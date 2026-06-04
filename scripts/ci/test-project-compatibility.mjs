@@ -56,7 +56,7 @@ withTempDir((dir) => {
     COMPAT_SOURCE_COMMIT: "abcdef1234567890",
     COMPAT_WORKFLOW_NAME: "CI",
     COMPAT_WORKFLOW_RUN_ID: "12345",
-    COMPAT_WORKFLOW_RUN_URL: "https://github.com/mohsen1/tsz/actions/runs/12345",
+    COMPAT_WORKFLOW_RUN_URL: "https://github.com/tsz-org/tsz/actions/runs/12345",
     COMPAT_WORKFLOW_RUN_ATTEMPT: "2",
     COMPAT_RUN_STATUS: "completed",
     COMPAT_FIXTURE_SOURCES: [
@@ -75,7 +75,7 @@ withTempDir((dir) => {
   assert.equal(row.source_commit, "abcdef1234567890");
   assert.equal(row.workflow_name, "CI");
   assert.equal(row.workflow_run_id, "12345");
-  assert.equal(row.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/12345");
+  assert.equal(row.workflow_run_url, "https://github.com/tsz-org/tsz/actions/runs/12345");
   assert.equal(row.workflow_run_attempt, "2");
   assert.equal(row.run_status, "completed");
   assert.equal(row.state, "yellow");
@@ -849,7 +849,7 @@ withTempDir((dir) => {
     SUMMARY_SOURCE_COMMIT: "123456abcdef",
     SUMMARY_WORKFLOW_NAME: "Project compile guard",
     SUMMARY_WORKFLOW_RUN_ID: "67890",
-    SUMMARY_WORKFLOW_RUN_URL: "https://github.com/mohsen1/tsz/actions/runs/67890",
+    SUMMARY_WORKFLOW_RUN_URL: "https://github.com/tsz-org/tsz/actions/runs/67890",
     SUMMARY_WORKFLOW_RUN_ATTEMPT: "1",
     SUMMARY_RUN_STATUS: "completed",
   });
@@ -860,7 +860,7 @@ withTempDir((dir) => {
   assert.equal(payload.source_commit, "123456abcdef");
   assert.equal(payload.workflow_name, "Project compile guard");
   assert.equal(payload.workflow_run_id, "67890");
-  assert.equal(payload.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/67890");
+  assert.equal(payload.workflow_run_url, "https://github.com/tsz-org/tsz/actions/runs/67890");
   assert.equal(payload.workflow_run_attempt, "1");
   assert.equal(payload.run_status, "completed");
   assert.equal(payload.project_set, "canary");

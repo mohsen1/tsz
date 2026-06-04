@@ -14,7 +14,7 @@
 //! `outcome.failure`-reading predicates observe in `core_statement_checks.rs:413-426`
 //! and caused a real conformance regression on `coAndContraVariantInferences2.ts`
 //! and `correlatedUnions.ts` (see the review discussion on
-//! <https://github.com/mohsen1/tsz/pull/12239#discussion_r3342820552>). The
+//! <https://github.com/tsz-org/tsz/pull/12239#discussion_r3342820552>). The
 //! TS2322 elaboration tested here flows through `analyze_assignability_failure`
 //! directly in `error_reporter/assignability.rs:602`, independent of the
 //! `assign_relation_outcome` outcome's `failure` field.

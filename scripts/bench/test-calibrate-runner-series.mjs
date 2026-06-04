@@ -52,7 +52,7 @@ function artifact(rows, { sourceCommit = "abc123", cloudBuild = false } = {}) {
   return {
     generated_at: "2026-05-20T00:00:00.000Z",
     source_commit: sourceCommit,
-    workflow_run_url: `https://github.com/mohsen1/tsz/actions/runs/${sourceCommit}`,
+    workflow_run_url: `https://github.com/tsz-org/tsz/actions/runs/${sourceCommit}`,
     runner_environment: runnerEnvironment({ cloudBuild }),
     results: rows,
   };

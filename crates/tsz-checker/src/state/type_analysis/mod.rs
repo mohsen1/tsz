@@ -38,6 +38,7 @@ mod cross_file_shared_cache;
 mod qualified_names;
 mod source_alias_attribution;
 mod symbol_type_helpers;
+mod syntactic_defaults;
 mod type_param_defaults;
 
 /// Reset every cross-file/cross-arena recursion-guard thread-local owned by

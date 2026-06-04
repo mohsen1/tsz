@@ -14,7 +14,7 @@
 //! using name from external module but cannot be named"). Both gates share
 //! the relaxation, so every fixture asserts neither code fires.
 //!
-//! Tracks: <https://github.com/mohsen1/tsz/issues/7642>.
+//! Tracks: <https://github.com/tsz-org/tsz/issues/7642>.
 
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::diagnostics::Diagnostic;

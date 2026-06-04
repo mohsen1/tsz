@@ -43,8 +43,8 @@ function pr(overrides = {}) {
 assert.deepEqual(parseArgs(["--repository", "owner/repo"]).repository, "owner/repo");
 assert.deepEqual(parseArgs(["--no-default-required-check"]).requiredChecks, []);
 assert.deepEqual(
-  parseArgs(["--no-default-required-check", "--required-check", "merge-queue"]).requiredChecks,
-  ["merge-queue"],
+  parseArgs(["--no-default-required-check", "--required-check", "queue-ci"]).requiredChecks,
+  ["queue-ci"],
 );
 
 assert.equal(checkRollupState([check()]).kind, "passed");
@@ -120,7 +120,7 @@ assert.equal(
   autoMergeInFlightReason(
     pr({
       autoMergeRequest: { mergeMethod: "SQUASH" },
-      statusCheckRollup: [check({ name: "GitGuardian Security Checks" })],
+      statusCheckRollup: [check({ name: "external-security-check" })],
     }),
     { ahead_by: 2, behind_by: 0 },
     { base: "main" },
@@ -131,7 +131,7 @@ assert.equal(
   autoMergeInFlightReason(
     pr({
       autoMergeRequest: { mergeMethod: "SQUASH" },
-      statusCheckRollup: [check({ name: "GitGuardian Security Checks" })],
+      statusCheckRollup: [check({ name: "external-security-check" })],
     }),
     { ahead_by: 2, behind_by: 1 },
     { base: "main" },

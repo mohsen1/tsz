@@ -157,9 +157,14 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     ///   utilities like `Omit`/`Pick`/`ComponentPropsWithRef` are already
     ///   excluded earlier by the `IndexAccess`-body requirement.
     fn body_has_conditional(&self, type_id: TypeId) -> bool {
-        crate::visitors::visitor_predicates::contains_type_matching(self.interner, type_id, |k| {
-            matches!(k, TypeData::Conditional(_))
-        })
+        // Routed through the project-wide `contains_conditional_cache` (see
+        // `contains_conditional_type`) so the eligibility gate is amortized O(1)
+        // per node rather than an O(subtree) walk on every cache-miss
+        // evaluation. The cached walker enumerates children identically to the
+        // generic `contains_type_matching(.., Conditional)` walk — both treat
+        // `Lazy`/`Application` bases as opaque leaves — so the answer is
+        // unchanged.
+        crate::type_queries::contains_conditional_type(self.interner, type_id)
     }
 
     /// Whether the object operand of a cacheable `IndexAccess`/`KeyOf` is safe to

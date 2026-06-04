@@ -1255,7 +1255,7 @@ fn test_protocol_open_at_fourslash_path_does_not_strip_quad_slash_comments() {
     // Real client opens `/fourslash.ts` with `//// const x: string = 1;\n`.
     // tsc treats `////` as a normal comment and returns no diagnostics; tsz
     // used to apply the fourslash harness's `////`-line extraction here and
-    // emit TS2322. Regression for https://github.com/mohsen1/tsz/issues/3799.
+    // emit TS2322. Regression for https://github.com/tsz-org/tsz/issues/3799.
     let mut server = make_server();
     let file = "/fourslash.ts";
     server

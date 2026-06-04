@@ -49,14 +49,14 @@ assert.deepEqual(
     title: "chore(ci): sample",
     body: "AgentName: TestAgent\n",
     draft: false,
-    labels: [{ name: "agent:Studio-manager" }, { name: "merge-queue" }],
+    labels: [{ name: "agent:Studio-manager" }, { name: "ready-review" }],
   }),
   {
     number: 456,
     title: "chore(ci): sample",
     body: "AgentName: TestAgent\n",
     draft: false,
-    labels: ["agent:Studio-manager", "merge-queue"],
+    labels: ["agent:Studio-manager", "ready-review"],
   },
 );
 

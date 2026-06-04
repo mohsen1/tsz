@@ -186,6 +186,32 @@ impl ContentPredicate for SubstitutionDependentPredicate {
     }
 }
 
+struct ConditionalPredicate;
+impl ContentPredicate for ConditionalPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::Conditional(_))
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_conditional_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_conditional_cache(type_id, result);
+    }
+}
+
+/// Whether the alias-opaque structure of `type_id` contains a `Conditional`.
+///
+/// Like the generic `contains_type_matching(.., Conditional)` walk, this treats
+/// nested `Lazy`/`Application` bases as opaque leaves (it never resolves
+/// aliases), so the result is immutable per `TypeId`. Routing it through
+/// `contains_content_cached` memoizes every visited node in the project-wide
+/// `contains_conditional_cache`, turning the `closed_eval_cache` eligibility
+/// gate (`is_closed_cacheable_kind`) from an O(subtree) walk on every
+/// cache-miss evaluation into an amortized O(1) lookup.
+pub fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_content_cached(db, type_id, &ConditionalPredicate)
+}
+
 /// Whether evaluating `type_id` depends on the substitution environment.
 ///
 /// Returns `true` if the type (recursively) contains any `TypeParameter`/

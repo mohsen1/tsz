@@ -2418,7 +2418,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         //                  `default_module_kind_for_target(target, true)`
         //   moduleResolution unset → `default_module_resolution_for_module(module)`
         // and `Bundler` / `Node16` / `NodeNext` all count as "modern".
-        // See https://github.com/mohsen1/tsz/issues/3509.
+        // See https://github.com/tsz-org/tsz/issues/3509.
         let mr_is_modern = if let Some(serde_json::Value::String(mr_value)) =
             compiler_opts.get("moduleResolution")
         {
@@ -2739,7 +2739,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // TS6046 for invalid `watchOptions.watchFile` / `watchDirectory` /
         // `fallbackPolling` enum values. tsc surfaces these as config
         // diagnostics before compiling; tsz used to skip them entirely.
-        // See https://github.com/mohsen1/tsz/issues/3591 (repro A).
+        // See https://github.com/tsz-org/tsz/issues/3591 (repro A).
         if let Some(serde_json::Value::Object(watch_opts)) = obj.get_mut("watchOptions") {
             validate_option_value(
                 watch_opts,

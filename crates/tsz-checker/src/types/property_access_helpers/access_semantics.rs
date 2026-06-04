@@ -619,11 +619,55 @@ impl<'a> CheckerState<'a> {
         names
     }
 
+    /// Resolve a (possibly mapped) instantiation through the type environment and,
+    /// when it reduces to a concrete object, report whether `prop_name` is present.
+    ///
+    /// The solver's environment-free finite-name queries cannot resolve
+    /// `Lazy(DefId)` source references (type aliases / interfaces), so a mapped
+    /// type whose source is such a reference — combined with a non-identity `as`
+    /// clause — cannot be enumerated syntactically. The checker owns the
+    /// `DefId -> TypeId` resolver, so evaluating here yields the real, fully
+    /// modifier-preserving object shape. Empty evaluated shapes stay uncertain:
+    /// they may be artifacts of unresolved generic/keyof constraints rather
+    /// than proof that every property is absent.
+    fn concrete_mapped_application_has_property(
+        &mut self,
+        instantiated: TypeId,
+        prop_name: &str,
+    ) -> Option<bool> {
+        use crate::query_boundaries::common as common_query;
+
+        let evaluated = self.evaluate_type_with_env(instantiated);
+        // A type that still carries free type parameters is not concrete; defer.
+        if common_query::contains_type_parameters(self.ctx.types, evaluated) {
+            return None;
+        }
+        let shape = common_query::object_shape_for_type(self.ctx.types, evaluated)?;
+
+        let has_concrete_property_surface = shape.string_index.is_some()
+            || shape.number_index.is_some()
+            || !shape.properties.is_empty();
+        if !has_concrete_property_surface {
+            return None;
+        }
+
+        // The property is "known" when a string index signature accepts any
+        // string-named property, a named property matches, or a numeric index
+        // signature covers a numeric-looking name. Mirrors the intersection
+        // excess-property logic so the verdict stays consistent.
+        let target_atom = self.ctx.types.intern_string(prop_name);
+        let is_known = shape.string_index.is_some()
+            || shape.properties.iter().any(|prop| prop.name == target_atom)
+            || (shape.number_index.is_some() && prop_name.parse::<f64>().is_ok());
+        Some(is_known)
+    }
+
     fn generic_mapped_application_lacks_explicit_property(
         &mut self,
         object_type: TypeId,
         prop_name: &str,
         use_known_finite_names: bool,
+        use_concrete_fallback: bool,
     ) -> Option<bool> {
         use crate::query_boundaries::common::{
             TypeSubstitution, application_info, instantiate_type,
@@ -651,6 +695,7 @@ impl<'a> CheckerState<'a> {
 
         let substitution = TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
         let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
+
         let instantiated_mapped_id =
             crate::query_boundaries::common::mapped_type_id(self.ctx.types, instantiated)?;
         let instantiated_mapped = self.ctx.types.mapped_type(instantiated_mapped_id);
@@ -670,6 +715,21 @@ impl<'a> CheckerState<'a> {
                 return Some(true);
             }
             return None;
+        }
+        if use_concrete_fallback {
+            // For non-identity key-remapping over `Lazy(DefId)` sources, the
+            // environment-free finite-name path above may find no names even
+            // when the concrete instantiated shape has known remapped
+            // properties. Only opt-in callers that are checking concrete
+            // object-literal/intersection excess properties should ask the
+            // checker's environment-backed evaluator for that verdict; broader
+            // relation/keyof/constraint paths need the conservative syntactic
+            // fallback below.
+            if let Some(has_property) =
+                self.concrete_mapped_application_has_property(instantiated, prop_name)
+            {
+                return Some(!has_property);
+            }
         }
         Some(true)
     }
@@ -733,8 +793,44 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::query_boundaries::common as common_query;
 
-        if let Some(lacks_explicit_property) =
-            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name, false)
+        if let Some(lacks_explicit_property) = self
+            .generic_mapped_application_lacks_explicit_property(
+                object_type,
+                prop_name,
+                false,
+                false,
+            )
+        {
+            return lacks_explicit_property;
+        }
+
+        let resolved = self.resolve_type_for_property_access(object_type);
+        let evaluated = self.evaluate_type_with_env(resolved);
+
+        for candidate in [resolved, evaluated] {
+            if !common_query::contains_type_parameters(self.ctx.types, candidate) {
+                continue;
+            }
+
+            let Some(mapped_id) = common_query::mapped_type_id(self.ctx.types, candidate) else {
+                continue;
+            };
+
+            return !self.mapped_type_has_explicit_property(mapped_id, prop_name);
+        }
+
+        false
+    }
+
+    pub(crate) fn generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        use crate::query_boundaries::common as common_query;
+
+        if let Some(lacks_explicit_property) = self
+            .generic_mapped_application_lacks_explicit_property(object_type, prop_name, false, true)
         {
             return lacks_explicit_property;
         }
@@ -764,8 +860,8 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::query_boundaries::common as common_query;
 
-        if let Some(lacks_explicit_property) =
-            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name, true)
+        if let Some(lacks_explicit_property) = self
+            .generic_mapped_application_lacks_explicit_property(object_type, prop_name, true, true)
         {
             return lacks_explicit_property;
         }
