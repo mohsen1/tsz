@@ -20,7 +20,7 @@ use tsz_solver::types::TypeData;
 /// `PropertyKey = string | number | symbol`).
 ///
 /// This is the primary solver-based gate. The AST fallback
-/// (`is_valid_index_sig_param_type_ast`) handles composite TypeIds produced
+/// (`is_valid_index_sig_param_type_ast`) handles composite `TypeIds` produced
 /// by intersections and local alias bodies; this function handles the case
 /// where the resolved `TypeId` is itself a union of primitives — including
 /// when the union came from a lib type alias that the AST resolver cannot
