@@ -6,7 +6,6 @@ use super::helpers::{
 };
 use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
-use crate::query_boundaries::common::is_template_literal_type;
 use crate::query_boundaries::common::{ObjectFlags, TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -789,10 +788,12 @@ impl<'a> CheckerState<'a> {
                     // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
                     // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                     let has_param_grammar_error = param.dot_dot_dot_token || param.question_token;
-                    let is_valid_index_type = key_type == TypeId::STRING
-                        || key_type == TypeId::NUMBER
-                        || key_type == TypeId::SYMBOL
-                        || is_template_literal_type(self.ctx.types, key_type);
+                    // Accepts any alias reducing to a valid index key, including the
+                    // cross-file lib global `PropertyKey`. A generic/literal key
+                    // keeps falling through to TS1268 (this site has no TS1337
+                    // branch), preserving existing class behavior.
+                    let (_is_generic_or_literal, is_valid_index_type) =
+                        self.classify_index_sig_param_type(key_type, param.type_annotation);
 
                     if !is_valid_index_type && !has_param_grammar_error {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
