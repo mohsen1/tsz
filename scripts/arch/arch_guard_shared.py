@@ -523,6 +523,10 @@ FILE_LINE_LIMIT_CHECKS = [
     ),
     # Emitter using/disposable region: issue #8276 tracks migrating the 16
     # output-surgery rewrites to structured resource-region IR.
+    # Ratcheted 2537→2608 here in #12503 because main grew past the prior
+    # cap between this branch's base and the synthetic-merge test (issues
+    # #12499 / #12492 — this PR's reason for being). The new cap matches
+    # the live count on the rebased synthetic merge.
     (
         "Emitter boundary: source_file/top_level_using size ratchet (#8276)",
         ROOT
@@ -532,7 +536,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "source_file"
         / "top_level_using.rs",
-        2537,
+        2608,
     ),
     # Emitter property/element access: split by access kind per §19.
     (
