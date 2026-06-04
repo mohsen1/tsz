@@ -89,15 +89,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(type_node) = self.ctx.arena.get(param_data.type_annotation) else {
+        if self.ctx.arena.get(param_data.type_annotation).is_none() {
             return;
-        };
+        }
+        let type_annotation = param_data.type_annotation;
 
-        // Check if the type annotation is a valid index signature parameter type
-        // Valid types: string, number, symbol (keywords), template literal type,
-        // or type references to string/number/symbol (including type aliases)
-        let is_valid =
-            self.is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation);
+        // Check if the type annotation is a valid index signature parameter type.
+        let key_type = self.get_type_from_type_node(type_annotation);
+        let (is_generic_or_literal, is_valid) =
+            self.classify_index_sig_param_type(key_type, type_annotation);
 
         tracing::trace!(
             is_valid,
@@ -110,8 +110,6 @@ impl<'a> CheckerState<'a> {
             has_grammar_error = true;
             // TS1337: when the type is a generic type parameter or literal type,
             // emit the more specific "cannot be a literal type or generic type" message.
-            let is_generic_or_literal = self
-                .is_type_param_or_literal_in_index_sig(type_node.kind, param_data.type_annotation);
             if is_generic_or_literal {
                 self.error_at_node(
                     param_idx,

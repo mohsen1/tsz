@@ -1277,17 +1277,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             );
                         }
                     } else {
-                        is_valid_index_type = key_type == TypeId::STRING
-                            || key_type == TypeId::NUMBER
-                            || key_type == TypeId::SYMBOL
-                            || crate::query_boundaries::common::is_template_literal_type(
+                        // Primary check: tsc's `everyType(type, isValidIndexKeyType)`
+                        // over the resolved key type. Resolve any `Lazy(DefId)`
+                        // alias head first (e.g. the cross-file lib global
+                        // `PropertyKey` => `string | number | symbol`), then ask
+                        // structurally whether it is a valid key type.
+                        let resolved_key = {
+                            let env = self.ctx.type_environment.borrow();
+                            crate::query_boundaries::flow::resolve_lazy_def_with_env(
                                 self.ctx.types,
+                                Some(&env),
                                 key_type,
+                            )
+                        };
+                        is_valid_index_type =
+                            crate::query_boundaries::index_signature::resolved_index_key_type_is_valid(
+                                self.ctx.types.as_type_database(),
+                                resolved_key,
                             );
-                        // AST fallback: unions of valid types and non-generic
-                        // intersections (`string | number`, `string & Tag`)
-                        // resolve to composite TypeIds that don't match the
-                        // primitive checks above.
+                        // AST fallback: a defensive net for local composite spellings
+                        // the resolved-type check can't reach (e.g. a still-Lazy
+                        // member). Only ever adds acceptance, never removes it.
                         is_valid_via_ast = !is_valid_index_type
                             && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
                                 self.ctx.arena,

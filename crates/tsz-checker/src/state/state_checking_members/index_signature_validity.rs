@@ -8,8 +8,63 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Mirror tsc's `everyType(type, isValidIndexKeyType)` over the *resolved*
+    /// index-signature key `TypeId`.
+    ///
+    /// tsc validates index-signature parameter types against the resolved type,
+    /// not the syntactic spelling: an alias whose constituents are all subsets
+    /// of `string | number | symbol` (or a template-literal/pattern type) is a
+    /// valid key. The AST helper [`Self::is_valid_index_sig_param_type`] can only
+    /// recurse alias bodies that live in the current file's arena, so it misses
+    /// cross-file aliases — most notably the lib global `PropertyKey`
+    /// (`string | number | symbol`). Resolving the key type first makes the
+    /// decision independent of which source file declares the alias.
+    ///
+    /// `everyType` distributes the predicate over union constituents; a single
+    /// constituent is valid when it is `string`/`number`/`symbol`, a
+    /// template-literal type, or an intersection with some valid member. `any`,
+    /// `unknown`, `boolean`, literals, and object types are not valid keys —
+    /// matching tsc, and notably *not* an assignability test (`any` is
+    /// assignable to `string | number | symbol` yet is still rejected).
+    pub(crate) fn index_key_type_is_valid(&mut self, key_type: TypeId) -> bool {
+        let resolved = self.evaluate_type_for_assignability(key_type);
+        crate::query_boundaries::index_signature::resolved_index_key_type_is_valid(
+            self.ctx.types.as_type_database(),
+            resolved,
+        )
+    }
+
+    /// Classify an index-signature parameter type against tsc's grammar rules,
+    /// returning `(is_generic_or_literal, is_valid)`.
+    ///
+    /// tsc applies the TS1337 (literal/generic) condition *before* the
+    /// `isValidIndexKeyType` (TS1268) check, so a generic key like `T & string`
+    /// is never treated as valid even though one member is. `is_valid` combines
+    /// the resolved-type structural check ([`Self::index_key_type_is_valid`],
+    /// which accepts cross-file aliases such as the lib global `PropertyKey`)
+    /// with the AST helper as a defensive fallback for local composite spellings.
+    /// This is the single decision point shared by every index-signature site.
+    pub(crate) fn classify_index_sig_param_type(
+        &mut self,
+        key_type: TypeId,
+        type_annotation_idx: NodeIndex,
+    ) -> (bool, bool) {
+        let type_node_kind = self
+            .ctx
+            .arena
+            .get(type_annotation_idx)
+            .map_or(0, |n| n.kind);
+        let is_generic_or_literal =
+            self.is_type_param_or_literal_in_index_sig(type_node_kind, type_annotation_idx);
+        let is_valid = !is_generic_or_literal
+            && (self.index_key_type_is_valid(key_type)
+                || self.is_valid_index_sig_param_type(type_node_kind, type_annotation_idx));
+        (is_generic_or_literal, is_valid)
+    }
+
     /// Check if a type node represents a valid index signature parameter type.
     /// Valid types: string, number, symbol keywords, template literal types,
     /// type aliases that resolve to these, unions whose members are all valid,
