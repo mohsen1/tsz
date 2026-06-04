@@ -19,6 +19,17 @@ use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
 impl<'a> InferenceContext<'a> {
+    fn discard_self_referential_candidates(
+        &mut self,
+        root: InferenceVar,
+        candidates: Vec<InferenceCandidate>,
+    ) -> Vec<InferenceCandidate> {
+        candidates
+            .into_iter()
+            .filter(|candidate| !self.occurs_in(root, candidate.type_id))
+            .collect()
+    }
+
     /// Returns `true` when `type_id` is a bare named `TypeParameter` with no
     /// `extends` constraint — a name that carries no structural information
     /// that a covariant inference result could violate.
@@ -426,8 +437,9 @@ impl<'a> InferenceContext<'a> {
         let mut upper_bounds = Vec::new();
         let mut self_referential_bounds = Vec::new();
         let mut seen_upper_bounds = FxHashSet::default();
-        let mut candidates = info.candidates;
-        let contra_candidates = info.contra_candidates;
+        let mut candidates = self.discard_self_referential_candidates(root, info.candidates);
+        let contra_candidates =
+            self.discard_self_referential_candidates(root, info.contra_candidates);
         for bound in info.upper_bounds {
             if self.occurs_in(root, bound) {
                 self_referential_bounds.push(bound);
@@ -1718,7 +1730,8 @@ impl<'a> InferenceContext<'a> {
             let dc = self.declared_constraints.get(&root).copied();
             let dc_preserves_literals =
                 self.literal_preserving_declared_constraints.contains(&root);
-            let mut candidates = info.candidates.clone();
+            let mut candidates =
+                self.discard_self_referential_candidates(root, info.candidates.clone());
             if !info.upper_bounds.is_empty() {
                 let has_informative_upper_bound = info
                     .upper_bounds
@@ -1733,11 +1746,10 @@ impl<'a> InferenceContext<'a> {
                     _ => true,
                 });
             }
-            let mut concrete_contra_candidates: Vec<_> = info
-                .contra_candidates
-                .iter()
+            let mut concrete_contra_candidates: Vec<_> = self
+                .discard_self_referential_candidates(root, info.contra_candidates.clone())
+                .into_iter()
                 .filter(|c| self.is_concrete_contra_candidate(c.type_id))
-                .cloned()
                 .collect();
             // Mirror the priority filter from `compute_constraint_result`: when
             // both co- and contra-variant candidates exist, drop contra-candidates
@@ -1863,7 +1875,12 @@ impl<'a> InferenceContext<'a> {
                         "get_current_substitution: not resolved"
                     );
 
-                    if !info.candidates.is_empty() {
+                    let candidates =
+                        self.discard_self_referential_candidates(root, info.candidates.clone());
+                    let contra_candidates = self
+                        .discard_self_referential_candidates(root, info.contra_candidates.clone());
+
+                    if !candidates.is_empty() {
                         let is_const = self.is_var_const(root);
                         let dc = self.declared_constraints.get(&root).copied();
                         let dc_preserves_literals =
@@ -1871,33 +1888,32 @@ impl<'a> InferenceContext<'a> {
                         let skip_literal_widening =
                             self.top_level_in_return_type_unfixed.contains(&root);
                         let covariant_result = self.resolve_from_candidates(
-                            &info.candidates,
+                            &candidates,
                             is_const,
                             &info.upper_bounds,
                             dc,
                             dc_preserves_literals,
                             skip_literal_widening,
                         );
-                        if !info.contra_candidates.is_empty() {
+                        if !contra_candidates.is_empty() {
                             let covariant_is_uninformative = matches!(
                                 covariant_result,
                                 TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
                             );
                             let covariant_ok = !covariant_is_uninformative
-                                && info
-                                    .contra_candidates
+                                && contra_candidates
                                     .iter()
                                     .any(|c| self.is_subtype(covariant_result, c.type_id));
                             if covariant_ok {
                                 covariant_result
                             } else {
-                                self.resolve_from_contra_candidates(&info.contra_candidates)
+                                self.resolve_from_contra_candidates(&contra_candidates)
                             }
                         } else {
                             covariant_result
                         }
-                    } else if !info.contra_candidates.is_empty() {
-                        self.resolve_from_contra_candidates(&info.contra_candidates)
+                    } else if !contra_candidates.is_empty() {
+                        self.resolve_from_contra_candidates(&contra_candidates)
                     } else if !info.upper_bounds.is_empty() {
                         // No candidates yet, but we have a constraint (upper bound).
                         // Use the constraint as contextual fallback so that mapped types
