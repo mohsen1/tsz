@@ -843,13 +843,60 @@ pub fn module_specifier_error_candidates(specifier: &str) -> Vec<String> {
 // so the whole project pays the cost once.
 
 /// Project-wide reverse index from normalized file name to file index.
-pub type FileNameIndex = FxHashMap<String, usize>;
+///
+/// The index also owns a shared memo for `(source_file_name, specifier)`
+/// probes. It is rebuilt with the project filename topology, so memoized hits
+/// and misses have the same lifetime as the strings they were resolved against.
+#[derive(Default)]
+pub struct FileNameIndex {
+    entries: FxHashMap<String, usize>,
+    specifier_resolution_cache: dashmap::DashMap<(String, String), Option<usize>>,
+}
+
+impl FileNameIndex {
+    pub fn reserve(&mut self, additional: usize) {
+        self.entries.reserve(additional);
+    }
+
+    pub fn insert(&mut self, key: String, value: usize) -> Option<usize> {
+        self.entries.insert(key, value)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&usize> {
+        self.entries.get(key)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    #[cfg(test)]
+    fn specifier_resolution_cache_len(&self) -> usize {
+        self.specifier_resolution_cache.len()
+    }
+}
+
+impl FromIterator<(String, usize)> for FileNameIndex {
+    fn from_iter<T: IntoIterator<Item = (String, usize)>>(iter: T) -> Self {
+        let mut idx = Self::default();
+        for (key, value) in iter {
+            idx.insert(key, value);
+        }
+        idx
+    }
+}
 
 /// Build a reverse index `normalized_file_name -> file_idx` from a slice of
 /// arenas. The keys use forward slashes only, matching the forms the
 /// specifier resolver produces.
 pub fn build_file_name_index(arenas: &[Arc<NodeArena>]) -> FileNameIndex {
-    let mut idx: FileNameIndex = FxHashMap::default();
+    let mut idx = FileNameIndex::default();
     idx.reserve(arenas.len());
     for (file_idx, arena) in arenas.iter().enumerate() {
         let Some(sf) = arena.source_files.first() else {
@@ -927,6 +974,23 @@ fn probe_arbitrary_ext_decl(
 /// index that matches, or `None` when no project file answers the
 /// specifier.
 pub fn resolve_specifier_via_file_index(
+    source_file_name: &str,
+    specifier: &str,
+    filename_idx: &FileNameIndex,
+) -> Option<usize> {
+    let cache_key = (source_file_name.to_string(), specifier.to_string());
+    if let Some(cached) = filename_idx.specifier_resolution_cache.get(&cache_key) {
+        return *cached;
+    }
+    let resolved =
+        resolve_specifier_via_file_index_uncached(source_file_name, specifier, filename_idx);
+    filename_idx
+        .specifier_resolution_cache
+        .insert(cache_key, resolved);
+    resolved
+}
+
+fn resolve_specifier_via_file_index_uncached(
     source_file_name: &str,
     specifier: &str,
     filename_idx: &FileNameIndex,

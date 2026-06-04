@@ -833,7 +833,7 @@ fn test_extension_bearing_dts_specifier() {
 // `build_module_resolution_maps` registers, without the O(N²) cross-product.
 // ---------------------------------------------------------------------------
 
-fn file_index_from(files: &[&str]) -> FxHashMap<String, usize> {
+fn file_index_from(files: &[&str]) -> FileNameIndex {
     files
         .iter()
         .enumerate()
@@ -1233,6 +1233,35 @@ fn test_fast_resolver_arbitrary_ext_decl_matches_legacy_map() {
             specifier,
         );
     }
+}
+
+#[test]
+fn test_file_name_index_memoizes_specifier_resolution_hits_and_misses() {
+    let files = ["/proj/a.ts", "/proj/b.ts"];
+    let idx = file_index_from(&files);
+
+    assert_eq!(idx.specifier_resolution_cache_len(), 0);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./b", &idx),
+        Some(1)
+    );
+    assert_eq!(idx.specifier_resolution_cache_len(), 1);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./b", &idx),
+        Some(1)
+    );
+    assert_eq!(idx.specifier_resolution_cache_len(), 1);
+
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./missing", &idx),
+        None
+    );
+    assert_eq!(idx.specifier_resolution_cache_len(), 2);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./missing", &idx),
+        None
+    );
+    assert_eq!(idx.specifier_resolution_cache_len(), 2);
 }
 
 // ---------------------------------------------------------------------------
