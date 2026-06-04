@@ -34,12 +34,31 @@ impl PaddedAtomicU64 {
 /// numbers we're trying to collect.
 static ENABLED_FAST: OnceLock<bool> = OnceLock::new();
 
+/// Test-only override so unit tests that assert on counter deltas can opt
+/// into counting without depending on the `TSZ_PERF_COUNTERS` env var (and
+/// without being defeated by the `ENABLED_FAST` `OnceLock` having already
+/// latched `false`). Only compiled in test/debug builds; production builds
+/// keep the single env-gated `OnceLock` read.
+#[cfg(any(test, debug_assertions))]
+static FORCE_ENABLED_FOR_TESTS: AtomicBool = AtomicBool::new(false);
+
 /// Cheap O(1) gate readable from any hot path. Reads a `OnceLock<bool>`
 /// (one branch + one load) instead of going through `counters().enabled`
 /// (deref-via-OnceLock + load).
 #[inline(always)]
 pub fn enabled_fast() -> bool {
+    #[cfg(any(test, debug_assertions))]
+    if FORCE_ENABLED_FOR_TESTS.load(Ordering::Relaxed) {
+        return true;
+    }
     *ENABLED_FAST.get_or_init(|| std::env::var_os("TSZ_PERF_COUNTERS").is_some())
+}
+
+/// Force the perf-counter gate on for the current process. Test-only; lets a
+/// unit test observe `fetch_add` deltas regardless of env or `OnceLock` state.
+#[cfg(any(test, debug_assertions))]
+pub fn force_enable_perf_counters_for_tests() {
+    FORCE_ENABLED_FOR_TESTS.store(true, Ordering::Relaxed);
 }
 
 // Declarative manifest for enum-backed counter families. Each entry owns the
