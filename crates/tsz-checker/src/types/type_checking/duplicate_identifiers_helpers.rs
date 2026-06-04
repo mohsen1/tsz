@@ -21,12 +21,30 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
+        // Index-based iteration over the top-level statements. Re-borrowing the
+        // arena each step (the parse tree is immutable here) lets the diagnostic
+        // emitters take `&mut self` without first cloning the whole statement
+        // list just to release the borrow.
+        let Some(stmt_count) = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .map(|source_file| source_file.statements.nodes.len())
+        else {
             return;
         };
-        let statements: Vec<NodeIndex> = source_file.statements.nodes.clone();
 
-        for stmt_idx in statements {
+        for stmt_i in 0..stmt_count {
+            let Some(stmt_idx) = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|source_file| source_file.statements.nodes.get(stmt_i).copied())
+            else {
+                break;
+            };
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
@@ -45,24 +63,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(module) = self.ctx.arena.get_module(stmt_node) else {
+            // Same index-based walk for the augmentation body's statements, so
+            // the inner list is never cloned either.
+            let Some(inner_count) = self
+                .global_augmentation_body_statements(stmt_idx)
+                .map(<[NodeIndex]>::len)
+            else {
                 continue;
             };
-            let Some(body_node) = self.ctx.arena.get(module.body) else {
-                continue;
-            };
-            if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
-                continue;
-            }
-            let Some(block) = self.ctx.arena.get_module_block(body_node) else {
-                continue;
-            };
-            let Some(statements) = block.statements.as_ref() else {
-                continue;
-            };
-            let inner_statements: Vec<NodeIndex> = statements.nodes.clone();
 
-            for enum_decl_idx in inner_statements {
+            for inner_i in 0..inner_count {
+                let Some(enum_decl_idx) = self
+                    .global_augmentation_body_statements(stmt_idx)
+                    .and_then(|inner| inner.get(inner_i).copied())
+                else {
+                    break;
+                };
                 let Some(enum_node) = self.ctx.arena.get(enum_decl_idx) else {
                     continue;
                 };
@@ -119,6 +135,26 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Resolve the statement list inside a `global { ... }` augmentation block,
+    /// returning `None` when `module_decl_idx` is not a module declaration with a
+    /// concrete `MODULE_BLOCK` body. Borrows the arena only for the duration of the
+    /// call so the caller can copy out individual indices and emit diagnostics
+    /// without holding the borrow.
+    fn global_augmentation_body_statements(
+        &self,
+        module_decl_idx: NodeIndex,
+    ) -> Option<&[NodeIndex]> {
+        let stmt_node = self.ctx.arena.get(module_decl_idx)?;
+        let module = self.ctx.arena.get_module(stmt_node)?;
+        let body_node = self.ctx.arena.get(module.body)?;
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return None;
+        }
+        let block = self.ctx.arena.get_module_block(body_node)?;
+        let statements = block.statements.as_ref()?;
+        Some(&statements.nodes)
     }
 
     pub(super) fn extend_duplicate_symbol_ids_with_local_augmentation_decls(
