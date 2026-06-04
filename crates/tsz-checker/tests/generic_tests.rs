@@ -254,6 +254,51 @@ type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
 }
 
 #[test]
+fn test_lib_required_constraint_uses_application_arg_source() {
+    let source = r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type | Options;
+
+export type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+"#;
+    let libs = crate::test_utils::load_lib_files(&["es5.d.ts"]);
+    let codes = crate::test_utils::check_source_with_libs(
+        source,
+        "paths.ts",
+        tsz_checker::context::CheckerOptions::default(),
+        &libs,
+    )
+    .into_iter()
+    .map(|diag| diag.code)
+    .collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected no TS2344 for lib Required<Options> application constraints, got {codes:?}"
+    );
+}
+
+#[test]
 fn lib_record_constraint_application_preserves_type_args() {
     let source = r#"
 type UndefinedKeys<T extends Record<string, any>> = {
@@ -300,6 +345,59 @@ type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
     assert!(
         !codes.contains(&2344),
         "Expected no TS2344 when lib Required/Partial applications keep their type args, got {codes:?}"
+    );
+}
+
+#[test]
+fn test_imported_type_options_alias_satisfies_lib_required_constraint() {
+    let libs = crate::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diags = crate::test_utils::check_multi_file_with_libs(
+        &[
+            (
+                "create-type-options.ts",
+                r#"
+export type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+"#,
+            ),
+            (
+                "paths.ts",
+                r#"
+import { CreateTypeOptions } from "./create-type-options";
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type | Options;
+
+export type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+"#,
+            ),
+        ],
+        "paths.ts",
+        tsz_checker::context::CheckerOptions::default(),
+        &libs,
+    );
+    let codes = diags.into_iter().map(|diag| diag.code).collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected imported CreateTypeOptions to satisfy lib Required<PathsOptions>, got {codes:?}"
     );
 }
 

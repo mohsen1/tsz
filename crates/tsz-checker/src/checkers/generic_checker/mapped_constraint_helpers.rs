@@ -251,13 +251,32 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let source = self.resolve_lazy_type(source);
-        let source = self.substitute_required_mapped_source(source, substitutions);
+        let mut source = self.substitute_required_mapped_source(source, substitutions);
 
-        let source = self.resolve_lazy_type(source);
-        self.ensure_relation_input_ready(source);
-        let source = self.evaluate_type_with_resolution(source);
+        let mut source_resolved = self.resolve_lazy_type(source);
+        self.ensure_relation_input_ready(source_resolved);
+        let mut source_evaluated = self.evaluate_type_with_resolution(source_resolved);
+        let mut property_result =
+            tsz_solver::objects::collect_properties(source_evaluated, self.ctx.types, &self.ctx);
+        if !matches!(
+            &property_result,
+            tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. }
+                if !properties.is_empty()
+        ) && let Some((_, fallback_source)) = substitutions.first().copied()
+            && fallback_source != source
+        {
+            source = fallback_source;
+            source_resolved = self.resolve_lazy_type(source);
+            self.ensure_relation_input_ready(source_resolved);
+            source_evaluated = self.evaluate_type_with_resolution(source_resolved);
+            property_result = tsz_solver::objects::collect_properties(
+                source_evaluated,
+                self.ctx.types,
+                &self.ctx,
+            );
+        }
         let tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } =
-            tsz_solver::objects::collect_properties(source, self.ctx.types, &self.ctx)
+            property_result
         else {
             return false;
         };
@@ -268,43 +287,43 @@ impl<'a> CheckerState<'a> {
         let type_arg_resolved = self.resolve_lazy_type(type_arg);
         self.ensure_relation_input_ready(type_arg_resolved);
         let type_arg_evaluated = self.evaluate_type_with_resolution(type_arg_resolved);
-        type_arg_evaluated == source
+        type_arg_evaluated == source_evaluated
             || self
-                .required_mapped_constraint_relation_outcome(type_arg_evaluated, source)
+                .required_mapped_constraint_relation_outcome(type_arg_evaluated, source_evaluated)
                 .related
             || self.type_satisfies_required_source_properties(type_arg_resolved, &properties)
             || (type_arg_evaluated != type_arg_resolved
                 && self.type_satisfies_required_source_properties(type_arg_evaluated, &properties))
-            || self.type_literal_alias_satisfies_required_source(type_arg_resolved, source)
+            || self
+                .type_literal_alias_satisfies_required_source(type_arg_resolved, source_evaluated)
     }
 
     fn required_mapped_constraint_source(&self, constraint: TypeId) -> Option<TypeId> {
         let db = self.ctx.types.as_type_database();
+        if let Some((Some(base_def), args)) = query::application_base_def_and_args(db, constraint)
+            && args.len() == 1
+        {
+            let sym_id = self.ctx.def_to_symbol_id(base_def)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            // The shortcut treats `Required<Source>` as the lib's mapped utility
+            // and skips the constraint check by comparing the type argument
+            // against the source itself. A *user-defined* `type Required<T> = ...`
+            // with a different shape must NOT trigger the shortcut, otherwise
+            // the constraint check is silently skipped (#3061). Gate on the
+            // symbol coming from a lib file so user redeclarations fall through
+            // to the regular constraint check.
+            if symbol.escaped_name == "Required" && self.ctx.symbol_is_from_lib(sym_id) {
+                return Some(args[0]);
+            }
+        }
+
         if let Some(mapped) = crate::query_boundaries::common::mapped_type_info(db, constraint)
             && mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
         {
             return crate::query_boundaries::common::homomorphic_mapped_source(db, constraint);
         }
 
-        let (Some(base_def), args) = query::application_base_def_and_args(db, constraint)? else {
-            return None;
-        };
-        if args.len() != 1 {
-            return None;
-        }
-        let sym_id = self.ctx.def_to_symbol_id(base_def)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        // The shortcut treats `Required<Source>` as the lib's mapped utility
-        // and skips the constraint check by comparing the type argument
-        // against the source itself. A *user-defined* `type Required<T> = …`
-        // with a different shape must NOT trigger the shortcut, otherwise
-        // the constraint check is silently skipped (#3061). Gate on the
-        // symbol coming from a lib file so user redeclarations fall through
-        // to the regular constraint check.
-        if symbol.escaped_name != "Required" || !self.ctx.symbol_is_from_lib(sym_id) {
-            return None;
-        }
-        Some(args[0])
+        None
     }
 
     fn substitute_required_mapped_source(
