@@ -1277,17 +1277,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             );
                         }
                     } else {
-                        is_valid_index_type = key_type == TypeId::STRING
-                            || key_type == TypeId::NUMBER
-                            || key_type == TypeId::SYMBOL
-                            || crate::query_boundaries::common::is_template_literal_type(
+                        // Primary solver check: accepts string/number/symbol, template
+                        // literal types, and unions of valid key types (e.g. PropertyKey).
+                        is_valid_index_type =
+                            crate::query_boundaries::index_signature::is_valid_index_key_type(
                                 self.ctx.types,
                                 key_type,
                             );
-                        // AST fallback: unions of valid types and non-generic
-                        // intersections (`string | number`, `string & Tag`)
-                        // resolve to composite TypeIds that don't match the
-                        // primitive checks above.
+                        // AST fallback: non-generic intersections and local alias bodies.
                         is_valid_via_ast = !is_valid_index_type
                             && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
                                 self.ctx.arena,

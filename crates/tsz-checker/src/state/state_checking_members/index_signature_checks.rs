@@ -93,11 +93,16 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check if the type annotation is a valid index signature parameter type
-        // Valid types: string, number, symbol (keywords), template literal type,
-        // or type references to string/number/symbol (including type aliases)
-        let is_valid =
-            self.is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation);
+        // Check if the type annotation is a valid index signature parameter type.
+        // Primary: solver-based check handles primitives, template literal types, and
+        // unions of valid key types (e.g. `PropertyKey = string | number | symbol`).
+        // Fallback: AST check for non-generic intersections like `string & Brand`.
+        let key_type = self.get_type_from_type_node(param_data.type_annotation);
+        let is_valid = crate::query_boundaries::index_signature::is_valid_index_key_type(
+            self.ctx.types,
+            key_type,
+        ) || self
+            .is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation);
 
         tracing::trace!(
             is_valid,

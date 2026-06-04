@@ -10,6 +10,39 @@ use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::types::TypeData;
+
+/// Solver-level check: is `type_id` a valid index-signature parameter type?
+///
+/// Accepts the three index-key primitives (`string`, `number`, `symbol`),
+/// template literal types, and unions where **every** member passes this
+/// check (e.g. `string | number`, `string | symbol`, or lib aliases like
+/// `PropertyKey = string | number | symbol`).
+///
+/// This is the primary solver-based gate. The AST fallback
+/// (`is_valid_index_sig_param_type_ast`) handles composite TypeIds produced
+/// by intersections and local alias bodies; this function handles the case
+/// where the resolved `TypeId` is itself a union of primitives — including
+/// when the union came from a lib type alias that the AST resolver cannot
+/// follow because the declaration lives in a separate lib arena.
+pub(crate) fn is_valid_index_key_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match type_id {
+        TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL => true,
+        _ => {
+            if super::common::is_template_literal_type(db, type_id) {
+                return true;
+            }
+            // Union whose every constituent is a valid index key type (e.g. PropertyKey).
+            if let Some(TypeData::Union(list_id)) = db.lookup(type_id) {
+                return db
+                    .type_list(list_id)
+                    .iter()
+                    .all(|&m| is_valid_index_key_type(db, m));
+            }
+            false
+        }
+    }
+}
 
 pub(crate) fn index_key_type_satisfies_index_signature(
     db: &dyn TypeDatabase,

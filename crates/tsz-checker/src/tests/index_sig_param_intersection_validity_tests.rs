@@ -190,6 +190,42 @@ type X<T extends string> = readonly { [k: T & string]: any }[];
     );
 }
 
+/// A user-defined alias `type PK = string | number | symbol` is a valid index
+/// signature parameter type — mirrors what `PropertyKey` from lib.es5.d.ts does.
+/// Regression for issue #12371 where the solver saw this as a union TypeId that
+/// didn't match any of the three primitive TypeId constants.
+#[test]
+fn local_alias_of_valid_union_is_valid_index_param() {
+    let codes = check_source_codes(
+        r#"
+type PK = string | number | symbol;
+type T1 = { readonly [k: PK]: unknown };
+interface I { [k: PK]: unknown }
+declare let v: { [k: PK]: number };
+"#,
+    );
+    assert!(
+        !codes.contains(&1268),
+        "TS1268 must not fire for local alias of string|number|symbol: {codes:?}"
+    );
+}
+
+/// An inline `string | number | symbol` union used directly as the index
+/// signature parameter type must also be accepted.
+#[test]
+fn inline_three_way_union_is_valid_index_param() {
+    let codes = check_source_codes(
+        r#"
+type T = { [k: string | number | symbol]: unknown };
+interface I { [k: string | number | symbol]: unknown }
+"#,
+    );
+    assert!(
+        !codes.contains(&1268),
+        "TS1268 must not fire for inline string|number|symbol union: {codes:?}"
+    );
+}
+
 /// Reverse member order: `string & T` should also be detected as generic.
 /// Guards against any regression where only the first member is inspected.
 #[test]

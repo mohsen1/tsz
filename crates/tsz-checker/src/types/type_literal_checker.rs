@@ -4,7 +4,6 @@
 //! callable types with call/construct signatures.
 
 use super::type_node_helpers::type_node_includes_explicit_undefined;
-use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -1341,14 +1340,16 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
                         );
                     } else {
-                        is_valid_index_type = key_type == TypeId::STRING
-                            || key_type == TypeId::NUMBER
-                            || key_type == TypeId::SYMBOL
-                            || is_template_literal_type(self.ctx.types, key_type);
-                        // AST fallback: unions of valid types and non-generic
-                        // intersections (`string | number`, `string & Tag`)
-                        // resolve to composite TypeIds that don't match the
-                        // primitive checks above.
+                        // Primary solver check: accepts string/number/symbol primitives,
+                        // template literal types, and unions of valid key types (e.g.
+                        // PropertyKey = string | number | symbol from lib.es5.d.ts).
+                        is_valid_index_type =
+                            crate::query_boundaries::index_signature::is_valid_index_key_type(
+                                self.ctx.types,
+                                key_type,
+                            );
+                        // AST fallback: non-generic intersections (`string & Tag`) and
+                        // local alias bodies that resolve to composite TypeIds.
                         is_valid_via_ast = !is_valid_index_type
                             && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
                                 self.ctx.arena,
