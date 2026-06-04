@@ -259,3 +259,155 @@ fn keeps_2430_three_level_chain_intermediate_breaks_variance() {
         "expected TS2430 when intermediate level changes return type; got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Case 7: Overloaded method INHERITED from a base class, checked against an
+// interface in a `class S extends Base implements I` mixed chain. (Issue
+// #10828.) Collecting only the first overload signature of the inherited
+// member drops the rest, producing a false TS2416/TS2420 when the interface's
+// overload set relies on a later signature. The inherited member's *full*
+// overload set must be compared against the interface member, mirroring the
+// own-class overloaded path. tsc accepts these (no diagnostic).
+// ---------------------------------------------------------------------------
+
+fn assert_no_2416_or_2420(src: &str) {
+    let codes = check_source_codes(src);
+    assert!(
+        !codes.contains(&2416) && !codes.contains(&2420),
+        "unexpected TS2416/TS2420 (false positive). Got: {codes:?}\nSource:\n{src}"
+    );
+}
+
+// Non-generic overloaded method inherited from the base satisfies the
+// interface's identical overload set.
+#[test]
+fn no_false_2416_inherited_overloaded_method_matches_interface_overloads() {
+    assert_no_2416_or_2420(
+        "interface Schema {
+           refine(check: string): number
+           refine(check: boolean): number
+         }
+         class Base {
+           refine(check: string): number
+           refine(check: boolean): number
+           refine(check: any): any { return 0 }
+         }
+         class S extends Base implements Schema {}",
+    );
+}
+
+// Same shape with a renamed method so the rule is not keyed on an identifier.
+#[test]
+fn no_false_2416_inherited_overloaded_method_matches_interface_overloads_renamed() {
+    assert_no_2416_or_2420(
+        "interface Spec {
+           validate(input: string): number
+           validate(input: boolean): number
+         }
+         class Core {
+           validate(input: string): number
+           validate(input: boolean): number
+           validate(input: any): any { return 0 }
+         }
+         class Impl extends Core implements Spec {}",
+    );
+}
+
+// Generic builder shape (the reported zod-style repro): the inherited generic
+// overload set (a type-guard overload plus a predicate overload, returning the
+// builder) satisfies the interface's matching overload set through the
+// `extends Base<O> implements Schema<O>` chain.
+#[test]
+fn no_false_2416_inherited_generic_overloaded_builder_through_mixed_chain() {
+    assert_no_2416_or_2420(
+        "interface Schema<O> {
+           refine<R extends O>(check: (v: O) => v is R): Schema<R>
+           refine(check: (v: O) => boolean): Schema<O>
+         }
+         class Base<O> {
+           refine<R extends O>(check: (v: O) => v is R): Base<R>
+           refine(check: (v: O) => boolean): Base<O>
+           refine(check: any): any { return this }
+         }
+         class S<O> extends Base<O> implements Schema<O> {}",
+    );
+}
+
+// Renamed generic builder shape — structural, not identifier-keyed.
+#[test]
+fn no_false_2416_inherited_generic_overloaded_builder_through_mixed_chain_renamed() {
+    assert_no_2416_or_2420(
+        "interface Validator<V> {
+           narrow<N extends V>(guard: (value: V) => value is N): Validator<N>
+           narrow(guard: (value: V) => boolean): Validator<V>
+         }
+         class BaseValidator<V> {
+           narrow<N extends V>(guard: (value: V) => value is N): BaseValidator<N>
+           narrow(guard: (value: V) => boolean): BaseValidator<V>
+           narrow(guard: any): any { return this }
+         }
+         class Concrete<V> extends BaseValidator<V> implements Validator<V> {}",
+    );
+}
+
+// The interface requires the SECOND overload specifically; collecting only the
+// first inherited signature would (incorrectly) reject this. tsc accepts.
+#[test]
+fn no_false_2416_inherited_overloaded_method_interface_needs_second_overload() {
+    assert_no_2416_or_2420(
+        "interface I { f(x: number): number }
+         class Base {
+           f(x: string): string
+           f(x: number): number
+           f(x: any): any { return x }
+         }
+         class S extends Base implements I {}",
+    );
+}
+
+// Negative control: the inherited overload set is genuinely incompatible with
+// the interface (first overload returns `boolean` where the interface requires
+// `string`), so a diagnostic must still fire. The combined-overload comparison
+// must not silently accept a real mismatch.
+#[test]
+fn keeps_diagnostic_for_inherited_overloaded_method_genuine_mismatch() {
+    let codes = check_source_codes(
+        "interface I {
+           f(x: string): boolean
+           f(x: number): number
+         }
+         class Base {
+           f(x: string): string
+           f(x: number): number
+           f(x: any): any { return x }
+         }
+         class S extends Base implements I {}",
+    );
+    assert!(
+        codes.contains(&2416) || codes.contains(&2420),
+        "expected TS2416/TS2420 for genuinely incompatible inherited overload set; got {codes:?}"
+    );
+}
+
+// Negative control: the interface requires an overload (`boolean` parameter)
+// that the inherited overload set cannot service at all. tsc reports.
+#[test]
+fn keeps_diagnostic_when_inherited_overloads_miss_required_interface_overload() {
+    let codes = check_source_codes(
+        "interface I {
+           f(x: string): string
+           f(x: number): number
+           f(x: boolean): boolean
+         }
+         class Base {
+           f(x: string): string
+           f(x: number): number
+           f(x: any): any { return x }
+         }
+         class S extends Base implements I {}",
+    );
+    assert!(
+        codes.contains(&2416) || codes.contains(&2420),
+        "expected TS2416/TS2420 when inherited overloads miss a required interface overload; got {codes:?}"
+    );
+}
