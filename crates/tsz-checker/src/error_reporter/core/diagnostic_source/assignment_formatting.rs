@@ -104,6 +104,36 @@ impl<'a> CheckerState<'a> {
         saw_number_literal.then_some(non_numeric_parts)
     }
 
+    /// When the diagnostic source expression at `anchor_idx` is a plain
+    /// `expr as T` / `<T>expr` assertion (not `as const`, not `satisfies`),
+    /// return the asserted type formatted with its literal element / property
+    /// types preserved.
+    ///
+    /// The value of such an assertion is the asserted type `T` exactly as
+    /// written, which `tsc` treats as a *regular* (non-fresh) type. The general
+    /// source-display fallbacks reach the inner literal expression node (the
+    /// widening machinery peels assertions via `skip_parenthesized_and_assertions`)
+    /// and re-widen its element/property literals as though they came from a
+    /// fresh literal expression, collapsing `[1, 2, 3] as [1, 2, 3]` to
+    /// `[number, number, number]`. Intercepting before that peel keeps the
+    /// literals, matching `tsc`. Returns `None` for non-assertion sources so the
+    /// caller proceeds with its normal display path (fresh literal expressions
+    /// still widen). Shared by the two parallel TS2322 source-display pipelines
+    /// (`format_assignment_source_type_for_diagnostic` and
+    /// `format_top_level_assignability_message_types_at`) so they cannot diverge.
+    pub(in crate::error_reporter) fn assertion_source_literal_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        self.expression_is_plain_type_assertion(expr_idx)
+            .then(|| self.format_assignability_type_for_message(source, target))
+    }
+
     pub(in crate::error_reporter) fn format_assignment_source_type_for_diagnostic(
         &mut self,
         source: TypeId,
@@ -139,6 +169,13 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(display) = self.tuple_structural_source_display(source, target) {
+            return display;
+        }
+
+        // Preserve the literal surface of a plain `as T` / `<T>` assertion source
+        // before the widening fallbacks below; see
+        // `assertion_source_literal_display`.
+        if let Some(display) = self.assertion_source_literal_display(anchor_idx, source, target) {
             return display;
         }
 

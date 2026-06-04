@@ -1138,6 +1138,16 @@ impl<'a> CheckerState<'a> {
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
         let mut source_str = source_str;
+        // Preserve the literal surface of a plain `as T` / `<T>` assertion
+        // source. This `_at` path is distinct from the `AssignmentSource` role
+        // path, so both funnel through the shared
+        // `assertion_source_literal_display`.
+        if !source_from_annotation
+            && !source_from_array_literal_tuple
+            && let Some(display) = self.assertion_source_literal_display(anchor_idx, source, target)
+        {
+            source_str = display;
+        }
         if !source_from_annotation && !source_from_array_literal_tuple {
             source_str = self.apply_ts2739_nonliteral(source, source_str);
         }
