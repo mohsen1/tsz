@@ -587,19 +587,20 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<tsz_binder::SymbolId> {
+        let mut visited_key: Vec<_> = visited_aliases.iter().collect();
+        visited_key.sort_by_key(|sym_id| sym_id.0);
         let cache_key = (
             self.ctx.current_file_idx,
             module_specifier.to_string(),
             export_name.to_string(),
+            visited_key,
         );
-        let cache_miss = visited_aliases.len() == 0;
         if let Some(cached) = self
             .ctx
             .export_equals_named_cache
             .borrow()
             .get(&cache_key)
             .copied()
-            && (cached.is_some() || cache_miss)
         {
             return cached;
         }
@@ -611,12 +612,10 @@ impl<'a> CheckerState<'a> {
                 visited_aliases,
             )
         });
-        if resolved.is_some() || cache_miss {
-            self.ctx
-                .export_equals_named_cache
-                .borrow_mut()
-                .insert(cache_key, resolved);
-        }
+        self.ctx
+            .export_equals_named_cache
+            .borrow_mut()
+            .insert(cache_key, resolved);
         resolved
     }
 
