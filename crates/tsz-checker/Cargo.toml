@@ -487,6 +487,10 @@ name = "merged_namespace_typeof_display_tests"
 path = "tests/merged_namespace_typeof_display_tests.rs"
 
 [[test]]
+name = "recursive_type_display_overflow_tests"
+path = "tests/recursive_type_display_overflow_tests.rs"
+
+[[test]]
 name = "recursive_typeof_param_display_tests"
 path = "tests/recursive_typeof_param_display_tests.rs"
 

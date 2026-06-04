@@ -7,6 +7,8 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+use super::display_recursion_guard::DisplayRecursionGuard;
+
 impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn sanitize_type_annotation_text_for_diagnostic(
         &self,
@@ -310,6 +312,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> TypeId {
+        let Some(_depth_guard) = DisplayRecursionGuard::enter(ty) else {
+            return ty;
+        };
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
@@ -327,6 +332,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_property_receiver_application_display_alias(&mut self, ty: TypeId) -> TypeId {
+        let Some(_depth_guard) = DisplayRecursionGuard::enter(ty) else {
+            return ty;
+        };
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
@@ -344,6 +352,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_property_receiver_application_display_arg(&mut self, ty: TypeId) -> TypeId {
+        let Some(_depth_guard) = DisplayRecursionGuard::enter(ty) else {
+            return ty;
+        };
         // Only resolve `Lazy(DefId)` references via the type environment.
         // Calling `evaluate_type_with_env` on richer shapes (e.g. `keyof T`,
         // `T[K]`, conditional types) eagerly expands them to their evaluated

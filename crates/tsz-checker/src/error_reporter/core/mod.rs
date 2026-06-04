@@ -8,6 +8,7 @@ mod annotation_literal_display;
 mod annotation_text;
 mod declared_intersection_display;
 mod diagnostic_source;
+mod display_recursion_guard;
 mod excess_display;
 mod identifier_source_display;
 mod intersection_optional_display;
