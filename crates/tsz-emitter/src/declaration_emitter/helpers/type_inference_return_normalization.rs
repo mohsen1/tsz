@@ -425,7 +425,7 @@ impl<'a> DeclarationEmitter<'a> {
         body_idx: NodeIndex,
     ) -> Option<String> {
         let mut yield_type = None;
-        if !self.collect_unique_yield_type_text_from_node(body_idx, &mut yield_type, 0) {
+        if !self.collect_unique_yield_type_text_from_node(body_idx, is_async, &mut yield_type, 0) {
             return None;
         }
         let yield_type = yield_type.unwrap_or_else(|| "undefined".to_string());
@@ -440,6 +440,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn collect_unique_yield_type_text_from_node(
         &self,
         node_idx: NodeIndex,
+        is_async: bool,
         preferred: &mut Option<String>,
         depth: usize,
     ) -> bool {
@@ -456,7 +457,18 @@ impl<'a> DeclarationEmitter<'a> {
                     return false;
                 };
                 if yield_expr.asterisk_token {
-                    return false;
+                    // `yield* <iterable>` contributes the *element* type of the
+                    // delegated iterable to the enclosing generator's inferred
+                    // yield type (e.g. `yield* [1, 2]` yields `number`). Resolve
+                    // that element type through the solver's iterator protocol so
+                    // delegated yields participate in declaration inference instead
+                    // of forcing the conservative `any` fallback.
+                    let Some(type_text) =
+                        self.yield_star_delegated_yield_type_text(yield_expr.expression, is_async)
+                    else {
+                        return false;
+                    };
+                    return self.merge_unique_type_text(preferred, type_text);
                 }
                 let type_text = if yield_expr.expression.is_none() {
                     "undefined".to_string()
@@ -496,9 +508,48 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_children(node_idx)
                 .into_iter()
                 .all(|child_idx| {
-                    self.collect_unique_yield_type_text_from_node(child_idx, preferred, depth + 1)
+                    self.collect_unique_yield_type_text_from_node(
+                        child_idx,
+                        is_async,
+                        preferred,
+                        depth + 1,
+                    )
                 }),
         }
+    }
+
+    /// Resolve the declaration-emit text for the element type delegated by a
+    /// `yield* <iterable>` expression.
+    ///
+    /// The element type is the iterable's iteration (`yield`) type, e.g. `number`
+    /// for `yield* [1, 2]`. Resolution goes through the solver's iterator
+    /// protocol (`get_iterator_info`), which covers array and tuple operands
+    /// structurally; async generators consult the async iterator protocol first
+    /// and fall back to the sync one (mirroring how `yield*` is checked). Returns
+    /// `None` whenever the element type cannot be resolved (or widens to `any`),
+    /// so the caller keeps its conservative `Generator<any, …>` fallback rather
+    /// than emitting a wrong type.
+    fn yield_star_delegated_yield_type_text(
+        &self,
+        expression: NodeIndex,
+        is_async: bool,
+    ) -> Option<String> {
+        let interner = self.type_interner?;
+        let iterable_type = self.get_node_type_or_names(&[expression])?;
+        let element = if is_async {
+            // `get_async_iterable_element_type` tries the async iterator protocol,
+            // then the sync protocol, and returns `any` when neither resolves.
+            tsz_solver::operations::get_async_iterable_element_type(interner, iterable_type)
+        } else {
+            tsz_solver::operations::get_iterator_info(interner, iterable_type, false)
+                .map(|info| info.yield_type)?
+        };
+        let element = self.widen_unique_symbol_value_type_for_dts(element, 0);
+        let type_text = self.print_type_id_for_inferred_declaration(element);
+        if type_text.is_empty() || type_text == "any" {
+            return None;
+        }
+        Some(type_text)
     }
 
     fn merge_unique_type_text(&self, preferred: &mut Option<String>, type_text: String) -> bool {
