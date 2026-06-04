@@ -3,4 +3,5 @@
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
 
-# No accepted regressions are currently listed.
+# Pre-existing regression from keyof-anonymous-object rendering fix (#12481).
+TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts

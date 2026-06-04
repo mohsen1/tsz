@@ -549,14 +549,15 @@ FILE_LINE_LIMIT_CHECKS = [
     # These entries pin the current baseline and prevent silent growth.
     # Each file is a candidate for splitting; ratchet down as submodules land.
     (
-        "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
+        "Emitter boundary: expressions/core/private_fields.rs size ratchet",
         ROOT
         / "crates"
         / "tsz-emitter"
         / "src"
-        / "declaration_emitter"
-        / "helpers"
-        / "type_inference_return_normalization.rs",
+        / "emitter"
+        / "expressions"
+        / "core"
+        / "private_fields.rs",
         2006,
     ),
     (
@@ -1206,7 +1207,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # boundary re-exports already used throughout the checker; the new
         # call site walks the `extends` chain and substitutes inherited
         # member types via `instantiate_type`. No new quarantine entry.
-        3237,
+        #
+        # Ratcheted down by 3 after rebase onto current main removed stale
+        # direct common references.
+        3234,
     ),
 ]
 
