@@ -56,3 +56,33 @@ x;
 ";
     assert_eq!(output, expected);
 }
+
+#[test]
+fn namespace_class_method_local_vars_do_not_recover_as_namespace_tail() {
+    let source = "\
+namespace Formatting {
+    export class Indenter {
+        method(tokenStartPosition: number, childTokenStartPosition: number/*?*/): number/*?*/ {
+            // misleading recovery depth }
+            var indentationDeltaSize = this.offsetIndentationDeltas.GetValue(tokenStartPosition);
+            return indentationDeltaSize;
+        }
+    }
+}
+";
+    let output = emit_es2015(source);
+    let expected = "\
+var Formatting;
+(function (Formatting) {
+    class Indenter {
+        method(tokenStartPosition, childTokenStartPosition /*?*/) {
+            // misleading recovery depth }
+            var indentationDeltaSize = this.offsetIndentationDeltas.GetValue(tokenStartPosition);
+            return indentationDeltaSize;
+        }
+    }
+    Formatting.Indenter = Indenter;
+})(Formatting || (Formatting = {}));
+";
+    assert_eq!(output, expected);
+}
