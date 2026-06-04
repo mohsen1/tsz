@@ -137,7 +137,7 @@ fn test_default_build_info_path() {
 
     // With outDir AND rootDir: tsc resolves outDir + rel(rootDir, configExtless),
     // which collapses back outside outDir whenever the config sits above rootDir.
-    // See https://github.com/mohsen1/tsz/issues/3821 — repro: rootDir=src,
+    // See https://github.com/tsz-org/tsz/issues/3821 — repro: rootDir=src,
     // outDir=dist, expected path is /project/tsconfig.tsbuildinfo.
     let path = default_build_info_path(
         config,

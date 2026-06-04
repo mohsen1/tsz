@@ -82,7 +82,7 @@ permalink: /install.html
     We publish a daily <code>latest</code> PGO-optimized build, and the default installer tries that first when one is available for your target.
     Try it for experimentation; do not rely on it for production type-checking.
     Feedback and bug reports are welcome in GitHub Discussions at
-    <a href="https://github.com/mohsen1/tsz/discussions">github.com/mohsen1/tsz/discussions</a>.
+    <a href="https://github.com/tsz-org/tsz/discussions">github.com/tsz-org/tsz/discussions</a>.
   </div>
 
   <section>
@@ -107,7 +107,7 @@ permalink: /install.html
 
   <section>
     <h2>From Cargo</h2>
-    <pre><button type="button" class="copy-btn" data-copy-target="install-cargo" aria-live="polite">Copy</button><code id="install-cargo">cargo install --git https://github.com/mohsen1/tsz tsz-cli</code></pre>
+    <pre><button type="button" class="copy-btn" data-copy-target="install-cargo" aria-live="polite">Copy</button><code id="install-cargo">cargo install --git https://github.com/tsz-org/tsz tsz-cli</code></pre>
   </section>
 
   <div class="verify">
@@ -140,7 +140,7 @@ permalink: /install.html
   <details>
     <summary>What does the installer do?</summary>
     <p>The script detects your OS &amp; architecture, fetches the matching release asset from
-    <a href="https://github.com/mohsen1/tsz/releases">GitHub Releases</a>, verifies the tarball,
+    <a href="https://github.com/tsz-org/tsz/releases">GitHub Releases</a>, verifies the tarball,
     and drops <code>tsz</code> (and <code>tsz-lsp</code> when included in the selected asset) into a directory on your <code>$PATH</code>.
     It does not touch system files or require <code>sudo</code> unless you point <code>--dir</code> at a privileged location.</p>
     <p>If you'd rather audit it first:</p>

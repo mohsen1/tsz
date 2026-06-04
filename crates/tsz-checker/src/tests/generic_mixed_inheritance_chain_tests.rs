@@ -14,7 +14,7 @@
 //! The invariant: tsz must match tsc's variance decisions exactly — no false
 //! positives and no missed diagnostics.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/10836>
+//! Issue: <https://github.com/tsz-org/tsz/issues/10836>
 
 use crate::test_utils::check_source_codes;
 

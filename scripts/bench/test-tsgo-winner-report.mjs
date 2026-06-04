@@ -209,7 +209,7 @@ withTempDir((dir) => {
     operation: "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
     command: "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
     issue: 8356,
-    url: "https://github.com/mohsen1/tsz/issues/8356",
+    url: "https://github.com/tsz-org/tsz/issues/8356",
   });
   assert.deepEqual(report.worst.attribution_status, {
     present: true,

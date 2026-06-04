@@ -566,7 +566,7 @@ fn test_project_info_lib_files_use_real_paths_outside_fourslash() {
     // Production tsserver clients send real on-disk paths, not the fourslash
     // VFS mount. projectInfo must return the actual lib paths the server is
     // using, not the harness's `/home/src/tslibs/TS/Lib/...` rewrites.
-    // Regression for https://github.com/mohsen1/tsz/issues/3779.
+    // Regression for https://github.com/tsz-org/tsz/issues/3779.
     let mut server = make_server_with_real_libs();
     server.open_files.insert(
         "/private/tmp/tsz-projectinfo-repro/a.ts".to_string(),

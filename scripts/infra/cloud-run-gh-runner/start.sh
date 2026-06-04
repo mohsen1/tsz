@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-: "${GITHUB_REPO:?GITHUB_REPO is required, e.g. mohsen1/tsz}"
+: "${GITHUB_REPO:?GITHUB_REPO is required, e.g. tsz-org/tsz}"
 : "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 
 RUNNER_LABELS="${RUNNER_LABELS:-tsz-cloud-run}"
