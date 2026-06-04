@@ -7,6 +7,7 @@
 use super::super::*;
 use super::helpers_class_expression_static::Es5StaticClassExpressionElement;
 use crate::transforms::emit_utils;
+use crate::transforms::ir::IRNode;
 
 #[path = "helpers_async/spread.rs"]
 mod spread;
@@ -1070,6 +1071,11 @@ impl<'a> Printer<'a> {
             self.sync_es5_class_emitter_state(&mut es5_emitter);
             let _ = es5_emitter.take_mappings();
 
+            let computed_decls = if computed_decls.is_empty() {
+                self.es5_computed_temp_decls_from_init_exprs(&computed_init_exprs)
+            } else {
+                computed_decls
+            };
             for decl in &computed_decls {
                 if in_loop {
                     self.block_scoped_private_temps.push(decl.clone());
@@ -1235,6 +1241,48 @@ impl<'a> Printer<'a> {
                     } => Some((*block, *saved_comment_idx)),
                     Es5StaticClassExpressionElement::Field(_) => None,
                 }));
+        }
+    }
+
+    fn es5_computed_temp_decls_from_init_exprs(&self, init_exprs: &[IRNode]) -> Vec<String> {
+        let mut decls = Vec::new();
+        for init_expr in init_exprs {
+            self.collect_es5_computed_temp_decls_from_init_expr(init_expr, &mut decls);
+        }
+        decls
+    }
+
+    fn collect_es5_computed_temp_decls_from_init_expr(
+        &self,
+        init_expr: &IRNode,
+        decls: &mut Vec<String>,
+    ) {
+        let expr = match init_expr {
+            IRNode::ExpressionStatement(inner) => inner.as_ref(),
+            other => other,
+        };
+        self.collect_es5_computed_temp_decls_from_expr(expr, decls);
+    }
+
+    fn collect_es5_computed_temp_decls_from_expr(&self, expr: &IRNode, decls: &mut Vec<String>) {
+        let IRNode::BinaryExpr {
+            left,
+            operator,
+            right,
+        } = expr
+        else {
+            return;
+        };
+        if operator.as_ref() == "," {
+            self.collect_es5_computed_temp_decls_from_expr(left, decls);
+            self.collect_es5_computed_temp_decls_from_expr(right, decls);
+            return;
+        }
+        if operator.as_ref() == "="
+            && let IRNode::Identifier(name) = left.as_ref()
+            && !decls.iter().any(|decl| decl == name.as_ref())
+        {
+            decls.push(name.to_string());
         }
     }
 
