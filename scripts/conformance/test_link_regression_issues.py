@@ -370,6 +370,7 @@ class TestRendering(unittest.TestCase):
         md = helper.render_markdown(results, self.index)
         self.assertIn("`tsxGenericAttributesType6.tsx`", md)
         self.assertIn(helper.STATUSES["stale-accepted"][0], md)
+        self.assertIn("exact-head aggregate CI", md)
 
     def test_markdown_includes_dashboard_hint_only_when_aggregate(self) -> None:
         aggregate_md = helper.render_markdown(

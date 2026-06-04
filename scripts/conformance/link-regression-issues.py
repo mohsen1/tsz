@@ -28,7 +28,9 @@ Status taxonomy
 
 ``stale-accepted``
     The test is in the accepted-regression list but no longer appears in
-    ``conformance-detail.json`` failures. The accepted entry can be retired.
+    ``conformance-detail.json`` failures. Treat this as checked-in snapshot
+    evidence only; exact-head aggregate CI must also show the test absent from
+    shard failures before the accepted entry can be retired.
 
 ``passing``
     The test passes in the baseline and is not accepted as a regression.
@@ -95,8 +97,10 @@ SNAPSHOT_REGEN_HINT = "./scripts/conformance/conformance.sh snapshot"
 STATUSES: dict[str, tuple[str, str]] = {
     "stale-accepted": (
         "stale: accepted-regression entry no longer fails",
-        "Remove the entry from `conformance-accepted-regressions.txt`, then "
-        "close the regression issue with `not planned (stale)`.",
+        "Do not remove the entry from `conformance-accepted-regressions.txt` "
+        "from this checked-in snapshot alone. First verify exact-head "
+        "aggregate CI no longer lists the test in shard failures, then retire "
+        "the entry and close the regression issue with `not planned (stale)`.",
     ),
     "passing": (
         "stale: passing in current snapshot",
