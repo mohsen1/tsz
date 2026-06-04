@@ -1154,8 +1154,7 @@ impl<'a> Printer<'a> {
         }
         let is_accessor = self
             .arena
-            .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
-            || self.has_recovered_accessor_modifier(node);
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword);
         if is_accessor {
             self.write("accessor ");
         }
