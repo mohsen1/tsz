@@ -275,6 +275,9 @@ impl<'a> CheckerContext<'a> {
             .alias_reaches_single_resolving_alias
             .clear();
         self.type_reference_validation_caches
+            .indexed_access_key_space_relation
+            .clear();
+        self.type_reference_validation_caches
             .ref_type_params
             .clear();
         self.in_conditional_extends_depth = 0;

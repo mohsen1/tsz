@@ -1,6 +1,19 @@
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
+fn cached_relation_outcome(
+    cached: crate::context::CachedRelationOutcome,
+) -> crate::query_boundaries::assignability::RelationOutcome {
+    crate::query_boundaries::assignability::RelationOutcome {
+        related: cached.related,
+        depth_exceeded: cached.depth_exceeded,
+        iteration_exceeded: cached.iteration_exceeded,
+        failure: None,
+        weak_union_violation: false,
+        property_classification: None,
+    }
+}
+
 impl<'a> CheckerState<'a> {
     /// Execute a diagnostic-bearing TS2322 reason-entrypoint relation for raw
     /// checker types, preserving the canonical reason-reporting request shape.
@@ -421,11 +434,48 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         let (source, target) = self.prepare_assignability_inputs(source, target);
+        let flags = self.ctx.pack_relation_flags();
+        let sound_mode = self.ctx.sound_mode();
+        let cache_key = (source, target, flags, sound_mode);
+        let is_cacheable = crate::query_boundaries::assignability::is_relation_cacheable(
+            self.ctx.types,
+            source,
+            target,
+        );
+        if is_cacheable
+            && let Some(cached) = self
+                .ctx
+                .type_reference_validation_caches
+                .indexed_access_key_space_relation
+                .get(&cache_key)
+                .copied()
+        {
+            return cached_relation_outcome(cached);
+        }
         let request =
             crate::query_boundaries::assignability::RelationRequest::indexed_access_key_space(
                 source, target,
             );
-        self.execute_relation_request(&request)
+        let outcome = self.execute_relation_request(&request);
+        if is_cacheable
+            && outcome.related
+            && outcome.failure.is_none()
+            && !outcome.weak_union_violation
+            && outcome.property_classification.is_none()
+        {
+            self.ctx
+                .type_reference_validation_caches
+                .indexed_access_key_space_relation
+                .insert(
+                    cache_key,
+                    crate::context::CachedRelationOutcome {
+                        related: outcome.related,
+                        depth_exceeded: outcome.depth_exceeded,
+                        iteration_exceeded: outcome.iteration_exceeded,
+                    },
+                );
+        }
+        outcome
     }
 
     /// Execute a diagnostic-bearing conditional constraint component relation

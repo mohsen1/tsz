@@ -4,6 +4,13 @@ use tsz_binder::SymbolId;
 use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
+#[derive(Debug, Clone, Copy)]
+pub struct CachedRelationOutcome {
+    pub related: bool,
+    pub depth_exceeded: bool,
+    pub iteration_exceeded: bool,
+}
+
 /// Checker-local memos for type-reference argument validation.
 #[derive(Debug, Default)]
 pub struct TypeReferenceValidationCaches {
@@ -22,6 +29,13 @@ pub struct TypeReferenceValidationCaches {
     /// currently in `symbol_resolution_set`; multi-active resolution falls back
     /// to the uncached DFS.
     pub alias_reaches_single_resolving_alias: FxHashMap<(SymbolId, DefId), bool>,
+    /// Successful indexed-access key-space relation proofs during type
+    /// validation. Keyed by prepared source/target `TypeId`s plus packed
+    /// relation flags and sound-mode state; failures are intentionally not
+    /// cached so callers that ever need structured failure data cannot observe
+    /// a synthetic empty failure.
+    pub indexed_access_key_space_relation:
+        FxHashMap<(TypeId, TypeId, u16, bool), CachedRelationOutcome>,
     /// Declared type-parameter lists keyed by reference symbol identity, valid
     /// for the lifetime of the current source file. `SymbolId` values are
     /// arena-local in project checks, so imported aliases from different files
