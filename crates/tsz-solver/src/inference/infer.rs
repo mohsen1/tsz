@@ -337,6 +337,15 @@ pub(crate) struct InferenceContext<'a> {
     /// element literals of a readonly array/tuple, so `new Set([1, 2] as const)`
     /// infers `Set<1 | 2>` rather than `Set<number>`.
     pub(crate) in_readonly_source_context: bool,
+    /// Implied arity per inference variable, mirroring tsc's `InferenceInfo.impliedArity`.
+    ///
+    /// Set during call-argument inference when a signature's non-array rest type is
+    /// a bare type parameter (`function f<T>(...args: T)` or `...rest: T`). The
+    /// implied arity is the number of trailing arguments that fall into the rest
+    /// parameter, and it lets variadic tuple inference distribute the middle of a
+    /// `[...A, ...B]` target between two adjacent variadic elements. Keyed by the
+    /// root inference variable (see [`InferenceContext::set_implied_arity`]).
+    pub(crate) implied_arities: FxHashMap<InferenceVar, usize>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -371,6 +380,7 @@ impl<'a> InferenceContext<'a> {
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             in_readonly_source_context: false,
+            implied_arities: FxHashMap::default(),
         }
     }
 
@@ -397,6 +407,7 @@ impl<'a> InferenceContext<'a> {
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             in_readonly_source_context: false,
+            implied_arities: FxHashMap::default(),
         }
     }
 
@@ -447,6 +458,56 @@ impl<'a> InferenceContext<'a> {
             .iter()
             .find(|(n, _, _)| *n == name)
             .map(|(_, v, _)| *v)
+    }
+
+    /// Record the implied arity for an inference variable (tsc's
+    /// `InferenceInfo.impliedArity`). Keyed by the root variable so it survives
+    /// later unification.
+    pub(crate) fn set_implied_arity(&mut self, var: InferenceVar, arity: usize) {
+        let root = self.table.find(var);
+        self.implied_arities.insert(root, arity);
+    }
+
+    /// Resolve the root inference variable named by a `TypeParameter`/`Infer`
+    /// placeholder type, or `None` if the type does not name a tracked variable.
+    fn type_param_root_for_type(&mut self, ty: TypeId) -> Option<InferenceVar> {
+        let name = match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.name,
+            _ => return None,
+        };
+        let var = self.find_type_param(name)?;
+        Some(self.table.find(var))
+    }
+
+    /// Look up the implied arity for a target type that names an inference
+    /// variable (a `TypeParameter`/`Infer` placeholder). Returns `None` when the
+    /// type is not an inference variable or has no recorded implied arity.
+    pub(crate) fn implied_arity_for_type(&mut self, ty: TypeId) -> Option<usize> {
+        let root = self.type_param_root_for_type(ty)?;
+        self.implied_arities.get(&root).copied()
+    }
+
+    /// Fixed arity implied by the declared constraint of the type parameter named
+    /// by `ty`. Mirrors tsc's use of `getBaseConstraintOfType(param)` in the
+    /// `(variadic, rest)` / `(rest, variadic)` middle cases: when the constraint
+    /// is a non-variadic tuple, its length is the implied arity.
+    pub(crate) fn constraint_fixed_arity_for_type(&mut self, ty: TypeId) -> Option<usize> {
+        let declared = match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.constraint,
+            _ => return None,
+        };
+        let constraint = declared.or_else(|| {
+            let root = self.type_param_root_for_type(ty)?;
+            self.declared_constraints.get(&root).copied()
+        })?;
+        let TypeData::Tuple(list_id) = self.interner.lookup(constraint)? else {
+            return None;
+        };
+        let elements = self.interner.tuple_list(list_id);
+        if elements.iter().any(|element| element.rest) {
+            return None;
+        }
+        Some(elements.len())
     }
 
     pub(crate) fn fixed_tuple_candidate_len_for_type(&mut self, ty: TypeId) -> Option<usize> {
