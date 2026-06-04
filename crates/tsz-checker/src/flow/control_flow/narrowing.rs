@@ -5,7 +5,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::{GuardSense, TypeGuard};
+use tsz_solver::narrowing::TypeGuard;
 use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
@@ -749,20 +749,15 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         };
 
-        // Delegate ALL type algebra to solver via unified narrow_type API
-        // Solver handles: ANY, UNKNOWN, type parameters, unions, non-union types
-        let env_borrow;
-        let narrowing = if let Some(env) = &self.type_environment {
-            env_borrow = env.borrow();
-            self.make_narrowing_context().with_resolver(&*env_borrow)
-        } else {
-            self.make_narrowing_context()
-        };
-
-        narrowing.narrow_type(
+        // Delegate all type algebra to solver-owned flow query boundary.
+        // Solver handles: ANY, UNKNOWN, type parameters, unions, non-union types.
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_in_property(
+            self.interner,
+            env_borrow.as_deref(),
             type_id,
-            &TypeGuard::InProperty(prop_name),
-            GuardSense::from(is_true_branch),
+            prop_name,
+            is_true_branch,
         )
     }
 

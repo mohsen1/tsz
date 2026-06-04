@@ -5,8 +5,8 @@
 set -euo pipefail
 
 AGENTS=(
-  M1-A M1-B M1-Opus
-  M4-A M4-B M4-Opus
+  M1-A M1-B M1-D M1-Opus
+  M4-A M4-B M4-C M4-Opus
   Studio-A Studio-B Studio-C Studio-Opus
   Studio-manager
 )
@@ -253,7 +253,7 @@ NODE
 
 for agent in "${SELECTED[@]}"; do
   case "$agent" in
-    M1-A|M1-B|M1-Opus|M4-A|M4-B|M4-Opus|Studio-A|Studio-B|Studio-C|Studio-Opus|Studio-manager) ;;
+    M1-A|M1-B|M1-D|M1-Opus|M4-A|M4-B|M4-C|M4-Opus|Studio-A|Studio-B|Studio-C|Studio-Opus|Studio-manager) ;;
     *) echo "unknown AgentName: $agent" >&2; exit 1 ;;
   esac
 
