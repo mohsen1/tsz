@@ -1,7 +1,7 @@
 /// JSX factory imports must not be elided by the AMD/System helper-emission
 /// usage check, even when the factory name doesn't textually appear in the
 /// source (JSX elements reference it implicitly).
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2295#discussion_r3176647570>
+/// Devin review: <https://github.com/tsz-org/tsz/pull/2295#discussion_r3176647570>
 #[test]
 fn amd_jsx_factory_default_import_kept_in_helpers_check() {
     use crate::emitter::JsxEmit;

@@ -6,7 +6,7 @@
 //! TS2345 on tsz at the time the issue was filed. They now pass on main; these
 //! tests lock in the fix so it cannot silently regress.
 //!
-//! [issue #3768]: https://github.com/mohsen1/tsz/issues/3768
+//! [issue #3768]: https://github.com/tsz-org/tsz/issues/3768
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source_code_messages(source)

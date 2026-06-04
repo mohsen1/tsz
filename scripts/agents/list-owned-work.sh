@@ -82,7 +82,7 @@ else
   SELECTED=("${POSITIONAL[0]}")
 fi
 
-REPOSITORY="${GITHUB_REPOSITORY:-mohsen1/tsz}"
+REPOSITORY="${GITHUB_REPOSITORY:-tsz-org/tsz}"
 REPORT_ROWS=""
 
 collect_git_context() {
@@ -134,6 +134,45 @@ list_owned_items_rest() {
   fi
 }
 
+list_owned_prs_graphql() {
+  local label="$1"
+  local owner="${REPOSITORY%%/*}"
+  local repo="${REPOSITORY#*/}"
+
+  gh api graphql \
+    -f owner="$owner" \
+    -f name="$repo" \
+    -f label="$label" \
+    -f query='
+      query($owner: String!, $name: String!, $label: String!) {
+        repository(owner: $owner, name: $name) {
+          pullRequests(first: 100, states: OPEN, labels: [$label], orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes {
+              number
+              title
+              isDraft
+              url
+              mergeStateStatus
+              mergeable
+              autoMergeRequest { enabledAt }
+              isInMergeQueue
+            }
+          }
+        }
+      }
+    ' \
+    --jq '
+      .data.repository.pullRequests.nodes[] |
+        "#\(.number) " +
+        (if .isDraft then "draft" else "ready" end) +
+        " merge=\(.mergeStateStatus // "UNKNOWN")" +
+        " mergeable=\(.mergeable // "UNKNOWN")" +
+        " autoMerge=" + (if .autoMergeRequest then "on" else "off" end) +
+        " nativeQueue=" + (if .isInMergeQueue then "on" else "off" end) +
+        " " + .title + " " + .url
+    '
+}
+
 count_rows() {
   local rows="$1"
   if [[ -z "$rows" ]]; then
@@ -182,7 +221,7 @@ count_ready_unqueued_pr_rows() {
   printf '%s\n' "$rows" | awk '
     $2 == "ready" {
       for (i = 1; i <= NF; i++) {
-        if ($i == "mergeQueue=off") {
+        if ($i == "nativeQueue=off") {
           count++
           next
         }
@@ -193,57 +232,15 @@ count_ready_unqueued_pr_rows() {
 }
 
 count_merge_queue_tested_pr_rows() {
-  local rows="$1"
-  if [[ -z "$rows" ]]; then
-    echo 0
-    return
-  fi
-  printf '%s\n' "$rows" | awk '
-    {
-      queued = 0
-      queue_success = 0
-      for (i = 1; i <= NF; i++) {
-        if ($i == "mergeQueue=on") {
-          queued = 1
-        } else if ($i == "queue=success") {
-          queue_success = 1
-        }
-      }
-      if (queued && queue_success) {
-        count++
-      }
-    }
-    END { print count + 0 }
-  '
+  # Native GitHub merge queue validation belongs to merge-group checks, not a
+  # PR-head status owned by this script.
+  echo 0
 }
 
 count_merge_queue_unverified_pr_rows() {
-  local rows="$1"
-  if [[ -z "$rows" ]]; then
-    echo 0
-    return
-  fi
-  printf '%s\n' "$rows" | awk '
-    {
-      queued = 0
-      queue_seen = 0
-      queue_success = 0
-      for (i = 1; i <= NF; i++) {
-        if ($i == "mergeQueue=on") {
-          queued = 1
-        } else if ($i ~ /^queue=/) {
-          queue_seen = 1
-          if ($i == "queue=success") {
-            queue_success = 1
-          }
-        }
-      }
-      if (queued && queue_seen && !queue_success) {
-        count++
-      }
-    }
-    END { print count + 0 }
-  '
+  # Native GitHub merge queue exposes queued validation through merge-group
+  # checks instead of a PR-head status owned by this script.
+  echo 0
 }
 
 json_array_from_lines() {
@@ -266,25 +263,18 @@ for agent in "${SELECTED[@]}"; do
   echo "PRs:"
   if [[ "$WITH_PR_STATE" == true ]]; then
     prs="$(
+      list_owned_prs_graphql "$label" \
+        2>/dev/null ||
       gh pr list --state open --limit 100 --label "$label" \
-        --json number,title,isDraft,url,mergeStateStatus,mergeable,autoMergeRequest,statusCheckRollup,labels \
+        --json number,title,isDraft,url,mergeStateStatus,mergeable,autoMergeRequest \
         --jq '
-          def queue_state:
-            ([.statusCheckRollup[]? | select((.__typename == "StatusContext" and .context == "Queue Tested") or .name == "Queue Tested")] | first) as $queue |
-            if $queue == null then "queue=none"
-            elif $queue.__typename == "StatusContext" then "queue=\(($queue.state // "unknown") | ascii_downcase)"
-            else "queue=\((($queue.conclusion // $queue.status // "unknown")) | ascii_downcase)"
-            end;
-          def merge_queue_label:
-            if any(.labels[]?; .name == "merge-queue") then "mergeQueue=on" else "mergeQueue=off" end;
           .[] |
             "#\(.number) " +
             (if .isDraft then "draft" else "ready" end) +
             " merge=\(.mergeStateStatus // "UNKNOWN")" +
             " mergeable=\(.mergeable // "UNKNOWN")" +
             " autoMerge=" + (if .autoMergeRequest then "on" else "off" end) +
-            " " + merge_queue_label +
-            " " + queue_state +
+            " nativeQueue=unknown" +
             " " + .title + " " + .url
         ' \
         2>/dev/null ||
@@ -292,23 +282,16 @@ for agent in "${SELECTED[@]}"; do
     )"
   else
     prs="$(
+      list_owned_prs_graphql "$label" \
+        2>/dev/null ||
       gh pr list --state open --limit 100 --label "$label" \
-        --json number,title,isDraft,url,labels,autoMergeRequest,statusCheckRollup \
+        --json number,title,isDraft,url,autoMergeRequest \
         --jq '
-          def queue_state:
-            ([.statusCheckRollup[]? | select((.__typename == "StatusContext" and .context == "Queue Tested") or .name == "Queue Tested")] | first) as $queue |
-            if $queue == null then "queue=none"
-            elif $queue.__typename == "StatusContext" then "queue=\(($queue.state // "unknown") | ascii_downcase)"
-            else "queue=\((($queue.conclusion // $queue.status // "unknown")) | ascii_downcase)"
-            end;
-          def merge_queue_label:
-            if any(.labels[]?; .name == "merge-queue") then "mergeQueue=on" else "mergeQueue=off" end;
           .[] |
             "#\(.number) " +
             (if .isDraft then "draft" else "ready" end) +
             " autoMerge=" + (if .autoMergeRequest then "on" else "off" end) +
-            " " + merge_queue_label +
-            " " + queue_state +
+            " nativeQueue=unknown" +
             " " + .title + " " + .url
         ' \
         2>/dev/null ||
@@ -324,7 +307,7 @@ for agent in "${SELECTED[@]}"; do
   ready_pr_count="$(count_pr_state_rows "$prs" ready)"
   draft_pr_count="$(count_pr_state_rows "$prs" draft)"
   auto_merge_pr_count="$(count_pr_token_rows "$prs" "autoMerge=on")"
-  merge_queue_pr_count="$(count_pr_token_rows "$prs" "mergeQueue=on")"
+  merge_queue_pr_count="$(count_pr_token_rows "$prs" "nativeQueue=on")"
   merge_queue_tested_pr_count="$(count_merge_queue_tested_pr_rows "$prs")"
   merge_queue_unverified_pr_count="$(count_merge_queue_unverified_pr_rows "$prs")"
   ready_unqueued_pr_count="$(count_ready_unqueued_pr_rows "$prs")"

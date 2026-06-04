@@ -336,7 +336,7 @@ const Hoc = <Tag extends Tags>(
     );
 }
 
-/// Regression for <https://github.com/mohsen1/tsz/issues/3227>.
+/// Regression for <https://github.com/tsz-org/tsz/issues/3227>.
 ///
 /// `apply_jsx_library_managed_attributes` previously discarded the LMA
 /// evaluation whenever `format_type(evaluated)` contained the substring

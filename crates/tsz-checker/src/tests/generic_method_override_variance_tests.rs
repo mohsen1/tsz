@@ -14,7 +14,7 @@
 //! non-generic `(x: string) => string` is still not a valid implementation of
 //! `<T>(x: T) => T`.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/10681>
+//! Issue: <https://github.com/tsz-org/tsz/issues/10681>
 
 use crate::test_utils::check_source_codes;
 

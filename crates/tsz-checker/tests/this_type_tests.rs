@@ -481,7 +481,7 @@ class D extends C {
 /// Regression: assigning a polymorphic-this call result to a base class variable
 /// must not emit TS2322. `derived.clone()` returns `Derived` (the polymorphic
 /// this), which IS assignable to `Base`. tsc accepts this without error.
-/// See: <https://github.com/mohsen1/tsz/issues/3135>
+/// See: <https://github.com/tsz-org/tsz/issues/3135>
 #[test]
 fn test_polymorphic_this_subtype_assignment_no_false_ts2322() {
     let source = r#"

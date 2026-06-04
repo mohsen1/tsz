@@ -238,21 +238,21 @@ withTempDir((dir) => {
       title: "fix(solver): TS2339 property not found in keyspace evaluation",
       labels: ["solver", "keyspace-property-indexed"],
       state: "open",
-      html_url: "https://github.com/mohsen1/tsz/issues/123",
+      html_url: "https://github.com/tsz-org/tsz/issues/123",
     },
     {
       number: 456,
       title: "unrelated issue about type narrowing",
       labels: ["flow-narrowing"],
       state: "open",
-      html_url: "https://github.com/mohsen1/tsz/issues/456",
+      html_url: "https://github.com/tsz-org/tsz/issues/456",
     },
     {
       number: 789,
       title: "closed issue about TS2339",
       labels: ["solver"],
       state: "closed",
-      html_url: "https://github.com/mohsen1/tsz/issues/789",
+      html_url: "https://github.com/tsz-org/tsz/issues/789",
     },
   ];
 
@@ -314,7 +314,7 @@ withTempDir((dir) => {
       title: `matching issue ${n}`,
       labels: ["keyspace-property-indexed"],
       state: "open",
-      html_url: `https://github.com/mohsen1/tsz/issues/${n}`,
+      html_url: `https://github.com/tsz-org/tsz/issues/${n}`,
     });
   }
   // Insert a closed match and an unrelated issue to prove they are skipped.
