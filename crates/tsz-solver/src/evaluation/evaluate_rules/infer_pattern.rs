@@ -1414,6 +1414,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// not found), which terminates the chain instead of looping. Mirrors tsc's
     /// global `instantiationDepth` cutoff.
     pub(crate) fn evaluate_for_infer_match(&self, type_id: TypeId) -> TypeId {
+        if let Some(cached) = self.cached_infer_match_eval(type_id) {
+            return cached;
+        }
         let Some(_guard) = InferMatchExpansionGuard::enter() else {
             return type_id;
         };
@@ -1422,7 +1425,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(query_db) = self.query_db() {
             evaluator = evaluator.with_query_db(query_db);
         }
-        evaluator.evaluate(type_id)
+        let evaluated = evaluator.evaluate(type_id);
+        if !evaluator.is_depth_exceeded() && !evaluator.is_silent_depth_bailed() {
+            self.cache_infer_match_eval(type_id, evaluated);
+        }
+        evaluated
     }
 
     /// Match each member of a union source against `pattern`, merging the

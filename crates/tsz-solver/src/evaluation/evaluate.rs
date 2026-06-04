@@ -41,8 +41,10 @@ pub(crate) use array_methods::{
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tsz_common::interner::Atom;
 
+pub mod cache_stats;
 mod closed_eval;
 mod support;
 
@@ -96,6 +98,13 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// pattern thousands of times while checking whether the application-level
     /// infer fast path applies.
     contains_infer_cache: FxHashMap<TypeId, bool>,
+    /// PERF: Cache evaluated sources/patterns expanded only for infer-pattern matching.
+    ///
+    /// Infer matching methods mostly take `&self`, so application/object pattern
+    /// recovery uses fresh sub-evaluators through `evaluate_for_infer_match`.
+    /// Keeping this request-local and interior-mutable lets those `&self`
+    /// call-sites share pure expansion results without caching infer bindings.
+    infer_match_eval_cache: RefCell<FxHashMap<TypeId, TypeId>>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
     /// When true, flag `depth_exceeded` on Application cycle detection.
@@ -142,27 +151,6 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     closed_eval_writes_allowed: bool,
 }
 
-/// Operation-local memo table statistics for [`TypeEvaluator`].
-///
-/// Owner: one evaluator request. The caches are dropped with the evaluator and
-/// are never shared across resolver, substitution, or compiler-option modes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TypeEvaluatorCacheStatistics {
-    /// Entries in the conditional subtype memo keyed by `(check_type, extends_type)`.
-    pub conditional_subtype_entries: usize,
-    /// Entries in the `contains infer` predicate memo keyed by `TypeId`.
-    pub contains_infer_entries: usize,
-    estimated_size_bytes: usize,
-}
-
-impl TypeEvaluatorCacheStatistics {
-    /// Estimated heap bytes owned by the evaluator memo tables.
-    #[must_use]
-    pub const fn estimated_size_bytes(self) -> usize {
-        self.estimated_size_bytes
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 const DEFAULT_MAX_MAPPED_KEYS: usize = 250;
 #[cfg(not(target_arch = "wasm32"))]
@@ -195,6 +183,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
+            infer_match_eval_cache: RefCell::new(FxHashMap::default()),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -203,24 +192,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             detection_growth_runs: FxHashMap::default(),
             deep_recursion_seen: false,
             closed_eval_writes_allowed: false,
-        }
-    }
-
-    /// Return entry and size accounting for this evaluator's operation-local caches.
-    #[must_use]
-    pub fn cache_statistics(&self) -> TypeEvaluatorCacheStatistics {
-        let conditional_subtype_entries = self.conditional_subtype_cache.len();
-        let contains_infer_entries = self.contains_infer_cache.len();
-        let type_evaluator_cache_estimated_size_bytes = conditional_subtype_entries
-            .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
-            .saturating_add(
-                contains_infer_entries.saturating_mul(std::mem::size_of::<(TypeId, bool)>()),
-            );
-
-        TypeEvaluatorCacheStatistics {
-            conditional_subtype_entries,
-            contains_infer_entries,
-            estimated_size_bytes: type_evaluator_cache_estimated_size_bytes,
         }
     }
 
@@ -420,42 +391,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) const fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
         self.query_db
-    }
-
-    /// PERF: Look up a cached subtype result from conditional type evaluation.
-    #[inline]
-    pub(crate) fn cached_conditional_subtype(
-        &self,
-        check: TypeId,
-        extends: TypeId,
-    ) -> Option<bool> {
-        self.conditional_subtype_cache
-            .get(&(check, extends))
-            .copied()
-    }
-
-    /// PERF: Cache a subtype result from conditional type evaluation.
-    #[inline]
-    pub(crate) fn cache_conditional_subtype(
-        &mut self,
-        check: TypeId,
-        extends: TypeId,
-        result: bool,
-    ) {
-        self.conditional_subtype_cache
-            .insert((check, extends), result);
-    }
-
-    /// PERF: Look up whether a type contains `infer`.
-    #[inline]
-    pub(crate) fn cached_contains_infer(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_infer_cache.get(&type_id).copied()
-    }
-
-    /// PERF: Cache whether a type contains `infer`.
-    #[inline]
-    pub(crate) fn cache_contains_infer(&mut self, type_id: TypeId, result: bool) {
-        self.contains_infer_cache.insert(type_id, result);
     }
 
     /// Check if `no_unchecked_indexed_access` is enabled.

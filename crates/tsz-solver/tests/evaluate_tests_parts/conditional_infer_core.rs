@@ -6,19 +6,36 @@ fn evaluator_cache_statistics_report_entries_and_size() {
     let empty = evaluator.cache_statistics();
     assert_eq!(empty.conditional_subtype_entries, 0);
     assert_eq!(empty.contains_infer_entries, 0);
+    assert_eq!(empty.infer_match_eval_entries, 0);
     assert_eq!(empty.estimated_size_bytes(), 0);
 
     evaluator.cache_conditional_subtype(TypeId::STRING, TypeId::UNKNOWN, true);
     evaluator.cache_conditional_subtype(TypeId::NUMBER, TypeId::STRING, false);
     evaluator.cache_contains_infer(TypeId::BOOLEAN, false);
+    evaluator.cache_infer_match_eval(TypeId::STRING, TypeId::STRING);
 
     let populated = evaluator.cache_statistics();
     assert_eq!(populated.conditional_subtype_entries, 2);
     assert_eq!(populated.contains_infer_entries, 1);
+    assert_eq!(populated.infer_match_eval_entries, 1);
     assert!(
         populated.estimated_size_bytes() > empty.estimated_size_bytes(),
         "populated evaluator caches should report nonzero estimated residency"
     );
+}
+
+#[test]
+fn evaluator_caches_infer_match_expansions_per_request() {
+    let interner = TypeInterner::new();
+    let prop = interner.intern_string("value");
+    let object = interner.object(vec![PropertyInfo::readonly(prop, TypeId::STRING)]);
+    let evaluator = TypeEvaluator::new(&interner);
+
+    assert_eq!(evaluator.cache_statistics().infer_match_eval_entries, 0);
+    assert_eq!(evaluator.evaluate_for_infer_match(object), object);
+    assert_eq!(evaluator.cache_statistics().infer_match_eval_entries, 1);
+    assert_eq!(evaluator.evaluate_for_infer_match(object), object);
+    assert_eq!(evaluator.cache_statistics().infer_match_eval_entries, 1);
 }
 
 #[test]
