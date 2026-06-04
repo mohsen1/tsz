@@ -2469,9 +2469,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    /// Write the appropriate variable declaration keyword based on target.
-    /// For ES2015+, use `const` for top-level module imports.
-    /// For ES3/ES5, use `var`.
+    /// Write `const` for top-level module imports, or `var` for ES3/ES5.
     pub(in crate::emitter) fn write_var_or_const(&mut self) {
         if self.ctx.target_es5 {
             self.write("var ");
