@@ -250,13 +250,32 @@ impl<'a> CheckerState<'a> {
         let Some(source) = self.required_mapped_constraint_source(constraint) else {
             return false;
         };
-        let source = self.substitute_required_mapped_source(source, substitutions);
+        let mut source = self.substitute_required_mapped_source(source, substitutions);
 
-        let source = self.resolve_lazy_type(source);
-        self.ensure_relation_input_ready(source);
-        let source = self.evaluate_type_with_resolution(source);
+        let mut source_resolved = self.resolve_lazy_type(source);
+        self.ensure_relation_input_ready(source_resolved);
+        let mut source_evaluated = self.evaluate_type_with_resolution(source_resolved);
+        let mut property_result =
+            tsz_solver::objects::collect_properties(source_evaluated, self.ctx.types, &self.ctx);
+        if !matches!(
+            &property_result,
+            tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. }
+                if !properties.is_empty()
+        ) && let Some((_, fallback_source)) = substitutions.first().copied()
+            && fallback_source != source
+        {
+            source = fallback_source;
+            source_resolved = self.resolve_lazy_type(source);
+            self.ensure_relation_input_ready(source_resolved);
+            source_evaluated = self.evaluate_type_with_resolution(source_resolved);
+            property_result = tsz_solver::objects::collect_properties(
+                source_evaluated,
+                self.ctx.types,
+                &self.ctx,
+            );
+        }
         let tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } =
-            tsz_solver::objects::collect_properties(source, self.ctx.types, &self.ctx)
+            property_result
         else {
             return false;
         };
@@ -267,14 +286,15 @@ impl<'a> CheckerState<'a> {
         let type_arg_resolved = self.resolve_lazy_type(type_arg);
         self.ensure_relation_input_ready(type_arg_resolved);
         let type_arg_evaluated = self.evaluate_type_with_resolution(type_arg_resolved);
-        type_arg_evaluated == source
+        type_arg_evaluated == source_evaluated
             || self
-                .required_mapped_constraint_relation_outcome(type_arg_evaluated, source)
+                .required_mapped_constraint_relation_outcome(type_arg_evaluated, source_evaluated)
                 .related
             || self.type_satisfies_required_source_properties(type_arg_resolved, &properties)
             || (type_arg_evaluated != type_arg_resolved
                 && self.type_satisfies_required_source_properties(type_arg_evaluated, &properties))
-            || self.type_literal_alias_satisfies_required_source(type_arg_resolved, source)
+            || self
+                .type_literal_alias_satisfies_required_source(type_arg_resolved, source_evaluated)
     }
 
     fn required_mapped_constraint_source(&self, constraint: TypeId) -> Option<TypeId> {
