@@ -850,23 +850,4 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
-    pub(crate) fn type_ref_is_bare_scoped_type_parameter(
-        &self,
-        type_name: NodeIndex,
-        type_arguments: Option<&tsz_parser::parser::base::NodeList>,
-    ) -> bool {
-        if type_arguments.is_some_and(|args| !args.nodes.is_empty()) {
-            return false;
-        }
-        let Some(name_node) = self.ctx.arena.get(type_name) else {
-            return false;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
-        };
-        self.ctx
-            .type_parameter_scope
-            .contains_key(ident.escaped_text.as_str())
-    }
 }
