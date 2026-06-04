@@ -422,9 +422,8 @@ impl ProgramContext {
             .collect();
 
         for (file_idx, binder) in self.all_binders.iter().enumerate() {
-            let arena = self.all_arenas.get(file_idx).map(Arc::as_ref);
             for (name, &sym_id) in binder.file_locals.iter() {
-                if !binder.cross_file_local_is_visible(arena, file_idx, name, sym_id) {
+                if !binder.cross_file_local_is_visible(file_idx, name, sym_id) {
                     continue;
                 }
                 file_locals_index
