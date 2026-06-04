@@ -863,13 +863,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
   margin: 0.35rem 0 0.85rem;
 }
 
-.compat-summary {
-  margin: 0.15rem 0 0.65rem;
-  font-family: var(--mono);
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-}
-
 .compat-list {
   list-style: none;
   margin: 0;

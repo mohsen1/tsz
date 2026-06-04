@@ -1685,17 +1685,6 @@ export function getProjectCompatibilityDashboard() {
   const allResults = withExpectedProjectRows(data?.results);
   const rows = COMPATIBILITY_CORPUS_ROWS.map((definition) => compatibilityRowFor(definition, allResults, data));
 
-  const counts = rows.reduce((acc, row) => {
-    acc[row.className] = (acc[row.className] || 0) + 1;
-    return acc;
-  }, {});
-  const summary = [
-    `${counts.green || 0} green`,
-    `${counts.yellow || 0} yellow`,
-    `${counts.red || 0} red`,
-    `${counts.gray || 0} gray`,
-  ].join(" · ");
-
   const numericSortValue = (value) => {
     const number = finiteNumber(value);
     return number === null ? "" : String(number);
@@ -1760,7 +1749,6 @@ export function getProjectCompatibilityDashboard() {
   <h2>Project compatibility</h2>
   ${artifactBanner}
   <p class="compat-dashboard-intro">These rows track real project fixtures that <code>tsc</code> accepts. A green row means <code>tsz</code> completed the same project check; red or yellow rows identify the current blocker before timing claims are treated as release evidence.</p>
-  <div class="compat-summary">${escapeHtml(summary)}</div>
   <div class="compat-table-wrap">
     <table class="compat-table" data-compat-sortable>
       <thead>
