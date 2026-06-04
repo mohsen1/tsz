@@ -289,6 +289,65 @@ impl<'a> TypeInstantiator<'a> {
         self.shadowed.contains(&name)
     }
 
+    /// Restore the homomorphic modifier source of a self-indexed mapped type
+    /// `{ [Q in P]: T[P] }` when its constraint parameter `P` is substituted by a
+    /// single property key.
+    ///
+    /// tsc derives a mapped type's modifier source from its iteration
+    /// constraint's type parameter (`getModifiersTypeFromMappedType` follows
+    /// `P`'s `keyof T` constraint to `T`). Bare substitution of `P := "k"`
+    /// rewrites the template `T[P]` to `T["k"]`, erasing that link, so the
+    /// inherited `readonly`/optional modifiers of `T`'s key are dropped. This is
+    /// the substrate of ts-essentials' `ReadonlyKeys` / `WritableKeys` /
+    /// `MarkWritable`, where the `IfEquals` identity trick compares
+    /// `{ [Q in P]: T[P] }` against `{ -readonly [Q in P]: T[P] }`.
+    ///
+    /// Because the sole iterated key `Q` equals `P` here, `T[P]` denotes `T[Q]`.
+    /// Rewriting the template index from the constraint parameter `P` to the
+    /// iteration variable `Q` restores the homomorphic form so the evaluator
+    /// inherits `T`'s per-key modifiers, matching tsc — without changing the
+    /// property's value type. The single-key guard is essential: for a union of
+    /// keys `T[P]` is the union of all key values, which `T[Q]` (per-key) would
+    /// not preserve.
+    fn rewrite_single_key_self_indexed_template(&self, mapped: &MappedType) -> Option<TypeId> {
+        // Constraint must be a bare type parameter `P` (the homomorphic
+        // iteration variable), distinct from this mapped type's own iteration
+        // variable `Q`, neither shadowed nor still free. This gate rejects the
+        // common `{ [K in keyof T]: ... }` form (constraint is `KeyOf`) up front.
+        let TypeData::TypeParameter(constraint_param) = self.interner.lookup(mapped.constraint)?
+        else {
+            return None;
+        };
+        let p_name = constraint_param.name;
+        if p_name == mapped.type_param.name || self.is_shadowed(p_name) {
+            return None;
+        }
+        // Template must be the self-index `T[P]` (index is the constraint
+        // parameter, not already the iteration variable `Q`). Checked before the
+        // potentially-expensive evaluation below so non-matching templates exit
+        // cheaply.
+        let TypeData::IndexAccess(source, index) = self.interner.lookup(mapped.template)? else {
+            return None;
+        };
+        let TypeData::TypeParameter(index_param) = self.interner.lookup(index)? else {
+            return None;
+        };
+        if index_param.name != p_name {
+            return None;
+        }
+        // `P` must be substituted with a single property key. A union of keys
+        // would change `T[P]` (the union of all key values) into a per-key
+        // `T[Q]`, so it is intentionally excluded.
+        let substituted = self.substitution.get(p_name)?;
+        let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+        if !crate::type_queries::is_type_usable_as_property_name(self.interner, resolved) {
+            return None;
+        }
+        // Rewrite `T[P]` to `T[Q]` (Q = this mapped type's iteration variable).
+        let iter_var = self.interner.type_param(mapped.type_param);
+        Some(self.interner.index_access(source, iter_var))
+    }
+
     /// Whether the unmapped-TypeParameter constraint-fallback at
     /// `instantiate_inner` is safe to apply for `name`.
     ///
@@ -1287,9 +1346,21 @@ impl<'a> TypeInstantiator<'a> {
 
             // Mapped: instantiate constraint and template
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.get_mapped(*mapped_id);
+                let mut mapped = self.interner.get_mapped(*mapped_id);
                 let tp_slice = std::slice::from_ref(&mapped.type_param);
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(tp_slice);
+
+                // Restore homomorphic modifier inheritance for a self-indexed
+                // mapped type `{ [Q in P]: T[P] }` whose constraint parameter is
+                // substituted by a single key (ts-essentials `ReadonlyKeys` /
+                // `WritableKeys` substrate). Done before the constraint/template
+                // substitution below collapses `T[P]` to `T["k"]`.
+                if let Some(rewritten) = self.rewrite_single_key_self_indexed_template(&mapped) {
+                    mapped = MappedType {
+                        template: rewritten,
+                        ..mapped
+                    };
+                }
 
                 // Homomorphic array/tuple handling must run before standard
                 // instantiation collapses `keyof T` to a flat union.
