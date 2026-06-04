@@ -111,7 +111,6 @@ TSZ_BENCH_INCLUDE_COMPILE_CANARIES="${TSZ_BENCH_INCLUDE_COMPILE_CANARIES:-0}"
 BENCH_NPM_INSTALL_TIMEOUT="${BENCH_NPM_INSTALL_TIMEOUT:-900}"
 BENCH_PGO_TSZ_TIMEOUT="${BENCH_PGO_TSZ_TIMEOUT:-900}"
 BENCH_CARGO_BUILD_TIMEOUT="${BENCH_CARGO_BUILD_TIMEOUT:-1200}"
-TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR="${TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR:-8}"
 BENCH_PGO_MARKER="$TSZ_OUTPUT_DIR/.bench-pgo-optimized"
 declare -a BENCH_PGO_TRAINING_INPUTS=()
 declare -a BENCH_PGO_TRAINING_FAILED_INPUTS=()
@@ -620,11 +619,6 @@ project_failure_status() {
         "oracle unavailable") echo "tsc oracle unavailable" ;;
         *) echo "diagnostic mismatch or compiler error" ;;
     esac
-}
-
-project_slowdown_failure_enabled() {
-    [[ "$TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR" =~ ^[0-9]+([.][0-9]+)?$ ]] \
-        && (( $(echo "$TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR > 0" | bc -l) ))
 }
 
 exit_codes_from_status() {
@@ -1929,12 +1923,13 @@ run_project_benchmark() {
             fi
 
             if [ "$winner" = "tsgo" ] \
-                && project_slowdown_failure_enabled \
-                && (( $(echo "$tsz_mean / $tsgo_mean >= $TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR" | bc -l) )); then
+                && tsz_project_slowdown_failure_reached "$tsz_mean" "$tsgo_mean"; then
+                local threshold
+                threshold="$(tsz_project_slowdown_failure_factor)"
                 local status
-                status="tsz slowdown (${ratio}x slower than tsgo; threshold ${TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR}x)"
+                status="tsz slowdown (${ratio}x slower than tsgo; threshold ${threshold}x)"
                 local diagnostic_delta
-                diagnostic_delta="timing failure: tsz ${tsz_ms} ms, tsgo ${tsgo_ms} ms, ratio ${ratio}x, threshold ${TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR}x"
+                diagnostic_delta="timing failure: tsz ${tsz_ms} ms, tsgo ${tsgo_ms} ms, ratio ${ratio}x, threshold ${threshold}x"
                 echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
                 record_project_compatibility "$name" "slowdown" "timing" "$(project_failure_status slowdown)" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"

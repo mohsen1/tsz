@@ -79,9 +79,9 @@ withTempDir((dir) => {
           last_successful_phase: "check",
           diagnostic_status: "none",
           files_reached: 242,
-        peak_memory_bytes: 734003200,
-        semantic_owner_family: "recursive type evaluation pressure",
-      },
+          peak_memory_bytes: 734003200,
+          semantic_owner_family: "recursive type evaluation pressure",
+        },
         attribution_artifact: {
           path: "artifacts/perf/ts-toolbelt-project-attribution.json",
           generated_at: "2026-05-20T00:05:00.000Z",
