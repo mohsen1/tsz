@@ -299,6 +299,59 @@ export type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> 
 }
 
 #[test]
+fn test_imported_type_options_alias_satisfies_lib_required_constraint() {
+    let libs = crate::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diags = crate::test_utils::check_multi_file_with_libs(
+        &[
+            (
+                "create-type-options.ts",
+                r#"
+export type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+"#,
+            ),
+            (
+                "paths.ts",
+                r#"
+import { CreateTypeOptions } from "./create-type-options";
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type | Options;
+
+export type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+"#,
+            ),
+        ],
+        "paths.ts",
+        tsz_checker::context::CheckerOptions::default(),
+        &libs,
+    );
+    let codes = diags.into_iter().map(|diag| diag.code).collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected imported CreateTypeOptions to satisfy lib Required<PathsOptions>, got {codes:?}"
+    );
+}
+
+#[test]
 fn test_module_local_partial_default_constraint_uses_local_alias() {
     let source = r#"
 export {};
