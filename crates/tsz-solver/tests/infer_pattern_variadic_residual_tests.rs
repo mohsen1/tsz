@@ -154,3 +154,187 @@ fn conditional_infer_head_empty_source_takes_false_branch() {
         TypeId::NEVER
     );
 }
+
+// =============================================================================
+// Tail inference: concrete fixed-element tuples
+// =============================================================================
+
+#[test]
+fn conditional_infer_tail_of_three_element_tuple_is_two_element_tuple() {
+    let interner = TypeInterner::new();
+    let infer_h = infer_var(&interner, "_H");
+    let infer_rest = infer_var(&interner, "Rest");
+
+    let extends_tuple = interner.tuple(vec![tuple_elem(infer_h), rest_tuple_elem(infer_rest)]);
+    let source = interner.tuple(vec![
+        tuple_elem(TypeId::STRING),
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+    ]);
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: extends_tuple,
+        true_type: infer_rest,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let expected = interner.tuple(vec![
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+    ]);
+    assert_eq!(
+        evaluate_type(&interner, interner.conditional(cond)),
+        expected,
+        "Tail<[string, number, boolean]> should produce [number, boolean]"
+    );
+}
+
+#[test]
+fn conditional_infer_tail_of_two_element_tuple_is_one_element_tuple() {
+    let interner = TypeInterner::new();
+    let infer_h = infer_var(&interner, "_H");
+    let infer_rest = infer_var(&interner, "Rest");
+
+    let extends_tuple = interner.tuple(vec![tuple_elem(infer_h), rest_tuple_elem(infer_rest)]);
+    let source = interner.tuple(vec![tuple_elem(TypeId::STRING), tuple_elem(TypeId::NUMBER)]);
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: extends_tuple,
+        true_type: infer_rest,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let expected = interner.tuple(vec![tuple_elem(TypeId::NUMBER)]);
+    assert_eq!(
+        evaluate_type(&interner, interner.conditional(cond)),
+        expected,
+        "Tail<[string, number]> should produce [number]"
+    );
+}
+
+#[test]
+fn conditional_infer_tail_of_single_element_tuple_is_empty_tuple() {
+    let interner = TypeInterner::new();
+    let infer_h = infer_var(&interner, "_H");
+    let infer_rest = infer_var(&interner, "Rest");
+
+    let extends_tuple = interner.tuple(vec![tuple_elem(infer_h), rest_tuple_elem(infer_rest)]);
+    let source = interner.tuple(vec![tuple_elem(TypeId::STRING)]);
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: extends_tuple,
+        true_type: infer_rest,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let expected = interner.tuple(vec![]);
+    assert_eq!(
+        evaluate_type(&interner, interner.conditional(cond)),
+        expected,
+        "Tail<[string]> should produce []"
+    );
+}
+
+#[test]
+fn conditional_infer_prepend_inferred_tail_is_flattened_into_result_tuple() {
+    // Source=[number,boolean,string], Rest=[boolean,string] after matching head.
+    // True branch [string, ...Rest] must flatten to [string, boolean, string].
+    let interner = TypeInterner::new();
+    let infer_h = infer_var(&interner, "_H");
+    let infer_rest = infer_var(&interner, "Rest");
+
+    let extends_tuple = interner.tuple(vec![tuple_elem(infer_h), rest_tuple_elem(infer_rest)]);
+    let source = interner.tuple(vec![
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+        tuple_elem(TypeId::STRING),
+    ]);
+    let true_branch = interner.tuple(vec![
+        tuple_elem(TypeId::STRING),
+        rest_tuple_elem(infer_rest),
+    ]);
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: extends_tuple,
+        true_type: true_branch,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let expected = interner.tuple(vec![
+        tuple_elem(TypeId::STRING),
+        tuple_elem(TypeId::BOOLEAN),
+        tuple_elem(TypeId::STRING),
+    ]);
+    assert_eq!(
+        evaluate_type(&interner, interner.conditional(cond)),
+        expected,
+        "[string, ...Rest] where Rest=[boolean,string] should produce [string, boolean, string]"
+    );
+}
+
+#[test]
+fn evaluate_spread_of_concrete_tuple_flattens_inline() {
+    let interner = TypeInterner::new();
+    let inner = interner.tuple(vec![
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+    ]);
+    let spread_tuple = interner.tuple(vec![tuple_elem(TypeId::STRING), rest_tuple_elem(inner)]);
+
+    let expected = interner.tuple(vec![
+        tuple_elem(TypeId::STRING),
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+    ]);
+    assert_eq!(
+        evaluate_type(&interner, spread_tuple),
+        expected,
+        "[string, ...[number, boolean]] should evaluate to [string, number, boolean]"
+    );
+}
+
+#[test]
+fn conditional_infer_tail_applied_to_previous_tail_preserves_arity() {
+    // Tail<Tail<[string, number, boolean]>> must be [boolean], not [number, boolean].
+    // Validates that chained infer bindings produce independent residuals.
+    let interner = TypeInterner::new();
+    let infer_h = infer_var(&interner, "_H");
+    let infer_rest = infer_var(&interner, "Rest");
+    let extends_tuple = interner.tuple(vec![tuple_elem(infer_h), rest_tuple_elem(infer_rest)]);
+
+    let source1 = interner.tuple(vec![
+        tuple_elem(TypeId::STRING),
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+    ]);
+    let cond1 = ConditionalType {
+        check_type: source1,
+        extends_type: extends_tuple,
+        true_type: infer_rest,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let tail1 = evaluate_type(&interner, interner.conditional(cond1));
+
+    let infer_h2 = infer_var(&interner, "_H2");
+    let infer_rest2 = infer_var(&interner, "Rest2");
+    let extends_tuple2 = interner.tuple(vec![tuple_elem(infer_h2), rest_tuple_elem(infer_rest2)]);
+    let cond2 = ConditionalType {
+        check_type: tail1,
+        extends_type: extends_tuple2,
+        true_type: infer_rest2,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let tail2 = evaluate_type(&interner, interner.conditional(cond2));
+
+    let expected = interner.tuple(vec![tuple_elem(TypeId::BOOLEAN)]);
+    assert_eq!(
+        tail2, expected,
+        "Tail<Tail<[string, number, boolean]>> should produce [boolean]"
+    );
+}
