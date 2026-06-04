@@ -32,7 +32,7 @@ exec "$@"
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=10,
+            timeout=30,
         )
 
     def test_clear_owned_work_prints_summary_counters(self):

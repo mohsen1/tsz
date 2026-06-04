@@ -31,12 +31,24 @@ web-time = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "assertion_source_literal_display_tests"
+path = "tests/assertion_source_literal_display_tests.rs"
+
+[[test]]
 name = "nested_discriminant_narrowing_tests"
 path = "tests/nested_discriminant_narrowing_tests.rs"
 
 [[test]]
+name = "homomorphic_self_indexed_mapped_modifier_tests"
+path = "tests/homomorphic_self_indexed_mapped_modifier_tests.rs"
+
+[[test]]
 name = "inference_placeholder_determinism_tests"
 path = "tests/inference_placeholder_determinism_tests.rs"
+
+[[test]]
+name = "context_sensitive_callback_inference_tests"
+path = "tests/context_sensitive_callback_inference_tests.rs"
 
 [[test]]
 name = "type_only_import_reexport_tests"

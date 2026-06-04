@@ -224,22 +224,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         infer_ctx.source_is_type_annotation = was_type_annotation;
     }
 
-    fn type_param_name_if_generic_rest_tuple_param(
-        &self,
-        func: &FunctionShape,
-        type_id: TypeId,
-    ) -> Option<tsz_common::Atom> {
-        let type_id = self.unwrap_readonly(type_id);
-        let Some(TypeData::TypeParameter(info)) = self.interner.lookup(type_id) else {
-            return None;
-        };
-
-        func.type_params
-            .iter()
-            .any(|type_param| type_param.name == info.name)
-            .then_some(info.name)
-    }
-
     fn generic_rest_tuple_callback_arity_mismatch(
         &mut self,
         func: &FunctionShape,
@@ -480,6 +464,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 infer_ctx.set_declared_constraint(var, inst_constraint);
             }
         }
+
+        // Record the implied arity for a non-array rest type parameter (tsc's
+        // `getNonArrayRestType` path). For a signature whose rest parameter is a
+        // bare type parameter (`...rest: T`), the number of trailing arguments
+        // that land in the rest parameter is the implied arity of `T`. Variadic
+        // tuple inference uses it to split a `[...A, ...B]` target so the tail
+        // type parameter keeps its arity (e.g. partial-application / `bind`).
+        self.record_rest_param_implied_arity(&mut infer_ctx, func, arg_types, &type_param_vars);
 
         // Seed inference from generic `this` parameter when present.
         // For calls like `obj.method<T>(...)`, `this: T` must constrain `T` from

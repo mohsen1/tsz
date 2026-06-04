@@ -37,14 +37,10 @@ pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
 /// body `TypeId` so the caller can evaluate it with a resolver-equipped
 /// evaluator. Otherwise return `None`.
 ///
-/// tsc loses the outer alias when this specific reduction collapses to a
-/// concrete type. The classic case is
-/// `type WeakKey = WeakKeyTypes[keyof WeakKeyTypes]` (where `WeakKeyTypes`
-/// has only `object: object` in the es2022 lib) which displays as `object`,
-/// not `WeakKey`. The match is intentionally narrow — generic indexed-access
-/// aliases (`type Pair<T> = Pairs<T>[keyof T]`) and non-self-keyof aliases
-/// stay opaque because pre-resolving them in the formatter can blow up
-/// recursion fuel and emit spurious TS2589s.
+/// tsc loses the outer alias when this reduction collapses to a concrete type.
+/// The match is intentionally narrow: generic indexed-access aliases and
+/// non-self-keyof aliases stay opaque to avoid recursion-fuel blowups and
+/// spurious TS2589s.
 pub(crate) fn indexed_access_alias_body(
     db: &dyn TypeDatabase,
     def_store: &tsz_solver::def::DefinitionStore,
@@ -287,19 +283,6 @@ pub(crate) fn is_generic_mapped_application<R: TypeResolver>(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::is_generic_mapped_application_db(db, resolver, type_id)
-}
-
-/// Check whether an application's *declared* alias body is a mapped type
-/// (e.g. `Partial<X>`, `Readonly<X>`, or `type F<T> = { [K in keyof T]... }`),
-/// even when the concrete instantiation is fully resolved. Diagnostic
-/// elaboration uses this to elaborate mapped-alias mismatches structurally
-/// rather than via type-argument variance, matching tsc.
-pub(crate) fn application_base_is_mapped_type<R: TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::application_base_is_mapped_type_db(db, resolver, type_id)
 }
 
 /// Check if a type contains type parameters that require instantiation,

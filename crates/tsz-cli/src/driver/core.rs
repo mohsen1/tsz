@@ -57,24 +57,9 @@ use tsz::parser::{NodeIndex, ParseDiagnostic};
 use tsz::scanner::SyntaxKind;
 use tsz_solver::construction::QueryCache;
 
-fn diagnostic_source_line<'a>(
-    program: &'a MergedProgram,
-    diagnostic: &Diagnostic,
-) -> Option<&'a str> {
-    let file = program.files.iter().find(|file| {
-        file.file_name == diagnostic.file || file.file_name.ends_with(&diagnostic.file)
-    })?;
-    let source_file = file.arena.get_source_file_at(file.source_file)?;
-    let source_text = source_file.text.as_ref();
-    let start = (diagnostic.start as usize).min(source_text.len());
-    let line_start = source_text[..start]
-        .rfind('\n')
-        .map_or(0, |idx| idx.saturating_add(1));
-    let line_end = source_text[start..]
-        .find('\n')
-        .map_or(source_text.len(), |idx| start + idx);
-    Some(&source_text[line_start..line_end])
-}
+#[path = "diagnostic_source.rs"]
+mod diagnostic_source;
+use diagnostic_source::diagnostic_source_line;
 
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1037,6 +1022,13 @@ fn compile_inner(
     let loaded = load_config_with_diagnostics(tsconfig_path.as_deref())?;
     let config = loaded.config;
     let mut config_diagnostics = loaded.diagnostics;
+    // A references-only root tsconfig (no .ts inputs, but non-empty `references[]`) is
+    // the canonical TypeScript Project References pattern. tsc never emits TS18003 in
+    // this case; suppress the "no inputs" diagnostic when `references[]` is non-empty.
+    let has_project_references = config
+        .as_ref()
+        .and_then(|c| c.references.as_deref())
+        .is_some_and(|refs| !refs.is_empty());
     if cli_ignore_deprecations_silences_6_0(args) {
         config_diagnostics.retain(|d| !is_deprecation_diagnostic_code(d.code));
     }
@@ -1225,7 +1217,10 @@ fn compile_inner(
             || d.code
                 == diagnostic_codes::NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_WHEN_BASEURL_IS_NOT_SET_DID_YOU_FORGET_A_LEAD
     }) {
-        let diagnostics = if file_paths.is_empty() && !discovery.files_explicitly_set {
+        let diagnostics = if file_paths.is_empty()
+            && !discovery.files_explicitly_set
+            && !has_project_references
+        {
             no_input_diagnostics_for_config(
                 config_diagnostics,
                 tsconfig_path.as_deref(),
@@ -1300,9 +1295,10 @@ fn compile_inner(
     // When cache is None, we can use local_cache; otherwise we use the provided cache
     if file_paths.is_empty() {
         // When `files` is explicitly set (e.g., `"files": []` in a solution-style
-        // tsconfig), tsc does NOT emit TS18003. The error only applies when discovery
-        // found nothing due to include/exclude patterns.
-        let diagnostics = if discovery.files_explicitly_set {
+        // tsconfig) or when `references[]` is non-empty (project-references root),
+        // tsc does NOT emit TS18003. The error only applies when discovery found
+        // nothing due to include/exclude patterns with no project-references fallback.
+        let diagnostics = if discovery.files_explicitly_set || has_project_references {
             config_diagnostics
         } else {
             no_input_diagnostics_for_config(

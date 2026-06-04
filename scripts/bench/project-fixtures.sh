@@ -208,6 +208,21 @@ NODE
 
 tsz_load_fixture_pins_from_rows
 
+tsz_project_slowdown_failure_factor() {
+  printf '%s\n' "${TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR:-8}"
+}
+
+tsz_project_slowdown_failure_reached() {
+  local tsz_mean="$1"
+  local tsgo_mean="$2"
+  local threshold
+  threshold="$(tsz_project_slowdown_failure_factor)"
+
+  [[ "$threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  (( $(echo "$threshold > 0" | bc -l) )) || return 1
+  (( $(echo "$tsz_mean / $tsgo_mean >= $threshold" | bc -l) ))
+}
+
 tsz_project_fixture_sources() {
   case "$1" in
     utility-types-project)

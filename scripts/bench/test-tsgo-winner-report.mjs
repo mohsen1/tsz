@@ -42,6 +42,27 @@ withTempDir((dir) => {
     },
     results: [
       {
+        name: "type-fest-project",
+        lines: 8044,
+        kb: 216,
+        project_files: 242,
+        tsz_ms: null,
+        tsgo_ms: null,
+        winner: "error",
+        factor: 0,
+        status: "tsz slowdown (9.21x slower than tsgo; threshold 8x)",
+        compatibility: {
+          state: "red",
+          exit_class: "slowdown",
+          phase: "timing",
+          last_successful_phase: null,
+          diagnostic_status: "runtime slowdown",
+          files_reached: 242,
+          peak_memory_bytes: 734003200,
+          semantic_owner_family: "mapped/conditional/key-space utility surface",
+        },
+      },
+      {
         name: "ts-toolbelt-project",
         lines: 8044,
         kb: 216,
@@ -146,7 +167,7 @@ withTempDir((dir) => {
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.source.quick_mode, true);
-  assert.equal(report.totals.rows, 6);
+  assert.equal(report.totals.rows, 7);
   assert.equal(report.totals.duplicate_project_rows, 0);
   assert.equal(report.totals.green_tsgo_winners, 3);
   assert.equal(report.totals.project_green_tsgo_winners, 2);

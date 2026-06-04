@@ -3,4 +3,47 @@
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
 
-# No accepted regressions are currently listed.
+# Current-main aggregate drift after PR #12436 cleared the ledger.
+# Exact evidence:
+# - main run 26933754790 at 81902917fa69 listed these rows plus
+#   autoAccessorDisallowedModifiers.ts.
+# - PR #12434 run 26935984666 at 9138aa5de2 fixed
+#   autoAccessorDisallowedModifiers.ts and left exactly these 23 rows.
+# - PR #12495 run 26937965627 at 7dd0c3a441 found one additional
+#   current-main row, keyofIsLiteralContexualType.ts.
+# - PR #12495 run 26941560765 at faec9f5e found four additional current-head
+#   rows after #12491 landed the partial ledger restoration.
+# Keep these visible as accepted-regression debt until their owning parity
+# fixes remove them from exact-head aggregate output.
+TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
+TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
+TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
+TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
+TypeScript/tests/cases/compiler/declarationsIndirectGeneratedAliasReference.ts
+TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
+TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+TypeScript/tests/cases/compiler/exportDefaultInterface.ts
+TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
+TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
+TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
+TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
+TypeScript/tests/cases/compiler/promisesWithConstraints.ts
+TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
+TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
+TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
+TypeScript/tests/cases/conformance/externalModules/circularReference.ts
+TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
+TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
+TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit6.ts
+TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit7.ts
+TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
+TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
+TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
+# covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
+# callback method parameters the way tsc does (getSingleCallSignature(
+# getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
+# covariant TS2322 again. Removed from this ledger; covered by
+# nullable_union_callback_variance_tests.
+TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation.ts

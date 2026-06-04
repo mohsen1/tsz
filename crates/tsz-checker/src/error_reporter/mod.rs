@@ -27,6 +27,7 @@ mod assignability_type_helpers;
 mod call_errors;
 mod call_errors_anchors;
 mod core;
+mod core_alias_display;
 mod core_formatting;
 mod emitters;
 mod fingerprint_policy;

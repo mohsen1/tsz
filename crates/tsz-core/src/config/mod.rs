@@ -11,12 +11,14 @@ use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
 use tsz_common::diagnostics::format_message;
 mod deprecation_helpers;
 mod extends;
+mod lib_offsets;
 mod lib_resolution;
 
 use extends::{
     anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
     resolve_extends_path,
 };
+use lib_offsets::find_lib_entry_offset;
 
 pub use lib_resolution::{
     LibReference, core_lib_name_for_target, default_lib_dir, default_lib_name_for_target,
@@ -1621,10 +1623,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 {
                     let start = find_value_offset_in_source(&stripped, key);
                     let value_len = estimate_json_value_len(value);
-                    let msg = deprecation_helpers::with_migration_url(format_message(
-                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
-                        &[key, display_value, "7.0", "6.0"],
-                    ));
+                    let msg = deprecation_helpers::maybe_with_migration_url(
+                        format_message(
+                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
+                            &[key, display_value, "7.0", "6.0"],
+                        ),
+                        key,
+                        Some(display_value),
+                    );
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
@@ -1635,11 +1641,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
             }
 
-            // No-value deprecations (TS5101): "Option '{0}' is deprecated..."
             let key_deprecations = ["baseUrl", "outFile", "downlevelIteration"];
             for key in &key_deprecations {
-                // Suppress TS5101 when TS5024 already fired for the same option:
-                // tsc does not emit a deprecation warning for options with type errors.
+                // Suppress TS5101 when TS5024 already fired; tsc skips invalid options.
                 if ts5024_keys.iter().any(|k| k == key) {
                     continue;
                 }
@@ -1651,10 +1655,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         .map(|p| (compiler_opts_pos + p) as u32)
                         .unwrap_or(0);
                     let key_len = key.len() as u32 + 2; // include quotes
-                    let msg = deprecation_helpers::with_migration_url(format_message(
-                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
-                        &[key, "7.0", "6.0"],
-                    ));
+                    let msg = deprecation_helpers::maybe_with_migration_url(
+                        format_message(
+                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
+                            &[key, "7.0", "6.0"],
+                        ),
+                        key,
+                        None,
+                    );
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
@@ -4255,19 +4263,6 @@ fn validate_lib_values(
         for &idx in invalid_indices.iter().rev() {
             lib_array.remove(idx);
         }
-    }
-}
-
-/// Find the byte offset of a specific lib entry string within the source text.
-/// Searches for `"entry"` within the lib array section.
-fn find_lib_entry_offset(source: &str, entry: &str) -> u32 {
-    let search = format!("\"{entry}\"");
-    // Look for the lib array first
-    let lib_pos = source.find("\"lib\"").unwrap_or(0);
-    if let Some(pos) = source[lib_pos..].find(&search) {
-        (lib_pos + pos) as u32
-    } else {
-        0
     }
 }
 

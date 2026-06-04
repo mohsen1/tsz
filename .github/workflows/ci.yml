@@ -63,10 +63,16 @@ jobs:
           unit_packages=""
           if [[ "${CI_REF}" == refs/heads/automation/merge-queue/* ]]; then
             # Queue branches are synthetic latest-main merge commits. The PR
-            # head has already passed required PR CI before queueing, so keep
-            # only the required summary check alive for queue throughput.
-            echo "Merge-queue synthetic branch - publishing CI Summary without heavy suites."
-            should_run=false
+            # head already passed PR CI on its own SHA, but the synthetic
+            # merge can introduce regressions no PR-head check observed —
+            # most importantly, arch-guard size caps that a sibling PR pushed
+            # up while this PR was waiting (issue #12499). Run the cheap
+            # gates (lint, cargo-shear, cargo-deny, project-row-drift) on
+            # the synthetic merge to catch those; keep the heavy compiler
+            # suites off via compiler_checks_required=false so queue
+            # throughput stays bounded.
+            echo "Merge-queue synthetic branch - running cheap gates on the merge."
+            should_run=true
             full_run=false
             required_summary=true
             compiler_checks_required=false

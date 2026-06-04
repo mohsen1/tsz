@@ -156,6 +156,7 @@ while [[ $# -gt 0 ]]; do
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
             echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
             echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
+            echo "  TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR=<factor> Mark green project rows slower than tsgo by this factor as timing failures (default: 8; 0 disables)"
             echo "  BENCH_PGO_FETCH_CORE_PROJECTS=1  Fetch/train ts-toolbelt/ts-essentials during PGO (default: 0; slower)"
             echo "  BENCH_PGO_SYNTHETIC=0  Don't train PGO on generated benchmark stress cases (default: 1)"
             echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"
@@ -614,6 +615,7 @@ project_failure_status() {
         timeout) echo "compiler timed out" ;;
         oom) echo "compiler OOM or killed" ;;
         crash) echo "compiler crashed" ;;
+        slowdown) echo "runtime slowdown" ;;
         "oracle unavailable") echo "tsc oracle unavailable" ;;
         *) echo "diagnostic mismatch or compiler error" ;;
     esac
@@ -1918,6 +1920,21 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsgo_mean / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             else
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            fi
+
+            if [ "$winner" = "tsgo" ] \
+                && tsz_project_slowdown_failure_reached "$tsz_mean" "$tsgo_mean"; then
+                local threshold
+                threshold="$(tsz_project_slowdown_failure_factor)"
+                local status
+                status="tsz slowdown (${ratio}x slower than tsgo; threshold ${threshold}x)"
+                local diagnostic_delta
+                diagnostic_delta="timing failure: tsz ${tsz_ms} ms, tsgo ${tsgo_ms} ms, ratio ${ratio}x, threshold ${threshold}x"
+                echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
+                record_project_compatibility "$name" "slowdown" "timing" "$(project_failure_status slowdown)" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
+                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+                rm -f "$json_file"
+                return
             fi
 
             local success_exit_class="exit success"

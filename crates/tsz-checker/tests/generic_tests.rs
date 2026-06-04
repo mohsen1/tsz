@@ -254,6 +254,56 @@ type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
 }
 
 #[test]
+fn lib_record_constraint_application_preserves_type_args() {
+    let source = r#"
+type UndefinedKeys<T extends Record<string, any>> = {
+  [K in keyof T]: undefined extends T[K] ? K : never
+};
+
+type MyType = { a: string, b: string | undefined };
+type Result = UndefinedKeys<MyType>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected no TS2344 for object type against Record<string, any>, got {codes:?}"
+    );
+}
+
+#[test]
+fn lib_required_partial_constraints_preserve_application_type_args() {
+    let source = r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: "0";
+};
+
+type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected no TS2344 when lib Required/Partial applications keep their type args, got {codes:?}"
+    );
+}
+
+#[test]
 fn test_module_local_partial_default_constraint_uses_local_alias() {
     let source = r#"
 export {};
