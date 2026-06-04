@@ -745,7 +745,8 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
 
         let saved_context_flags = self.context_flags;
-        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION
+            | crate::parser::state::CONTEXT_FLAG_IF_CONDITION;
         let expression = self.parse_expression();
         self.context_flags = saved_context_flags;
 
@@ -866,40 +867,20 @@ impl ParserState {
         self.parse_expected(SyntaxKind::WhileKeyword);
         let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
         let missing_open_paren_before_colon =
-            !has_open_paren && self.parse_optional(SyntaxKind::ColonToken);
+            !has_open_paren && self.is_token(SyntaxKind::ColonToken);
 
-        let condition = self.parse_expression();
+        let condition = if missing_open_paren_before_colon {
+            NodeIndex::NONE
+        } else {
+            self.parse_expression()
+        };
 
         // Check for missing while condition: while () { }
-        if condition == NodeIndex::NONE {
+        if condition == NodeIndex::NONE && !missing_open_paren_before_colon {
             self.error_expression_expected();
         }
 
         if missing_open_paren_before_colon {
-            if self.is_token(SyntaxKind::DotDotDotToken) {
-                self.error_expression_expected();
-                self.next_token();
-                let _ = self.parse_expression();
-            }
-            if self.is_token(SyntaxKind::ColonToken) {
-                self.next_token();
-                let _ = self.parse_expression();
-            }
-            while !matches!(
-                self.token(),
-                SyntaxKind::CloseParenToken
-                    | SyntaxKind::OpenBraceToken
-                    | SyntaxKind::CloseBraceToken
-                    | SyntaxKind::EndOfFileToken
-            ) {
-                if self.is_token(SyntaxKind::CloseBracketToken) {
-                    self.parse_error_at_current_token(
-                        tsz_common::diagnostics::diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
-                        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
-                    );
-                }
-                self.next_token();
-            }
             if self.is_token(SyntaxKind::CloseParenToken) {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
                 self.next_token();
@@ -913,7 +894,11 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseParenToken);
         }
 
-        let statement = self.parse_statement();
+        let statement = if missing_open_paren_before_colon {
+            self.parse_recovered_leading_colon_expression_statement()
+        } else {
+            self.parse_statement()
+        };
         self.check_using_outside_block(statement);
 
         let end_pos = self.token_end();

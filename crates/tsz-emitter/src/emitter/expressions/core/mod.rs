@@ -880,6 +880,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn conditional_case_a_missing_false_branch_breaks_before_semicolon() {
+        let source = "function f() {\n    return true ?\n        : ;\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("return true ?\n        :\n    ;"),
+            "Missing false branch should keep `:` and the return semicolon on separate lines.\nOutput:\n{output}"
+        );
+    }
+
     /// Case B with nested ternaries: `a\n  ? b ? d : e\n  : c ? f : g`
     #[test]
     fn conditional_case_b_nested_ternaries() {

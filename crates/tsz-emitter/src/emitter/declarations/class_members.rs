@@ -359,6 +359,14 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
+        if self.recovered_if_class_member_has_invalid_header(node, method.body) {
+            self.write(" { }");
+            if let Some(body_node) = self.arena.get(method.body) {
+                self.skip_comments_for_erased_node(body_node);
+            }
+            return;
+        }
+
         // Skip return type for JavaScript emit — skip comments inside erased return type
         if !self.ctx.flags.in_declaration_emit
             && method.type_annotation.is_some()
@@ -449,6 +457,39 @@ impl<'a> Printer<'a> {
             self.pending_lowered_async_arrow_super_capture =
                 prev_pending_lowered_async_arrow_super_capture;
         }
+    }
+
+    fn recovered_if_class_member_has_invalid_header(&self, node: &Node, body: NodeIndex) -> bool {
+        if self.class_member_emit_depth == 0 {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(method) = self.arena.get_method_decl(node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(method.name) else {
+            return false;
+        };
+        let is_if_keyword_name = name_node.kind == SyntaxKind::IfKeyword as u16
+            || self
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == "if");
+        if !is_if_keyword_name {
+            return false;
+        }
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+        let start = (name_node.end as usize).min(text.len());
+        let end = (body_node.pos as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        let header = &text[start..end];
+        header.contains("!=") || header.contains("==")
     }
 
     pub(in crate::emitter) fn emit_recovered_object_method_without_body(&mut self, node: &Node) {
