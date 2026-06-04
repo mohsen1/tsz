@@ -2,7 +2,7 @@ use tsz_common::diagnostics::data::diagnostic_messages;
 
 /// Returns true when `tsc 6.0.3` appends the migration-URL note.
 ///
-/// `tsc` only chains "Visit https://aka.ms/ts6" for the deprecated entries
+/// `tsc` only chains "Visit <https://aka.ms/ts6>" for the deprecated entries
 /// whose `createDeprecatedDiagnostic` call receives the TS5111 related message.
 /// Most TS 6 deprecations, including `allowSyntheticDefaultImports=false`,
 /// `alwaysStrict=false`, and `moduleResolution=classic`, do not get the suffix.

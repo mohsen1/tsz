@@ -31,13 +31,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn well_known_lib_constraint_type_name(&self, type_id: TypeId) -> Option<String> {
-        if let Some(def_id) = query_common::lazy_def_id(self.ctx.types, type_id)
-            && let Some(name) = self.well_known_lib_constraint_def_name(def_id)
-        {
-            return Some(name);
+        if query_common::type_application(self.ctx.types, type_id).is_some() {
+            return None;
         }
 
-        if let Some(def_id) = query_common::get_application_lazy_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = query_common::lazy_def_id(self.ctx.types, type_id)
             && let Some(name) = self.well_known_lib_constraint_def_name(def_id)
         {
             return Some(name);
