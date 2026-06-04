@@ -2708,7 +2708,12 @@ impl<'a> CheckerState<'a> {
                     .and_then(|_| self.ctx.binder.get_symbol(sym_id))
                     .is_some_and(|symbol| {
                         symbol.declarations.iter().any(|&decl_idx| {
-                            self.alias_declaration_body_is_computed(decl_idx, result)
+                            super::source_alias_attribution::alias_declaration_body_is_computed(
+                                self.ctx.arena,
+                                self.ctx.types,
+                                decl_idx,
+                                result,
+                            )
                         })
                     });
                 if body_is_computed {
@@ -2744,81 +2749,6 @@ impl<'a> CheckerState<'a> {
         }
 
         result
-    }
-
-    /// Decide whether a type-alias declaration body is a reducing operator whose
-    /// `result` tsc renders structurally (without an `aliasSymbol`), so the
-    /// definition store should mark `result` as a "computed" body.
-    ///
-    /// - An **intersection** drops the alias name only when it collapses to a
-    ///   union of purely primitive/literal members (`T1 & ("a"|"b")` →
-    ///   `"a"|"b"`); a distribution into object-typed members keeps the name.
-    /// - A **conditional** or **indexed access** resolves *away* into its branch
-    ///   / element type and never carries the alias's `aliasSymbol`, so tsc
-    ///   renders the evaluated underlying type — scalar, literal, `never`,
-    ///   union, tuple, array, or function (verified against tsc 6.0.2:
-    ///   `type P = true extends true ? [string, number] : never` elaborates as
-    ///   `[string, number]`). This is gated to results that do **not** mention
-    ///   an anonymous object type: an object result re-resolves eagerly and is
-    ///   surfaced through the reverse `find_def_for_type` lookup, where marking
-    ///   the shared shape mis-routes the alias name onto an unrelated holder.
-    ///   The deferred-body display path (`TypeFormatter`) already renders those
-    ///   object results structurally without this provenance flag. The other
-    ///   exclusion is a result that stayed a deferred conditional / indexed
-    ///   access (an operand could not be resolved), no more informative than the
-    ///   alias name.
-    fn alias_declaration_body_is_computed(
-        &self,
-        decl_idx: tsz_parser::parser::NodeIndex,
-        result: TypeId,
-    ) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-            return false;
-        };
-        let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node) else {
-            return false;
-        };
-        let Some(body_node) = self.ctx.arena.get(type_alias.type_node) else {
-            return false;
-        };
-        match body_node.kind {
-            syntax_kind_ext::INTERSECTION_TYPE => self.result_is_primitive_literal_union(result),
-            syntax_kind_ext::CONDITIONAL_TYPE | syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-                !crate::query_boundaries::common::is_conditional_type(self.ctx.types, result)
-                    && !crate::query_boundaries::common::is_index_access_type(
-                        self.ctx.types,
-                        result,
-                    )
-                    && !crate::query_boundaries::common::union_or_intersection_mentions_object(
-                        self.ctx.types,
-                        result,
-                    )
-            }
-            _ => false,
-        }
-    }
-
-    /// `true` when `ty` is a union whose members are all primitives, literals,
-    /// or `never` — the "trivial reduction" shape an intersection drops its
-    /// alias name for (`T1 & ("a"|"b")` → `"a"|"b"`). A non-union result returns
-    /// `false`: a single primitive/literal is already handled by the formatter's
-    /// intrinsic/literal check.
-    fn result_is_primitive_literal_union(&self, ty: TypeId) -> bool {
-        crate::query_boundaries::common::union_members(self.ctx.types, ty).is_some_and(|members| {
-            members.iter().all(|&m| {
-                crate::query_boundaries::common::literal_value(self.ctx.types, m).is_some()
-                    || m == TypeId::STRING
-                    || m == TypeId::NUMBER
-                    || m == TypeId::BOOLEAN
-                    || m == TypeId::BIGINT
-                    || m == TypeId::SYMBOL
-                    || m == TypeId::UNDEFINED
-                    || m == TypeId::NULL
-                    || m == TypeId::VOID
-                    || m == TypeId::NEVER
-            })
-        })
     }
 
     /// Resolve a `typeof X` type query with flow-sensitive narrowing.

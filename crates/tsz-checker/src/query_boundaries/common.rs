@@ -1255,15 +1255,6 @@ pub(crate) fn is_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_tuple_type(db, type_id)
 }
 
-/// `true` when `type_id` is an anonymous object type, or a union / intersection
-/// that contains one (recursing through nested unions / intersections).
-pub(crate) fn union_or_intersection_mentions_object(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::union_or_intersection_mentions_object(db, type_id)
-}
-
 pub(crate) fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_intersection_type(db, type_id)
 }

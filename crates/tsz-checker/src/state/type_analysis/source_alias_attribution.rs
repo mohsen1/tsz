@@ -15,6 +15,8 @@ use tsz_common::perf_counters::{
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) fn record_source_alias_rejection_kinds(
     arena: &NodeArena,
@@ -79,6 +81,63 @@ pub(crate) fn record_source_alias_rejection_kinds(
             type_node_is_lowerable,
         );
     }
+}
+
+/// Decide whether a type-alias declaration body is a reducing operator whose
+/// `result` tsc renders structurally (without an `aliasSymbol`), so the
+/// definition store should mark `result` as a "computed" body.
+///
+/// - An **intersection** drops the alias name only when it collapses to a
+///   union of purely primitive/literal members (`T1 & ("a"|"b")` ->
+///   `"a"|"b"`); a distribution into object-typed members keeps the name.
+/// - A **conditional** or **indexed access** resolves away into its branch /
+///   element type and never carries the alias's `aliasSymbol`, so tsc renders
+///   the evaluated underlying type. Object results are excluded because a
+///   shared object shape is painted through the reverse `find_def_for_type`
+///   lookup, where marking it would mis-route the alias name.
+pub(crate) fn alias_declaration_body_is_computed(
+    arena: &NodeArena,
+    db: &dyn TypeDatabase,
+    decl_idx: NodeIndex,
+    result: TypeId,
+) -> bool {
+    let Some(decl_node) = arena.get(decl_idx) else {
+        return false;
+    };
+    let Some(type_alias) = arena.get_type_alias(decl_node) else {
+        return false;
+    };
+    let Some(body_node) = arena.get(type_alias.type_node) else {
+        return false;
+    };
+    match body_node.kind {
+        syntax_kind_ext::INTERSECTION_TYPE => result_is_primitive_literal_union(db, result),
+        syntax_kind_ext::CONDITIONAL_TYPE | syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+            !crate::query_boundaries::common::is_conditional_type(db, result)
+                && !crate::query_boundaries::common::is_index_access_type(db, result)
+                && !crate::query_boundaries::diagnostics::union_or_intersection_mentions_object(
+                    db, result,
+                )
+        }
+        _ => false,
+    }
+}
+
+fn result_is_primitive_literal_union(db: &dyn TypeDatabase, ty: TypeId) -> bool {
+    crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
+        members.iter().all(|&m| {
+            crate::query_boundaries::common::literal_value(db, m).is_some()
+                || m == TypeId::STRING
+                || m == TypeId::NUMBER
+                || m == TypeId::BOOLEAN
+                || m == TypeId::BIGINT
+                || m == TypeId::SYMBOL
+                || m == TypeId::UNDEFINED
+                || m == TypeId::NULL
+                || m == TypeId::VOID
+                || m == TypeId::NEVER
+        })
+    })
 }
 
 #[derive(Copy, Clone)]
