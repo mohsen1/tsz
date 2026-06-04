@@ -83,6 +83,7 @@ impl<'a> Printer<'a> {
         let mut recovered = Vec::new();
         let mut pending_empty_enum: Option<(String, bool)> = None;
         let mut pending_empty_class: Option<(String, bool)> = None;
+        let mut in_block_comment = false;
         for line in source.lines() {
             let trimmed = line.trim();
             if let Some((class_name, has_body)) = pending_empty_class.as_mut() {
@@ -133,13 +134,7 @@ impl<'a> Printer<'a> {
             {
                 recovered.push(stmt);
             }
-            for ch in line.chars() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-            }
+            depth += class_recovery_brace_delta(line, &mut in_block_comment);
         }
         recovered
     }
@@ -224,4 +219,60 @@ impl<'a> Printer<'a> {
 
         Some(format!("{{\n    {inner};\n}}"))
     }
+}
+
+fn class_recovery_brace_delta(line: &str, in_block_comment: &mut bool) -> i32 {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    let mut delta = 0;
+    let mut quote: Option<u8> = None;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        if *in_block_comment {
+            if b == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                *in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        if let Some(q) = quote {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+
+        match b {
+            b'\'' | b'"' | b'`' => {
+                quote = Some(b);
+                i += 1;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'/') => break,
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                *in_block_comment = true;
+                i += 2;
+            }
+            b'{' => {
+                delta += 1;
+                i += 1;
+            }
+            b'}' => {
+                delta -= 1;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+
+    delta
 }

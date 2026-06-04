@@ -354,6 +354,53 @@ fn test_collect_export_names_ignores_type_only_declarations() {
 }
 
 #[test]
+fn test_collect_export_names_ignores_type_only_exported_namespace() {
+    let export_names = parse_collect_exports(
+        "export namespace N { export type X = number; export interface I {} }",
+    );
+    assert!(
+        export_names.is_empty(),
+        "Expected no runtime exports for a namespace with only type members"
+    );
+}
+
+#[test]
+fn cjs_erases_type_only_export_star_and_namespace() {
+    let output = print_commonjs(
+        "export type * from \"./types\";\nexport namespace N { export type X = number; }\n",
+    );
+
+    assert!(
+        output.contains("Object.defineProperty(exports, \"__esModule\", { value: true });"),
+        "Type-only module syntax should still mark the file as an ES module.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.N"),
+        "Type-only namespace exports should not emit CommonJS runtime exports.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (N)"),
+        "Type-only namespace exports should not emit a namespace IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn cjs_namespace_class_method_body_does_not_leak_to_namespace_tail() {
+    let output = print_commonjs(
+        "namespace N { export class C implements I { constructor(public logger: L) {} private m(p: P): string { var leaked: T = null; return null; } } }",
+    );
+
+    assert!(
+        !output.contains("var leaked:"),
+        "Method-local declarations must stay inside the class method body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("m(p)"),
+        "The class method should still be emitted.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_collect_export_names_ignores_declare_exports() {
     let export_names = parse_collect_exports(
         "export declare const foo: number; export declare function bar(): void;",
