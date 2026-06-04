@@ -23,5 +23,6 @@ mod path_mapping;
 mod pattern_matching;
 mod resolution_failure;
 mod resolver_integration;
+mod scoped_types_fallback;
 mod specifier_parsing;
 mod target_package_type;
