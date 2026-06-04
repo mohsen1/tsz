@@ -119,6 +119,65 @@ const h: Holder = { v: 0 };
     );
 }
 
+// 5b. A conditional reducing to a bare *object* renders the object structurally
+//     (issue #10914 / #10799 follow-up; tsc shows `{ a: 1; }`, never the alias
+//     name). The shared-shape repaint that previously forced object results to
+//     keep the alias name is prevented by the def store's "direct wins" guard.
+#[test]
+fn conditional_alias_to_object_renders_underlying_object() {
+    let msg = ts2322_target(
+        r#"
+type Boxed = true extends true ? { a: 1 } : never;
+type Holder = { v: Boxed };
+const h: Holder = { v: 0 };
+"#,
+    );
+    assert!(
+        msg.contains("{ a: 1; }") && !msg.contains("Boxed"),
+        "expected conditional object alias to render as `{{ a: 1; }}`, got: {msg}"
+    );
+}
+
+// 5c. Renamed binder, indexed-access reducing to an object — proves the object
+//     rule is structural, not keyed on an identifier.
+#[test]
+fn indexed_access_alias_to_object_renders_underlying_object() {
+    let msg = ts2322_target(
+        r#"
+type Picked = { p: { a: 1 } }["p"];
+type Wrapper = { field: Picked };
+const w: Wrapper = { field: 0 };
+"#,
+    );
+    assert!(
+        msg.contains("{ a: 1; }") && !msg.contains("Picked"),
+        "expected indexed-access object alias to render as `{{ a: 1; }}`, got: {msg}"
+    );
+}
+
+// 5d. Collision guard: when a directly-written alias and a computed alias
+//     resolve to the *same* interned object shape, the directly-written alias
+//     keeps its name. Without the "direct wins" guard, marking the shared shape
+//     computed would strip `Direct`'s name too (the prior `C_uobj` regression).
+#[test]
+fn computed_object_shape_shared_with_direct_alias_keeps_direct_name() {
+    let diags = check_source_diagnostics(
+        r#"
+type Direct = { a: 1 };
+type Computed = true extends true ? { a: 1 } : never;
+type Holder = { d: Direct };
+const h: Holder = { d: 0 };
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.iter().any(|d| d.message_text.contains("Direct")),
+        "expected the directly-written alias to keep its name despite a computed \
+         alias sharing the shape, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
 // 6. Negative case: a directly-written tuple alias KEEPS its name (it is a
 //    freshly-constructed structural type with an alias symbol).
 #[test]
