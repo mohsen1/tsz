@@ -1627,6 +1627,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                             &[key, display_value, "7.0", "6.0"],
                         ),
                         key,
+                        Some(display_value),
                     );
                     diagnostics.push(Diagnostic::error(
                         file_path,
@@ -1660,6 +1661,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                             &[key, "7.0", "6.0"],
                         ),
                         key,
+                        None,
                     );
                     diagnostics.push(Diagnostic::error(
                         file_path,

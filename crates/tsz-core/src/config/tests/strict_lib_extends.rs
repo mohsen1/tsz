@@ -1160,9 +1160,12 @@ fn ts6046_silent_for_valid_watch_file_value() {
 // TS5107 and TS5101 must produce the same combined message as tsc's
 // `flattenDiagnosticMessageText` ("\n  " separator before the TS5111 URL)
 // so `try-tsz` project comparisons match tsc output on (code, message) tuples.
+// tsc 6.0.3 chains the TS5111 migration URL onto only two deprecations:
+// `moduleResolution=node10` and `baseUrl` (see `option_has_migration_url`).
 
 #[test]
 fn ts5107_message_equals_flattened_tsc_output() {
+    // `alwaysStrict=false` is deprecated WITHOUT the migration URL in tsc 6.0.3.
     let source = r#"{"compilerOptions":{"alwaysStrict":false}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
@@ -1173,16 +1176,16 @@ fn ts5107_message_equals_flattened_tsc_output() {
     let expected = concat!(
         "Option 'alwaysStrict=false' is deprecated and will stop functioning in TypeScript 7.0.",
         " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
-        "\n  Visit https://aka.ms/ts6 for migration information.",
     );
     assert_eq!(
         diag.message_text, expected,
-        "TS5107 message must exactly match tsc flattenDiagnosticMessageText output"
+        "TS5107 for alwaysStrict=false must match tsc flattenDiagnosticMessageText output (no URL)"
     );
 }
 
 #[test]
 fn ts5101_message_equals_flattened_tsc_output() {
+    // `baseUrl` IS one of the two deprecations tsc chains the migration URL onto.
     let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
@@ -1199,4 +1202,45 @@ fn ts5101_message_equals_flattened_tsc_output() {
         diag.message_text, expected,
         "TS5101 message must exactly match tsc flattenDiagnosticMessageText output"
     );
+}
+
+/// Full TS6-wave parity matrix: for every deprecated option, the TS5107/TS5101
+/// message must carry the TS5111 migration URL only when tsc 6.0.3 does. The
+/// expected URL state was captured from the `typescript@6.0.3` oracle.
+#[test]
+fn ts6_deprecation_migration_url_matches_tsc_oracle() {
+    // (compilerOptions JSON, expected TS code, expects_url)
+    let cases: &[(&str, u32, bool)] = &[
+        (r#"{"moduleResolution":"node10"}"#, 5107, true),
+        (r#"{"moduleResolution":"node"}"#, 5107, true),
+        (r#"{"baseUrl":"."}"#, 5101, true),
+        (r#"{"moduleResolution":"classic"}"#, 5107, false),
+        (r#"{"target":"ES5"}"#, 5107, false),
+        (r#"{"module":"amd"}"#, 5107, false),
+        (r#"{"module":"umd"}"#, 5107, false),
+        (r#"{"module":"system"}"#, 5107, false),
+        (r#"{"module":"none"}"#, 5107, false),
+        (r#"{"alwaysStrict":false}"#, 5107, false),
+        (r#"{"esModuleInterop":false}"#, 5107, false),
+        (r#"{"allowSyntheticDefaultImports":false}"#, 5107, false),
+        (r#"{"outFile":"out.js"}"#, 5101, false),
+        (r#"{"downlevelIteration":true}"#, 5101, false),
+    ];
+    for (opts, code, expects_url) in cases {
+        let source = format!(r#"{{"compilerOptions":{opts}}}"#);
+        let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+        let diag = parsed
+            .diagnostics
+            .iter()
+            .find(|d| d.code == *code)
+            .unwrap_or_else(|| panic!("expected TS{code} for {opts}"));
+        let has_url = diag.message_text.contains(
+            tsz_common::diagnostics::data::diagnostic_messages::VISIT_HTTPS_AKA_MS_TS6_FOR_MIGRATION_INFORMATION,
+        );
+        assert_eq!(
+            has_url, *expects_url,
+            "TS{code} migration-URL state for {opts} must match tsc 6.0.3 (got message: {:?})",
+            diag.message_text
+        );
+    }
 }
