@@ -144,6 +144,28 @@ pub(crate) fn missing_props_are_iterator_protocol_noise(
     has_iterator && has_next
 }
 
+pub(crate) fn missing_props_are_intrinsic_collection_protocol_noise(
+    db: &dyn TypeDatabase,
+    props: &[&tsz_solver::PropertyInfo],
+) -> bool {
+    if props.is_empty() {
+        return false;
+    }
+    let mut has_iterator = false;
+    let mut has_collection_member = false;
+    for prop in props {
+        let name = db.resolve_atom_ref(prop.name);
+        match (prop.is_symbol_named, name.as_ref()) {
+            (true, "[Symbol.iterator]") => has_iterator = true,
+            (false, "join" | "length" | "next" | "slice") => {
+                has_collection_member = true;
+            }
+            _ => return false,
+        }
+    }
+    has_iterator && has_collection_member
+}
+
 pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     crate::query_boundaries::common::contains_error_type_in_args(db, type_id)
 }

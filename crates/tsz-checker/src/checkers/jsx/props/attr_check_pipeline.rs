@@ -970,6 +970,7 @@ impl<'a> CheckerState<'a> {
             && !spread_named_props_target
             && !ctx.skip_prop_checks
             && !outcome.has_prop_type_error
+            && !self.jsx_tag_is_intrinsic_string_choice_alias(opts.tag_name_idx)
         {
             self.check_missing_required_jsx_props(
                 ctx.props_type,
