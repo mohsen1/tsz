@@ -21,7 +21,7 @@ use crate::transforms::private_fields_es5::{
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{ClassData, Node, NodeAccess};
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::syntax::transform_utils::{
     contains_async_arrow_function, contains_super_reference, contains_this_reference,
@@ -29,48 +29,6 @@ use tsz_parser::syntax::transform_utils::{
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    fn class_computed_property_names_contain_static_context_reference(
-        &self,
-        class: &ClassData,
-    ) -> bool {
-        class.members.nodes.iter().any(|&member_idx| {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                return false;
-            };
-            let name_idx = match member_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                    .arena
-                    .get_property_decl(member_node)
-                    .map(|prop| prop.name),
-                k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                    .arena
-                    .get_method_decl(member_node)
-                    .map(|method| method.name),
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    self.arena
-                        .get_accessor(member_node)
-                        .map(|accessor| accessor.name)
-                }
-                _ => None,
-            };
-            let Some(name_idx) = name_idx else {
-                return false;
-            };
-            let Some(name_node) = self.arena.get(name_idx) else {
-                return false;
-            };
-            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                return false;
-            }
-            self.arena
-                .get_computed_property(name_node)
-                .is_some_and(|computed| {
-                    contains_this_reference(self.arena, computed.expression)
-                        || contains_super_reference(self.arena, computed.expression)
-                })
-        })
-    }
-
     pub(in crate::emitter) fn emit_class_es6_with_options(
         &mut self,
         node: &Node,
@@ -1184,13 +1142,8 @@ impl<'a> Printer<'a> {
         );
         let has_static_block_comma_expr =
             self.class_has_static_block_comma_expr(class, target_needs_static_block_lowering);
-        // A computed-named *static method or accessor* is emitted inline in the
-        // class body, so it only requires the `(_tmp = class {...}, ..., _tmp)`
-        // comma wrapping when the binding *also* loses JS named evaluation --
-        // i.e. a `using`/`await using` declaration lowered to
-        // `__addDisposableResource`, which moves the class out of
-        // direct-assignment position. A plain `var X = class {...}` keeps named
-        // evaluation and needs no wrapping for inline computed method names.
+        // Inline computed static methods/accessors need comma wrapping only when
+        // the binding also loses JS named evaluation (for example lowered `using`).
         let has_static_computed_method_or_accessor = self
             .class_has_static_computed_method_or_accessor_comma_expr(
                 class,
