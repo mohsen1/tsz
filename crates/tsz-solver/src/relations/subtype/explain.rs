@@ -1088,14 +1088,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        // For a deferred conditional source related to a concrete target, tsc
+        // For a deferred conditional source related to a target, tsc
         // first reports through the conditional's default constraint. That
         // keeps diagnostics finite for deeply nested conditional helpers:
         // `T extends U ? X : Y` is explained as `(inferred X) | Y` against the
         // target when that constraint already fails, instead of expanding every
         // branch level in the diagnostic slow path.
         if let Some(source_cond) = source_cond.as_deref()
-            && target_cond.is_none()
             && let Some(constraint) = self.get_conditional_constraint(source_cond)
             && constraint != resolved_source
             && !self.check_subtype(constraint, target).is_true()
@@ -1106,6 +1105,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     target_type: target,
                 },
             ));
+        }
+
+        if let (Some(source_cond), Some(target_cond)) =
+            (source_cond.as_deref(), target_cond.as_deref())
+            && !self.conditional_pair_explains_by_branches(source_cond, target_cond)
+        {
+            return None;
         }
 
         let (s_true, s_false) = source_cond

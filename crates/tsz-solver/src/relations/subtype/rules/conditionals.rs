@@ -28,7 +28,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   makes the higher-order `IfEquals` pattern (and `ReadonlyKeys` /
     ///   `MutableKeys` built on top of it) able to distinguish properties
     ///   by mutability.
-    fn conditional_extends_types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
+    pub(crate) fn conditional_extends_types_equivalent(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
         // For extends-clause identity (tsc's `isTypeIdenticalTo`) `any` is
         // identical only to `any`. The bidirectional check below runs with
         // `TopLevelOnly` any-propagation, so a top-level `any` would otherwise
@@ -215,6 +219,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+
+    pub(crate) fn conditional_pair_explains_by_branches(
+        &mut self,
+        source: &ConditionalType,
+        target: &ConditionalType,
+    ) -> bool {
+        if source.is_distributive != target.is_distributive {
+            return false;
+        }
+
+        if !self
+            .check_subtype(source.check_type, target.check_type)
+            .is_true()
+            && !self
+                .check_subtype(target.check_type, source.check_type)
+                .is_true()
+        {
+            return false;
+        }
+
+        self.conditional_extends_types_equivalent(source.extends_type, target.extends_type)
     }
 
     fn check_disjoint_non_distributive_conditional_subtype(

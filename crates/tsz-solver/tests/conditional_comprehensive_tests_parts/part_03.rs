@@ -2,9 +2,9 @@
 // details in conditional failures.
 //
 // Structural rule: when a subtype/assignability check involving a deferred
-// conditional type (`T extends U ? X : Y`) fails, the failure reason should
-// preserve the branch that caused the failure and the nested reason explaining
-// why that branch failed, rather than collapsing to a generic `TypeMismatch`.
+// conditional type (`T extends U ? X : Y`) fails, target-side conditionals
+// preserve the branch that caused the failure, while source-side conditionals
+// first explain through the source default constraint like tsc.
 //
 // The tests below cover the three structural shapes the explain path can see
 // — source-side conditional, target-side conditional, and conditional-vs-
@@ -132,10 +132,10 @@ fn test_explain_target_conditional_false_branch_mismatch_preserves_chain() {
 }
 
 /// Deferred-conditional **source**: `(T extends U ? X : Y) <: T'`.
-/// Both branches must be `<:` the concrete target. Exercise the path with the
-/// true branch failing.
+/// tsc explains through the source conditional's default constraint before
+/// drilling into branch pairs. Exercise the path with the true branch failing.
 #[test]
-fn test_explain_source_conditional_true_branch_mismatch_preserves_chain() {
+fn test_explain_source_conditional_true_branch_mismatch_uses_default_constraint() {
     let interner = TypeInterner::new();
 
     // T extends string ? boolean : "no"
@@ -163,31 +163,20 @@ fn test_explain_source_conditional_true_branch_mismatch_preserves_chain() {
         "deferred conditional with boolean true branch should not be assignable to \"no\""
     );
 
-    let reason = checker.explain_failure(cond, target);
-    let Some(SubtypeFailureReason::ConditionalBranchMismatch {
-        source_type,
-        target_type,
-        branch_source,
-        branch_target,
-        nested_reason,
-    }) = reason
-    else {
-        panic!(
-            "deferred conditional source with branch failure should yield ConditionalBranchMismatch, got {reason:?}"
-        );
-    };
-    assert_eq!(source_type, cond);
-    assert_eq!(target_type, target);
-    assert_eq!(
-        branch_source, TypeId::BOOLEAN,
-        "true branch (boolean) is the failing branch source"
+    let reason = checker
+        .explain_failure(cond, target)
+        .expect("deferred conditional source should produce a default-constraint reason");
+    let stayed_on_original_conditional = matches!(
+        reason,
+        SubtypeFailureReason::TypeMismatch {
+            source_type,
+            target_type
+        } if source_type == cond && target_type == target
     );
-    assert_eq!(branch_target, target, "concrete target carried into branch relation");
     assert!(
-        matches!(*nested_reason, SubtypeFailureReason::TypeMismatch { .. }
-            | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
-            | SubtypeFailureReason::LiteralTypeMismatch { .. }),
-        "nested reason should preserve the structural mismatch on the failing branch, got {nested_reason:?}"
+        !matches!(reason, SubtypeFailureReason::ConditionalBranchMismatch { .. })
+            && !stayed_on_original_conditional,
+        "deferred conditional source should explain via its default constraint before branches, got {reason:?}"
     );
 }
 
