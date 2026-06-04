@@ -580,6 +580,7 @@ return {
         ..Default::default()
     };
     let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_current_root_js_source(true);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
@@ -665,6 +666,9 @@ function outer() {
 }
 const object = {
     static method() { }
+    [console.log('oh no'), 2]: 'hi',
+    #secret: 1,
+    export cantExportProperties: 4,
 }
 const { ...rest = true } = object
 const tri = import('1','2','3')
@@ -678,6 +682,7 @@ const tri = import('1','2','3')
         ..Default::default()
     };
     let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_current_root_js_source(true);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
@@ -697,6 +702,9 @@ const tri = import('1','2','3')
         "export static var staticExport = 1;",
         "static function inner() { }",
         "static method() { }",
+        "[console.log('oh no'), 2]: 'hi'",
+        "#secret: 1",
+        "cantExportProperties: 4",
         "const { ...rest = true } = object;",
         "const tri = import('1','2','3');",
     ] {
