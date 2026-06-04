@@ -173,7 +173,7 @@ impl<'a> CheckerState<'a> {
         // Skip the check under `noLib`: with no library files, the user owns
         // the global type surface, and tsc does not complain about missing
         // `Promise` simply because an async function is declared. See
-        // https://github.com/mohsen1/tsz/issues/3787.
+        // https://github.com/tsz-org/tsz/issues/3787.
         if func.is_async && !func.asterisk_token && !self.ctx.compiler_options.no_lib {
             self.check_global_promise_available();
         }

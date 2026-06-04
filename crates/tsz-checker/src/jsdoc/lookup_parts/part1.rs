@@ -1,28 +1,3 @@
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-use crate::query_boundaries::type_checking_utilities as query;
-
-use crate::state::CheckerState;
-
-use tsz_binder::symbol_flags;
-
-use tsz_parser::parser::NodeIndex;
-
-use tsz_parser::parser::node::SourceFileData;
-
-use tsz_parser::parser::syntax_kind_ext;
-
-use tsz_scanner::SyntaxKind;
-
-use tsz_solver::TypeId;
-
-/// `(tag_name, Some((pos, len)))` for orphaned `@extends`/`@augments` tags.
-/// `None` means fully-dangling (no attached statement); `Some` gives the
-/// statement's source position and length for diagnostic anchoring.
-type OrphanedExtendsTag = (&'static str, Option<(u32, u32)>);
-
-const JSDOC_TYPEDEF_PRESCAN_MIN_FILES: usize = 32;
-
 impl<'a> CheckerState<'a> {
     fn global_source_file_idx_for_name(&self, file_name: &str) -> Option<usize> {
         if self.ctx.file_name == file_name {
@@ -261,6 +236,59 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Negative-result fast path. A name that resolves to no global JSDoc
+        // `@typedef` anywhere in the project stays unresolved for the whole run,
+        // so re-scanning every source file's text for it on each unresolved type
+        // reference is pure repeated work (quadratic on dense `.d.ts` graphs such
+        // as `pino` + `@types/node`).
+        if self
+            .ctx
+            .jsdoc_global_typedef_lookup_cache
+            .miss_cache
+            .borrow()
+            .contains(name)
+        {
+            return None;
+        }
+
+        // Re-entrancy guard. A recursive typedef whose body references itself
+        // (`@typedef T ... T ...`) re-enters this lookup; the inner call returns
+        // `None` only as a *cycle break*, while the outermost call still resolves
+        // `T` to its type. Caching that provisional inner `None` would poison
+        // every later resolution of `T`. So only the outermost (non-re-entrant)
+        // lookup — where `None` genuinely means "no such typedef in any file" —
+        // records a miss.
+        let is_outermost = self
+            .ctx
+            .jsdoc_global_typedef_lookup_cache
+            .in_progress
+            .borrow_mut()
+            .insert(name.to_string());
+
+        let result = self.resolve_global_jsdoc_typedef_info_uncached(name);
+
+        if is_outermost {
+            self.ctx
+                .jsdoc_global_typedef_lookup_cache
+                .in_progress
+                .borrow_mut()
+                .remove(name);
+            if result.is_none() {
+                self.ctx
+                    .jsdoc_global_typedef_lookup_cache
+                    .miss_cache
+                    .borrow_mut()
+                    .insert(name.to_string());
+            }
+        }
+
+        result
+    }
+
+    fn resolve_global_jsdoc_typedef_info_uncached(
+        &mut self,
+        name: &str,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let current_file_name = self.ctx.file_name.clone();
         let current_file_idx = self.ctx.current_file_idx;
         let use_typedef_prescan = self
@@ -425,6 +453,7 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
     /// Resolve `typeof X` type queries to the type of symbol X.
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
@@ -489,6 +518,7 @@ impl<'a> CheckerState<'a> {
             query::TypeQueryKind::Application { .. } | query::TypeQueryKind::Other => type_id,
         }
     }
+
     /// Extract and parse a JSDoc `@type` annotation for the given node.
     pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
         if !self.ctx.should_resolve_jsdoc() {
@@ -872,6 +902,7 @@ impl<'a> CheckerState<'a> {
 
         idx
     }
+
     fn validate_jsdoc_generic_constraints_at_node(
         &mut self,
         idx: NodeIndex,
@@ -1072,6 +1103,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
     }
+
     /// Resolve a direct leading JSDoc `@type` annotation (no parent fallback).
     pub(crate) fn jsdoc_type_annotation_for_node_direct(
         &mut self,
@@ -1106,6 +1138,7 @@ impl<'a> CheckerState<'a> {
         // Use the authoritative resolution kernel — no fallback chain needed.
         self.resolve_jsdoc_reference(type_expr)
     }
+
     /// Like `jsdoc_type_annotation_for_node_direct`, but resolves JSDoc `@type`
     /// annotations even when `checkJs` is not set. This is needed for type inference
     /// of JS class properties (`this.p = value` in constructors) when `allowJs` is
@@ -1266,6 +1299,7 @@ impl<'a> CheckerState<'a> {
         };
         Self::jsdoc_contains_tag(&jsdoc, "readonly")
     }
+
     /// Get the access level from JSDoc `@private` / `@protected` / `@public` tags.
     pub(crate) fn jsdoc_access_level(
         &self,
@@ -1458,56 +1492,5 @@ impl<'a> CheckerState<'a> {
             }
         }
         results
-    }
-
-    /// Check if two source positions are in different function scopes.
-    /// Used for JSDoc typedef scoping — a typedef defined inside a function
-    /// should not be visible outside that function.
-    #[allow(dead_code)]
-    pub(crate) fn is_in_different_function_scope(&self, comment_pos: u32, anchor_pos: u32) -> bool {
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let source_text = sf.text.to_string();
-        // Walk from anchor_pos backward to see if we cross a function boundary
-        // before reaching comment_pos. If comment_pos is inside a function body
-        // and anchor_pos is outside it, they're in different scopes.
-        let text = &source_text[..anchor_pos as usize];
-        let mut depth: i32 = 0;
-        for ch in text[comment_pos as usize..].chars() {
-            match ch {
-                '{' => depth += 1,
-                '}' => depth -= 1,
-                _ => {}
-            }
-        }
-        // If depth != 0, the comment is inside a nested scope relative to anchor
-        depth != 0
-    }
-
-    /// Find the end position of a function body by scanning for the matching '}'.
-    pub(crate) fn find_function_body_end(node_pos: u32, node_end: u32, source_text: &str) -> u32 {
-        let start = node_pos as usize;
-        let end = node_end as usize;
-        if end > source_text.len() {
-            return node_end;
-        }
-        let slice = &source_text[start..end];
-        let mut depth = 0i32;
-        let mut last_close = node_end;
-        for (i, ch) in slice.char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        last_close = (start + i + 1) as u32;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        last_close
     }
 }

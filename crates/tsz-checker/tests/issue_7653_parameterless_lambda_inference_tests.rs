@@ -23,7 +23,7 @@
 //!    signature, so an `Application` like `Make<T>` resolves to its `(): T`
 //!    call shape and is correctly seen as providing evidence for `T`.
 //!
-//! [issue #7653]: https://github.com/mohsen1/tsz/issues/7653
+//! [issue #7653]: https://github.com/tsz-org/tsz/issues/7653
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source_code_messages(source)

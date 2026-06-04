@@ -886,7 +886,7 @@ fn test_substitution_from_args_circular_defaults_resolve_to_any() {
 /// independently for each call. Two independent instantiations of the same
 /// `<A, B = A>` parameter list with different first arguments must not let
 /// the default resolved for one call leak into the other — i.e. the defaults
-/// must not "bleed between independent branches" (mohsen1/tsz#11608).
+/// must not "bleed between independent branches" (tsz-org/tsz#11608).
 #[test]
 fn test_substitution_from_args_earlier_param_default_independent_per_call() {
     let interner = TypeInterner::new();

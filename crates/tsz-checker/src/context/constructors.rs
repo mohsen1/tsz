@@ -77,6 +77,10 @@ impl<'a> CheckerContext<'a> {
             export_equals_named_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
             symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
+            jsdoc_global_typedef_lookup_cache: crate::context::JSDocGlobalTypedefLookupCache {
+                miss_cache: RefCell::new(FxHashSet::default()),
+                in_progress: RefCell::new(FxHashSet::default()),
+            },
             nested_namespace_candidates_cache_complete: Cell::new(false),
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
             namespace_exports_cache: RefCell::new(FxHashMap::default()),

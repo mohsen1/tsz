@@ -18,6 +18,15 @@ fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
     })
 }
 
+fn strip_keyword_token<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
+    text.strip_prefix(keyword).and_then(|tail| {
+        tail.chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            .then_some(tail)
+    })
+}
+
 const fn is_identifier_continue(byte: u8) -> bool {
     byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
 }

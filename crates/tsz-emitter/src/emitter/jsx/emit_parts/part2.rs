@@ -3,6 +3,58 @@ impl<'a> Printer<'a> {
     // JSX - Preserve Mode (default)
     // =========================================================================
 
+    /// Check if a JSX child is a truly empty expression container `{}` with no
+    /// inner comments.  Used in preserve mode to strip bare `{}` from JSX output
+    /// (matching tsc behavior) while keeping `{/* comment */}` intact.
+    pub(in super::super) fn is_empty_jsx_expression_without_comments(
+        &self,
+        child: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(child) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::JSX_EXPRESSION {
+            return false;
+        }
+        let Some(expr) = self.arena.get_jsx_expression(node) else {
+            return false;
+        };
+        if expr.expression.is_some() {
+            return false;
+        }
+        if !self.empty_jsx_expression_has_source_close_brace(node) {
+            return false;
+        }
+        // Check that there are no comments inside the expression range
+        let has_tracked_comment = self
+            .all_comments
+            .iter()
+            .any(|c| c.pos >= node.pos && c.end <= node.end);
+        if has_tracked_comment {
+            return false;
+        }
+        let first_unfiltered = self
+            .source_comment_ranges
+            .partition_point(|comment| comment.end <= node.pos);
+        if self.source_comment_ranges[first_unfiltered..]
+            .iter()
+            .take_while(|comment| comment.pos < node.end)
+            .any(|comment| comment.pos >= node.pos && comment.end <= node.end)
+        {
+            return false;
+        }
+        true
+    }
+
+    fn empty_jsx_expression_has_source_close_brace(&self, node: &Node) -> bool {
+        let Some(source) = self.source_text else {
+            return true;
+        };
+        let start = std::cmp::min(node.pos as usize, source.len());
+        let end = std::cmp::min(node.end as usize, source.len());
+        source[start..end].bytes().any(|byte| byte == b'}')
+    }
+
     /// Walk all JSX children in source order, emitting non-empty children and
     /// consuming comments from empty expressions.  This ensures `comment_emit_idx`
     /// advances monotonically.

@@ -167,6 +167,8 @@ impl<'a> Printer<'a> {
         self.write("/>");
         if let Some(tail) = self.recovered_numeric_jsx_tag_tail(node, jsx.tag_name) {
             self.write(&tail);
+        } else if let Some(tail) = self.recovered_invalid_jsx_attribute_tail(node, jsx.tag_name) {
+            self.write(&tail);
         }
     }
 
@@ -206,6 +208,60 @@ impl<'a> Printer<'a> {
             return None;
         }
         Some(rest[..=digits_len].to_string())
+    }
+
+    fn recovered_invalid_jsx_attribute_tail(
+        &self,
+        node: &Node,
+        tag_name: NodeIndex,
+    ) -> Option<String> {
+        if self.arena.is_missing_recovery_identifier(tag_name) {
+            return None;
+        }
+        let source = self.source_text?;
+        let tag_node = self.arena.get(tag_name)?;
+        let start = std::cmp::min(tag_node.end as usize, source.len());
+        let node_end = std::cmp::min(node.end as usize, source.len());
+        if start >= source.len() || node_end <= start {
+            return None;
+        }
+
+        let line_end = source[start..]
+            .find(['\n', '\r', ';'])
+            .map_or(source.len(), |offset| start + offset);
+        let tail = source[start..line_end].trim_start();
+        let bytes = tail.as_bytes();
+        let first = *bytes.first()?;
+
+        if first.is_ascii_digit() {
+            let digits_len = bytes
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
+            if tail[digits_len..]
+                .starts_with(|ch: char| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+                && tail.contains("/>")
+            {
+                return Some(format!(";\n{}", &tail[..digits_len]));
+            }
+            return None;
+        }
+
+        if matches!(first, b'-' | b'+') {
+            let rest = tail[1..].trim_start();
+            let name_len = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(*ch, '_' | '$' | '-'))
+                .map(char::len_utf8)
+                .sum::<usize>();
+            if name_len > 0 && rest[name_len..].trim_start().starts_with('=') && tail.contains("/>")
+            {
+                let op = first as char;
+                return Some(format!(" {op} {}", &rest[..name_len]));
+            }
+        }
+
+        None
     }
 
     fn emit_jsx_element_classic(&mut self, node: &Node) {
@@ -1432,45 +1488,5 @@ impl<'a> Printer<'a> {
         self.arena
             .get_jsx_expression(node)
             .is_some_and(|e| e.expression.is_none())
-    }
-
-    /// Check if a JSX child is a truly empty expression container `{}` with no
-    /// inner comments.  Used in preserve mode to strip bare `{}` from JSX output
-    /// (matching tsc behavior) while keeping `{/* comment */}` intact.
-    pub(in super::super) fn is_empty_jsx_expression_without_comments(
-        &self,
-        child: NodeIndex,
-    ) -> bool {
-        let Some(node) = self.arena.get(child) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::JSX_EXPRESSION {
-            return false;
-        }
-        let Some(expr) = self.arena.get_jsx_expression(node) else {
-            return false;
-        };
-        if expr.expression.is_some() {
-            return false;
-        }
-        // Check that there are no comments inside the expression range
-        let has_tracked_comment = self
-            .all_comments
-            .iter()
-            .any(|c| c.pos >= node.pos && c.end <= node.end);
-        if has_tracked_comment {
-            return false;
-        }
-        let first_unfiltered = self
-            .source_comment_ranges
-            .partition_point(|comment| comment.end <= node.pos);
-        if self.source_comment_ranges[first_unfiltered..]
-            .iter()
-            .take_while(|comment| comment.pos < node.end)
-            .any(|comment| comment.pos >= node.pos && comment.end <= node.end)
-        {
-            return false;
-        }
-        true
     }
 }

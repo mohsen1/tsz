@@ -28,6 +28,7 @@ impl TypeInterner {
             contains_lazy_or_recursive_cache: DashMap::with_hasher(FxBuildHasher),
             contains_unresolved_application_cache: DashMap::with_hasher(FxBuildHasher),
             contains_resolver_dependent_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_conditional_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),

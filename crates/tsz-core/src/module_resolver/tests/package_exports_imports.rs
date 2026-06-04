@@ -128,7 +128,7 @@ fn test_package_imports_conditional_falls_back_after_missing_target() {
 
 #[test]
 fn test_package_imports_conditional_prefers_versioned_types_branch() {
-    // Regression for https://github.com/mohsen1/tsz/issues/3564.
+    // Regression for https://github.com/tsz-org/tsz/issues/3564.
     //
     // The package.json#imports field supports the same conditional key syntax
     // as the exports field, including versioned `types@<range>` keys. tsc

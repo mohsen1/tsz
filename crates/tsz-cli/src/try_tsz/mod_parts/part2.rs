@@ -26,7 +26,7 @@ fn submit_discussion_or_print_fallback(report_path: &Path) -> Result<()> {
             println!("Could not submit with gh. Open a Discussion and paste:");
             println!("{}", report_path.display());
             println!(
-                "https://github.com/mohsen1/tsz/discussions/new?category=general&title={}&body={}",
+                "https://github.com/tsz-org/tsz/discussions/new?category=general&title={}&body={}",
                 percent_encode_url_component(title),
                 percent_encode_url_component(&body)
             );

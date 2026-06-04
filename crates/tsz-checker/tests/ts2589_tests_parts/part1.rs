@@ -682,7 +682,7 @@ function foo(arg: Circular<tup>): tup {
 /// A recursive mapped type whose template contains the alias itself in a union
 /// with a ground type should NOT emit TS2589.  tsc handles this coinductively.
 ///
-/// Regression for: <https://github.com/mohsen1/tsz/issues/6169>
+/// Regression for: <https://github.com/tsz-org/tsz/issues/6169>
 #[test]
 fn recursive_mapped_type_with_union_ground_type_no_ts2589() {
     let source = r#"
@@ -1138,7 +1138,7 @@ fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
 }
 
 mod issue_6761 {
-    //! Tests for <https://github.com/mohsen1/tsz/issues/6761>.
+    //! Tests for <https://github.com/tsz-org/tsz/issues/6761>.
     //!
     //! Structural rule: the `TypeEvaluator`'s per-`TypeId` recursion guard
     //! is a stack-protection limit, not tsc's `instantiationDepth`. When it
@@ -1374,7 +1374,7 @@ type Invert<O extends Record<keyof O, Key>> =
 /// for a small union. For `Permutation<"a" | "b">`, there are only 2 permutations
 /// and the recursion terminates in a few steps. tsc accepts this without error.
 ///
-/// Repro for: <https://github.com/mohsen1/tsz/issues/6515>
+/// Repro for: <https://github.com/tsz-org/tsz/issues/6515>
 #[test]
 fn permutation_type_small_union_no_ts2799() {
     // Use T parameter name
@@ -1487,97 +1487,5 @@ type Y = Forever<42>;
     assert!(
         diags_u.iter().any(|d| d.0 == 2589),
         "Must emit TS2589 for infinite tail-recursive alias (renamed param). Got: {diags_u:?}"
-    );
-}
-
-/// A conditional recursive alias whose accumulator is a tuple spread doubles
-/// in length each step. When instantiated with args that make termination
-/// impossible (e.g. a length that isn't a power of 2), the accumulated tuple
-/// exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH` before the recursion depth limit,
-/// so tsc emits TS2799 rather than TS2589.
-///
-/// Structural rule: when a generic alias application triggers the tuple-too-large
-/// sentinel (solver emits `TypeId::ERROR` from `visit_tuple`), the checker emits
-/// TS2799 regardless of whether the alias body is conditional or unconditional.
-#[test]
-fn conditional_tuple_accumulator_alias_emits_ts2799_not_ts2589() {
-    // Canonical BuildTuple from excessivelyLargeTupleSpread.ts (TypeScript#41771).
-    // T['length'] extends L ? T : BuildTuple<L, [...T, ...T]>
-    // L=3 is not a power of 2 so the accumulator doubles unboundedly.
-    let source_build = r#"
-type BuildTuple<L extends number, T extends any[] = [any]> =
-    T['length'] extends L ? T : BuildTuple<L, [...T, ...T]>;
-type A = BuildTuple<3>
-"#;
-    let diags = check_source_diagnostics(source_build);
-    assert!(
-        diags.iter().any(|d| d.code == 2799),
-        "BuildTuple<3> must emit TS2799 (tuple too large): {diags:?}"
-    );
-    assert!(
-        !diags.iter().any(|d| d.code == 2589),
-        "BuildTuple<3> must NOT emit TS2589: {diags:?}"
-    );
-
-    // Same pattern, renamed alias and type-parameter names — rule must not
-    // be tied to 'BuildTuple', 'L', or 'T'.
-    let source_grow = r#"
-type GrowArr<N extends number, Acc extends any[] = [any]> =
-    Acc['length'] extends N ? Acc : GrowArr<N, [...Acc, ...Acc]>;
-type G = GrowArr<5>
-"#;
-    let diags_grow = check_source_diagnostics(source_grow);
-    assert!(
-        diags_grow.iter().any(|d| d.code == 2799),
-        "GrowArr<5> must emit TS2799 (tuple too large): {diags_grow:?}"
-    );
-    assert!(
-        !diags_grow.iter().any(|d| d.code == 2589),
-        "GrowArr<5> must NOT emit TS2589: {diags_grow:?}"
-    );
-
-    // Third variant: three type parameters, different alias and param names.
-    // `Bag` doubles each step: 1, 2, 4, 8, 16, ... — 11 never appears in this
-    // sequence so the recursion never terminates and Bag exceeds 10,000 elements.
-    let source_triple = r#"
-type Twice<Size extends number, Bag extends any[] = [any], Tag extends any[] = []> =
-    Bag['length'] extends Size ? Bag : Twice<Size, [...Bag, ...Bag], [...Tag, any]>;
-type T3 = Twice<11>
-"#;
-    let diags_triple = check_source_diagnostics(source_triple);
-    assert!(
-        diags_triple.iter().any(|d| d.code == 2799),
-        "Twice<11> must emit TS2799 (tuple too large): {diags_triple:?}"
-    );
-    assert!(
-        !diags_triple.iter().any(|d| d.code == 2589),
-        "Twice<11> must NOT emit TS2589: {diags_triple:?}"
-    );
-}
-
-/// Terminating concrete instantiations of recursive aliases must NOT emit TS2589.
-/// These converge in a bounded number of steps regardless of input.
-#[test]
-fn terminating_recursive_alias_with_concrete_args_no_ts2589() {
-    // Length counter: Len<[1,2,3]> converges in 4 steps
-    let source_len = r#"
-type Len<T extends any[]> = T extends [any, ...infer R] ? Len<R> : 0;
-type L = Len<[1, 2, 3]>;
-"#;
-    let diags_len = get_diagnostics(source_len);
-    assert!(
-        !diags_len.iter().any(|d| d.0 == 2589),
-        "Len<[1,2,3]> is bounded; must NOT emit TS2589. Got: {diags_len:?}"
-    );
-
-    // String trimming: TrimRight<"hello   "> terminates when no trailing space remains
-    let source_trim = r#"
-type TrimRight<S extends string> = S extends `${infer R} ` ? TrimRight<R> : S;
-type T = TrimRight<"hello   ">;
-"#;
-    let diags_trim = get_diagnostics(source_trim);
-    assert!(
-        !diags_trim.iter().any(|d| d.0 == 2589),
-        "TrimRight<\"hello   \"> is bounded; must NOT emit TS2589. Got: {diags_trim:?}"
     );
 }

@@ -130,6 +130,16 @@ pub trait TypePredicateCache {
     /// Record the result of `is_resolver_dependent_type(type_id)` in the shared
     /// interner cache. Default impl is a no-op.
     fn set_contains_resolver_dependent_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached alias-opaque `contains Conditional` walk result, used by
+    /// the `closed_eval_cache` eligibility gate. Default impl returns `None`.
+    fn contains_conditional_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of the alias-opaque `contains Conditional` walk in the
+    /// shared interner cache. Default impl is a no-op.
+    fn set_contains_conditional_cache(&self, _type_id: TypeId, _result: bool) {}
 }
 
 /// Narrow signal for tuple-size overflow discovered during solver evaluation.
@@ -578,6 +588,14 @@ impl TypePredicateCache for TypeInterner {
     fn set_contains_resolver_dependent_cache(&self, type_id: TypeId, result: bool) {
         self.contains_resolver_dependent_cache
             .insert(type_id, result);
+    }
+
+    fn contains_conditional_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_conditional_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_conditional_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_conditional_cache.insert(type_id, result);
     }
 }
 

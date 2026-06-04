@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - main
-      - 'automation/merge-queue/**'
   workflow_dispatch:
 
 permissions:
@@ -46,7 +45,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF: ${{ github.ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -61,20 +59,14 @@ jobs:
           arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
-          if [[ "${CI_REF}" == refs/heads/automation/merge-queue/* ]]; then
-            # Queue branches are synthetic latest-main merge commits. The PR
-            # head already passed PR CI on its own SHA, but the synthetic
-            # merge can introduce regressions no PR-head check observed —
-            # most importantly, arch-guard size caps that a sibling PR pushed
-            # up while this PR was waiting (issue #12499). Run the cheap
-            # gates (lint, cargo-shear, cargo-deny, project-row-drift) on
-            # the synthetic merge to catch those; keep the heavy compiler
-            # suites off via compiler_checks_required=false so queue
-            # throughput stays bounded.
-            echo "Merge-queue synthetic branch - running cheap gates on the merge."
-            should_run=true
+          if [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            # Native merge queue has already admitted a PR whose current head
+            # satisfied the required PR status checks. The queued commit is a
+            # GitHub-owned synthetic merge; keep the required CI Summary alive
+            # for branch protection without scheduling the self-hosted suite.
+            echo "Native merge queue group - validating queue admission without self-hosted CI."
+            should_run=false
             full_run=false
-            required_summary=true
             compiler_checks_required=false
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             if [[ "${{ github.event.action }}" == "edited" ]]; then

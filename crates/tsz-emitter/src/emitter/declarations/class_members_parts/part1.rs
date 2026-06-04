@@ -854,6 +854,10 @@ impl<'a> Printer<'a> {
                         && emit_accessor_keyword
                     {
                         self.write("accessor ");
+                    } else if mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                        && self.should_emit_recovered_root_js_declaration_modifiers()
+                    {
+                        self.write("async ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
                         // `export` on a class member is a parse error, but tsc
                         // preserves it in emit for error-recovery fidelity.
@@ -903,6 +907,7 @@ impl<'a> Printer<'a> {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
                     match mod_node.kind {
                         k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
+                        k if k == SyntaxKind::AsyncKeyword as u16 => self.write("async "),
                         k if k == SyntaxKind::ExportKeyword as u16 => self.write("export "),
                         _ => {}
                     }

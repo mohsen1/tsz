@@ -1077,6 +1077,57 @@ fn run_tsc_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
     Some((code, normalize_output(&combined)))
 }
 
+#[test]
+fn create_type_options_required_constraint_cli_no_ts2344() {
+    let temp = TempDir::new("create_type_options_required_constraint").expect("temp dir");
+    write_file(
+        &temp.path.join("repro.ts"),
+        r#"type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type;
+
+type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+
+type Ok = Paths<{ value: string }>;
+"#,
+    );
+    let args = ["--noEmit", "--pretty", "false", "--strict", "repro.ts"];
+    let Some((tsc_code, tsc_output)) = run_tsc_with_exit_code(&temp.path, &args) else {
+        println!("skipping: tsc not found");
+        return;
+    };
+    let Some((tsz_code, tsz_output)) = run_tsz_with_exit_code(&temp.path, &args) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(tsc_code, 0, "tsc should accept repro:\n{tsc_output}");
+    assert_eq!(tsz_code, 0, "tsz should accept repro:\n{tsz_output}");
+    assert!(
+        !tsz_output.contains("TS2344"),
+        "dependent Required<T> constraints must not emit TS2344:\n{tsz_output}"
+    );
+}
+
 /// Run both tsc and tsz and assert their outputs match exactly.
 /// Returns the common output on success.
 fn assert_tsc_tsz_match(cwd: &Path, args: &[&str], label: &str) -> String {

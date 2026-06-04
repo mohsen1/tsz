@@ -1,4 +1,60 @@
 impl<'a> Printer<'a> {
+    pub(super) fn has_recovered_declaration_trailing_comma(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        if start < end && text[start..end].trim_end().ends_with(',') {
+            return true;
+        }
+
+        let bytes = text.as_bytes();
+        let mut pos = end;
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b',' => return true,
+                b' ' | b'\t' => pos += 1,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    pub(super) fn has_recovered_anonymous_function_arrow(
+        &self,
+        node: &Node,
+        name: NodeIndex,
+    ) -> bool {
+        if name.is_some()
+            && self
+                .arena
+                .get(name)
+                .and_then(|name_node| self.arena.get_identifier(name_node))
+                .is_some_and(|ident| !ident.escaped_text.is_empty())
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        let Some(slice) = text.get(start..end) else {
+            return false;
+        };
+        let trimmed = slice.trim_start();
+        let Some(after_function) = trimmed.strip_prefix("function") else {
+            return false;
+        };
+        if after_function.trim_start().starts_with("=>") {
+            return true;
+        }
+
+        text.get(end..)
+            .is_some_and(|tail| tail.trim_start().starts_with("=>"))
+    }
+
     /// Check if a `declare;` expression statement is an artifact of the parser not
     /// recognizing `declare` as a modifier before certain keywords. Looks at the source
     /// text after `declare` to see if the next non-whitespace content on the same line

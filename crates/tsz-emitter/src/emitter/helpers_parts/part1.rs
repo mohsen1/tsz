@@ -195,6 +195,79 @@ impl<'a> Printer<'a> {
             || self.has_recovered_namespace_static_modifier(node)
     }
 
+    pub(in crate::emitter) fn emit_recovered_root_js_declaration_modifiers(
+        &mut self,
+        modifiers: &Option<NodeList>,
+        include_export: bool,
+    ) {
+        if !self.should_emit_recovered_root_js_declaration_modifiers() {
+            return;
+        }
+        let Some(modifiers) = modifiers else {
+            return;
+        };
+        for &mod_idx in &modifiers.nodes {
+            let Some(mod_node) = self.arena.get(mod_idx) else {
+                continue;
+            };
+            match mod_node.kind {
+                k if k == SyntaxKind::AsyncKeyword as u16 => self.write("async "),
+                k if include_export && k == SyntaxKind::ExportKeyword as u16 => {
+                    self.write("export ");
+                }
+                k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
+                _ => {}
+            }
+        }
+    }
+
+    pub(in crate::emitter) fn should_emit_recovered_root_js_declaration_modifiers(&self) -> bool {
+        self.is_current_root_js_source
+            && !self.ctx.target_es5
+            && self.transforms.is_empty()
+            && !self.ctx.is_commonjs()
+    }
+
+    pub(in crate::emitter) fn emit_recovered_root_js_export_clause_modifiers(
+        &mut self,
+        node: &Node,
+    ) {
+        if !self.should_emit_recovered_root_js_declaration_modifiers() {
+            return;
+        }
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let Some(line) = text.get(start..) else {
+            return;
+        };
+        let line = line.split_once(['\n', '\r']).map_or(line, |(head, _)| head);
+        let Some(mut rest) = strip_keyword_token(line, "export") else {
+            return;
+        };
+
+        loop {
+            rest = rest.trim_start_matches([' ', '\t']);
+            if rest.is_empty()
+                || ["var", "let", "const", "function", "class", "import"]
+                    .iter()
+                    .any(|keyword| starts_with_keyword_token(rest, keyword))
+            {
+                return;
+            }
+            if let Some(after_static) = strip_keyword_token(rest, "static") {
+                self.write("static ");
+                rest = after_static;
+            } else if let Some(after_export) = strip_keyword_token(rest, "export") {
+                self.write("export ");
+                rest = after_export;
+            } else {
+                return;
+            }
+        }
+    }
+
     fn has_recovered_namespace_static_modifier(&self, node: &Node) -> bool {
         let Some(text) = self.source_text else {
             return false;
@@ -1413,61 +1486,5 @@ impl<'a> Printer<'a> {
                 .arena
                 .get(module.body)
                 .is_some_and(|body| body.kind == syntax_kind_ext::MODULE_BLOCK)
-    }
-
-    pub(super) fn has_recovered_declaration_trailing_comma(&self, node: &Node) -> bool {
-        let Some(text) = self.source_text else {
-            return false;
-        };
-        let start = (node.pos as usize).min(text.len());
-        let end = (node.end as usize).min(text.len());
-        if start < end && text[start..end].trim_end().ends_with(',') {
-            return true;
-        }
-
-        let bytes = text.as_bytes();
-        let mut pos = end;
-        while pos < bytes.len() {
-            match bytes[pos] {
-                b',' => return true,
-                b' ' | b'\t' => pos += 1,
-                _ => return false,
-            }
-        }
-        false
-    }
-
-    pub(super) fn has_recovered_anonymous_function_arrow(
-        &self,
-        node: &Node,
-        name: NodeIndex,
-    ) -> bool {
-        if name.is_some()
-            && self
-                .arena
-                .get(name)
-                .and_then(|name_node| self.arena.get_identifier(name_node))
-                .is_some_and(|ident| !ident.escaped_text.is_empty())
-        {
-            return false;
-        }
-        let Some(text) = self.source_text else {
-            return false;
-        };
-        let start = (node.pos as usize).min(text.len());
-        let end = (node.end as usize).min(text.len());
-        let Some(slice) = text.get(start..end) else {
-            return false;
-        };
-        let trimmed = slice.trim_start();
-        let Some(after_function) = trimmed.strip_prefix("function") else {
-            return false;
-        };
-        if after_function.trim_start().starts_with("=>") {
-            return true;
-        }
-
-        text.get(end..)
-            .is_some_and(|tail| tail.trim_start().starts_with("=>"))
     }
 }

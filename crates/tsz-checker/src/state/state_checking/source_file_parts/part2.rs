@@ -1,4 +1,12 @@
 impl<'a> CheckerState<'a> {
+    pub(crate) fn check_statement_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        StatementChecker::check_with_request(stmt_idx, self, request);
+    }
+
     /// TS4094: For each `export default <expr>` statement, check whether the
     /// expression's type is an anonymous class constructor.  If so, report TS4094 for
     /// each private/protected member of its instance type.
