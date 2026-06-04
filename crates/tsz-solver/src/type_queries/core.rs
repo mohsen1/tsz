@@ -354,6 +354,27 @@ pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// `true` when `type_id` is an anonymous object type, or a union / intersection
+/// that contains one (recursing only through nested unions / intersections).
+///
+/// Used to keep the "computed body" structural display off shared object shapes:
+/// such a shape is painted through the reverse `find_def_for_type` lookup, which
+/// can repaint it with an unrelated alias name. Both the checker's computed-body
+/// marking and the diagnostic formatter consult this so the exclusion stays
+/// single-sourced.
+pub fn union_or_intersection_mentions_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if is_object_type(db, type_id) {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&member| union_or_intersection_mentions_object(db, member)),
+        _ => false,
+    }
+}
+
 /// Check if a type has named properties (non-empty property list).
 ///
 /// Returns true for object types with at least one named property.
