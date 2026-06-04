@@ -2451,4 +2451,5 @@ pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
 }
 
 #[cfg(test)]
+#[path = "check_utils/tests.rs"]
 mod tests;

@@ -151,7 +151,7 @@ impl ParserState {
             }
             SyntaxKind::DeclareKeyword => self.parse_ambient_declaration_with_modifiers(modifiers),
             SyntaxKind::ExportKeyword => {
-                if !self.look_ahead_export_has_modified_declaration() {
+                if self.look_ahead_export_starts_export_declaration() {
                     return self.parse_export_declaration();
                 }
                 let export_start = self.token_pos();
@@ -170,29 +170,17 @@ impl ParserState {
         }
     }
 
-    fn look_ahead_export_has_modified_declaration(&mut self) -> bool {
+    fn look_ahead_export_starts_export_declaration(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token();
         let result = matches!(
             self.token(),
-            SyntaxKind::FunctionKeyword
-                | SyntaxKind::ClassKeyword
-                | SyntaxKind::InterfaceKeyword
-                | SyntaxKind::TypeKeyword
-                | SyntaxKind::EnumKeyword
-                | SyntaxKind::NamespaceKeyword
-                | SyntaxKind::ModuleKeyword
-                | SyntaxKind::GlobalKeyword
-                | SyntaxKind::VarKeyword
-                | SyntaxKind::LetKeyword
-                | SyntaxKind::ConstKeyword
-                | SyntaxKind::UsingKeyword
-                | SyntaxKind::AwaitKeyword
-                | SyntaxKind::ImportKeyword
-                | SyntaxKind::DeclareKeyword
-                | SyntaxKind::ExportKeyword
-                | SyntaxKind::AsyncKeyword
+            SyntaxKind::OpenBraceToken
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::AsteriskToken
+                | SyntaxKind::EqualsToken
+                | SyntaxKind::AsKeyword
         );
         self.scanner.restore_state(snapshot);
         self.current_token = current;
