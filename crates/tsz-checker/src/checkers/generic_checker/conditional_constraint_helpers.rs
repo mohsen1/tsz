@@ -2,6 +2,7 @@ use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn conditional_result_branches_satisfy_constraint(
@@ -42,16 +43,19 @@ impl<'a> CheckerState<'a> {
             if branch == TypeId::NEVER {
                 return true;
             }
-            let branch = self.resolve_lazy_type(branch);
-            let branch_evaluated = self.evaluate_type_for_assignability(branch);
-            self.conditional_constraint_component_relation_outcome(branch, constraint)
-                .related
+            let raw_branch = branch;
+            let resolved_branch = self.resolve_lazy_type(raw_branch);
+            let branch_evaluated = self.evaluate_type_for_assignability(resolved_branch);
+            self.indexed_object_map_branch_satisfies_constraint(raw_branch, constraint)
+                || self
+                    .conditional_constraint_component_relation_outcome(resolved_branch, constraint)
+                    .related
                 || self
                     .conditional_constraint_component_relation_outcome(branch_evaluated, constraint)
                     .related
-                || self.indexed_object_map_branch_satisfies_constraint(branch, constraint)
-                || (branch == true_type
-                    && branch == check_type
+                || self.indexed_object_map_branch_satisfies_constraint(resolved_branch, constraint)
+                || (raw_branch == true_type
+                    && raw_branch == check_type
                     && self.conditional_extends_type_satisfies_constraint(extends_type, constraint))
         })
     }
@@ -85,7 +89,9 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        let object_type = self.resolve_lazy_type(object_type);
+        let object_type = self
+            .resolve_alias_body_for_constraint_branch(object_type)
+            .unwrap_or_else(|| self.resolve_lazy_type(object_type));
         let value_types = {
             let Some(shape) =
                 query::get_object_shape(self.ctx.types.as_type_database(), object_type)
@@ -125,7 +131,58 @@ impl<'a> CheckerState<'a> {
                         constraint_evaluated,
                     )
                     .related
+                || self
+                    .tuple_value_satisfies_tuple_constraint(value_evaluated, constraint_evaluated)
                 || self.conditional_result_branches_satisfy_constraint(value, constraint)
+        })
+    }
+
+    fn tuple_value_satisfies_tuple_constraint(&mut self, source: TypeId, target: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some(source_elements) = crate::query_boundaries::common::tuple_elements(db, source)
+        else {
+            return false;
+        };
+        let Some(target_elements) = crate::query_boundaries::common::tuple_elements(db, target)
+        else {
+            return false;
+        };
+        if source_elements.len() != target_elements.len() {
+            return false;
+        }
+
+        source_elements.iter().zip(target_elements.iter()).all(
+            |(source_element, target_element)| {
+                self.conditional_constraint_component_relation_outcome(
+                    source_element.type_id,
+                    target_element.type_id,
+                )
+                .related
+                    || self.literal_satisfies_keyof_constraint(
+                        source_element.type_id,
+                        target_element.type_id,
+                    )
+            },
+        )
+    }
+
+    fn literal_satisfies_keyof_constraint(&mut self, source: TypeId, target: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some(name) = crate::query_boundaries::common::string_literal_value(db, source) else {
+            return false;
+        };
+        let Some(operand) = crate::query_boundaries::common::keyof_inner_type(db, target) else {
+            return false;
+        };
+        let operand = self
+            .resolve_alias_body_for_constraint_branch(operand)
+            .unwrap_or_else(|| self.resolve_lazy_type(operand));
+        query::get_object_shape(self.ctx.types.as_type_database(), operand).is_some_and(|shape| {
+            shape
+                .properties
+                .iter()
+                .any(|property| property.name == name)
+                || shape.string_index.is_some()
         })
     }
 
@@ -142,7 +199,7 @@ impl<'a> CheckerState<'a> {
                 query::full_conditional_type_components(self.ctx.types.as_type_database(), type_arg)
             {
                 let (_check_type, _extends_type, true_type, false_type) = components;
-                let branch_is_simple = |branch| {
+                let mut branch_is_simple = |branch| {
                     branch == TypeId::NEVER
                         || (!query::contains_free_type_parameters(self.ctx.types, branch)
                             && !query::is_infer_type(self.ctx.types.as_type_database(), branch))
@@ -178,9 +235,42 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn is_indexed_object_map_branch(&self, branch: TypeId) -> bool {
+    fn resolve_alias_body_for_constraint_branch(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.unresolved_type_name_def_id(type_id))?;
+        if !self
+            .ctx
+            .definition_store
+            .get(def_id)
+            .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+        {
+            return None;
+        }
+        let (sym_id, file_idx) = self.ctx.def_symbol_identity(def_id)?;
+        let file_idx =
+            file_idx.or_else(|| self.ctx.def_file_idx(def_id).map(|idx| idx as usize))?;
+        let (body_type, _params) =
+            self.direct_source_file_type_alias_result(sym_id, Some(file_idx), true)?;
+        (!matches!(body_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)).then_some(body_type)
+    }
+
+    fn unresolved_type_name_def_id(&self, type_id: TypeId) -> Option<tsz_solver::DefId> {
+        let name = crate::query_boundaries::spread::unresolved_type_name_atom(
+            self.ctx.types.as_type_database(),
+            type_id,
+        )?;
+        let name = self.ctx.types.resolve_atom(name);
+        self.ctx
+            .resolve_unresolved_type_name_from_file(&name, self.ctx.current_file_idx)
+            .or_else(|| TypeResolver::resolve_unresolved_type_name(&self.ctx, &name))
+    }
+
+    fn is_indexed_object_map_branch(&mut self, branch: TypeId) -> bool {
         query::index_access_components(self.ctx.types.as_type_database(), branch)
             .and_then(|(object_type, _index_type)| {
+                let object_type = self
+                    .resolve_alias_body_for_constraint_branch(object_type)
+                    .unwrap_or(object_type);
                 query::get_object_shape(self.ctx.types.as_type_database(), object_type)
             })
             .is_some_and(|shape| {

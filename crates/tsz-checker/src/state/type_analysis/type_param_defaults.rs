@@ -92,13 +92,34 @@ impl<'a> CheckerState<'a> {
                 {
                     let evaluated_default =
                         self.evaluate_type_for_assignability(instantiated_default);
+                    let resolved_constraint = self.resolve_lazy_type(constraint_type);
+                    let evaluated_constraint =
+                        self.evaluate_type_for_assignability(resolved_constraint);
                     default_satisfies = self
                         .type_parameter_default_relation_outcome(evaluated_default, constraint_type)
                         .related
+                        || self
+                            .type_parameter_default_relation_outcome(
+                                evaluated_default,
+                                evaluated_constraint,
+                            )
+                            .related
                         || self.satisfies_array_like_constraint(evaluated_default, constraint_type)
+                        || self.satisfies_array_like_constraint(
+                            evaluated_default,
+                            evaluated_constraint,
+                        )
                         || self.conditional_result_branches_satisfy_constraint(
                             evaluated_default,
                             constraint_type,
+                        )
+                        || self.conditional_result_branches_satisfy_constraint(
+                            instantiated_default,
+                            constraint_type,
+                        )
+                        || self.conditional_result_branches_satisfy_constraint(
+                            evaluated_default,
+                            evaluated_constraint,
                         );
                 }
                 if default_satisfies {

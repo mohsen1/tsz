@@ -130,17 +130,46 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let node = self.ctx.arena.get(type_arg_idx)?;
-        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        let type_ref = self.ctx.arena.get_type_ref(node);
+        let type_name = type_ref
+            .as_ref()
+            .map(|type_ref| type_ref.type_name)
+            .unwrap_or(type_arg_idx);
 
-        let mut sym_id = match self.resolve_identifier_symbol_in_type_position(type_ref.type_name) {
+        let syntax_import_alias_type = self
+            .ctx
+            .arena
+            .get(type_name)
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .and_then(|ident| self.ctx.binder.file_locals.get(&ident.escaped_text))
+            .filter(|&alias_sym_id| {
+                self.get_cross_file_symbol(alias_sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
+            })
+            .and_then(|alias_sym_id| {
+                self.instantiate_imported_alias_body_for_syntax(alias_sym_id)
+                    .or_else(|| {
+                        self.try_resolve_cross_arena_named_alias_without_child(alias_sym_id)
+                    })
+            });
+
+        let mut sym_id = match self.resolve_identifier_symbol_in_type_position(type_name) {
             TypeSymbolResolution::Type(sym_id) => Some(sym_id),
-            _ => match self.resolve_qualified_symbol_in_type_position(type_ref.type_name) {
+            _ => match self.resolve_qualified_symbol_in_type_position(type_name) {
                 TypeSymbolResolution::Type(sym_id) => Some(sym_id),
                 _ => None,
             },
         }?;
+        let import_alias_type = syntax_import_alias_type.or_else(|| {
+            self.get_cross_file_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
+                .then(|| self.try_resolve_cross_arena_named_alias_without_child(sym_id))
+                .flatten()
+        });
         let mut visited = crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
-        if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) {
+        if import_alias_type.is_none()
+            && let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+        {
             sym_id = target_sym_id;
         }
         if self
@@ -168,8 +197,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let args = type_ref.type_arguments.as_ref();
+        let args = type_ref.and_then(|type_ref| type_ref.type_arguments.as_ref());
         if args.is_none_or(|args| args.nodes.is_empty()) {
+            if let Some((body_type, params)) = import_alias_type
+                && params.is_empty()
+                && body_type != type_arg
+            {
+                return Some(body_type);
+            }
+            if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                && file_idx != self.ctx.current_file_idx
+                && let Some((body_type, params)) =
+                    self.direct_source_file_type_alias_result(sym_id, Some(file_idx), true)
+                && params.is_empty()
+                && body_type != type_arg
+            {
+                return Some(body_type);
+            }
             let symbol = self.get_cross_file_symbol(sym_id)?;
             if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
                 return None;
@@ -192,7 +236,9 @@ impl<'a> CheckerState<'a> {
         }
         let args = args?;
 
-        let (body_type, mut params) = if self
+        let (body_type, mut params) = if let Some((body_type, params)) = import_alias_type {
+            (body_type, params)
+        } else if self
             .get_cross_file_symbol(sym_id)
             .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
             && self
@@ -206,7 +252,12 @@ impl<'a> CheckerState<'a> {
             self.type_reference_symbol_type_with_params(sym_id)
         };
         if params.is_empty() {
-            params = self.get_display_type_params_for_symbol(sym_id);
+            params = self
+                .get_cross_file_symbol(sym_id)
+                .map(|symbol| symbol.escaped_name.clone())
+                .map(|name| self.get_reference_type_params_for_symbol(sym_id, &name))
+                .filter(|params| !params.is_empty())
+                .unwrap_or_else(|| self.get_display_type_params_for_symbol(sym_id));
         }
         if params.is_empty() || matches!(body_type, TypeId::ANY | TypeId::ERROR) {
             return None;
@@ -230,6 +281,78 @@ impl<'a> CheckerState<'a> {
             &substitution,
         );
         (instantiated != type_arg).then_some(instantiated)
+    }
+
+    fn instantiate_imported_alias_body_for_syntax(
+        &mut self,
+        alias_sym_id: tsz_binder::SymbolId,
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        let (module_name, import_name) = {
+            let symbol = self.ctx.binder.get_symbol(alias_sym_id)?;
+            if symbol.flags & tsz_binder::symbol_flags::ALIAS == 0 {
+                return None;
+            }
+            let module_name = symbol.import_module.clone()?;
+            let import_name = symbol
+                .import_name
+                .clone()
+                .unwrap_or_else(|| symbol.escaped_name.clone());
+            (module_name, import_name)
+        };
+        if import_name == "*" {
+            return None;
+        }
+
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, &module_name)?;
+        let target_arena_arc = self.ctx.all_arenas.as_ref()?.get(target_file_idx)?.clone();
+        let target_binder_arc = self.ctx.all_binders.as_ref()?.get(target_file_idx)?.clone();
+        let target_arena = target_arena_arc.as_ref();
+        let target_binder = target_binder_arc.as_ref();
+        let file_name = target_arena.source_files.first()?.file_name.as_str();
+        let (target_sym_id, _) = target_binder
+            .resolve_import_with_reexports_type_only(file_name, &import_name)
+            .or_else(|| {
+                target_binder
+                    .file_locals
+                    .get(&import_name)
+                    .map(|sym_id| (sym_id, false))
+            })?;
+        let target_symbol = target_binder.get_symbol(target_sym_id)?;
+        if target_symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0
+            || target_symbol.declarations.len() != 1
+        {
+            return None;
+        }
+
+        self.ctx
+            .register_symbol_file_target(target_sym_id, target_file_idx);
+        let decl_idx = target_symbol.declarations[0];
+        let decl_node = target_arena.get(decl_idx)?;
+        let type_alias = target_arena.get_type_alias(decl_node)?;
+        let (body_type, params) = self.lower_cross_arena_type_alias_declaration(
+            target_sym_id,
+            decl_idx,
+            target_arena,
+            type_alias,
+        );
+        if matches!(body_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        let def_id = self.ctx.get_or_create_def_id(target_sym_id);
+        self.ctx
+            .register_def_auto_params_in_envs(def_id, body_type, params.clone());
+        self.ctx
+            .definition_store
+            .register_type_to_def(body_type, def_id);
+        self.ctx.cache_cross_file_symbol_type(
+            target_sym_id,
+            target_file_idx as u32,
+            body_type,
+            params.clone(),
+        );
+        Some((body_type, params))
     }
 }
 

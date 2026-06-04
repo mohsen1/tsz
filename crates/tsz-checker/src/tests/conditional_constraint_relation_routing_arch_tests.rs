@@ -29,8 +29,8 @@ fn conditional_result_branches_use_relation_outcome_boundary() {
         function
             .matches("conditional_constraint_component_relation_outcome(")
             .count(),
-        6,
-        "conditional branch, extends fallback, and indexed-object-map branch relations should route through the conditional constraint component request helper"
+        7,
+        "conditional branch, extends fallback, indexed-object-map branch, and tuple-element relations should route through the conditional constraint component request helper"
     );
 }
 
