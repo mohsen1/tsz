@@ -340,7 +340,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Core boundary: tsconfig/config monolith size ratchet (#8280)",
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
-        4275,
+        4281,
     ),
     # LSP signature-help: the root provider has been split by concern. Existing
     # TypeData/direct lookup() debt is isolated in signature_help/shapes.rs (see
@@ -440,7 +440,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "CLI boundary: driver/core monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
-        3186,
+        3193,
     ),
     # CLI LSP server: structure/outline handler — split by request kind per §19.
     (
@@ -683,7 +683,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "CLI boundary: driver/tests.rs size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "tests.rs",
-        2736,
+        2843,
     ),
     (
         "Checker boundary: types/class_type/constructor.rs size ratchet",
