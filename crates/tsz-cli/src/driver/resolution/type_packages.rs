@@ -67,7 +67,10 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
         .and_then(|(package_name, subpath)| subpath.map(|subpath| (package_name, subpath)));
     let conditions = export_conditions(options);
 
-    let mut current = from_file.parent().unwrap_or(base_dir);
+    // Anchor the walk-up at the realpath of the containing file so sibling
+    // `@types/*` packages inside a pnpm `.pnpm` sandbox resolve (matches tsc).
+    let (origin, stop_dir) = module_walk_bounds(from_file, base_dir, options, resolution_cache);
+    let mut current = origin.as_path();
 
     loop {
         let node_modules = current.join("node_modules");
@@ -116,7 +119,7 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
             }
         }
 
-        if current == base_dir {
+        if current == stop_dir.as_path() {
             break;
         }
         let Some(parent) = current.parent() else {

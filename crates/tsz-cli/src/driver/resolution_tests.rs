@@ -101,6 +101,100 @@ fn test_preserve_symlinks_keeps_symlink_path_identity() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A `/// <reference types="..." />` directive in a `.d.ts` reached through a
+/// pnpm symlink must resolve its sibling `@types/*` packages from the realpath
+/// of the symlink target, matching tsc's `preserveSymlinks: false` default.
+///
+/// Layout mirrors pnpm: `node_modules/@types/a` is a symlink into the `.pnpm`
+/// sandbox where the sibling `@types/b` lives next to the target. Walking up
+/// from the symlink path only sees the hoisted `node_modules/@types` entry and
+/// misses `b`; walking from the realpath finds it.
+#[test]
+#[cfg(unix)]
+fn test_triple_slash_types_resolves_sibling_through_pnpm_symlink() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_pnpm_triple_slash");
+    let _ = fs::remove_dir_all(&dir);
+
+    let sandbox = dir.join("node_modules/.pnpm/@types+a@1.0.0/node_modules/@types");
+    fs::create_dir_all(sandbox.join("a")).unwrap();
+    fs::create_dir_all(sandbox.join("b")).unwrap();
+    fs::write(
+        sandbox.join("a/index.d.ts"),
+        "/// <reference types=\"b\" />\nexport interface A {}",
+    )
+    .unwrap();
+    fs::write(
+        sandbox.join("a/package.json"),
+        "{\"name\":\"@types/a\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}",
+    )
+    .unwrap();
+    fs::write(sandbox.join("b/index.d.ts"), "export interface B {}").unwrap();
+    fs::write(
+        sandbox.join("b/package.json"),
+        "{\"name\":\"@types/b\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}",
+    )
+    .unwrap();
+
+    // Hoist `@types/a` into `node_modules/@types/a` via a pnpm-style symlink.
+    fs::create_dir_all(dir.join("node_modules/@types")).unwrap();
+    symlink(
+        dir.join("node_modules/.pnpm/@types+a@1.0.0/node_modules/@types/a"),
+        dir.join("node_modules/@types/a"),
+    )
+    .unwrap();
+
+    let from_file = dir.join("node_modules/@types/a/index.d.ts");
+    let real_b = canonicalize_or_owned(&sandbox.join("b/index.d.ts"));
+
+    let make_options = |preserve_symlinks: bool| ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // Default (preserveSymlinks: false) walks the realpath and finds the sibling.
+    let options = make_options(false);
+    let mut cache = ModuleResolutionCache::default();
+    let resolved = resolve_type_reference_from_node_modules_with_cache(
+        "b", &from_file, &dir, None, &options, &mut cache,
+    );
+    assert_eq!(
+        resolved,
+        Some(real_b),
+        "sibling @types/b should resolve from the realpath of the pnpm symlink target"
+    );
+
+    // preserveSymlinks: true keeps the symlink path, where the sibling is absent.
+    let preserve_options = make_options(true);
+    let mut preserve_cache = ModuleResolutionCache::default();
+    let preserved = resolve_type_reference_from_node_modules_with_cache(
+        "b",
+        &from_file,
+        &dir,
+        None,
+        &preserve_options,
+        &mut preserve_cache,
+    );
+    assert_eq!(
+        preserved, None,
+        "preserveSymlinks keeps the symlink path, where no sibling @types/b exists"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn test_normalize_resolved_path_preserves_symlink_ancestor_identity() {
     use std::fs;

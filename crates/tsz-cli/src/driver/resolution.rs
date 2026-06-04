@@ -132,6 +132,11 @@ pub(crate) struct ModuleResolutionCache {
     file_exists_by_path: FxHashMap<PathBuf, bool>,
     node_modules_dir_by_path: FxHashMap<PathBuf, bool>,
     package_root_dir_by_path: FxHashMap<PathBuf, bool>,
+    // Realpath of a directory, memoized. Anchoring `node_modules` walk-ups at
+    // the realpath of the containing file (tsc's `preserveSymlinks: false`
+    // default) means we `canonicalize` the same package directories repeatedly;
+    // a file with many imports shares one parent directory.
+    canonical_dir_by_path: FxHashMap<PathBuf, PathBuf>,
     // Per-compiler-options cache. A compile uses one resolved `paths` table, so
     // the specifier alone is enough to memoize the best matching mapping.
     path_mapping_by_specifier: FxHashMap<String, Option<(usize, String)>>,
@@ -192,6 +197,19 @@ impl ModuleResolutionCache {
         self.package_root_dir_by_path
             .insert(path.to_path_buf(), exists);
         exists
+    }
+
+    /// Realpath of a directory (falling back to the input when it cannot be
+    /// canonicalized), memoized for the lifetime of the resolution.
+    pub(crate) fn canonical_dir(&mut self, dir: &Path) -> PathBuf {
+        if let Some(cached) = self.canonical_dir_by_path.get(dir) {
+            return cached.clone();
+        }
+
+        let canonical = canonicalize_or_owned(dir);
+        self.canonical_dir_by_path
+            .insert(dir.to_path_buf(), canonical.clone());
+        canonical
     }
 
     fn select_path_mapping<'a>(

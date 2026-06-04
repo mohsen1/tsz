@@ -551,6 +551,51 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+/// Anchor `dir` for a `node_modules` walk: the real (symlink-resolved) path
+/// when `preserveSymlinks` is false (tsc's default), else `dir` unchanged.
+fn anchor_walk_dir(
+    dir: &Path,
+    options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> PathBuf {
+    if options.preserve_symlinks {
+        dir.to_path_buf()
+    } else {
+        resolution_cache.canonical_dir(dir)
+    }
+}
+
+/// Origin and stop boundary for a `node_modules` walk-up from `from_file`.
+///
+/// tsc resolves module specifiers and `/// <reference types="..." />`
+/// directives relative to the *real* (`realpath`) location of the containing
+/// file when `preserveSymlinks` is false (the default). Under pnpm, packages
+/// are symlinked from `node_modules/<pkg>` into a `.pnpm` sandbox, so a
+/// package's own dependencies and the sibling `@types/*` packages it references
+/// live next to the symlink *target*, not next to the symlink. Walking up from
+/// the symlink path only sees the hoisted `node_modules/@types` entry and
+/// misses those siblings; walking up from the realpath finds them, matching
+/// tsc. When the containing file is not behind a symlink this is a no-op.
+///
+/// The returned `stop` boundary is the realpath of `base_dir`: because the
+/// origin is realpath-anchored its ancestor chain passes through the real
+/// `base_dir`, so the stop comparison must use the same realpath or the loop
+/// would never match and would walk to the filesystem root.
+pub(crate) fn module_walk_bounds(
+    from_file: &Path,
+    base_dir: &Path,
+    options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> (PathBuf, PathBuf) {
+    let origin = anchor_walk_dir(
+        from_file.parent().unwrap_or(base_dir),
+        options,
+        resolution_cache,
+    );
+    let stop = anchor_walk_dir(base_dir, options, resolution_cache);
+    (origin, stop)
+}
+
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
     let normalized = normalize_path(path);
     if options.preserve_symlinks {

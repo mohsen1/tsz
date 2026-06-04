@@ -173,6 +173,11 @@ pub(crate) fn resolve_node_module_specifier(
     // Self-reference: check if any ancestor package.json has a "name" matching
     // the import specifier. Node.js supports importing your own package by name
     // using the "exports" field in package.json.
+    //
+    // This walk targets the containing package's own root (the first named
+    // package.json), reachable through the symlink, so it needs no realpath
+    // anchoring — unlike the `node_modules` walk below, which looks for sibling
+    // packages that live next to the symlink target in a pnpm sandbox.
     {
         let mut dir = from_file.parent().unwrap_or(base_dir);
         loop {
@@ -233,7 +238,10 @@ pub(crate) fn resolve_node_module_specifier(
         }
     }
 
-    let mut current = from_file.parent().unwrap_or(base_dir);
+    // Anchor the walk-up at the realpath of the containing file so a package's
+    // own dependencies inside a pnpm `.pnpm` sandbox resolve (matches tsc).
+    let (origin, stop_dir) = module_walk_bounds(from_file, base_dir, options, resolution_cache);
+    let mut current = origin.as_path();
 
     loop {
         // 1. Look for the package itself in node_modules
@@ -306,7 +314,7 @@ pub(crate) fn resolve_node_module_specifier(
             }
         }
 
-        if current == base_dir {
+        if current == stop_dir.as_path() {
             break;
         }
         let Some(parent) = current.parent() else {
@@ -346,6 +354,9 @@ pub(crate) fn resolve_package_imports_specifier(
 ) -> Option<PathBuf> {
     let conditions = export_conditions(options);
     let compiler_version = types_versions_compiler_version(options);
+    // `#imports` resolve targets *within* the containing package, reached
+    // through the symlink, so this walk needs no realpath anchoring (only the
+    // `node_modules` sibling walk does — see `module_walk_bounds`).
     let mut current = from_file.parent().unwrap_or(base_dir);
 
     loop {
