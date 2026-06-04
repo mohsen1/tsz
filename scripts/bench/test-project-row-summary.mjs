@@ -7,11 +7,13 @@ import {
   BENCH_RUNNER_EXCLUDED_ROWS,
   COMPILE_GUARD_EXCLUDED_ROWS,
   appendStepSummary,
+  buildJsonReport,
   computeCoverage,
   extractBenchRunnerRows,
   extractCompileGuardFallbackRows,
   extractCompileGuardRows,
   extractFixtureSourceRows,
+  formatJson,
   formatMarkdown,
   formatPlainText,
   rowRequiresFixtureSource,
@@ -270,6 +272,36 @@ function baseSurfaces() {
   const cleanSummary = `All ${PROJECT_ROW_DEFINITIONS.length} rows consistent`;
   assert.ok(text.includes("Project Row Coverage"), "plain text missing heading");
   assert.ok(text.includes(cleanSummary), "plain text missing clean summary");
+}
+
+// JSON format exposes machine-readable row coverage and drift counters.
+{
+  const coverage = computeCoverage(baseSurfaces());
+  const report = buildJsonReport(coverage);
+  assert.equal(report.ok, true);
+  assert.equal(report.status, "passed");
+  assert.equal(report.rowCount, PROJECT_ROW_DEFINITIONS.length);
+  assert.equal(report.driftCount, 0);
+  assert.deepEqual(report.drift, []);
+  assert.equal(report.rows[0].name, PROJECT_ROW_DEFINITIONS[0].name);
+
+  const parsed = JSON.parse(formatJson(coverage));
+  assert.equal(parsed.status, "passed");
+  assert.equal(parsed.rowCount, PROJECT_ROW_DEFINITIONS.length);
+}
+
+// JSON format carries drift details without parsing markdown.
+{
+  const surfaces = baseSurfaces();
+  surfaces.benchRunnerRows = surfaces.benchRunnerRows.filter((r) => r !== REQUIRED_PROJECT_ROWS[0]);
+  const report = buildJsonReport(computeCoverage(surfaces));
+  assert.equal(report.ok, false);
+  assert.equal(report.status, "failed");
+  assert.ok(report.driftCount > 0, "drift count should be nonzero");
+  assert.ok(
+    report.drift.some((issue) => issue.includes(REQUIRED_PROJECT_ROWS[0])),
+    "json drift should include the drifted row name",
+  );
 }
 
 // Step summary appends markdown regardless of the selected stdout format.
