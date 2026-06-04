@@ -1,6 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
+use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 /// Checker-local memos for type-reference argument validation.
@@ -16,6 +17,11 @@ pub struct TypeReferenceValidationCaches {
     /// Syntax-guided type-reference argument instantiations in the current
     /// lexical type-parameter scope, including misses.
     pub syntax_instantiation: FxHashMap<(usize, u32, TypeId, u64), Option<TypeId>>,
+    /// Alias-body validation DFS results for the common single-active-alias
+    /// case. Keyed by the candidate alias symbol and the `DefId` of the alias
+    /// currently in `symbol_resolution_set`; multi-active resolution falls back
+    /// to the uncached DFS.
+    pub alias_reaches_single_resolving_alias: FxHashMap<(SymbolId, DefId), bool>,
     /// Declared type-parameter lists keyed by reference symbol identity, valid
     /// for the lifetime of the current source file. `SymbolId` values are
     /// arena-local in project checks, so imported aliases from different files

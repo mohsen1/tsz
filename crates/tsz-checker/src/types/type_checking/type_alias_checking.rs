@@ -38,6 +38,15 @@ fn record_type_alias_phase_timing(
     }
 }
 
+fn alias_reaches_resolving_alias_cache_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_ALIAS_REACHES_CACHE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl<'a> CheckerState<'a> {
     fn type_node_is_nested_in_type_literal(&self, node_idx: NodeIndex) -> bool {
         let mut current = self
@@ -63,7 +72,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(crate) fn type_alias_reaches_resolving_alias(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(crate) fn type_alias_reaches_resolving_alias(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
@@ -79,7 +91,28 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        with_alias_defid_visited(|visited| {
+        let single_resolving_def_id = if !alias_reaches_resolving_alias_cache_disabled()
+            && self.ctx.symbol_resolution_set.len() == 1
+        {
+            self.ctx
+                .symbol_resolution_set
+                .iter()
+                .next()
+                .and_then(|sid| self.ctx.get_existing_def_id(*sid))
+        } else {
+            None
+        };
+        if let Some(resolving_def_id) = single_resolving_def_id
+            && let Some(&cached) = self
+                .ctx
+                .type_reference_validation_caches
+                .alias_reaches_single_resolving_alias
+                .get(&(sym_id, resolving_def_id))
+        {
+            return cached;
+        }
+
+        let result = with_alias_defid_visited(|visited| {
             let mut pending = vec![start_def_id];
             let mut steps = 0usize;
             while let Some(def_id) = pending.pop() {
@@ -107,7 +140,14 @@ impl<'a> CheckerState<'a> {
                 ));
             }
             false
-        })
+        });
+        if let Some(resolving_def_id) = single_resolving_def_id {
+            self.ctx
+                .type_reference_validation_caches
+                .alias_reaches_single_resolving_alias
+                .insert((sym_id, resolving_def_id), result);
+        }
+        result
     }
 
     /// Read-and-clear the solver's `tuple_too_large` flag, returning `true`
