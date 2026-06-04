@@ -75,7 +75,6 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 # fixtures are same-code/fingerprint drift in mapped, conditional, inference,
 # JSX, variance, and recursive relation-policy families tracked by #8432; keep
 # them visible here until the owning parity fixes remove them.
-TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren2.tsx
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
