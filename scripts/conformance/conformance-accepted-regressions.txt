@@ -119,3 +119,5 @@ TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
 TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
+TypeScript/tests/cases/compiler/indexingTypesWithNever.ts
+TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
