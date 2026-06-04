@@ -15,6 +15,8 @@ mod recovery;
 mod tc39_decorator_tests;
 mod top_level_using;
 mod top_level_using_decorated;
+#[cfg(test)]
+mod top_level_using_decorated_tests;
 
 #[cfg(test)]
 mod class_es5_field_initializer_tests;

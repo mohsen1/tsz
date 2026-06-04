@@ -2003,13 +2003,8 @@ impl<'a> Printer<'a> {
                 has_member_decorators: false,
                 emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
             });
-            let mut output = es5_emitter.emit_class_with_name(idx, &binding_name);
+            let mut output = es5_emitter.emit_class_assignment_with_name(idx, &binding_name);
             self.sync_es5_class_emitter_state(&mut es5_emitter);
-            output = output.replacen(
-                &format!("var {binding_name} = "),
-                &format!("{binding_name} = "),
-                1,
-            );
             if self.in_system_execute_body {
                 let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
                 if let Some(stripped) = output.strip_prefix(&leading_indent) {
