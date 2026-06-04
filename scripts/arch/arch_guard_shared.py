@@ -240,7 +240,6 @@ LINE_LIMIT_CHECKS = [
             # any regression.
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
-            "crates/tsz-checker/src/state/type_analysis/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
@@ -691,7 +690,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2843,
+        1815,
     ),
     (
         # Ratcheted 2736→2896: +160 lines for three config-validation
@@ -762,7 +761,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_environment"
         / "core.rs",
-        1463,
+        1461,
     ),
     (
         "Conformance boundary: conformance runner size ratchet",
