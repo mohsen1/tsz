@@ -1,6 +1,8 @@
 //! Tests for class member modifier ordering (TS1029) and ambient context (TS1040).
 
+use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
+use tsz_scanner::SyntaxKind;
 
 fn parse_diagnostics(source: &str) -> Vec<(u32, String)> {
     let (parser, _root) = parse_source(source);
@@ -353,6 +355,24 @@ fn accessor_on_top_level_var_emits_ts1275() {
 fn accessor_on_top_level_function_emits_ts1275() {
     let source = "accessor function F1() {}";
     assert_eq!(count_error(source, 1275), 1);
+}
+
+#[test]
+fn accessor_on_top_level_function_is_preserved_as_recovered_modifier() {
+    let source = "accessor /* recovered */ function F1() {}";
+    let (parser, root) = parse_source(source);
+    assert_eq!(count_error(source, 1275), 1);
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let statement = source_file.statements.nodes[0];
+    let node = arena.get(statement).unwrap();
+    assert_eq!(node.kind, syntax_kind_ext::FUNCTION_DECLARATION);
+    let function = arena.get_function_at(statement).unwrap();
+    assert!(
+        arena.has_modifier(&function.modifiers, SyntaxKind::AccessorKeyword),
+        "recovered top-level accessor should be stored as a modifier"
+    );
 }
 
 #[test]

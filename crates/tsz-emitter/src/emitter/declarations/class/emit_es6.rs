@@ -115,7 +115,9 @@ impl<'a> Printer<'a> {
 
         if !suppress_modifiers
             && self.ctx.options.target == ScriptTarget::ESNext
-            && self.has_recovered_accessor_modifier(node)
+            && self
+                .arena
+                .has_modifier(&class.modifiers, SyntaxKind::AccessorKeyword)
         {
             self.write("accessor ");
         }
