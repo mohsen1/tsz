@@ -278,6 +278,15 @@ impl<'a> CheckerContext<'a> {
             .indexed_access_key_space_relation
             .clear();
         self.type_reference_validation_caches
+            .conditional_constraint_component_relation
+            .clear();
+        self.type_reference_validation_caches
+            .conditional_result_branch_constraint
+            .clear();
+        self.type_reference_validation_caches
+            .indexed_object_map_branch_constraint
+            .clear();
+        self.type_reference_validation_caches
             .ref_type_params
             .clear();
         self.type_reference_validation_caches

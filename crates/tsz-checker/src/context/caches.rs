@@ -36,6 +36,19 @@ pub struct TypeReferenceValidationCaches {
     /// a synthetic empty failure.
     pub indexed_access_key_space_relation:
         FxHashMap<(TypeId, TypeId, u16, bool), CachedRelationOutcome>,
+    /// Successful conditional constraint component relation proofs during
+    /// generic validation. Uses the same dimensions as the relation request
+    /// gateway; failures stay uncached because callers may need diagnostic
+    /// detail from the real request.
+    pub conditional_constraint_component_relation:
+        FxHashMap<(TypeId, TypeId, u16, bool), CachedRelationOutcome>,
+    /// Successful syntax-driven conditional branch constraint summaries.
+    /// These are checker-owned recursive proofs, so they are scoped to the
+    /// current file session and relation context rather than solver-global.
+    pub conditional_result_branch_constraint: FxHashSet<(TypeId, TypeId, u16, bool)>,
+    /// Successful indexed-object-map branch constraint summaries reached from
+    /// conditional/indexed-access validation.
+    pub indexed_object_map_branch_constraint: FxHashSet<(TypeId, TypeId, u16, bool)>,
     /// Declared type-parameter lists keyed by reference symbol identity, valid
     /// for the lifetime of the current source file. `SymbolId` values are
     /// arena-local in project checks, so imported aliases from different files

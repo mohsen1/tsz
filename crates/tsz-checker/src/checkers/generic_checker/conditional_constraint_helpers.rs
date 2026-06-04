@@ -10,6 +10,20 @@ impl<'a> CheckerState<'a> {
         type_arg: TypeId,
         constraint: TypeId,
     ) -> bool {
+        let cache_key = (
+            type_arg,
+            constraint,
+            self.ctx.pack_relation_flags(),
+            self.ctx.sound_mode(),
+        );
+        if self
+            .ctx
+            .type_reference_validation_caches
+            .conditional_result_branch_constraint
+            .contains(&cache_key)
+        {
+            return true;
+        }
         if matches!(constraint, TypeId::ANY | TypeId::UNKNOWN)
             || query::contains_free_type_parameters(self.ctx.types, constraint)
         {
@@ -39,7 +53,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        [true_type, false_type].into_iter().all(|branch| {
+        let result = [true_type, false_type].into_iter().all(|branch| {
             if branch == TypeId::NEVER {
                 return true;
             }
@@ -57,7 +71,14 @@ impl<'a> CheckerState<'a> {
                 || (raw_branch == true_type
                     && raw_branch == check_type
                     && self.conditional_extends_type_satisfies_constraint(extends_type, constraint))
-        })
+        });
+        if result {
+            self.ctx
+                .type_reference_validation_caches
+                .conditional_result_branch_constraint
+                .insert(cache_key);
+        }
+        result
     }
 
     fn conditional_extends_type_satisfies_constraint(
@@ -84,6 +105,20 @@ impl<'a> CheckerState<'a> {
         branch: TypeId,
         constraint: TypeId,
     ) -> bool {
+        let cache_key = (
+            branch,
+            constraint,
+            self.ctx.pack_relation_flags(),
+            self.ctx.sound_mode(),
+        );
+        if self
+            .ctx
+            .type_reference_validation_caches
+            .indexed_object_map_branch_constraint
+            .contains(&cache_key)
+        {
+            return true;
+        }
         let Some((object_type, _index_type)) =
             query::index_access_components(self.ctx.types.as_type_database(), branch)
         else {
@@ -117,7 +152,7 @@ impl<'a> CheckerState<'a> {
 
         let constraint = self.resolve_lazy_type(constraint);
         let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
-        value_types.into_iter().all(|value| {
+        let result = value_types.into_iter().all(|value| {
             if value == TypeId::NEVER {
                 return true;
             }
@@ -134,7 +169,14 @@ impl<'a> CheckerState<'a> {
                 || self
                     .tuple_value_satisfies_tuple_constraint(value_evaluated, constraint_evaluated)
                 || self.conditional_result_branches_satisfy_constraint(value, constraint)
-        })
+        });
+        if result {
+            self.ctx
+                .type_reference_validation_caches
+                .indexed_object_map_branch_constraint
+                .insert(cache_key);
+        }
+        result
     }
 
     fn tuple_value_satisfies_tuple_constraint(&mut self, source: TypeId, target: TypeId) -> bool {

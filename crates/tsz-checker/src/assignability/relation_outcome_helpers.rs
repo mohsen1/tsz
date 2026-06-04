@@ -487,11 +487,48 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         let (source, target) = self.prepare_assignability_inputs(source, target);
+        let flags = self.ctx.pack_relation_flags();
+        let sound_mode = self.ctx.sound_mode();
+        let cache_key = (source, target, flags, sound_mode);
+        let is_cacheable = crate::query_boundaries::assignability::is_relation_cacheable(
+            self.ctx.types,
+            source,
+            target,
+        );
+        if is_cacheable
+            && let Some(cached) = self
+                .ctx
+                .type_reference_validation_caches
+                .conditional_constraint_component_relation
+                .get(&cache_key)
+                .copied()
+        {
+            return cached_relation_outcome(cached);
+        }
         let request =
             crate::query_boundaries::assignability::RelationRequest::conditional_constraint_component(
                 source, target,
             );
-        self.execute_relation_request(&request)
+        let outcome = self.execute_relation_request(&request);
+        if is_cacheable
+            && outcome.related
+            && outcome.failure.is_none()
+            && !outcome.weak_union_violation
+            && outcome.property_classification.is_none()
+        {
+            self.ctx
+                .type_reference_validation_caches
+                .conditional_constraint_component_relation
+                .insert(
+                    cache_key,
+                    crate::context::CachedRelationOutcome {
+                        related: outcome.related,
+                        depth_exceeded: outcome.depth_exceeded,
+                        iteration_exceeded: outcome.iteration_exceeded,
+                    },
+                );
+        }
+        outcome
     }
 
     /// Execute a diagnostic-bearing conditional true-base constraint relation
