@@ -1048,6 +1048,20 @@ impl<'a> Printer<'a> {
         let Some(class_data) = self.arena.get_class(class_node) else {
             return Vec::new();
         };
+        let is_commonjs_exported_class = self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword)
+            || self
+                .pending_commonjs_class_export_name
+                .as_ref()
+                .is_some_and(|(_, local_name, _)| local_name == class_name);
+        if !self.ctx.outer_module_kind().is_commonjs()
+            || !is_commonjs_exported_class
+            || self.ctx.module_state.has_export_assignment
+        {
+            return Vec::new();
+        }
+
         let has_static_runtime_computed_key = class_data.members.nodes.iter().any(|&member_idx| {
             let Some(member_node) = self.arena.get(member_idx) else {
                 return false;

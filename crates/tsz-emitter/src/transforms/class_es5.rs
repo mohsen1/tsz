@@ -731,7 +731,9 @@ impl<'a> ClassES5Emitter<'a> {
         override_name: Option<&str>,
         mut ir: IRNode,
     ) -> String {
-        Self::lift_private_storage_from_iife_body(&mut ir);
+        if !self.externally_hoisted_decls.is_empty() {
+            Self::lift_private_storage_from_iife_body(&mut ir);
+        }
 
         if !self.externally_hoisted_decls.is_empty()
             && let IRNode::ES5ClassIIFE {

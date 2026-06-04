@@ -53,6 +53,41 @@ class Derived extends Base {
     );
 }
 
+#[test]
+fn es5_private_name_bundle_stays_inside_plain_class_iife() {
+    let source = r#"
+class Holder {
+    #field = 1;
+    #method() {}
+    static #staticField = "value";
+    static #staticMethod() {}
+    get #accessor() { return this.#field; }
+    set #accessor(value) { this.#field = value; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+
+    let class_pos = output
+        .find("var Holder = /** @class */")
+        .expect("expected an ES5 class IIFE");
+    let storage_decl_pos = output
+        .find("var _Holder_instances, _a, _Holder_field, _Holder_method")
+        .expect("expected private storage declaration bundle");
+    let return_pos = output
+        .find("return Holder;")
+        .expect("expected class IIFE return");
+    let storage_init_pos = output
+        .find("_a = Holder, _Holder_field = new WeakMap(), _Holder_instances = new WeakSet()")
+        .expect("expected private storage initialization bundle");
+
+    assert!(
+        class_pos < storage_decl_pos
+            && storage_decl_pos < storage_init_pos
+            && storage_init_pos < return_pos,
+        "Plain ES5 classes keep private-name storage bundles inside the IIFE.\nOutput:\n{output}"
+    );
+}
+
 // Rule: for a class *declaration* lowered to the WeakMap pattern, the private
 // member init statements (`_C_field = new WeakMap()`) must be emitted before the
 // static field initialization statements (`C.x = value;`). A static initializer
