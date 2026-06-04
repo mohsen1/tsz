@@ -6,8 +6,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
-    FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
-    TypePredicate,
+    FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};

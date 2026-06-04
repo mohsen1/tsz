@@ -8,9 +8,7 @@
 
 use super::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
-use crate::types::{
-    IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
-};
+use crate::types::{ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId};
 use crate::utils::{self, TupleRestExpansion};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
