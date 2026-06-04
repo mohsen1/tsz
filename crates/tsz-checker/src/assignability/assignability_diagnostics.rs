@@ -1488,24 +1488,67 @@ impl<'a> CheckerState<'a> {
     }
 
     fn iterator_result_return_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
-        let target_display = self.format_type(target);
-        let Some(target_return) = function_return_display(&target_display) else {
+        let Some(target_return) = self.callable_return_type_for_iterator_diagnostic(target) else {
             return false;
         };
-        let Some((target_name, target_args)) = parse_simple_type_application_display(target_return)
-        else {
+        let target_return = self.evaluate_type_for_assignability(target_return);
+        let Some(target_args) = self.iterator_result_application_args(target_return) else {
             return false;
         };
-        if target_name != "IteratorResult" || target_args.get(1).copied() != Some("unknown") {
+        if target_args
+            .get(1)
+            .copied()
+            .is_none_or(|return_type| !self.type_evaluates_to(return_type, TypeId::UNKNOWN))
+        {
             return false;
         }
 
-        let source_display = self.format_type(source);
-        let Some(source_return) = function_return_display(&source_display) else {
+        let Some(source_return) = self.callable_return_type_for_iterator_diagnostic(source) else {
             return false;
         };
-        source_return.contains("done: boolean")
-            || (source_return.contains("done: true") && !source_return.contains("value: undefined"))
+        self.iterator_result_return_source_has_broad_done(source_return)
+    }
+
+    fn callable_return_type_for_iterator_diagnostic(&mut self, type_id: TypeId) -> Option<TypeId> {
+        crate::query_boundaries::common::return_type_for_type(self.ctx.types, type_id).or_else(
+            || {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                crate::query_boundaries::common::return_type_for_type(self.ctx.types, evaluated)
+            },
+        )
+    }
+
+    fn iterator_result_return_source_has_broad_done(&mut self, type_id: TypeId) -> bool {
+        let type_id = self.evaluate_type_for_assignability(type_id);
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&member| self.iterator_result_return_source_has_broad_done(member));
+        }
+
+        let Some(shape) = object_shape_for_type(self.ctx.types, type_id) else {
+            return false;
+        };
+        let done_name = self.ctx.types.intern_string("done");
+        let value_name = self.ctx.types.intern_string("value");
+        let Some(done_prop) = shape.properties.iter().find(|prop| prop.name == done_name) else {
+            return false;
+        };
+        let done_type = self.evaluate_type_for_assignability(done_prop.type_id);
+        if done_type == TypeId::BOOLEAN {
+            return true;
+        }
+        if done_type != TypeId::BOOLEAN_TRUE {
+            return false;
+        }
+
+        !shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == value_name)
+            .is_some_and(|prop| self.type_evaluates_to(prop.type_id, TypeId::UNDEFINED))
     }
 }
 
