@@ -279,7 +279,7 @@ impl<'a> CheckerState<'a> {
 
     fn required_mapped_constraint_source(&self, constraint: TypeId) -> Option<TypeId> {
         let db = self.ctx.types.as_type_database();
-        if let (Some(base_def), args) = query::application_base_def_and_args(db, constraint)
+        if let Some((Some(base_def), args)) = query::application_base_def_and_args(db, constraint)
             && args.len() == 1
         {
             let sym_id = self.ctx.def_to_symbol_id(base_def)?;
