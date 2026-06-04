@@ -7,6 +7,68 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+/// Maximum nesting depth for the diagnostic display normalization passes.
+///
+/// Before a type is handed to the solver's diagnostic formatter, the checker
+/// runs cosmetic normalization passes over it (resolving `Lazy` references,
+/// widening fresh literals, re-applying display aliases, materializing finite
+/// mapped types, stripping excess-property wrappers). These passes recurse
+/// structurally through applications, unions, intersections, and object shapes,
+/// and re-enter on each resolved/evaluated `Lazy` reference. On deeply
+/// self-expanding generic types — e.g. the higher-kinded middleware-mutator
+/// chains in `zustand` / `jotai` / `arktype`, where `Mutate<S, [...]>` peels one
+/// tuple element and nests another `StoreMutators[...]` application per step —
+/// that recursion never reaches a non-lazy fixpoint and overflows the worker
+/// stack (issue #12455).
+///
+/// The downstream formatter already truncates nested type printing at depth 8
+/// (`max_depth`) and elides long property-receiver objects by depth 26, so any
+/// normalization performed below this bound is never observable in the rendered
+/// diagnostic. Capping the passes here therefore bottoms out the recursion
+/// without changing any displayed output: once the limit is reached the type is
+/// returned unchanged (the cosmetic normalization is simply skipped for the
+/// unreachable depths). The bound is chosen far above the formatter's visible
+/// depth so realistic diagnostics are unaffected, yet far below the thousands of
+/// frames required to exhaust the worker stack.
+const MAX_DIAGNOSTIC_DISPLAY_RECURSION_DEPTH: u32 = 100;
+
+thread_local! {
+    static DISPLAY_RECURSION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII guard that bounds the recursion depth of the diagnostic display
+/// normalization passes (see [`MAX_DIAGNOSTIC_DISPLAY_RECURSION_DEPTH`]).
+///
+/// A single shared thread-local counter spans every mutually-recursive display
+/// normalization function, so the total stack depth across them is bounded even
+/// when one pass re-enters another. The depth is decremented on `Drop`, so every
+/// return path — including early exits — is accounted for without threading a
+/// depth parameter through each call site.
+pub(in crate::error_reporter::core) struct DisplayRecursionGuard;
+
+impl DisplayRecursionGuard {
+    /// Enter one level of display-normalization recursion.
+    ///
+    /// Returns `None` once the depth cap is reached; the caller must then leave
+    /// the type unchanged (return `ty` / `None`) instead of recursing further.
+    pub(in crate::error_reporter::core) fn enter() -> Option<Self> {
+        DISPLAY_RECURSION_DEPTH.with(|depth| {
+            if depth.get() >= MAX_DIAGNOSTIC_DISPLAY_RECURSION_DEPTH {
+                None
+            } else {
+                depth.set(depth.get() + 1);
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for DisplayRecursionGuard {
+    fn drop(&mut self) {
+        DISPLAY_RECURSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn sanitize_type_annotation_text_for_diagnostic(
         &self,
@@ -310,23 +372,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> TypeId {
-        let Some(app) = query::type_application(self.ctx.types, ty) else {
+        // Bound the structural / lazy-resolution recursion so deeply
+        // self-expanding generic types cannot overflow the stack while a
+        // diagnostic type is normalized for display (issue #12455). The
+        // downstream formatter truncates nested printing well below this depth,
+        // so leaving the type unchanged at the cap never alters rendered output.
+        let Some(_display_guard) = DisplayRecursionGuard::enter() else {
             return ty;
         };
-        let args: Vec<_> = app
-            .args
-            .iter()
-            .map(|&arg| self.normalize_property_receiver_application_display_arg(arg))
-            .collect();
-
-        if args == app.args {
-            ty
-        } else {
-            self.ctx.types.factory().application(app.base, args)
-        }
-    }
-
-    fn normalize_property_receiver_application_display_alias(&mut self, ty: TypeId) -> TypeId {
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
@@ -344,6 +397,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_property_receiver_application_display_arg(&mut self, ty: TypeId) -> TypeId {
+        let Some(_display_guard) = DisplayRecursionGuard::enter() else {
+            return ty;
+        };
         // Only resolve `Lazy(DefId)` references via the type environment.
         // Calling `evaluate_type_with_env` on richer shapes (e.g. `keyof T`,
         // `T[K]`, conditional types) eagerly expands them to their evaluated
@@ -457,7 +513,7 @@ impl<'a> CheckerState<'a> {
             let new_ty = self.ctx.types.factory().object_with_index(normalized_shape);
             if let Some(alias_origin) = self.ctx.types.get_display_alias(ty) {
                 let alias_origin =
-                    self.normalize_property_receiver_application_display_alias(alias_origin);
+                    self.normalize_property_receiver_application_display_type(alias_origin);
                 if query::type_application(self.ctx.types, alias_origin).is_some() {
                     self.ctx
                         .types
@@ -503,6 +559,12 @@ impl<'a> CheckerState<'a> {
         &self,
         ty: TypeId,
     ) -> TypeId {
+        // Bound the recursion so deeply self-expanding generic types cannot
+        // overflow the stack while an excess-property diagnostic type is
+        // normalized for display (issue #12455).
+        let Some(_display_guard) = DisplayRecursionGuard::enter() else {
+            return ty;
+        };
         let ty = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
         if let Some(app) = query::type_application(self.ctx.types, ty) {
             let args: Vec<_> = app
@@ -1197,6 +1259,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn materialize_finite_mapped_type_for_display(&mut self, ty: TypeId) -> Option<TypeId> {
+        // Bound the recursion so deeply self-expanding generic types cannot
+        // overflow the stack while materializing a finite mapped type for
+        // display (issue #12455).
+        let _display_guard = DisplayRecursionGuard::enter()?;
         if let Some((mapped_id, mapped)) = query::mapped_type(self.ctx.types, ty) {
             let names =
                 crate::query_boundaries::state::checking::collect_finite_mapped_property_names(

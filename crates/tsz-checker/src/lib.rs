@@ -1059,6 +1059,9 @@ mod property_alias_display_tests;
 #[path = "tests/property_index_key_relation_routing_arch_tests.rs"]
 mod property_index_key_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/property_receiver_display_recursion_overflow_tests.rs"]
+mod property_receiver_display_recursion_overflow_tests;
+#[cfg(test)]
 #[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
 mod property_receiver_relation_routing_arch_tests;
 #[cfg(test)]
