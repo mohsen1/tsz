@@ -832,9 +832,44 @@ impl<'a> TypeFormatter<'a> {
             }
             match self.interner.lookup(body) {
                 Some(TypeData::Lazy(next_def)) => current_def = next_def,
+                // A non-generic alias whose body is a *computed* form — a
+                // conditional, a utility-type application, or an indexed
+                // access — may still resolve to a shared singleton. tsc
+                // attaches no `aliasSymbol` to such a result, so it renders the
+                // underlying `string`/`42`/`never`/… rather than the alias
+                // name. The syntactic checks above never see this because the
+                // body is e.g. `true extends true ? string : number`, so
+                // evaluate the body and display the resolved scalar.
+                Some(
+                    TypeData::Conditional(_)
+                    | TypeData::Application(_)
+                    | TypeData::IndexAccess(_, _),
+                ) => return self.alias_computed_body_underlying(body),
                 _ => return None,
             }
         }
+    }
+
+    /// Evaluate a computed alias body (conditional / utility application /
+    /// indexed access) and return the resolved type to display **only** when it
+    /// collapses to a concrete primitive, literal, or `never` — the shared
+    /// singletons tsc renders structurally instead of by the alias name.
+    ///
+    /// Returns `None` when the body stays generic, deferred, structural
+    /// (union/object/tuple/…), errors, or does not change under evaluation, so
+    /// those aliases keep their declared name exactly as before.
+    fn alias_computed_body_underlying(&self, body: TypeId) -> Option<TypeId> {
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, body);
+        if evaluated == body
+            || evaluated == TypeId::ERROR
+            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
+        {
+            return None;
+        }
+        (crate::visitor::is_primitive_type(self.interner, evaluated)
+            || matches!(self.interner.lookup(evaluated), Some(TypeData::Literal(_)))
+            || evaluated == TypeId::NEVER)
+            .then_some(evaluated)
     }
 
     fn format_in_operator_record(&mut self, shape: &ObjectShape) -> Option<String> {
