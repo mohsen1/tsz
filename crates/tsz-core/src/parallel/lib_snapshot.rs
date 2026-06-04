@@ -43,6 +43,8 @@
 //! debugging, local bisects, or cache-behaviour comparisons.
 
 use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -307,7 +309,7 @@ pub(super) fn try_store_many(keys: &[(&str, u64)], libs: &[Arc<LibFile>]) -> Res
 }
 
 fn encode_snapshot(snapshot: &LibSnapshot) -> Result<Vec<u8>> {
-    let payload = bincode::serialize(snapshot).context("bincode serialize lib snapshot")?;
+    let payload = encode_payload(snapshot).context("bincode serialize lib snapshot")?;
     let mut out = Vec::with_capacity(SNAPSHOT_MAGIC.len() + payload.len());
     out.extend_from_slice(SNAPSHOT_MAGIC);
     out.extend_from_slice(&payload);
@@ -315,7 +317,7 @@ fn encode_snapshot(snapshot: &LibSnapshot) -> Result<Vec<u8>> {
 }
 
 fn encode_snapshot_set(snapshot: &LibSnapshotSet) -> Result<Vec<u8>> {
-    let payload = bincode::serialize(snapshot).context("bincode serialize lib snapshot set")?;
+    let payload = encode_payload(snapshot).context("bincode serialize lib snapshot set")?;
     let mut out = Vec::with_capacity(SNAPSHOT_MAGIC.len() + payload.len());
     out.extend_from_slice(SNAPSHOT_MAGIC);
     out.extend_from_slice(&payload);
@@ -327,7 +329,7 @@ fn decode_snapshot(bytes: &[u8]) -> Result<LibSnapshot> {
         return Err(anyhow!("snapshot magic mismatch"));
     }
     let payload = &bytes[SNAPSHOT_MAGIC.len()..];
-    bincode::deserialize(payload).context("bincode deserialize lib snapshot")
+    decode_payload(payload).context("bincode deserialize lib snapshot")
 }
 
 fn decode_snapshot_set(bytes: &[u8]) -> Result<LibSnapshotSet> {
@@ -335,7 +337,24 @@ fn decode_snapshot_set(bytes: &[u8]) -> Result<LibSnapshotSet> {
         return Err(anyhow!("snapshot magic mismatch"));
     }
     let payload = &bytes[SNAPSHOT_MAGIC.len()..];
-    bincode::deserialize(payload).context("bincode deserialize lib snapshot set")
+    decode_payload(payload).context("bincode deserialize lib snapshot set")
+}
+
+fn encode_payload<T: Serialize>(value: &T) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    bincode::serde::encode_to_vec(value, bincode::config::legacy())
+}
+
+fn decode_payload<T: DeserializeOwned>(payload: &[u8]) -> Result<T> {
+    let (value, consumed): (T, usize) =
+        bincode::serde::decode_from_slice(payload, bincode::config::legacy())
+            .context("decode bincode payload")?;
+    if consumed != payload.len() {
+        return Err(anyhow!(
+            "bincode payload had {} trailing byte(s)",
+            payload.len() - consumed
+        ));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
