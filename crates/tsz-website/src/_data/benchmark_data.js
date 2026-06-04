@@ -1619,7 +1619,7 @@ function generateCharts(data, mode = "projects") {
       html += `  <div class="bench-row">
     <div class="bench-name"><a href="${decorated.url}">${escapeHtml(decorated.display_name)}</a></div>
     <div class="bench-meta">${escapeHtml(metaParts.join(" · "))}</div>
-    <p class="bench-focus">${escapeHtml(decorated.focus)}</p>
+    ${isProject ? "" : `<p class="bench-focus">${escapeHtml(decorated.focus)}</p>`}
     <div class="bench-bars">
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsz</span>
