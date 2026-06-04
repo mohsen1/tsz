@@ -1627,6 +1627,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                             &[key, display_value, "7.0", "6.0"],
                         ),
                         key,
+                        Some(display_value),
                     );
                     diagnostics.push(Diagnostic::error(
                         file_path,
@@ -1638,11 +1639,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
             }
 
-            // No-value deprecations (TS5101): "Option '{0}' is deprecated..."
             let key_deprecations = ["baseUrl", "outFile", "downlevelIteration"];
             for key in &key_deprecations {
-                // Suppress TS5101 when TS5024 already fired for the same option:
-                // tsc does not emit a deprecation warning for options with type errors.
+                // Suppress TS5101 when TS5024 already fired; tsc skips invalid options.
                 if ts5024_keys.iter().any(|k| k == key) {
                     continue;
                 }
@@ -1660,6 +1659,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                             &[key, "7.0", "6.0"],
                         ),
                         key,
+                        None,
                     );
                     diagnostics.push(Diagnostic::error(
                         file_path,
