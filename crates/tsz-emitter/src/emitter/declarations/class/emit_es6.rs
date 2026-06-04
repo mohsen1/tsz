@@ -6,6 +6,7 @@ use super::duplicate_private_names::{
 use super::emit_es6_after_body::ClassEs6AfterBody;
 use super::emit_es6_field_inits::ClassFieldInitCollection;
 use super::emit_es6_members::ClassEs6MemberEmit;
+use super::emit_es6_options::ClassEs6EmitOptions;
 use super::emit_es6_private_accessors::{
     PrivateAutoAccessorInfo, collect_private_auto_accessors_with_reserved,
 };
@@ -38,6 +39,55 @@ impl<'a> Printer<'a> {
         static_initializer_self_alias: Option<&str>,
         emit_assignment_static_elements_as_statements: bool,
     ) {
+        self.emit_class_es6_with_emit_options(
+            node,
+            _idx,
+            ClassEs6EmitOptions {
+                suppress_modifiers,
+                assignment_prefix,
+                assignment_alias,
+                static_initializer_self_alias,
+                emit_assignment_static_elements_as_statements,
+                assignment_suffix: None,
+            },
+        );
+    }
+
+    pub(in crate::emitter) fn emit_class_es6_assignment_with_suffix(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+        assignment_target: String,
+        assignment_suffix: &str,
+    ) {
+        self.emit_class_es6_with_emit_options(
+            node,
+            _idx,
+            ClassEs6EmitOptions {
+                suppress_modifiers: false,
+                assignment_prefix: Some(("", assignment_target)),
+                assignment_alias: None,
+                static_initializer_self_alias: None,
+                emit_assignment_static_elements_as_statements: false,
+                assignment_suffix: Some(assignment_suffix),
+            },
+        );
+    }
+
+    fn emit_class_es6_with_emit_options(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+        options: ClassEs6EmitOptions<'_>,
+    ) {
+        let ClassEs6EmitOptions {
+            suppress_modifiers,
+            assignment_prefix,
+            assignment_alias,
+            static_initializer_self_alias,
+            emit_assignment_static_elements_as_statements,
+            assignment_suffix,
+        } = options;
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
@@ -1078,6 +1128,43 @@ impl<'a> Printer<'a> {
         let emits_as_class_expression = is_class_expression || assignment_prefix.is_some();
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
+        // For class expressions with static field initializers, we need to wrap
+        // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
+        let has_static_field_comma_expr = self.class_has_static_field_comma_expr(
+            class,
+            target_needs_field_lowering,
+            target_needs_static_block_lowering,
+            needs_private_field_lowering,
+        );
+        let has_static_block_comma_expr =
+            self.class_has_static_block_comma_expr(class, target_needs_static_block_lowering);
+        // A computed-named *static method or accessor* is emitted inline in the
+        // class body, so it only requires the `(_tmp = class {...}, ..., _tmp)`
+        // comma wrapping when the binding *also* loses JS named evaluation --
+        // i.e. a `using`/`await using` declaration lowered to
+        // `__addDisposableResource`, which moves the class out of
+        // direct-assignment position. A plain `var X = class {...}` keeps named
+        // evaluation and needs no wrapping for inline computed method names.
+        let has_static_computed_method_or_accessor = self
+            .class_has_static_computed_method_or_accessor_comma_expr(
+                class,
+                _idx,
+                emits_as_class_expression,
+            );
+        let needs_static_comma_expr = emits_as_class_expression
+            && !emit_assignment_static_elements_as_statements
+            && (has_static_field_comma_expr
+                || has_static_block_comma_expr
+                || has_static_computed_method_or_accessor);
+        let preplanned_class_expr_temp = if needs_static_comma_expr
+            && private_class_alias.is_none()
+            && self.file_level_class_temp_reservations.contains_key(&_idx)
+        {
+            Some(self.make_class_static_temp_name_hoisted(_idx))
+        } else {
+            None
+        };
+
         // Computed property name hoisting for class fields that will be lowered.
         // tsc hoists non-constant computed property name expressions to temp variables
         // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
@@ -1228,7 +1315,10 @@ impl<'a> Printer<'a> {
                     }
                 } else {
                     // Allocate a temp variable for this computed property name
-                    let temp = if self.ctx.options.legacy_decorators && !has_legacy_decorators {
+                    let use_class_static_temp = (preplanned_class_expr_temp.is_some()
+                        && self.file_level_class_temp_reservations.contains_key(&_idx))
+                        || (self.ctx.options.legacy_decorators && !has_legacy_decorators);
+                    let temp = if use_class_static_temp {
                         self.make_class_static_temp_name_hoisted(_idx)
                     } else {
                         self.make_unique_name_hoisted()
@@ -1244,93 +1334,6 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // For class expressions with static field initializers, we need to wrap
-        // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
-        // Allocate the class-expression temp after computed-name temps so the
-        // generated `_a`, `_b`, `_c` ordering matches tsc.
-        let has_static_field_comma_expr = target_needs_field_lowering
-            && target_needs_static_block_lowering
-            && class.members.nodes.iter().any(|&member_idx| {
-                let Some(member) = self.arena.get(member_idx) else {
-                    return false;
-                };
-                if member.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    return false;
-                }
-                let Some(prop) = self.arena.get_property_decl(member) else {
-                    return false;
-                };
-                if !self.arena.is_static(&prop.modifiers) {
-                    return false;
-                }
-                if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                {
-                    return false;
-                }
-                if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                {
-                    return false;
-                }
-                if needs_private_field_lowering && is_private_identifier(self.arena, prop.name) {
-                    return false;
-                }
-                // A static field that lowers to no runtime statement (a bare type-only
-                // declaration) neither needs a comma-expr temp nor a `__setFunctionName`
-                // helper item. Fields with runtime state (initializer, auto-accessor, or
-                // decorator) still carry static state.
-                crate::transforms::emit_utils::class_field_decl_has_runtime_state(self.arena, prop)
-            });
-        let has_static_block_comma_expr = target_needs_static_block_lowering
-            && class.members.nodes.iter().any(|&member_idx| {
-                self.arena
-                    .get(member_idx)
-                    .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
-            });
-        // A computed-named *static method or accessor* is emitted inline in the
-        // class body, so it only requires the `(_tmp = class {...}, ..., _tmp)`
-        // comma wrapping when the binding *also* loses JS named evaluation --
-        // i.e. a `using`/`await using` declaration lowered to
-        // `__addDisposableResource`, which moves the class out of
-        // direct-assignment position. A plain `var X = class {...}` keeps named
-        // evaluation and needs no wrapping for inline computed method names.
-        let has_static_computed_method_or_accessor = emits_as_class_expression
-            && class.name.is_none()
-            && self.resolve_class_expr_binding_name(_idx).is_some()
-            && self.class_expr_binding_loses_named_evaluation(_idx)
-            && class.members.nodes.iter().any(|&member_idx| {
-                self.arena
-                    .get(member_idx)
-                    .is_some_and(|member| match member.kind {
-                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                            self.arena.get_method_decl(member).is_some_and(|method| {
-                                self.arena.is_static(&method.modifiers)
-                                    && self.arena.get(method.name).is_some_and(|name| {
-                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                                    })
-                            })
-                        }
-                        k if k == syntax_kind_ext::GET_ACCESSOR
-                            || k == syntax_kind_ext::SET_ACCESSOR =>
-                        {
-                            self.arena.get_accessor(member).is_some_and(|accessor| {
-                                self.arena.is_static(&accessor.modifiers)
-                                    && self.arena.get(accessor.name).is_some_and(|name| {
-                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                                    })
-                            })
-                        }
-                        _ => false,
-                    })
-            });
-        let needs_static_comma_expr = emits_as_class_expression
-            && !emit_assignment_static_elements_as_statements
-            && (has_static_field_comma_expr
-                || has_static_block_comma_expr
-                || has_static_computed_method_or_accessor);
         let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
         if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
             let mut pending_computed_entries = Vec::new();
@@ -1492,6 +1495,8 @@ impl<'a> Printer<'a> {
         let class_expr_temp = if needs_class_expr_temp {
             let temp = if let Some(ref alias) = private_class_alias {
                 alias.clone()
+            } else if let Some(temp) = preplanned_class_expr_temp {
+                temp
             } else {
                 self.make_class_static_temp_name_hoisted(_idx)
             };
@@ -1894,7 +1899,7 @@ impl<'a> Printer<'a> {
             self.write("}");
         }
         if assignment_prefix.is_some() && class_expr_temp.is_none() {
-            self.write(";");
+            self.write(assignment_suffix.unwrap_or(";"));
         }
 
         if class_expr_temp.is_none() {

@@ -888,17 +888,11 @@ impl<'a> CheckerState<'a> {
             rustc_hash::FxHashMap::default();
         if !overloaded_methods.is_empty() {
             let class_instance_type = self.get_class_instance_type(class_idx, class_data);
-            if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+            overloaded_member_types = crate::query_boundaries::class::instance_member_types_by_name(
                 self.ctx.types,
                 class_instance_type,
-            ) {
-                for prop in &shape.properties {
-                    let name = self.ctx.types.resolve_atom(prop.name);
-                    if overloaded_methods.contains(&name) {
-                        overloaded_member_types.insert(name, prop.type_id);
-                    }
-                }
-            }
+            );
+            overloaded_member_types.retain(|name, _| overloaded_methods.contains(name));
         }
 
         // Build a map of inherited PUBLIC instance members from the base class chain.

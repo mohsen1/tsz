@@ -7,7 +7,7 @@ permalink: /compatibility/index.html
 
 # Compatibility
 
-`tsz` is not a drop-in replacement yet. Even though TypeScript's own compiler tests pass, some benchmark projects still do not compile cleanly with `tsz`. There is still a lot of compatibility work to do before it can replace `tsc` on real projects.
+`tsz` is close to `tsc` compatibility across diagnostics, emit, and editor behavior. The remaining work is concentrated in real-project compile readiness and the last release-gate gaps tracked below.
 
 Currently tracking **TypeScript `{{ metrics.ts_version }}`**.
 
@@ -56,3 +56,5 @@ The language-service suite checks editor-facing behavior: completions, hover, go
 </div>
 
 <p class="compat-note">{{ metrics.fourslash_passed }} of {{ metrics.fourslash_total }} editor tests match the TypeScript suite.</p>
+
+{{ project_compatibility_dashboard | safe }}

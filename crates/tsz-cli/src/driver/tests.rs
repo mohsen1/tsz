@@ -1385,6 +1385,59 @@ fn test_compile_emits_ts18003_in_batch_style_project_mode() {
 }
 
 #[test]
+fn test_no_ts18003_when_inherited_include_has_dot_prefix() {
+    // Regression for the selector-normalization half of issue #12460 (the
+    // `mswjs/msw` shape): a root that inherits `"include": ["./global.d.ts"]`
+    // from a base config via `extends`. Anchoring the inherited selector onto
+    // the base dir must collapse the leading `./`, otherwise the glob
+    // `<dir>/./global.d.ts` matches nothing and discovery raises a false
+    // TS18003.
+    //
+    // Deliberately no `references` here: the references-only suppression (added
+    // separately in #12493) would otherwise mask a broken selector fix, so this
+    // test would no longer exercise the normalization. With an empty discovery
+    // and no `files`/`references`, a regressed selector would re-raise TS18003.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    fs::write(
+        root.join("tsconfig.base.json"),
+        r#"{
+      "compilerOptions": { "strict": true },
+      "include": ["./global.d.ts"],
+      "exclude": ["node_modules"]
+    }"#,
+    )
+    .expect("write base tsconfig");
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{ "extends": "./tsconfig.base.json" }"#,
+    )
+    .expect("write root tsconfig");
+    fs::write(
+        root.join("global.d.ts"),
+        "declare module 'virtual-mod' { export const x: number; }\n",
+    )
+    .expect("write global.d.ts");
+
+    let project = root.to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("args");
+    let result = compile(&args, root).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&18003),
+        "inherited ./global.d.ts must be discovered; got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_batch_style_project_mode_keeps_ts7005_for_imported_dts_export() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
@@ -2659,78 +2712,5 @@ export type * from "./does-not-exist-g";
     );
 }
 
-#[test]
-fn test_cli_sound_report_only_sets_sound_mode_and_report_only() {
-    let args = CliArgs::try_parse_from(["tsz", "--soundReportOnly"]).expect("parse args");
-    let mut options = ResolvedCompilerOptions::default();
-    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
-    assert!(
-        options.checker.sound_mode,
-        "--soundReportOnly must enable sound_mode (implied)"
-    );
-    assert!(
-        options.checker.sound_report_only,
-        "--soundReportOnly must enable sound_report_only"
-    );
-}
-
-#[test]
-fn test_cli_sound_report_only_kebab_alias_works() {
-    let args = CliArgs::try_parse_from(["tsz", "--sound-report-only"]).expect("parse kebab alias");
-    let mut options = ResolvedCompilerOptions::default();
-    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
-    assert!(options.checker.sound_mode);
-    assert!(options.checker.sound_report_only);
-}
-
-#[test]
-fn test_cli_sound_report_only_false_override_clears_only_report_only() {
-    let args = CliArgs::try_parse_from([
-        "tsz",
-        "--sound",
-        "--__explicitly-disabled-bool-flag=soundReportOnly",
-    ])
-    .expect("parse args");
-    let mut options = ResolvedCompilerOptions::default();
-    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
-    assert!(options.checker.sound_mode, "sound_mode must stay true");
-    assert!(
-        !options.checker.sound_report_only,
-        "sound_report_only must be cleared"
-    );
-}
-
-#[test]
-fn test_sound_report_only_defaults_false() {
-    let options = ResolvedCompilerOptions::default();
-    assert!(!options.checker.sound_report_only);
-    assert!(!options.checker.sound_mode);
-}
-
-#[test]
-fn test_cli_sound_flag_does_not_set_report_only() {
-    let args = CliArgs::try_parse_from(["tsz", "--sound"]).expect("parse args");
-    let mut options = ResolvedCompilerOptions::default();
-    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
-    assert!(options.checker.sound_mode, "sound_mode must be true");
-    assert!(
-        !options.checker.sound_report_only,
-        "--sound alone must not set sound_report_only"
-    );
-}
-
-#[test]
-fn test_compile_sound_report_only_collects_diagnostics_from_sound_mode() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    fs::write(dir.path().join("a.ts"), "const x: string = 42;\n").expect("write source");
-
-    let args_sound_report_only =
-        CliArgs::try_parse_from(["tsz", "--noEmit", "--soundReportOnly", "a.ts"])
-            .expect("parse args");
-    let result = compile(&args_sound_report_only, dir.path()).expect("compile");
-    assert!(
-        result.diagnostics.iter().any(|d| d.code == 2322),
-        "TS2322 should still be reported in sound_report_only mode, got: {:?}",
-        result.diagnostics
-    );
-}
+#[path = "tests_tail.rs"]
+mod tests_tail;

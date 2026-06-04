@@ -81,6 +81,13 @@ RXJS_DIR="$EXTERNAL_BENCH_DIR/rxjs"
 TYPE_FEST_DIR="$EXTERNAL_BENCH_DIR/type-fest"
 ZOD_DIR="$EXTERNAL_BENCH_DIR/zod"
 KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
+VALIBOT_DIR="$EXTERNAL_BENCH_DIR/valibot"
+MSW_DIR="$EXTERNAL_BENCH_DIR/msw"
+COMLINK_DIR="$EXTERNAL_BENCH_DIR/comlink"
+EFFECT_DIR="$EXTERNAL_BENCH_DIR/effect"
+DRIZZLE_ORM_DIR="$EXTERNAL_BENCH_DIR/drizzle-orm"
+TS_REST_DIR="$EXTERNAL_BENCH_DIR/ts-rest"
+OFETCH_DIR="$EXTERNAL_BENCH_DIR/ofetch"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 # The local fallback was previously implicit, which silently contaminated
 # PR-quality numbers on any developer machine that happened to have a
@@ -156,6 +163,7 @@ while [[ $# -gt 0 ]]; do
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
             echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
             echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
+            echo "  TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR=<factor> Mark green project rows slower than tsgo by this factor as timing failures (default: 8; 0 disables)"
             echo "  BENCH_PGO_FETCH_CORE_PROJECTS=1  Fetch/train ts-toolbelt/ts-essentials during PGO (default: 0; slower)"
             echo "  BENCH_PGO_SYNTHETIC=0  Don't train PGO on generated benchmark stress cases (default: 1)"
             echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"
@@ -614,6 +622,7 @@ project_failure_status() {
         timeout) echo "compiler timed out" ;;
         oom) echo "compiler OOM or killed" ;;
         crash) echo "compiler crashed" ;;
+        slowdown) echo "runtime slowdown" ;;
         "oracle unavailable") echo "tsc oracle unavailable" ;;
         *) echo "diagnostic mismatch or compiler error" ;;
     esac
@@ -1920,6 +1929,21 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
+            if [ "$winner" = "tsgo" ] \
+                && tsz_project_slowdown_failure_reached "$tsz_mean" "$tsgo_mean"; then
+                local threshold
+                threshold="$(tsz_project_slowdown_failure_factor)"
+                local status
+                status="tsz slowdown (${ratio}x slower than tsgo; threshold ${threshold}x)"
+                local diagnostic_delta
+                diagnostic_delta="timing failure: tsz ${tsz_ms} ms, tsgo ${tsgo_ms} ms, ratio ${ratio}x, threshold ${threshold}x"
+                echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
+                record_project_compatibility "$name" "slowdown" "timing" "$(project_failure_status slowdown)" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
+                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+                rm -f "$json_file"
+                return
+            fi
+
             local success_exit_class="exit success"
             local success_phase="check"
             local success_diagnostic_status="none"
@@ -2805,6 +2829,41 @@ ensure_kysely_fixture() {
     tsz_write_kysely_config "$flat_tsconfig"
 }
 
+ensure_valibot_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "valibot" "$VALIBOT_REPO" "$VALIBOT_REF" "$VALIBOT_DIR" 1
+}
+
+ensure_msw_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "msw" "$MSW_REPO" "$MSW_REF" "$MSW_DIR" 1
+}
+
+ensure_comlink_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "comlink" "$COMLINK_REPO" "$COMLINK_REF" "$COMLINK_DIR" 1
+}
+
+ensure_effect_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "effect" "$EFFECT_REPO" "$EFFECT_REF" "$EFFECT_DIR" 1
+}
+
+ensure_drizzle_orm_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "drizzle-orm" "$DRIZZLE_ORM_REPO" "$DRIZZLE_ORM_REF" "$DRIZZLE_ORM_DIR" 1
+}
+
+ensure_ts_rest_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-rest" "$TS_REST_REPO" "$TS_REST_REF" "$TS_REST_DIR" 1
+}
+
+ensure_ofetch_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ofetch" "$OFETCH_REPO" "$OFETCH_REF" "$OFETCH_DIR" 1
+}
+
 run_utility_types_benchmarks() {
     local benchmark_names=(
         "utility-types/index.ts"
@@ -3118,6 +3177,111 @@ run_kysely_project_benchmarks() {
     echo
 }
 
+run_valibot_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "valibot-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Valibot"
+    ensure_valibot_fixture
+    local tsconfig="$VALIBOT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$VALIBOT_DIR/library/src"
+    tsz_write_valibot_config "$tsconfig"
+    run_project_benchmark "valibot-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_msw_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "msw-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - MSW"
+    ensure_msw_fixture
+    local tsconfig="$MSW_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$MSW_DIR/src"
+    tsz_write_msw_config "$tsconfig"
+    run_project_benchmark "msw-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_comlink_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "comlink-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Comlink"
+    ensure_comlink_fixture
+    local tsconfig="$COMLINK_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$COMLINK_DIR/src"
+    tsz_write_comlink_config "$tsconfig"
+    run_project_benchmark "comlink-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_effect_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "effect-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Effect"
+    ensure_effect_fixture
+    local tsconfig="$EFFECT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$EFFECT_DIR/packages/effect/src"
+    tsz_write_effect_config "$tsconfig"
+    run_project_benchmark "effect-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_drizzle_orm_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "drizzle-orm-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Drizzle ORM"
+    ensure_drizzle_orm_fixture
+    local tsconfig="$DRIZZLE_ORM_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$DRIZZLE_ORM_DIR/drizzle-orm/src"
+    tsz_write_drizzle_orm_config "$tsconfig"
+    run_project_benchmark "drizzle-orm-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_rest_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ts-rest-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-rest"
+    ensure_ts_rest_fixture
+    local tsconfig="$TS_REST_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TS_REST_DIR/libs/ts-rest/core/src"
+    tsz_write_ts_rest_config "$tsconfig"
+    run_project_benchmark "ts-rest-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ofetch_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ofetch-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ofetch"
+    ensure_ofetch_fixture
+    local tsconfig="$OFETCH_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$OFETCH_DIR/src"
+    tsz_write_ofetch_config "$tsconfig"
+    run_project_benchmark "ofetch-project" "$tsconfig" "$src_dir"
+    echo
+}
+
 run_nextjs_benchmarks() {
     if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
         return
@@ -3415,6 +3579,13 @@ main() {
     run_isolated "type-fest-project"      run_type_fest_project_benchmarks
     run_isolated "zod-project"            run_zod_project_benchmarks
     run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "valibot-project"        run_valibot_project_benchmarks
+    run_isolated "msw-project"            run_msw_project_benchmarks
+    run_isolated "comlink-project"        run_comlink_project_benchmarks
+    run_isolated "effect-project"         run_effect_project_benchmarks
+    run_isolated "drizzle-orm-project"    run_drizzle_orm_project_benchmarks
+    run_isolated "ts-rest-project"        run_ts_rest_project_benchmarks
+    run_isolated "ofetch-project"         run_ofetch_project_benchmarks
     run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
     run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks

@@ -9,7 +9,6 @@
 //! - Index signature handling
 //! - Type parameter instantiation for generic bases
 
-use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::CheckerState;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -505,29 +504,10 @@ impl<'a> CheckerState<'a> {
                 // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                 let has_param_grammar_error =
                     param_data.dot_dot_dot_token || param_data.question_token;
-                let is_valid_index_type = key_type == TypeId::STRING
-                    || key_type == TypeId::NUMBER
-                    || key_type == TypeId::SYMBOL
-                    || is_template_literal_type(self.ctx.types, key_type);
-
-                // Also check syntactically for type aliases that resolve to valid types
-                let is_valid_via_alias = if let Some(type_node) =
-                    self.ctx.arena.get(param_data.type_annotation)
-                {
-                    self.is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation)
-                } else {
-                    false
-                };
-
-                if !is_valid_index_type && !is_valid_via_alias && !has_param_grammar_error {
+                let (is_generic_or_literal, is_valid_index_type) =
+                    self.classify_index_sig_param_type(key_type, param_data.type_annotation);
+                if !is_valid_index_type && !has_param_grammar_error {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    // Check if this is a literal type or generic type (TS1337 vs TS1268)
-                    let type_node = self.ctx.arena.get(param_data.type_annotation);
-                    let type_node_kind = type_node.map(|n| n.kind).unwrap_or(0);
-                    let is_generic_or_literal = self.is_type_param_or_literal_in_index_sig(
-                        type_node_kind,
-                        param_data.type_annotation,
-                    );
                     if is_generic_or_literal {
                         self.error_at_node(
                             param_idx,
@@ -561,7 +541,7 @@ impl<'a> CheckerState<'a> {
                     readonly,
                     param_name,
                 };
-                if is_valid_index_type || is_valid_via_alias {
+                if is_valid_index_type {
                     if key_type == TypeId::NUMBER {
                         Self::merge_index_signature(&mut number_index, info);
                     } else {

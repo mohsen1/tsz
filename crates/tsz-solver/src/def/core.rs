@@ -1164,6 +1164,15 @@ impl DefinitionStore {
         self.definitions.get(&id).map(|r| r.name)
     }
 
+    /// The declaring file id of a definition, if known.
+    ///
+    /// Reads the single field directly rather than cloning the whole
+    /// `DefinitionInfo` (as `get` does), matching `get_kind`/`get_name`. Lib
+    /// definitions use the `u32::MAX` sentinel.
+    pub fn get_file_id(&self, id: DefId) -> Option<u32> {
+        self.definitions.get(&id).and_then(|r| r.file_id)
+    }
+
     /// Add an export to an existing definition.
     pub fn add_export(&self, id: DefId, name: Atom, export_def: DefId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {

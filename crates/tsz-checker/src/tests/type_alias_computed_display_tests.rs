@@ -135,3 +135,77 @@ const h: Holder = { v: 0 };
         "expected a directly-written tuple alias to keep its name, got: {msg}"
     );
 }
+
+// ── `keyof` reducing-operator family (issue #12179 / #10914) ──────────────
+//
+// `keyof <anonymous object type literal>` is a reducing operator like an
+// indexed access: it resolves to the operand's key set and tsc renders that
+// union, dropping any alias name and the `keyof { ... }` spelling. A `keyof`
+// over a *named* operand keeps the `keyof Name` form. Binder names vary across
+// cases so a hardcoded fix cannot satisfy them.
+
+// 7. A non-generic alias whose body is `keyof { ... }` renders the key union.
+#[test]
+fn keyof_anonymous_object_literal_alias_renders_key_union() {
+    let msg = ts2322_target(
+        r#"
+type KeyAlias = keyof { alpha: 1; beta: 2 };
+type Holder = { v: KeyAlias };
+const h: Holder = { v: 0 };
+"#,
+    );
+    assert!(
+        msg.contains("\"alpha\" | \"beta\"") && !msg.contains("KeyAlias"),
+        "expected `keyof {{ ... }}` alias to render as the key union, got: {msg}"
+    );
+}
+
+// 8. Renamed binder, three keys — proves the rule is structural, not keyed on
+//    a specific identifier or arity.
+#[test]
+fn keyof_anonymous_object_literal_alias_renamed_binder() {
+    let msg = ts2322_target(
+        r#"
+type ColumnNames = keyof { id: 1; name: 2; createdAt: 3 };
+type Wrapper = { field: ColumnNames };
+const w: Wrapper = { field: 0 };
+"#,
+    );
+    assert!(
+        msg.contains("\"id\" | \"name\" | \"createdAt\"") && !msg.contains("ColumnNames"),
+        "expected renamed `keyof {{ ... }}` alias to render as the key union, got: {msg}"
+    );
+}
+
+// 9. Inline (un-aliased) `keyof { ... }` annotation also renders the key union.
+#[test]
+fn keyof_anonymous_object_literal_inline_renders_key_union() {
+    let msg = ts2322_target(
+        r#"
+const x: keyof { zebra: 1; quartz: 2 } = 0;
+"#,
+    );
+    assert!(
+        msg.contains("\"zebra\" | \"quartz\"") && !msg.contains("keyof {"),
+        "expected inline `keyof {{ ... }}` to render as the key union, got: {msg}"
+    );
+}
+
+// 10. Negative case: `keyof NamedInterface` keeps the `keyof Name` spelling and
+//     is never expanded to the literal key union — a named operand is not
+//     anonymous, so the operator form is preserved (the TYPE_LITERAL gate does
+//     not fire for a named type reference).
+#[test]
+fn keyof_named_interface_keeps_keyof_spelling() {
+    let msg = ts2322_target(
+        r#"
+interface Registry { red: 1; green: 2 }
+type RegistryKeys = keyof Registry;
+const h: RegistryKeys = 0;
+"#,
+    );
+    assert!(
+        msg.contains("keyof Registry") && !msg.contains("\"red\""),
+        "expected `keyof NamedInterface` to keep its operator spelling, got: {msg}"
+    );
+}

@@ -487,6 +487,13 @@ impl ParserState {
                 if !self.is_token(SyntaxKind::CloseParenToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
+                    if self.in_recovered_if_class_member_parameters()
+                        && self.current_token_is_comparison_tail()
+                    {
+                        self.error_comma_expected();
+                        self.suppress_next_missing_close_paren_error_once = true;
+                        break;
+                    }
                     if recover_tail_from_definite_assignment_colon
                         && matches!(
                             self.token(),

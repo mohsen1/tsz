@@ -3,6 +3,7 @@
 mod assignment_formatting;
 mod assignment_source_preservation;
 mod compound_assignment_context;
+mod computed_index_source_display;
 mod contextual_index_display;
 mod generic_source_display;
 mod literal_surface;

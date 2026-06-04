@@ -20,6 +20,29 @@ pub(crate) fn maybe_substitute_this_type(
     }
 }
 
+/// Build a `name -> member type` map from a class/interface instance type's
+/// object shape.
+///
+/// The instance-type shape already merges method overloads into a single
+/// callable (and hides the implementation signature), so it is the canonical
+/// source for an externally-visible member type. Both the own-class and the
+/// inherited-member `implements` paths use this so they aggregate overloads
+/// identically. Returns an empty map when the type has no object shape.
+pub(crate) fn instance_member_types_by_name(
+    db: &dyn QueryDatabase,
+    instance_type: TypeId,
+) -> rustc_hash::FxHashMap<String, TypeId> {
+    crate::query_boundaries::common::object_shape_for_type(db.as_type_database(), instance_type)
+        .map(|shape| {
+            shape
+                .properties
+                .iter()
+                .map(|prop| (db.resolve_atom(prop.name), prop.type_id))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Collect a type's call signatures, handling both `CallableShape`
 /// (overloaded / object-with-call-sigs) and the single-signature `FunctionShape`
 /// that an interface method declaration lowers to. `get_call_signatures` alone

@@ -220,6 +220,21 @@ impl ParserState {
                 return left;
             }
 
+            if self.in_if_condition_context()
+                && self
+                    .arena
+                    .get(left)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+            {
+                if deferred_failed_async_arrow_colon_recovery
+                    && !self.is_token(SyntaxKind::ColonToken)
+                {
+                    self.pending_failed_async_arrow_colon_recovery =
+                        saved_pending_failed_async_arrow_colon_recovery;
+                }
+                return left;
+            }
+
             if self.in_parenthesized_expression_context()
                 && self
                     .arena

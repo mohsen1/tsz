@@ -59,6 +59,7 @@ if (process.env.TSZ_WEBSITE_SKIP_BENCH_PREPARE !== "1") {
 
 await runOnce(process.execPath, [path.join(root, "scripts", "sync-docs.mjs")]);
 
+children.push(spawnChild(process.execPath, [path.join(root, "scripts", "sync-docs.mjs"), "--watch-only"]));
 children.push(spawnChild(process.execPath, [path.join(root, "scripts", "build-playground.mjs"), "--watch"]));
 children.push(
   spawnChild(

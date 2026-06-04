@@ -154,3 +154,45 @@ fn var_bound_anonymous_class_computed_static_field_still_wraps_es2015() {
         "A runtime computed static field must not be emitted as a plain inline class body.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn file_level_static_field_class_expr_temps_reserve_in_source_order_es2015() {
+    let source = "let First = class {\n    // keep with lowered static field\n    static x = 1;\n};\nconst key = 'k';\nlet Second = class { static [key] = 2; };\nfunction later(value = class { static x = 3; }) {}\n";
+    let output = emit(source, ScriptTarget::ES2015, false);
+
+    assert!(
+        output.contains(
+            "let First = (_a = class {\n    },\n    __setFunctionName(_a, \"First\"),\n    // keep with lowered static field\n    _a.x = 1,\n    _a);"
+        ),
+        "Leading comments on static fields should be replayed inside class-expression comma lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "let Second = (_b = class {\n    },\n    _c = key,\n    __setFunctionName(_b, \"Second\"),\n    _b[_c] = 2,\n    _b);"
+        ),
+        "File-level class-expression result temps should be reserved before their computed-key temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function later(value) {\n    var _d;"),
+        "Nested function temp scopes should skip file-level class-expression temps.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn binding_pattern_default_class_expr_uses_binding_name_es2015() {
+    let source = "let { slot = class { static x = 1; } } = {};\nlet [item = class { static x = 2; }] = [];\n";
+    let output = emit(source, ScriptTarget::ES2015, false);
+
+    assert!(
+        output.contains(
+            "let { slot = (_a = class {\n    },\n    __setFunctionName(_a, \"slot\"),\n    _a.x = 1,\n    _a) } = {};"
+        ),
+        "Object binding defaults should use the binding element name for explicit class naming.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "let [item = (_b = class {\n    },\n    __setFunctionName(_b, \"item\"),\n    _b.x = 2,\n    _b)] = [];"
+        ),
+        "Array binding defaults should use the binding element name for explicit class naming.\nOutput:\n{output}"
+    );
+}

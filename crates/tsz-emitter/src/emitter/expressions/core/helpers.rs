@@ -779,8 +779,15 @@ impl<'a> Printer<'a> {
                 self.write(" ?");
                 self.write_line();
                 self.increase_indent();
-                self.emit(cond.when_true);
-                if newline_before_colon {
+                if self.arena.is_missing_recovery_identifier(cond.when_false) {
+                    if !self.arena.is_missing_recovery_identifier(cond.when_true) {
+                        self.emit(cond.when_true);
+                        self.write_line();
+                    }
+                    self.write(":");
+                    self.write_line();
+                } else if newline_before_colon {
+                    self.emit(cond.when_true);
                     let colon_on_true_line =
                         self.colon_on_true_line(cond.when_true, cond.when_false);
                     if colon_on_true_line {
@@ -795,6 +802,7 @@ impl<'a> Printer<'a> {
                         self.emit(cond.when_false);
                     }
                 } else {
+                    self.emit(cond.when_true);
                     self.write(" : ");
                     self.emit(cond.when_false);
                 }
