@@ -227,7 +227,10 @@ impl ModuleResolutionCache {
 
             visited.push(current.to_path_buf());
 
-            if let Some(package_json) = self.read_package_json(&current.join("package.json")) {
+            let package_json_path = current.join("package.json");
+            if self.file_exists(&package_json_path)
+                && let Some(package_json) = self.read_package_json(&package_json_path)
+            {
                 let value = package_type_from_json(Some(&package_json));
                 for path in visited {
                     self.package_type_by_dir.insert(path, value);
