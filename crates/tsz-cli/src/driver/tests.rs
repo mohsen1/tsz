@@ -1385,6 +1385,59 @@ fn test_compile_emits_ts18003_in_batch_style_project_mode() {
 }
 
 #[test]
+fn test_no_ts18003_when_inherited_include_has_dot_prefix() {
+    // Regression for the selector-normalization half of issue #12460 (the
+    // `mswjs/msw` shape): a root that inherits `"include": ["./global.d.ts"]`
+    // from a base config via `extends`. Anchoring the inherited selector onto
+    // the base dir must collapse the leading `./`, otherwise the glob
+    // `<dir>/./global.d.ts` matches nothing and discovery raises a false
+    // TS18003.
+    //
+    // Deliberately no `references` here: the references-only suppression (added
+    // separately in #12493) would otherwise mask a broken selector fix, so this
+    // test would no longer exercise the normalization. With an empty discovery
+    // and no `files`/`references`, a regressed selector would re-raise TS18003.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    fs::write(
+        root.join("tsconfig.base.json"),
+        r#"{
+      "compilerOptions": { "strict": true },
+      "include": ["./global.d.ts"],
+      "exclude": ["node_modules"]
+    }"#,
+    )
+    .expect("write base tsconfig");
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{ "extends": "./tsconfig.base.json" }"#,
+    )
+    .expect("write root tsconfig");
+    fs::write(
+        root.join("global.d.ts"),
+        "declare module 'virtual-mod' { export const x: number; }\n",
+    )
+    .expect("write global.d.ts");
+
+    let project = root.to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("args");
+    let result = compile(&args, root).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&18003),
+        "inherited ./global.d.ts must be discovered; got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_batch_style_project_mode_keeps_ts7005_for_imported_dts_export() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
@@ -2716,6 +2769,113 @@ fn test_cli_sound_flag_does_not_set_report_only() {
     assert!(
         !options.checker.sound_report_only,
         "--sound alone must not set sound_report_only"
+    );
+}
+
+/// TS18003 must not fire when `references[]` is non-empty: a references-only
+/// root tsconfig (orchestrates child builds without owning .ts inputs) is a
+/// standard TypeScript Project References pattern that tsc accepts silently.
+#[test]
+fn test_compile_no_ts18003_for_references_only_tsconfig() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let child_dir = dir.path().join("child");
+    fs::create_dir_all(&child_dir).expect("create child dir");
+
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "include": ["./global.d.ts"],
+  "references": [{ "path": "./child" }]
+}"#,
+    )
+    .expect("write root tsconfig");
+    fs::write(dir.path().join("global.d.ts"), "").expect("write global.d.ts");
+    fs::write(
+        child_dir.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "composite": true, "noEmit": true } }"#,
+    )
+    .expect("write child tsconfig");
+    fs::write(child_dir.join("a.ts"), "export const x = 1;\n").expect("write child source");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--noEmit"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&18003),
+        "TS18003 must not fire for references-only tsconfig, got: {codes:?}"
+    );
+}
+
+/// TS5107 for `allowSyntheticDefaultImports=false` must NOT append the migration URL
+/// ("Visit https://aka.ms/ts6"). tsc 6.0.3 only chains the URL for options with an
+/// active migration target (moduleResolution, module, target). This was a regression
+/// introduced in #12292.
+#[test]
+fn test_ts5107_allow_synthetic_default_imports_false_no_migration_url() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{ "compilerOptions": { "allowSyntheticDefaultImports": false, "noEmit": true, "strict": true } }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("a.ts"), "export const x = 1;\n").expect("write source");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args =
+        CliArgs::try_parse_from(["tsz", "--project", project.as_str()]).expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let ts5107: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5107)
+        .collect();
+    assert!(
+        !ts5107.is_empty(),
+        "expected TS5107, got: {:?}",
+        result.diagnostics
+    );
+    for d in &ts5107 {
+        assert!(
+            !d.message_text.contains("aka.ms/ts6"),
+            "TS5107 for allowSyntheticDefaultImports=false must not contain migration URL, got: {}",
+            d.message_text
+        );
+    }
+}
+
+/// TS5107 for `moduleResolution=node10` MUST append the migration URL because
+/// it has an active migration target (node16/bundler). Confirms the allowlist
+/// retains the URL for options that need it.
+#[test]
+fn test_ts5107_module_resolution_node10_has_migration_url() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{ "compilerOptions": { "moduleResolution": "node10", "noEmit": true } }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("a.ts"), "export const x = 1;\n").expect("write source");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args =
+        CliArgs::try_parse_from(["tsz", "--project", project.as_str()]).expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let ts5107: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5107)
+        .collect();
+    assert!(
+        !ts5107.is_empty(),
+        "expected TS5107, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts5107.iter().any(|d| d.message_text.contains("aka.ms/ts6")),
+        "TS5107 for moduleResolution=node10 must contain migration URL, got: {:?}",
+        ts5107
     );
 }
 

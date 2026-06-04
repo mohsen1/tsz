@@ -1177,6 +1177,15 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
 
+        if binary.operator_token == SyntaxKind::ColonToken as u16
+            && self.arena.is_missing_recovery_identifier(binary.left)
+        {
+            self.write(": ");
+            self.emit(binary.right);
+            self.ctx.flags.in_binary_operand = prev_in_binary;
+            return;
+        }
+
         // Check if there's a line break between left operand and operator,
         // and between operator and right operand. TypeScript preserves these
         // line breaks and places the operator at the START of the continuation
