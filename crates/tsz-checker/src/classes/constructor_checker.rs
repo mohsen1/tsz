@@ -835,10 +835,20 @@ impl<'a> CheckerState<'a> {
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
                 InstanceTypeKind::Union(members) => {
-                    let instance_types: Vec<TypeId> = members
-                        .into_iter()
-                        .filter_map(|m| self.instance_type_from_constructor_type_inner(m, visited))
-                        .collect();
+                    // A union is a constructor type only when EVERY member is
+                    // itself constructor-like. Extracting instance types from a
+                    // subset and dropping the rest would corrupt an ordinary type
+                    // union — e.g. `null | string` would collapse to `null`
+                    // because the `null` member maps to itself while `string`
+                    // (a `NotConstructor`) is silently discarded. If any member
+                    // has no instance type, this is not a constructor type: return
+                    // `None` so the caller keeps the original type unchanged.
+                    let mut instance_types = Vec::with_capacity(members.len());
+                    for member in members {
+                        let instance =
+                            self.instance_type_from_constructor_type_inner(member, visited)?;
+                        instance_types.push(instance);
+                    }
                     if instance_types.is_empty() {
                         return None;
                     }
