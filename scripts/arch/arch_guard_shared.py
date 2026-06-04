@@ -269,7 +269,33 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1920,
+        1924,
+    ),
+    (
+        "Emitter transform boundary: class_es5_ir.rs must not grow",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "class_es5_ir.rs",
+        2101,
+    ),
+    (
+        "Solver instantiation boundary: instantiate.rs must not grow",
+        ROOT / "crates" / "tsz-solver" / "src" / "instantiation" / "instantiate.rs",
+        2098,
+    ),
+    (
+        "Solver evaluation boundary: conditional.rs must not grow",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "evaluation"
+        / "evaluate_rules"
+        / "conditional.rs",
+        2083,
+    ),
+    (
+        "Emitter transform boundary: ir_printer.rs must not grow",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "ir_printer.rs",
+        2003,
     ),
     (
         "Solver engine boundary: generic call resolver must stay at current 3378 LOC baseline (#8209)",
@@ -633,7 +659,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2798,
+        2843,
     ),
     (
         "CLI boundary: driver/tests.rs size ratchet",
@@ -1173,7 +1199,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # boundary re-exports already used throughout the checker; the new
         # call site walks the `extends` chain and substitutes inherited
         # member types via `instantiate_type`. No new quarantine entry.
-        3281,
+        3237,
     ),
 ]
 

@@ -4,7 +4,7 @@ exclude = ["crates/.target"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 repository = "https://github.com/mohsen1/tsz"
 homepage = "https://github.com/mohsen1/tsz"
@@ -16,39 +16,39 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal workspace crates
-tsz = { path = "crates/tsz-core", version = "0.1.14", package = "tsz-core" }
-tsz-common = { path = "crates/tsz-common", version = "0.1.14" }
-tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.14" }
-tsz-parser = { path = "crates/tsz-parser", version = "0.1.14" }
-tsz-binder = { path = "crates/tsz-binder", version = "0.1.14" }
-tsz-solver = { path = "crates/tsz-solver", version = "0.1.14" }
-tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.14" }
-tsz-checker = { path = "crates/tsz-checker", version = "0.1.14" }
-tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.14", default-features = false }
-tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.14" }
+tsz = { path = "crates/tsz-core", version = "0.1.15", package = "tsz-core" }
+tsz-common = { path = "crates/tsz-common", version = "0.1.15" }
+tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.15" }
+tsz-parser = { path = "crates/tsz-parser", version = "0.1.15" }
+tsz-binder = { path = "crates/tsz-binder", version = "0.1.15" }
+tsz-solver = { path = "crates/tsz-solver", version = "0.1.15" }
+tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.15" }
+tsz-checker = { path = "crates/tsz-checker", version = "0.1.15" }
+tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.15", default-features = false }
+tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.15" }
 
 # External dependencies (shared versions)
 anyhow = "1.0"
 bitflags = "2.6"
 clap = { version = "4.5", features = ["derive"] }
-colored = "2.1"
+colored = "3.1"
 console_error_panic_hook = "0.1"
 criterion = "0.5"
-bincode = "1.3"
+bincode = { version = "2.0.1", features = ["serde"] }
 dashmap = "6.1"
 ena = "0.14"
-fixedbitset = "0.4"
+fixedbitset = "0.5"
 globset = "0.4"
 indexmap = { version = "2.6", features = ["serde"] }
 memchr = "2.7"
-notify = { version = "6.1", default-features = false, features = ["crossbeam-channel", "macos_kqueue"] }
+notify = { version = "8.2", default-features = false, features = ["crossbeam-channel", "macos_kqueue"] }
 once_cell = "1.19"
 rayon = "1.10"
 regex = "1.11"
 rustc-hash = "2.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
-json5 = "0.4"
+json5 = "1.3"
 serde-wasm-bindgen = "0.6"
 smallvec = { version = "1.13", features = ["serde"] }
 tempfile = "3"

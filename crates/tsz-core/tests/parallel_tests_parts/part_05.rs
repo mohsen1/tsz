@@ -852,3 +852,84 @@ fn test_dep_graph_deterministic_across_runs() {
     assert_eq!(topo1.order, topo2.order);
     assert_eq!(topo1.is_acyclic, topo2.is_acyclic);
 }
+
+/// Regression for #12372: a bare value identifier referenced without an import
+/// must resolve against globals only — never against a named value export of an
+/// installed-but-unimported external module. Here an unimported `typebox`-style
+/// `.d.ts` module exports a `Symbol` function; the consumer references bare
+/// `Symbol.for(...)`, which must bind to the global `SymbolConstructor`.
+#[test]
+fn test_check_files_parallel_bare_symbol_ignores_unimported_module_value_export() {
+    let lib_files = vec![std::sync::Arc::new(
+        crate::lib_loader::LibFile::from_source(
+            "lib.es2015.symbol.d.ts".to_string(),
+            r#"
+interface Symbol {
+    readonly description: string | undefined;
+    toString(): string;
+}
+interface SymbolConstructor {
+    readonly prototype: Symbol;
+    (description?: string | number): symbol;
+    for(key: string): symbol;
+    keyFor(sym: symbol): string | undefined;
+}
+declare var Symbol: SymbolConstructor;
+"#
+            .to_string(),
+        ),
+    )];
+
+    let files = vec![
+        (
+            "node_modules/@sinclair/typebox/index.d.ts".to_string(),
+            r#"
+export interface SchemaOptions { title?: string; }
+export interface TSymbol { kind: string; }
+export declare function Symbol(options?: SchemaOptions): TSymbol;
+export declare const Type: { String(): TSymbol; };
+"#
+            .to_string(),
+        ),
+        (
+            "src/symbols.ts".to_string(),
+            r#"
+export const matcher = Symbol.for('@ts-pattern/matcher');
+export const unset = Symbol.for('@ts-pattern/unset');
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = merge_bind_results(parse_and_bind_parallel_with_libs(files, &lib_files));
+
+    // The unimported module's value exports must not pollute the global scope.
+    // `Type` does not collide with any lib global, so its presence in `globals`
+    // is a direct witness of the leak. (`Symbol` legitimately stays in globals
+    // via the lib's `declare var Symbol`; the bug was the module export
+    // *overwriting* that lib binding.)
+    assert!(
+        !program.globals.has("Type"),
+        "unimported external-module value export `Type` leaked into program globals"
+    );
+
+    let options = CheckerOptions {
+        target: ScriptTarget::ESNext,
+        module: ModuleKind::ESNext,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let result = check_files_parallel(&program, &options, &lib_files);
+    let consumer_2339: Vec<_> = result
+        .file_results
+        .iter()
+        .filter(|file| file.file_name.ends_with("symbols.ts"))
+        .flat_map(|file| file.diagnostics.iter())
+        .filter(|diag| diag.code == 2339)
+        .collect();
+
+    assert!(
+        consumer_2339.is_empty(),
+        "bare `Symbol.for` must resolve to the global SymbolConstructor; got {consumer_2339:#?}"
+    );
+}

@@ -1207,35 +1207,26 @@ impl BindResultReducer {
                     if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                         // User symbol - use remapped ID
                         remapped_file_locals.set(name.clone(), new_sym_id);
-                        // Script-file top-levels are globally visible by default. For ordinary
-                        // external modules, keep pure type-only top-level declarations file-scoped so
-                        // unimported type aliases/interfaces do not leak across files. Value-bearing
-                        // exports still stay visible because CommonJS/export-assignment and declaration
-                        // emit paths rely on them being reachable cross-file. This shares the single
-                        // `Symbol::is_cross_file_global` predicate with the checker's
-                        // `global_file_locals_index` builders so both cross-file tables agree.
+                        // Script-file top-levels are globally visible by default. External
+                        // modules contribute nothing to the ambient global scope except UMD
+                        // globals (`export as namespace`) and `declare global` augmentations —
+                        // their value and type exports are reachable only through an explicit
+                        // import, so an unimported package's export must never leak as a global
+                        // (issue #12372). This shares the single `Symbol::is_cross_file_global`
+                        // predicate with the checker's `global_file_locals_index` builders so
+                        // both cross-file tables agree.
                         let sym_info = self.global_symbols.get(new_sym_id);
                         let is_umd = sym_info.is_some_and(|s| s.is_umd_export);
-                        let is_declaration_file = result
-                            .arena
-                            .source_files
-                            .first()
-                            .is_some_and(|sf| sf.is_declaration_file);
                         let is_global_augmentation = result.global_augmentations.contains_key(name);
                         let is_truly_global = match sym_info {
                             Some(s) => s.is_cross_file_global(
                                 result.is_external_module,
-                                is_declaration_file,
                                 is_global_augmentation,
                             ),
                             // When the merged symbol is unavailable, fall back to the
                             // flagless classification (equivalent to a symbol with no
                             // flags set), preserving the original behavior.
-                            None => {
-                                !result.is_external_module
-                                    || is_declaration_file
-                                    || is_global_augmentation
-                            }
+                            None => !result.is_external_module || is_global_augmentation,
                         };
                         if is_truly_global {
                             // UMD namespace exports (`export as namespace Foo`) use

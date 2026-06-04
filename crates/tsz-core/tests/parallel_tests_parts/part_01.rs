@@ -1712,7 +1712,13 @@ fn test_compile_large_program() {
 
 #[test]
 fn test_compile_with_exports() {
-    // Test that export function/class/const are properly bound
+    // Test that export function/class/const are properly bound — and stay
+    // module-scoped. Per tsc, the top-level exports of an external module are
+    // NOT ambient globals: an unqualified reference to `add`/`Calculator`/`PI`
+    // from a sibling file is a `TS2304` unless imported. They must therefore
+    // never leak into `program.globals` (the same fallback that an unimported
+    // package's `Symbol` export wrongly polluted in #12372), and remain
+    // reachable only through their module's export table.
     let files = vec![
         (
             "a.ts".to_string(),
@@ -1728,18 +1734,27 @@ fn test_compile_with_exports() {
     let program = compile_files(files);
 
     assert_eq!(program.files.len(), 3);
-    // All exported declarations should be in globals
+    // External-module exports must NOT seed the ambient global scope.
+    for name in ["add", "Calculator", "PI"] {
+        assert!(
+            !program.globals.has(name),
+            "external-module export '{name}' must not leak into program globals"
+        );
+    }
+    // They remain reachable through their module's export table.
+    let exported_somewhere =
+        |name: &str| program.module_exports.values().any(|table| table.has(name));
     assert!(
-        program.globals.has("add"),
-        "Exported function 'add' should be in globals"
+        exported_somewhere("add"),
+        "Exported function 'add' should be reachable as a module export"
     );
     assert!(
-        program.globals.has("Calculator"),
-        "Exported class 'Calculator' should be in globals"
+        exported_somewhere("Calculator"),
+        "Exported class 'Calculator' should be reachable as a module export"
     );
     assert!(
-        program.globals.has("PI"),
-        "Exported const 'PI' should be in globals"
+        exported_somewhere("PI"),
+        "Exported const 'PI' should be reachable as a module export"
     );
 }
 

@@ -321,3 +321,49 @@ function f(v: string | NotIndexed) {
     let d = diagnostics(source);
     assert_has_code_message(&d, 2339, "'NotIndexed'");
 }
+
+// ---------------------------------------------------------------------------
+// Case 9 (#11580): predicate functions produced by a mapped type must preserve
+// their property-specific `value is T[K]` facts across `&&` boolean joins. The
+// checker owns applying the flow fact to the property access sites; the solver
+// owns the predicate target type.
+// ---------------------------------------------------------------------------
+#[test]
+fn case_9_mapped_predicate_calls_survive_boolean_join_for_same_object() {
+    let source = r#"
+type Predicates<T> = { [K in keyof T]: (value: unknown) => value is T[K] };
+
+declare const predicates: Predicates<{ id: string; count: number }>;
+declare const input: { id: unknown; count: unknown };
+
+if (predicates.id(input.id) && predicates.count(input.count)) {
+    const id: string = input.id;
+    const count: number = input.count;
+}
+"#;
+    let d = diagnostics(source);
+    assert_no_code(&d, 2322);
+}
+
+// ---------------------------------------------------------------------------
+// Case 10: same structural rule with renamed binders and a wrapper alias around
+// the mapped predicate table. This guards against recognizing only the exact
+// `Predicates`/`id`/`count` names from the row witness.
+// ---------------------------------------------------------------------------
+#[test]
+fn case_10_wrapped_mapped_predicate_calls_keep_renamed_property_facts() {
+    let source = r#"
+type GuardTable<T> = { [P in keyof T]: (subject: unknown) => subject is T[P] };
+type Boxed<T> = { guards: GuardTable<T> };
+
+declare const registry: Boxed<{ slug: "next"; active: boolean }>;
+declare const row: { slug: unknown; active: unknown };
+
+if (registry.guards.slug(row.slug) && registry.guards.active(row.active)) {
+    const slug: "next" = row.slug;
+    const active: boolean = row.active;
+}
+"#;
+    let d = diagnostics(source);
+    assert_no_code(&d, 2322);
+}

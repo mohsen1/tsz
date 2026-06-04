@@ -158,3 +158,124 @@ fn generic_application_property_is_not_collapsed() {
         "application-typed property must not be folded into a dotted path: {related:?}"
     );
 }
+
+/// A homomorphic mapped-type alias application (`Id<{ p: number }>` vs
+/// `Id<{ p: string }>`) is NOT a nominal generic reference: `tsc` elaborates it
+/// structurally (`Types of property 'p' are incompatible.` + leaf) rather than
+/// collapsing to a single covariant type-argument line the way `Box<number>` vs
+/// `Box<string>` does. tsz previously treated the mapped application like a
+/// nominal generic and dropped the property header, leaving only the bare leaf.
+/// Property names vary so the rule is structural, not a spelling match.
+#[test]
+fn single_level_mapped_alias_application_keeps_property_header() {
+    for (prop, leaf) in [
+        ("value", "Type 'number' is not assignable to type 'string'"),
+        (
+            "payload",
+            "Type 'number' is not assignable to type 'string'",
+        ),
+    ] {
+        let source = format!(
+            "type Id<T> = {{ [K in keyof T]: Id<T[K]> }};\n\
+             type S = Id<{{ {prop}: number }}>;\n\
+             type D = Id<{{ {prop}: string }}>;\n\
+             declare const src: S;\n\
+             const t: D = src;\n"
+        );
+        let diag = single_ts2322(&source);
+        let related = &diag.related_information;
+        assert_eq!(related.len(), 2, "mapped chain for `{source}`: {related:?}");
+        assert!(
+            related[0]
+                .message_text
+                .contains(&format!("Types of property '{prop}'")),
+            "mapped-alias property header must be present: {}",
+            related[0].message_text
+        );
+        assert_eq!(related[0].depth, 0);
+        assert!(
+            related[1].message_text.contains(leaf),
+            "leaf: {}",
+            related[1].message_text
+        );
+        assert_eq!(related[1].depth, 1, "leaf one level under property header");
+    }
+}
+
+/// A nested homomorphic mapped-type alias collapses its property run into a
+/// single dotted path exactly like a plain nested object does — the mapped
+/// applications at each level must not stop the collapse. tsz previously
+/// truncated the chain at the first property (`Types of property 'a'`) with no
+/// leaf, losing the root mismatch. Names vary so the collapse is structural.
+#[test]
+fn nested_mapped_alias_application_collapses_to_dotted_path() {
+    for (a, b, c) in [("a", "b", "c"), ("one", "two", "three")] {
+        let source = format!(
+            "type Id<T> = {{ [K in keyof T]: Id<T[K]> }};\n\
+             type S = Id<{{ {a}: {{ {b}: {{ {c}: number }} }} }}>;\n\
+             type D = Id<{{ {a}: {{ {b}: {{ {c}: string }} }} }}>;\n\
+             declare const src: S;\n\
+             const t: D = src;\n"
+        );
+        let diag = single_ts2322(&source);
+        let related = &diag.related_information;
+        assert_eq!(
+            related.len(),
+            2,
+            "collapsed chain for `{source}`: {related:?}"
+        );
+        let dotted = format!("'{a}.{b}.{c}'");
+        assert!(
+            related[0].message_text.contains("The types of")
+                && related[0].message_text.contains(&dotted)
+                && related[0]
+                    .message_text
+                    .contains("are incompatible between these types"),
+            "collapsed header: {}",
+            related[0].message_text
+        );
+        assert_eq!(related[0].depth, 0);
+        assert!(
+            related[1]
+                .message_text
+                .contains("Type 'number' is not assignable to type 'string'"),
+            "leaf: {}",
+            related[1].message_text
+        );
+        assert_eq!(related[1].depth, 1, "leaf one level under collapsed header");
+    }
+}
+
+/// A non-recursive mapped alias with explicit modifiers (`+readonly`/`+?`) is
+/// also structural: a nested mismatch collapses into a dotted path. Guards that
+/// the fix keys on the mapped alias *body*, not a specific user-defined `Id`
+/// spelling, and that the modifier-bearing form still elaborates structurally.
+#[test]
+fn modifier_mapped_alias_collapses_to_dotted_path() {
+    let diag = single_ts2322(
+        "type RO<T> = { +readonly [K in keyof T]: RO<T[K]> };\n\
+         type S = RO<{ outer: { inner: number } }>;\n\
+         type D = RO<{ outer: { inner: string } }>;\n\
+         declare const src: S;\n\
+         const t: D = src;\n",
+    );
+    let related = &diag.related_information;
+    assert_eq!(related.len(), 2, "got: {related:?}");
+    assert!(
+        related[0].message_text.contains("'outer.inner'")
+            && related[0]
+                .message_text
+                .contains("are incompatible between these types"),
+        "collapsed header: {}",
+        related[0].message_text
+    );
+    assert_eq!(related[0].depth, 0);
+    assert!(
+        related[1]
+            .message_text
+            .contains("Type 'number' is not assignable to type 'string'"),
+        "leaf: {}",
+        related[1].message_text
+    );
+    assert_eq!(related[1].depth, 1);
+}

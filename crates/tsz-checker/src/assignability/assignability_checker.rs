@@ -794,26 +794,6 @@ impl<'a> CheckerState<'a> {
                     evaluated_target_for_infer_suppression,
                 );
 
-        // Suppress TS2322 for source types that are intersections containing indexed access
-        // types with unresolved type parameters (e.g., `Partial<T>[K] & ({} | null)`).
-        // These types may not be properly evaluated when assignability is checked, leading
-        // to false positives when the intersection should actually be assignable.
-        let source_is_intersection_with_indexed_access = || -> bool {
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, source)
-            {
-                members.iter().any(|&member| {
-                    crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
-                        && crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            member,
-                        )
-                })
-            } else {
-                false
-            }
-        };
-
         // Suppress TS2322 for callable types with generic type parameters from outer
         // context. Skip the suppression when both sides have their own signature-level
         // type params — the solver handles generic-to-generic comparison correctly.
@@ -1098,8 +1078,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Pre-compute for two uses: the intersection-suppression guard and an early-exit
-        // before the more expensive should_suppress_for_complex_type call for structural targets.
+        // Structural targets (mapped/intersection/conditional/string-intrinsic) require
+        // property-level checking; they must not take the complex-generic suppression
+        // early-exit below — the solver decides those relations directly.
         let target_is_structural = is_structural_target_that_must_not_be_suppressed(target);
         let target_is_template_literal_from_bare_type_param =
             crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target)
@@ -1112,11 +1093,6 @@ impl<'a> CheckerState<'a> {
             && !target_is_template_literal_from_bare_type_param;
 
         matches!(source, TypeId::ERROR)
-            // Suppress for intersection-with-indexed-access sources only when the target is NOT
-            // a structural type requiring property-level checking (mapped, intersection,
-            // conditional, string intrinsic). For those targets the solver handles the check
-            // directly and this suppression would hide real property mismatches.
-            || (source_is_intersection_with_indexed_access() && !target_is_structural)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
             // any is assignable to everything except never — tsc reports TS2322 for any→never
