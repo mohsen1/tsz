@@ -467,6 +467,20 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn assignment_object_literal_has_own_rest(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && self.arena.get_literal_expr(node).is_some_and(|lit| {
+                lit.elements.nodes.iter().any(|&elem_idx| {
+                    self.arena
+                        .get(elem_idx)
+                        .is_some_and(|elem| elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+                })
+            })
+    }
+
     fn assignment_object_rest_default_pattern(
         &self,
         idx: NodeIndex,
@@ -558,6 +572,9 @@ impl<'a> Printer<'a> {
         let mut first = true;
         let source_name = if is_simple {
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, effective_right_idx)
+        } else if !self.assignment_object_literal_has_own_rest(left_idx) {
+            let emit_idx = self.peel_assign_rhs_object_literal_paren(right_idx);
+            self.capture_emit(emit_idx)
         } else {
             let temp = self.make_unique_name_hoisted_assignment();
             self.emit_assignment_separator(&mut first);
@@ -661,7 +678,10 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_assignment_object_rest_target(&mut self, target: NodeIndex) {
-        if self.assignment_object_rest_target_needs_temp(target) {
+        if self.emit_private_object_rest_assignment_target(target) {
+            // Private fields/accessors are not assignment targets after lowering,
+            // so use the same setter proxy target as native destructuring.
+        } else if self.assignment_object_rest_target_needs_temp(target) {
             let temp = self.make_unique_name_hoisted_assignment();
             self.write(&temp);
         } else if self.pattern_has_scoped_static_super_assignment_target(target) {
@@ -872,6 +892,7 @@ impl<'a> Printer<'a> {
                             let nested_source = self.object_key_access_text(source, &key);
                             let nested_simple = self.arena.get(prop.initializer).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    || self.assignment_object_literal_is_rest_only(prop.initializer)
                             });
                             self.emit_assignment_pattern_with_object_rest(
                                 prop.initializer,

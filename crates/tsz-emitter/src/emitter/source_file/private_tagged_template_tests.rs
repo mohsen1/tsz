@@ -221,6 +221,32 @@ class A3 {
 }
 
 #[test]
+fn private_accessor_object_rest_assignment_uses_setter_target() {
+    let source = r#"
+class Test {
+    set #value(v) {}
+    m(foo) {
+        ({ ...this.#value } = { foo });
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__rest({ foo }, [])"),
+        "Object-rest assignment to a private setter should lower through __rest.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("({ set value(") && output.contains("__classPrivateFieldSet("),
+        "Object-rest private setter targets should use the setter proxy target.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ ...({ set value("),
+        "Object-rest lowering should run before native private destructuring fallback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn private_compound_assignment_allocates_nested_receiver_temps_first() {
     let source = r#"
 class Test {

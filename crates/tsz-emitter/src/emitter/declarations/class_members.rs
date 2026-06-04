@@ -428,6 +428,13 @@ impl<'a> Printer<'a> {
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
             let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+            if let Some(body_node) = self.arena.get(method.body) {
+                let temp_count =
+                    self.estimate_assignment_destructuring_temps_in_constructor(body_node);
+                if temp_count > 0 {
+                    self.preallocate_assignment_temps(temp_count);
+                }
+            }
             self.prepare_logical_assignment_value_temps(method.body);
             self.ctx.flags.in_generator = has_generator_asterisk;
             self.emit(method.body);

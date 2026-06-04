@@ -366,6 +366,31 @@ impl<'a> Printer<'a> {
         self.write("; } }).value");
     }
 
+    pub(in crate::emitter) fn emit_private_object_rest_assignment_target(
+        &mut self,
+        target: NodeIndex,
+    ) -> bool {
+        let Some(access) = self.try_extract_private_field_access(target) else {
+            return false;
+        };
+        let receiver_temp = (!self.receiver_is_plain_identifier(access.expression))
+            .then(|| self.make_unique_name_hoisted_assignment());
+        if let Some(receiver_temp) = &receiver_temp {
+            self.write(receiver_temp);
+            self.write(" = ");
+            self.emit_private_receiver(access.expression, &access.clean_name);
+            self.write(", ");
+        }
+        let setter_value = self.peek_fresh_temp_name();
+        self.emit_private_destructuring_setter_target(&PrivateDestructuringTarget {
+            target,
+            access,
+            receiver_temp,
+            setter_value,
+        });
+        true
+    }
+
     fn emit_private_destructuring_pattern(
         &mut self,
         idx: NodeIndex,
@@ -993,15 +1018,6 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // ES2015+ can keep native destructuring syntax, but private field
-        // assignment targets still need to route writes through the SET helper.
-        if !self.ctx.target_es5
-            && binary.operator_token == SyntaxKind::EqualsToken as u16
-            && self.emit_private_field_destructuring_assignment(binary.left, binary.right)
-        {
-            return;
-        }
-
         if self.emit_scoped_static_super_assignment(
             binary.left,
             binary.operator_token,
@@ -1019,6 +1035,15 @@ impl<'a> Printer<'a> {
             && self.assignment_pattern_has_object_rest(binary.left)
         {
             self.emit_assignment_object_rest_destructuring(binary.left, binary.right);
+            return;
+        }
+
+        // ES2015+ can keep native destructuring syntax, but private field
+        // assignment targets still need to route writes through the SET helper.
+        if !self.ctx.target_es5
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self.emit_private_field_destructuring_assignment(binary.left, binary.right)
+        {
             return;
         }
 
