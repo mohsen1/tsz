@@ -27,6 +27,16 @@ slow-timeout = { period = "120s", terminate-after = 2 }
 filter = 'test(/^no_false_ts2322_generic_conditional_default_/) | test(real_ts2322_is_still_reported_with_conditional_default) | test(explicit_third_arg_mismatch_still_errors)'
 threads-required = "num-test-threads"
 
+# Issue #10677 regression. Faithfully reproducing the per-file
+# instantiation-fuel exhaustion requires evaluating ~2000 generic Applications
+# of the kysely builder machinery before the target statement, so the test is
+# intentionally heavy. Give it the longer slow-timeout and run it alone to
+# avoid memory pressure from co-tenant heavy tests.
+[[profile.default.overrides]]
+filter = 'test(fuel_drained_earlier_statements_keep_select_callback_context)'
+slow-timeout = { period = "120s", terminate-after = 2 }
+threads-required = "num-test-threads"
+
 [profile.default.junit]
 path = "target/nextest/default/junit.xml"
 
@@ -47,6 +57,12 @@ slow-timeout = { period = "120s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
 filter = 'test(/^no_false_ts2322_generic_conditional_default_/) | test(real_ts2322_is_still_reported_with_conditional_default) | test(explicit_third_arg_mismatch_still_errors)'
+threads-required = "num-test-threads"
+
+# Issue #10677 regression — see the matching default-profile override.
+[[profile.ci.overrides]]
+filter = 'test(fuel_drained_earlier_statements_keep_select_callback_context)'
+slow-timeout = { period = "120s", terminate-after = 2 }
 threads-required = "num-test-threads"
 
 # Quick profile for fast feedback during development
