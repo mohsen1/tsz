@@ -67,12 +67,76 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
         .and_then(|(package_name, subpath)| subpath.map(|subpath| (package_name, subpath)));
     let conditions = export_conditions(options);
 
-    let mut current = from_file.parent().unwrap_or(base_dir);
+    // Primary walk: from the importing file's literal (possibly symlinked)
+    // directory up to the project base directory.
+    if let Some(resolved) = probe_type_reference_in_node_modules_chain(
+        from_file.parent().unwrap_or(base_dir),
+        base_dir,
+        &candidates,
+        package_subpath.as_ref(),
+        &conditions,
+        &effective_mode,
+        options,
+        resolution_cache,
+    ) {
+        return Some(resolved);
+    }
+
+    // Secondary walk for symlinked layouts (pnpm `.pnpm` sandboxes, yarn/npm
+    // linked deps). When symlinks are honored (`preserveSymlinks: false`, the
+    // default), `tsc` resolves sibling `@types/*` packages relative to the
+    // *real* (`realpath`) location of the importing `.d.ts`, not the symlink
+    // path. In a pnpm tree `node_modules/@types/foo` is a symlink into
+    // `node_modules/.pnpm/@types+foo@V/node_modules/@types/foo`, and the
+    // siblings it references (e.g. `@types/express-serve-static-core`) live
+    // next to the symlink *target*. The literal walk above only sees the
+    // symlink-relative tree and misses them; re-walk from the real path to
+    // recover the siblings, matching `tsc`.
+    if !options.preserve_symlinks {
+        let real_from_file = canonicalize_or_owned(from_file);
+        if real_from_file.as_path() != from_file {
+            let real_base = canonicalize_or_owned(base_dir);
+            if let Some(resolved) = probe_type_reference_in_node_modules_chain(
+                real_from_file.parent().unwrap_or(real_base.as_path()),
+                real_base.as_path(),
+                &candidates,
+                package_subpath.as_ref(),
+                &conditions,
+                &effective_mode,
+                options,
+                resolution_cache,
+            ) {
+                return Some(resolved);
+            }
+        }
+    }
+
+    None
+}
+
+/// Walk `node_modules` directories from `start_dir` up to (and including)
+/// `stop_dir`, probing each for the triple-slash type reference described by
+/// `candidates`/`package_subpath`. Returns the first declaration file found.
+///
+/// This is the shared engine for both the literal (symlink-relative) walk and
+/// the `realpath` walk used to recover siblings in pnpm/symlinked layouts.
+#[allow(clippy::too_many_arguments)]
+fn probe_type_reference_in_node_modules_chain(
+    start_dir: &Path,
+    stop_dir: &Path,
+    candidates: &[String],
+    package_subpath: Option<&(String, String)>,
+    conditions: &[&str],
+    effective_mode: &str,
+    options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> Option<PathBuf> {
+    let mut current = start_dir;
 
     loop {
         let node_modules = current.join("node_modules");
         if resolution_cache.node_modules_dir_exists(&node_modules) {
-            if let Some((package_name, subpath)) = package_subpath.as_ref() {
+            if let Some((package_name, subpath)) = package_subpath {
                 let package_root = node_modules.join(package_name);
                 if resolution_cache.package_root_dir_exists(&package_root) {
                     let package_json =
@@ -81,7 +145,7 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
                         &package_root,
                         Some(subpath),
                         package_json.as_ref(),
-                        &conditions,
+                        conditions,
                         options,
                         resolution_cache,
                     );
@@ -91,12 +155,12 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
                 }
             }
 
-            for candidate in &candidates {
+            for candidate in candidates {
                 let package_root = node_modules.join(candidate);
                 if resolution_cache.package_root_dir_exists(&package_root) {
                     let resolved = resolve_type_package_entry_with_mode_and_cache(
                         &package_root,
-                        &effective_mode,
+                        effective_mode,
                         options,
                         resolution_cache,
                     );
@@ -116,7 +180,7 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
             }
         }
 
-        if current == base_dir {
+        if current == stop_dir {
             break;
         }
         let Some(parent) = current.parent() else {
@@ -444,6 +508,10 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
 
     None
 }
+
+#[cfg(test)]
+#[path = "type_packages_symlink_tests.rs"]
+mod type_packages_symlink_tests;
 
 pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
