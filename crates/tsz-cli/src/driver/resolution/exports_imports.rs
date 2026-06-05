@@ -2,20 +2,26 @@ use std::path::{Path, PathBuf};
 
 use crate::config::ResolvedCompilerOptions;
 use tsz::module_resolver::PackageType;
+use tsz_common::module_resolution::types_versions;
 
 #[allow(unused_imports)]
 use super::*;
 
-/// Resolve a `typesVersions` paths object against a subpath, mirroring tsc's
-/// `matchPatternOrExact` + `findBestPatternMatch` chain (see the matching
-/// `tsz-core` resolver for the full rationale). The CLI driver has its own
-/// resolver because it composes with `resolve_package_entry`, but the
-/// algorithm must stay byte-for-byte aligned with tsc:
+// Shared `typesVersions`/semver primitives live in `tsz_common`. Re-export the
+// names still used across the CLI resolver (versioned export conditions, the
+// compiler-version helpers in `package_resolution`) so call sites stay stable
+// while there is a single implementation of the algorithm.
+pub(crate) use tsz_common::module_resolution::types_versions::{
+    SemVer, parse_semver, range_matches as types_versions_range_matches,
+};
+
+/// Resolve a `typesVersions` paths object against a subpath, then probe the
+/// resulting candidate targets on disk via `resolve_package_entry`.
 ///
-/// 1. A no-`*` key that equals `subpath` exactly wins outright.
-/// 2. Otherwise, among single-`*` wildcard keys, the longest **prefix** wins
-///    (ties resolved by first occurrence in declaration order).
-/// 3. Two-or-more-`*` keys are skipped entirely.
+/// The version-range selection and exact/longest-prefix pattern matching are
+/// owned by the shared `tsz_common::module_resolution::types_versions` module
+/// so the CLI driver and the checker redirect cannot drift from each other or
+/// from tsc.
 pub(crate) fn resolve_types_versions(
     package_root: &Path,
     subpath: &str,
@@ -25,215 +31,19 @@ pub(crate) fn resolve_types_versions(
     resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let compiler_version = types_versions_compiler_version(options);
-    let paths = select_types_versions_paths(types_versions, compiler_version)?;
-
-    // 1) Exact-match short-circuit (`matchableStringSet.has(candidate)`).
-    for (key, value) in paths {
-        if !key.contains('*') && key == subpath {
-            return apply_types_versions_targets(
-                package_root,
-                value,
-                "",
-                options,
-                package_type,
-                resolution_cache,
-            );
-        }
-    }
-
-    // 2) Wildcard candidates: longest prefix wins, ties → first in order.
-    //    `best` stores `(prefix_len, value, captured wildcard)`; the
-    //    prefix_len lives inside the tuple so we keep a single source of
-    //    truth for "the current best prefix length".
-    let mut best: Option<(usize, &serde_json::Value, String)> = None;
-    for (key, value) in paths {
-        let Some((prefix, suffix)) = parse_types_versions_pattern(key) else {
-            continue;
-        };
-        if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
-            continue;
-        }
-        let start = prefix.len();
-        let end = subpath.len() - suffix.len();
-        if end < start {
-            continue;
-        }
-        // Strict `>` so equal-prefix ties keep the earlier entry (tsc's
-        // `findBestPatternMatch`).
-        if best
-            .as_ref()
-            .is_some_and(|(best_len, ..)| prefix.len() <= *best_len)
-        {
-            continue;
-        }
-        best = Some((prefix.len(), value, subpath[start..end].to_string()));
-    }
-
-    let (_, value, wildcard) = best?;
-    apply_types_versions_targets(
-        package_root,
-        value,
-        &wildcard,
-        options,
-        package_type,
-        resolution_cache,
-    )
-}
-
-/// Iterate the `value` of a `typesVersions` paths entry, substitute `*` with
-/// `wildcard`, and return the first target that resolves on disk.
-fn apply_types_versions_targets(
-    package_root: &Path,
-    value: &serde_json::Value,
-    wildcard: &str,
-    options: &ResolvedCompilerOptions,
-    package_type: Option<PackageType>,
-    resolution_cache: &mut ModuleResolutionCache,
-) -> Option<PathBuf> {
-    let mut try_target = |target: &str| {
-        let substituted = substitute_path_target(target, wildcard);
-        resolve_package_entry(
+    let paths = types_versions::select_paths(types_versions, compiler_version)?;
+    for target in types_versions::candidate_targets(paths, subpath) {
+        if let Some(resolved) = resolve_package_entry(
             package_root,
-            &substituted,
+            &target,
             options,
             package_type,
             resolution_cache,
-        )
-    };
-    match value {
-        serde_json::Value::String(target) => try_target(target.as_str()),
-        serde_json::Value::Array(list) => list
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .find_map(try_target),
-        _ => None,
-    }
-}
-
-/// First-match-in-declaration-order version selection (tsc's
-/// `getPackageJsonTypesVersionsPaths`).
-pub(crate) fn select_types_versions_paths(
-    types_versions: &serde_json::Value,
-    compiler_version: SemVer,
-) -> Option<&serde_json::Map<String, serde_json::Value>> {
-    let map = types_versions.as_object()?;
-    for (key, value) in map {
-        let Some(value_map) = value.as_object() else {
-            continue;
-        };
-        if types_versions_range_matches(key, compiler_version) {
-            return Some(value_map);
+        ) {
+            return Some(resolved);
         }
     }
     None
-}
-
-/// Split a `prefix*suffix` typesVersions pattern, mirroring tsc's
-/// `tryParsePattern`. Returns `None` for no-`*` patterns and for multi-`*`
-/// patterns.
-pub(crate) fn parse_types_versions_pattern(pattern: &str) -> Option<(&str, &str)> {
-    let star_pos = pattern.find('*')?;
-    let suffix_start = star_pos + 1;
-    if pattern[suffix_start..].contains('*') {
-        return None;
-    }
-    Some((&pattern[..star_pos], &pattern[suffix_start..]))
-}
-
-/// Returns `true` when `range` is a valid semver range that the supplied
-/// compiler version satisfies.
-pub(crate) fn types_versions_range_matches(range: &str, compiler_version: SemVer) -> bool {
-    let range = range.trim();
-    if range.is_empty() || range == "*" {
-        return true;
-    }
-    for segment in range.split("||") {
-        if types_versions_range_segment_matches(segment.trim(), compiler_version) {
-            return true;
-        }
-    }
-    false
-}
-
-fn types_versions_range_segment_matches(segment: &str, compiler_version: SemVer) -> bool {
-    // An empty segment comes from a malformed disjunction like `">=4 || "` —
-    // a vacuous empty-token loop would return `true`, so we reject explicitly.
-    // The lone `"*"` token is handled by the `continue` below; no early
-    // return needed.
-    if segment.is_empty() {
-        return false;
-    }
-    for token in segment.split_whitespace() {
-        if token.is_empty() || token == "*" {
-            continue;
-        }
-        let Some((op, version)) = parse_range_token(token) else {
-            return false;
-        };
-        if !compare_range(compiler_version, op, version) {
-            return false;
-        }
-    }
-    true
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RangeOp {
-    Gt,
-    Gte,
-    Lt,
-    Lte,
-    Eq,
-}
-
-pub(crate) fn parse_range_token(token: &str) -> Option<(RangeOp, SemVer)> {
-    let token = token.trim();
-    if token.is_empty() {
-        return None;
-    }
-
-    let (op, rest) = if let Some(rest) = token.strip_prefix(">=") {
-        (RangeOp::Gte, rest)
-    } else if let Some(rest) = token.strip_prefix("<=") {
-        (RangeOp::Lte, rest)
-    } else if let Some(rest) = token.strip_prefix('>') {
-        (RangeOp::Gt, rest)
-    } else if let Some(rest) = token.strip_prefix('<') {
-        (RangeOp::Lt, rest)
-    } else if let Some(rest) = token.strip_prefix('=') {
-        (RangeOp::Eq, rest)
-    } else {
-        (RangeOp::Eq, token)
-    };
-
-    parse_semver(rest).map(|version| (op, version))
-}
-
-pub(crate) fn compare_range(version: SemVer, op: RangeOp, bound: SemVer) -> bool {
-    match op {
-        RangeOp::Gt => version > bound,
-        RangeOp::Gte => version >= bound,
-        RangeOp::Lt => version < bound,
-        RangeOp::Lte => version <= bound,
-        RangeOp::Eq => version == bound,
-    }
-}
-
-pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-    let core = value.split(['-', '+']).next().unwrap_or(value);
-    let mut parts = core.split('.');
-    let major: u32 = parts.next()?.parse().ok()?;
-    let minor: u32 = parts.next().unwrap_or("0").parse().ok()?;
-    let patch: u32 = parts.next().unwrap_or("0").parse().ok()?;
-    Some(SemVer {
-        major,
-        minor,
-        patch,
-    })
 }
 
 pub(crate) fn resolve_exports_subpath(
@@ -606,44 +416,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn select_types_versions_paths_returns_first_matching_key_in_declaration_order() {
-        // Pinned against tsc's `getPackageJsonTypesVersionsPaths` (first-match
-        // semantics). With `"*"` declared first, every later key is
-        // unreachable.
-        let types_versions = serde_json::json!({
-            "*": { "*": ["fallback/index.d.ts"] },
-            ">=5.4": { "*": ["modern/index.d.ts"] }
-        });
-
-        let selected = select_types_versions_paths(&types_versions, TEST_VERSION)
-            .expect("expected a matching typesVersions entry");
-        assert_eq!(
-            selected.get("*"),
-            Some(&serde_json::json!(["fallback/index.d.ts"]))
-        );
-
-        // Natural ordering — fallback last — picks the tighter range.
-        let natural = serde_json::json!({
-            ">=5.4": { "*": ["modern/index.d.ts"] },
-            "*": { "*": ["fallback/index.d.ts"] }
-        });
-        let selected_natural = select_types_versions_paths(&natural, TEST_VERSION)
-            .expect("expected a matching typesVersions entry");
-        assert_eq!(
-            selected_natural.get("*"),
-            Some(&serde_json::json!(["modern/index.d.ts"])),
-        );
-    }
-
-    #[test]
-    fn parse_types_versions_pattern_rejects_multi_star_keys() {
-        assert_eq!(parse_types_versions_pattern("lib/*"), Some(("lib/", "")));
-        assert_eq!(parse_types_versions_pattern("*.d.ts"), Some(("", ".d.ts")));
-        assert_eq!(parse_types_versions_pattern("a*b*c"), None);
-        assert_eq!(parse_types_versions_pattern("exact"), None);
-    }
-
+    // NOTE: `select_paths`/`parse_pattern`/version-range selection are owned and
+    // unit-tested by `tsz_common::module_resolution::types_versions`. The CLI
+    // keeps the end-to-end `resolve_types_versions` coverage in the driver
+    // integration tests; only the re-exported `types_versions_range_matches`
+    // (used by versioned export conditions) is smoke-tested here.
     #[test]
     fn types_versions_range_matches_handles_star_empty_and_disjunctions() {
         assert!(types_versions_range_matches("*", TEST_VERSION));
