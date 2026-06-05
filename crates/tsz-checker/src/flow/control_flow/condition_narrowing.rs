@@ -18,6 +18,38 @@ impl<'a> FlowAnalyzer<'a> {
         flow_query::narrow_to_falsy(self.interner, env_borrow.as_deref(), type_id)
     }
 
+    fn narrow_by_typeof_result_via_flow_boundary(
+        &self,
+        type_id: TypeId,
+        typeof_result: &str,
+        is_true_branch: bool,
+    ) -> TypeId {
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_by_typeof_result(
+            self.interner,
+            env_borrow.as_deref(),
+            type_id,
+            typeof_result,
+            is_true_branch,
+        )
+    }
+
+    fn narrow_with_guard_via_flow_boundary(
+        &self,
+        type_id: TypeId,
+        guard: &TypeGuard,
+        is_true_branch: bool,
+    ) -> TypeId {
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_with_guard(
+            self.interner,
+            env_borrow.as_deref(),
+            type_id,
+            guard,
+            is_true_branch,
+        )
+    }
+
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
         let mut members = Vec::with_capacity(types.len());
         let mut saw_reachable = false;
@@ -213,7 +245,11 @@ impl<'a> FlowAnalyzer<'a> {
                     let Some(typeof_result) = self.literal_string_from_node(case_expr) else {
                         break;
                     };
-                    return narrowing.narrow_by_typeof(narrowed, typeof_result);
+                    return self.narrow_by_typeof_result_via_flow_boundary(
+                        narrowed,
+                        typeof_result,
+                        true,
+                    );
                 }
 
                 if clause.expression.is_none() {
@@ -224,7 +260,8 @@ impl<'a> FlowAnalyzer<'a> {
                     break;
                 };
 
-                narrowed = narrowing.narrow_by_typeof_negation(narrowed, typeof_result);
+                narrowed =
+                    self.narrow_by_typeof_result_via_flow_boundary(narrowed, typeof_result, false);
                 if narrowed == TypeId::NEVER {
                     return TypeId::NEVER;
                 }
@@ -460,7 +497,8 @@ impl<'a> FlowAnalyzer<'a> {
                 };
 
                 applied = true;
-                narrowed = narrowing.narrow_by_typeof_negation(narrowed, typeof_result);
+                narrowed =
+                    self.narrow_by_typeof_result_via_flow_boundary(narrowed, typeof_result, false);
                 if narrowed == TypeId::NEVER {
                     return TypeId::NEVER;
                 }
@@ -1274,10 +1312,10 @@ impl<'a> FlowAnalyzer<'a> {
                     .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
                 let typeof_base_type =
                     flow_boundary::catch_variable_typeof_base_from_flow(type_id, is_catch_var);
-                let narrowed = narrowing.narrow_type(
+                let narrowed = self.narrow_with_guard_via_flow_boundary(
                     typeof_base_type,
                     &TypeGuard::Typeof(typeof_kind),
-                    GuardSense::from(effective_truth),
+                    effective_truth,
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
@@ -1301,9 +1339,9 @@ impl<'a> FlowAnalyzer<'a> {
                 );
             } else {
                 // Collect the primitive members from the source type
-                let s = narrowing.narrow_by_typeof(type_id, "string");
-                let n = narrowing.narrow_by_typeof(type_id, "number");
-                let b = narrowing.narrow_by_typeof(type_id, "boolean");
+                let s = self.narrow_by_typeof_result_via_flow_boundary(type_id, "string", true);
+                let n = self.narrow_by_typeof_result_via_flow_boundary(type_id, "number", true);
+                let b = self.narrow_by_typeof_result_via_flow_boundary(type_id, "boolean", true);
                 let mut parts = Vec::new();
                 if s != TypeId::NEVER {
                     parts.push(s);
