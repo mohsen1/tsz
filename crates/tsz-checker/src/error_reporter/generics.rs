@@ -542,6 +542,18 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
         idx: NodeIndex,
     ) {
+        self.error_type_constraint_not_satisfied_with_constraint_display(
+            type_arg, constraint, idx, None,
+        );
+    }
+
+    pub(crate) fn error_type_constraint_not_satisfied_with_constraint_display(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+        idx: NodeIndex,
+        constraint_display: Option<String>,
+    ) {
         // Suppress cascade errors from unresolved types
         if type_arg == TypeId::ERROR
             || constraint == TypeId::ERROR
@@ -620,7 +632,8 @@ impl<'a> CheckerState<'a> {
                 type_str = format!("typeof {type_str}");
             }
         }
-        let constraint_str = self.format_type_diagnostic_constraint(constraint);
+        let constraint_str = constraint_display
+            .unwrap_or_else(|| self.format_type_diagnostic_constraint(constraint));
         // Structural check: `IndexedAccess(M, K)` where K is a bounded
         // type parameter satisfies any constraint that ALL of M's property
         // value types are assignable to. tsc's `getApparentType` reduces

@@ -33,6 +33,12 @@ stacker = "0.1.23"
 name = "assertion_source_literal_display_tests"
 path = "tests/assertion_source_literal_display_tests.rs"
 [[test]]
+name = "nested_mapped_optional_modifier_inline_application_tests"
+path = "tests/nested_mapped_optional_modifier_inline_application_tests.rs"
+[[test]]
+name = "recursive_generic_interface_application_display_tests"
+path = "tests/recursive_generic_interface_application_display_tests.rs"
+[[test]]
 name = "export_default_interface_type_import_tests"
 path = "tests/export_default_interface_type_import_tests.rs"
 [[test]]
@@ -77,6 +83,10 @@ path = "tests/union_protected_intersection_property_tests.rs"
 [[test]]
 name = "tuple_element_mismatch_tests"
 path = "tests/tuple_element_mismatch_tests.rs"
+[[test]]
+name = "tuple_argument_mismatch_elaboration_tests"
+path = "tests/tuple_argument_mismatch_elaboration_tests.rs"
+
 [[test]]
 name = "for_await_type_parameter_iterability_tests"
 path = "tests/for_await_type_parameter_iterability_tests.rs"
@@ -1494,6 +1504,10 @@ path = "tests/operator_literal_annotation_widen_tests.rs"
 name = "flow_dp_memoization_tests"
 path = "tests/flow_dp_memoization_tests.rs"
 [[test]]
+name = "flow_captured_let_memoization_tests"
+path = "tests/flow_captured_let_memoization_tests.rs"
+
+[[test]]
 name = "public_package_unique_symbol_emit_tests"
 path = "tests/public_package_unique_symbol_emit_tests.rs"
 [[test]]
@@ -1559,6 +1573,14 @@ path = "tests/ts2379_exact_optional_argument_tests.rs"
 [[test]]
 name = "type_literal_method_overload_tests"
 path = "tests/type_literal_method_overload_tests.rs"
+[[test]]
+name = "type_literal_overload_optionality_tests"
+path = "tests/type_literal_overload_optionality_tests.rs"
+
+[[test]]
+name = "global_augmentation_const_enum_rebind_tests"
+path = "tests/global_augmentation_const_enum_rebind_tests.rs"
+
 [[test]]
 name = "type_alias_signature_body_validation_tests"
 path = "tests/type_alias_signature_body_validation_tests.rs"

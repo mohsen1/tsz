@@ -51,6 +51,14 @@ function listAbsoluteFiles(dir, files) {
   return files.map((relative) => path.join(dir, relative));
 }
 
+// Shared awk snippet that extracts a single top-level shell function (from its
+// `name()` line through the next column-0 `}`) out of the prereqs library, so a
+// test can source just that function without the whole file's bench globals.
+function awkExtractFunction(funcName) {
+  const script = BENCH_PREREQS_SCRIPT.replace(/'/g, "'\\''");
+  return `awk '/^${funcName}\\(\\)/{flag=1} flag{print} /^}/{if(flag){exit}}' '${script}'`;
+}
+
 // --------------------------------------------------------------------------
 // File-name filter helpers.
 
@@ -510,7 +518,7 @@ SCRIPT_DIR='${SCRIPT_DIR.replace(/'/g, "'\\''")}'
 if [ -f '${BENCH_SCRIPT.replace(/'/g, "'\\''")}.helpers' ]; then
   source '${BENCH_SCRIPT.replace(/'/g, "'\\''")}.helpers'
 else
-  awk '/^sum_ts_stats\\(\\)/{flag=1} flag{print} /^}/{if(flag){exit}}' '${BENCH_PREREQS_SCRIPT.replace(/'/g, "'\\''")}' > /tmp/tsz-sum-ts-stats-$$.sh
+  ${awkExtractFunction("sum_ts_stats")} > /tmp/tsz-sum-ts-stats-$$.sh
   source /tmp/tsz-sum-ts-stats-$$.sh
   rm -f /tmp/tsz-sum-ts-stats-$$.sh
 fi
@@ -542,6 +550,65 @@ sum_ts_stats '${srcDir.replace(/'/g, "'\\''")}'
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// --------------------------------------------------------------------------
+// `bench_project_file_stats_cache_dir` (bench-vs-tsgo-prereqs.sh) must resolve
+// to a PERSISTENT directory. Regression for issue #10923: the cache dir
+// previously defaulted to the per-run `$TEMP_DIR`, which the harness deletes on
+// EXIT, so the persistence machinery above never survived a run and every row
+// invocation re-read (re-line-counted) every fixture source from cold.
+
+{
+  const extract = awkExtractFunction("bench_project_file_stats_cache_dir");
+
+  const runResolver = (envLine) => {
+    const script = `set -euo pipefail
+source <(${extract})
+${envLine}
+bench_project_file_stats_cache_dir
+`;
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+    if (result.status !== 0) {
+      throw new Error(`cache-dir resolver failed: ${result.stderr}`);
+    }
+    return result.stdout.trim();
+  };
+
+  // With a persistent BENCH_TARGET_DIR available, the default must live under
+  // it — NOT under the ephemeral per-run TEMP_DIR, even when TEMP_DIR is set.
+  const persistent = runResolver(
+    'BENCH_TARGET_DIR=/persist/.target-bench; TEMP_DIR=/tmp/run-XXXX; TMPDIR=/tmp; unset TSZ_PROJECT_FILE_STATS_CACHE_DIR',
+  );
+  assert.equal(
+    persistent,
+    "/persist/.target-bench/project-file-stats-cache",
+    "default cache dir is anchored to the run-surviving BENCH_TARGET_DIR",
+  );
+  assert.ok(
+    !persistent.includes("/run-XXXX"),
+    "default cache dir must not live under the per-run TEMP_DIR that is deleted on exit",
+  );
+
+  // An explicit override always wins over the computed default.
+  const overridden = runResolver(
+    'BENCH_TARGET_DIR=/persist/.target-bench; TSZ_PROJECT_FILE_STATS_CACHE_DIR=/custom/cache',
+  );
+  assert.equal(
+    overridden,
+    "/custom/cache",
+    "an explicit TSZ_PROJECT_FILE_STATS_CACHE_DIR overrides the default",
+  );
+
+  // With no persistent target known, fall back to TMPDIR rather than crashing.
+  const tmpFallback = runResolver(
+    'unset BENCH_TARGET_DIR; TMPDIR=/tmp/fallback; unset TSZ_PROJECT_FILE_STATS_CACHE_DIR',
+  );
+  assert.equal(
+    tmpFallback,
+    "/tmp/fallback/project-file-stats-cache",
+    "without BENCH_TARGET_DIR the resolver falls back to TMPDIR",
+  );
 }
 
 console.log("project-file-stats tests passed");

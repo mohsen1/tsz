@@ -25,6 +25,10 @@ pub struct TypeReferenceValidationCaches {
     /// reached repeatedly while extracting generic parameter lists from aliases
     /// imported or re-exported through several files.
     pub conditional_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    /// Results for indexed-object-map branch constraint proofs. This memo sits
+    /// underneath `conditional_branch_constraint` because different conditional
+    /// aliases can expose the same mapped-object branch/value constraint pair.
+    pub indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.

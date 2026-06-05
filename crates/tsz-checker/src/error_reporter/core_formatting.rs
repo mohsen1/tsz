@@ -319,6 +319,19 @@ impl<'a> CheckerState<'a> {
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty)
         {
+            // tsc always prints `keyof T` when the operand is a free type
+            // parameter, even when T has an inline anonymous constraint whose
+            // keys could be enumerated. The anonymous-object branch below
+            // reaches the constraint via `get_object_shape`'s TypeParameter
+            // look-through, so we must guard here before that path fires.
+            if let Some(param_info) = crate::query_boundaries::common::type_param_info(
+                self.ctx.types.as_type_database(),
+                keyof_inner,
+            ) {
+                let param_name = self.ctx.types.resolve_atom_ref(param_info.name);
+                return format!("keyof {param_name}");
+            }
+
             if let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner) {
                 return format!("keyof {alias_name}");
             }

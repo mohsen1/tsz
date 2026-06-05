@@ -1,7 +1,7 @@
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -54,5 +54,35 @@ impl<'a> CheckerState<'a> {
             }
             _ => type_arg,
         }
+    }
+
+    pub(super) fn written_keyof_constraint_display(
+        &self,
+        constraint: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        type_args_list: &NodeList,
+    ) -> Option<String> {
+        let keyof_inner = query_common::keyof_inner_type(self.ctx.types, constraint)?;
+        let param_info =
+            query_common::type_param_info(self.ctx.types.as_type_database(), keyof_inner)?;
+        let param_index = type_params
+            .iter()
+            .position(|param| param.name == param_info.name)?;
+        let arg_idx = *type_args_list.nodes.get(param_index)?;
+        let arg_node = self.ctx.arena.get(arg_idx)?;
+        if arg_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let arg_ref = self.ctx.arena.get_type_ref(arg_node)?;
+        if arg_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let arg_name_node = self.ctx.arena.get(arg_ref.type_name)?;
+        let arg_ident = self.ctx.arena.get_identifier(arg_name_node)?;
+        Some(format!("keyof {}", arg_ident.escaped_text))
     }
 }

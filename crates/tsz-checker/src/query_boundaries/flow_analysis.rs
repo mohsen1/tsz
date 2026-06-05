@@ -80,6 +80,14 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
         .unwrap_or(type_id)
 }
 
+/// Return whether a type carries enum component identity.
+///
+/// The checker owns deciding which flow assignments get enum-specific
+/// reduction. This boundary owns the reusable semantic enum-domain query.
+pub(crate) fn has_enum_components(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::enum_components(db, type_id).is_some()
+}
+
 pub(crate) fn enum_member_union_domain(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let Some(members) = union_members_for_type(db, type_id) else {
         return enum_member_domain(db, type_id);
@@ -1103,6 +1111,17 @@ mod tests {
         assert!(members.contains(&literal));
         assert!(members.contains(&TypeId::NUMBER));
         assert!(!members.contains(&enum_member));
+    }
+
+    #[test]
+    fn has_enum_components_tracks_enum_identity() {
+        let db = TypeInterner::new();
+        let literal = db.literal_string("ready");
+        let enum_member = db.enum_type(tsz_solver::def::DefId(702), literal);
+
+        assert!(has_enum_components(&db, enum_member));
+        assert!(!has_enum_components(&db, literal));
+        assert!(!has_enum_components(&db, TypeId::NUMBER));
     }
 
     #[test]

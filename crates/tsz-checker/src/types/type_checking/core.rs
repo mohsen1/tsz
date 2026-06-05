@@ -1066,11 +1066,23 @@ impl<'a> CheckerState<'a> {
     /// Method signatures with the same name must all be optional or all required.
     pub(crate) fn check_type_literal_overload_optionality(&mut self, members: &[NodeIndex]) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use rustc_hash::FxHashMap;
         use tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE;
 
-        // Group method signatures by name
-        let mut method_groups: FxHashMap<String, Vec<(NodeIndex, bool)>> = FxHashMap::default();
+        // An optionality disagreement requires at least two method signatures that
+        // share a name, so type literals with fewer than two members can never
+        // trip TS2386. Bail before touching the heap — this is the common case
+        // (most type literals carry zero or one members) and runs on every type
+        // literal in the program.
+        if members.len() < 2 {
+            return;
+        }
+
+        // Collect the method signatures, in source order, into a single vector of
+        // (name, member, optional). This replaces the former per-pass
+        // `FxHashMap<String, Vec<..>>` (one map plus one Vec per group); the vector
+        // only grows when the literal actually carries methods and stays empty for
+        // the common property-only object types.
+        let mut methods: Vec<(String, NodeIndex, bool)> = Vec::new();
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -1084,32 +1096,38 @@ impl<'a> CheckerState<'a> {
             let Some(name) = self.get_member_name(member_idx) else {
                 continue;
             };
-            method_groups
-                .entry(name)
-                .or_default()
-                .push((member_idx, sig.question_token));
+            methods.push((name, member_idx, sig.question_token));
         }
 
-        for group in method_groups.values() {
-            if group.len() < 2 {
+        // A disagreement needs at least two same-named methods, so fewer than two
+        // methods can never conflict.
+        if methods.len() < 2 {
+            return;
+        }
+
+        // Compare each method's optionality against the first method that shares
+        // its name. Reporting in source order keeps the first declaration as the
+        // reference and emits exactly the diagnostics the grouped form produced,
+        // while the per-literal method count is tiny so the adjacent scan beats
+        // building and rehashing a map.
+        for (current, entry) in methods.iter().enumerate() {
+            let (name, member_idx, optional) = (&entry.0, entry.1, entry.2);
+            let Some(first) = methods[..current].iter().find(|m| &m.0 == name) else {
                 continue;
-            }
-            let first_optional = group[0].1;
-            for &(member_idx, optional) in &group[1..] {
-                if optional != first_optional {
-                    let error_node = self
-                        .ctx
-                        .arena
-                        .get(member_idx)
-                        .and_then(|n| self.ctx.arena.get_signature(n))
-                        .map(|s| s.name)
-                        .unwrap_or(member_idx);
-                    self.error_at_node(
-                        error_node,
-                        diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
-                        diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
-                    );
-                }
+            };
+            if optional != first.2 {
+                let error_node = self
+                    .ctx
+                    .arena
+                    .get(member_idx)
+                    .and_then(|n| self.ctx.arena.get_signature(n))
+                    .map(|s| s.name)
+                    .unwrap_or(member_idx);
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                );
             }
         }
     }

@@ -255,7 +255,12 @@ fn types_versions_compiler_version_env() -> Option<String> {
 pub(crate) struct CompilationCache {
     type_caches: FxHashMap<PathBuf, TypeCache>,
     bind_cache: FxHashMap<PathBuf, BindCacheEntry>,
-    dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    /// Per-file dependency lists in source-import (discovery) order.
+    ///
+    /// Replayed during cached project rebuilds to seed BFS discovery; the order
+    /// must match the original fresh build so global `SymbolId` assignment stays
+    /// stable for unchanged source graphs. See `SourceReadResult::dependencies`.
+    dependencies: FxHashMap<PathBuf, Vec<PathBuf>>,
     pub(crate) outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     reverse_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     diagnostics: FxHashMap<PathBuf, Vec<Diagnostic>>,
@@ -423,7 +428,7 @@ impl CompilationCache {
 
     pub(crate) fn update_dependencies(
         &mut self,
-        dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+        dependencies: FxHashMap<PathBuf, Vec<PathBuf>>,
         outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     ) {
         let mut reverse = FxHashMap::default();
@@ -633,9 +638,12 @@ fn build_info_to_compilation_cache(build_info: &BuildInfo, base_dir: &Path) -> C
             cache.export_hashes.insert(full_path.clone(), hash);
         }
 
-        // Convert dependencies
+        // Convert dependencies. `build_info` stores them as an ordered list
+        // (source-import order); preserve that order on restore so a cached
+        // rebuild replays discovery in the same order as the original build and
+        // assigns identical global `SymbolId`s.
         if let Some(deps) = build_info.get_dependencies(path_str) {
-            let mut dep_paths = FxHashSet::default();
+            let mut dep_paths: Vec<PathBuf> = Vec::with_capacity(deps.len());
             for dep in deps {
                 let dep_path = base_dir.join(dep);
                 cache
@@ -643,7 +651,9 @@ fn build_info_to_compilation_cache(build_info: &BuildInfo, base_dir: &Path) -> C
                     .entry(dep_path.clone())
                     .or_default()
                     .insert(full_path.clone());
-                dep_paths.insert(dep_path);
+                if !dep_paths.contains(&dep_path) {
+                    dep_paths.push(dep_path);
+                }
             }
             cache.dependencies.insert(full_path, dep_paths);
         }

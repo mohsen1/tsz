@@ -1899,17 +1899,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if app.args.contains(&evaluated) {
             return;
         }
-        // Fast path: all-intrinsic args trivially have no free type
-        // parameters; skip the recursive `contains_generic_type_parameters_db`
-        // traversal that fires on every parametric application evaluation.
-        let all_intrinsic = app.args.iter().all(|a| a.is_intrinsic());
-        if !all_intrinsic
-            && app.args.iter().any(|&arg| {
-                crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
-            })
-        {
-            return;
-        }
+        // Args that carry free type parameters (e.g. `OwnerList<T>` inside a
+        // generic function) must still record provenance: `tsc` displays the
+        // nominal reference `OwnerList<T>`, not a structurally-recovered form.
+        // The downstream `store_display_alias_preferring_application` already
+        // applies precise gates (alloc-order, self-reference, bare type
+        // parameter, intrinsic) that reject the genuinely unsafe cases, so a
+        // blunt skip here would only drop legitimate generic-instance aliases
+        // and force the fragile property-based recovery in the checker.
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }
