@@ -1891,21 +1891,6 @@ impl<'a> Printer<'a> {
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
         ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
 
-        if !self.hoisted_deferred_static_class_result_temps.is_empty() {
-            let var_decl = format!(
-                "var {};",
-                self.hoisted_deferred_static_class_result_temps.join(", ")
-            );
-            self.writer
-                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
-        }
-
-        if !ref_vars.is_empty() {
-            let var_decl = format!("var {};", ref_vars.join(", "));
-            self.writer
-                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
-        }
-
         // A class-lowering temp can be reachable from more than one hoist
         // bucket (e.g. a class alias reserved as a file-level class temp that
         // is also collected with the private-field var names). Emit each name
@@ -1922,8 +1907,16 @@ impl<'a> Printer<'a> {
             })
             .cloned()
             .collect();
-        if !file_level_class_temps.is_empty() {
-            let var_decl = format!("var {};", file_level_class_temps.join(", "));
+
+        let mut same_location_ref_vars = file_level_class_temps;
+        same_location_ref_vars.extend(
+            self.hoisted_deferred_static_class_result_temps
+                .iter()
+                .cloned(),
+        );
+        same_location_ref_vars.extend(ref_vars);
+        if !same_location_ref_vars.is_empty() {
+            let var_decl = format!("var {};", same_location_ref_vars.join(", "));
             self.writer
                 .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
         }

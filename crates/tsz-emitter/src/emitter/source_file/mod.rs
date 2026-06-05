@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod block_scoped_hoist_void_zero_tests;
-mod comments;
 mod const_enums;
 mod emit;
-mod hoists;
 mod import_helpers_class_scan;
 #[cfg(test)]
 mod import_helpers_class_scan_tests;
@@ -12,9 +10,7 @@ mod invalid_numeric_declaration_recovery_tests;
 mod module_syntax;
 #[cfg(test)]
 mod parser_recovery_tests;
-mod prologue;
 mod recovery;
-mod recovery_tail;
 #[cfg(test)]
 mod tc39_decorator_tests;
 mod top_level_using;
