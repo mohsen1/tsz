@@ -805,6 +805,71 @@ let y10 = unboxify(x10);
 }
 
 #[test]
+fn declared_call_return_uses_receiver_interface_member_signature() {
+    let source = r#"
+interface Widget {
+    id: number;
+}
+type ExtendedWidget<T> = { id: number; ext: T };
+interface WidgetFactory {
+    make<T>(x: T): ExtendedWidget<T extends unknown ? Widget : undefined>;
+}
+declare const Widget: WidgetFactory;
+import * as ns from "mod";
+const ImportedWidget = ns.default;
+let y = Widget.make({ label: "ok" });
+let z = ImportedWidget.make({ label: "ok" });
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert!(
+        emitter
+            .call_expression_declared_return_type_text(call_idx)
+            .is_some_and(|text| text.contains("ExtendedWidget")),
+    );
+    let imported_call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .nth(1)
+        .expect("missing imported call expression");
+    let imported_call = parser
+        .arena
+        .get_call_expr(
+            parser
+                .arena
+                .get(imported_call_idx)
+                .expect("imported call node"),
+        )
+        .expect("imported call data");
+    assert!(
+        emitter
+            .call_receiver_default_import_alias(imported_call.expression)
+            .is_some_and(|(_, module)| module == "mod"),
+        "default import alias detection failed"
+    );
+}
+
+#[test]
 fn instantiation_expression_source_surface_detects_unresolved_declaration_text() {
     assert!(
         !DeclarationEmitter::instantiated_source_type_needs_semantic_surface(

@@ -222,7 +222,7 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
-        let related = self.is_assignable_to(source, target);
+        let related = self.diagnostic_relation_boolean_guard(source, target);
         if related {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
