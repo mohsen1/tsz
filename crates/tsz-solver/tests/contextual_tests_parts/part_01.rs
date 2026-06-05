@@ -629,3 +629,55 @@ fn test_homomorphic_mapped_per_index_contextual_skips_finite_literal_keys() {
         "literal-key constraint should not trigger positional substitution"
     );
 }
+
+/// Per-position contextual type over a union of differing-arity tuples must
+/// keep every member without reduction (tsc's `UnionReduction.None`). For
+/// `[number, boolean] | [2]` at index 0 the contextual type is `number | 2`,
+/// NOT `number`: reducing the literal `2` into its base primitive drops the
+/// contextual literal arm and causes a fresh `[2]` element to widen and
+/// spuriously fail assignment to the `[2]` tuple arm.
+#[test]
+fn test_tuple_element_contextual_union_preserves_literal_member() {
+    let interner = TypeInterner::new();
+
+    let two_lit = interner.literal_number(2.0);
+    let long_arm = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let short_arm = interner.tuple(vec![TupleElement {
+        type_id: two_lit,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let union_ty = interner.union(vec![long_arm, short_arm]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    let elem0 = ctx
+        .get_tuple_element_type_with_count(0, 1)
+        .expect("position 0 contextual type missing");
+
+    // Expected: a union that still contains the literal `2`. Without the fix
+    // this reduced to plain `number`.
+    let expected = interner.union_preserve_members(vec![TypeId::NUMBER, two_lit]);
+    assert_eq!(
+        elem0, expected,
+        "contextual element type must preserve the literal arm (`number | 2`), got a reduced form"
+    );
+    assert_ne!(
+        elem0,
+        TypeId::NUMBER,
+        "literal arm `2` must not be absorbed into `number`"
+    );
+}
