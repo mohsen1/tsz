@@ -304,6 +304,7 @@ mod computed_properties;
 mod enum_template_and_advanced;
 mod export_specifiers;
 mod fix_verification;
+mod fix_verification_generic_calls;
 mod fix_verification_returned;
 mod generics_and_ambient;
 mod infer_paren_and_union_intersection;
