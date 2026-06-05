@@ -220,6 +220,45 @@ fn contextual_generic_call_retry_uses_env_relation_outcome_boundary() {
 }
 
 #[test]
+fn contextual_overload_retry_scopes_inference_flags() {
+    let source =
+        fs::read_to_string("src/checkers/call_checker/overload_resolution/contextual_retry.rs")
+            .expect("failed to read contextual overload retry source");
+    let start = source
+        .find("pub(super) fn retry_overload_after_contextual_refresh_mismatch")
+        .expect("missing contextual overload retry helper");
+    let end = source[start..]
+        .find("fn with_overload_contextual_retry_inference_context")
+        .map(|offset| start + offset)
+        .expect("missing overload contextual retry inference-context helper");
+    let retry = &source[start..end];
+
+    assert_eq!(
+        retry
+            .matches("with_overload_contextual_retry_inference_context(")
+            .count(),
+        1,
+        "contextual overload retry should scope literal/const inference flags through the helper"
+    );
+    assert!(
+        !retry.contains("prev_preserve_literals")
+            && !retry.contains("previous_preserve_literals")
+            && !retry.contains("prev_in_const_assertion")
+            && !retry.contains("previous_in_const_assertion"),
+        "contextual overload retry should not open-code inference flag save/restore"
+    );
+
+    let helper = &source[end..];
+    assert!(
+        helper.contains("self.ctx.preserve_literal_types = true")
+            && helper.contains("self.ctx.in_const_assertion = true")
+            && helper.contains("self.ctx.preserve_literal_types = previous_preserve_literals")
+            && helper.contains("self.ctx.in_const_assertion = previous_in_const_assertion"),
+        "the overload retry inference-context helper should set and restore both flags"
+    );
+}
+
+#[test]
 fn contextual_return_substitution_uses_env_relation_outcome_boundary() {
     let source = fs::read_to_string("src/types/computation/call/inner.rs")
         .expect("failed to read call inner source");
