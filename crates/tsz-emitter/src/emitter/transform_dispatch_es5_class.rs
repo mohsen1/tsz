@@ -31,12 +31,7 @@ impl<'a> Printer<'a> {
             && let Some(class_data) = self.arena.get_class(class_node_ref)
         {
             let class_name = self.get_identifier_text_idx(class_data.name);
-            self.configure_es5_class_external_hoists(
-                &mut es5_emitter,
-                class_node,
-                &class_name,
-                class_data,
-            );
+            self.configure_es5_class_external_hoists(&mut es5_emitter, class_node, &class_name);
         }
         es5_emitter.set_indent_level(self.writer.indent_level());
         es5_emitter.set_transforms(self.transforms.clone());

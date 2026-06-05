@@ -240,12 +240,10 @@ LINE_LIMIT_CHECKS = [
             # any regression.
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
-            "crates/tsz-checker/src/state/type_analysis/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
-            "crates/tsz-checker/src/types/utilities/core.rs",
         },
     ),
     (
@@ -680,7 +678,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Checker boundary: types/utilities/core.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "utilities" / "core.rs",
-        2779,
+        1703,
     ),
     (
         "Checker boundary: state/type_analysis/core.rs size ratchet",
@@ -691,7 +689,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2843,
+        1815,
     ),
     (
         # Ratcheted 2736→2896: +160 lines for three config-validation
@@ -762,7 +760,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_environment"
         / "core.rs",
-        1463,
+        1461,
     ),
     (
         "Conformance boundary: conformance runner size ratchet",
@@ -1326,13 +1324,13 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
-        6,
+        5,
     ),
     (
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        23,
+        20,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",

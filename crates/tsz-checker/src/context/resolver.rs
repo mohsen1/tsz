@@ -324,6 +324,25 @@ impl<'a> CheckerContext<'a> {
             if kind != tsz_solver::def::DefKind::Interface {
                 return None;
             }
+            // Skip the override for an interface that definitively comes from a
+            // user source file (a real file id, not the `u32::MAX` lib sentinel).
+            // The override exists to upgrade a standard-library interface to its
+            // late heritage-merged body. A user interface only lands in
+            // `lib_type_resolution_cache` because its name was resolved through
+            // the lib path during generic-reference prewarming; substituting
+            // that cached "lib" body yields a structurally divergent `TypeId`
+            // from the same alias resolved through its ordinary path. When the
+            // divergent body sits in a contravariant position — a hybrid
+            // callable's parameter reached through a homomorphic mapped type —
+            // the two forms of one alias fail to relate and tsz reports a
+            // spurious "Type 'X' is not assignable to type 'X'".
+            if self
+                .definition_store
+                .get_file_id(def_id)
+                .is_some_and(|file_id| file_id != u32::MAX)
+            {
+                return None;
+            }
             let name_atom = self.definition_store.get_name(def_id)?;
             let name = self.types.resolve_atom(name_atom);
             if name == "Atomics" {

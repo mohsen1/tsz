@@ -243,6 +243,9 @@ mod instantiation_expression_inline_utility_modifier_tests;
 #[path = "tests/instantiation_expression_lib_display_tests.rs"]
 mod instantiation_expression_lib_display_tests;
 #[cfg(test)]
+#[path = "tests/interface_extends_generic_override_variance_tests.rs"]
+mod interface_extends_generic_override_variance_tests;
+#[cfg(test)]
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
 #[cfg(test)]
@@ -317,6 +320,9 @@ mod optional_property_target_undefined_display_tests;
 #[cfg(test)]
 #[path = "../tests/overload_modifier_tests.rs"]
 mod overload_modifier_tests;
+#[cfg(test)]
+#[path = "tests/override_incompatibility_elaboration_tests.rs"]
+mod override_incompatibility_elaboration_tests;
 #[cfg(test)]
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
@@ -699,6 +705,9 @@ mod excess_prop_object_union_display_tests;
 #[path = "tests/explicit_alias_constraint_relation_routing_arch_tests.rs"]
 mod explicit_alias_constraint_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/explicit_type_arg_overload_pruning_tests.rs"]
+mod explicit_type_arg_overload_pruning_tests;
+#[cfg(test)]
 #[path = "../tests/file_session_switch_to_file_tests.rs"]
 mod file_session_switch_to_file_tests;
 #[cfg(test)]
@@ -936,6 +945,9 @@ mod mapped_indexed_access_diagnostic_tests;
 #[path = "tests/mapped_infer_with_substitution_tests.rs"]
 mod mapped_infer_with_substitution_tests;
 #[cfg(test)]
+#[path = "tests/mapped_intersection_excess_property_tests.rs"]
+mod mapped_intersection_excess_property_tests;
+#[cfg(test)]
 #[path = "tests/mapped_true_base_constraint_relation_routing_arch_tests.rs"]
 mod mapped_true_base_constraint_relation_routing_arch_tests;
 #[cfg(test)]
@@ -1049,6 +1061,9 @@ mod property_alias_display_tests;
 #[cfg(test)]
 #[path = "tests/property_index_key_relation_routing_arch_tests.rs"]
 mod property_index_key_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/property_receiver_display_recursion_overflow_tests.rs"]
+mod property_receiver_display_recursion_overflow_tests;
 #[cfg(test)]
 #[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
 mod property_receiver_relation_routing_arch_tests;

@@ -815,7 +815,7 @@ fn test_heritage_multiple_type_arg_comments_do_not_leak() {
 /// search the helper could find a `{` from a much earlier construct
 /// (e.g. an outer block's brace) and then advance `comment_emit_idx`
 /// past comments on that earlier line, losing them from the output.
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2248#discussion_r3176256604>
+/// Devin review: <https://github.com/tsz-org/tsz/pull/2248#discussion_r3176256604>
 #[test]
 fn test_skip_block_opening_line_comments_uses_forward_search_for_param_lowered_block() {
     use tsz_common::ScriptTarget;
@@ -862,7 +862,7 @@ fn test_skip_block_opening_line_comments_uses_forward_search_for_param_lowered_b
 /// statement — i.e., dumped after the CJS preamble.
 ///
 /// Devin review:
-/// <https://github.com/mohsen1/tsz/pull/2563#discussion>
+/// <https://github.com/tsz-org/tsz/pull/2563#discussion>
 #[test]
 fn cjs_inter_prologue_comment_preserved_between_directives() {
     let source = r#""hey!";

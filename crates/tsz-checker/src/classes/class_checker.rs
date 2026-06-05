@@ -999,12 +999,10 @@ impl<'a> CheckerState<'a> {
                             ),
                             diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                         );
-                        let member_type_str = self.format_type(member_type);
-                        let base_type_str = self.format_type(base_type);
-                        self.report_type_not_assignable_detail(
+                        self.report_type_override_incompatibility_detail(
                             member_name_idx,
-                            &member_type_str,
-                            &base_type_str,
+                            member_type,
+                            base_type,
                             diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                         );
                         continue;
@@ -1214,12 +1212,22 @@ impl<'a> CheckerState<'a> {
             let resolved_base_type = self.resolve_type_query_type(base_type);
 
             // Check type compatibility through centralized mismatch policy.
-            // Methods always use bivariant relation checks.
-            // Static properties also use bivariant checks — tsc checks the static
+            //
+            // Static properties use bivariant checks — tsc checks the static
             // side structurally (typeof Derived vs typeof Base) with the normal
-            // assignability relation, which without strictFunctionTypes is bivariant.
-            // Only instance property overrides use strict assignability (TS2416).
-            let should_report_mismatch = if is_method || is_static {
+            // assignability relation, which without strictFunctionTypes is
+            // bivariant.
+            //
+            // Instance methods and instance property overrides both route
+            // through the no-erase member-mismatch relation. Method-parameter
+            // bivariance is still honored by the `is_method` flag inside that
+            // relation; crucially, it does NOT erase the base member's
+            // method-local generics to their constraints. A concrete override
+            // such as `m(x: string): string` is therefore correctly rejected
+            // (TS2416) against a generic base `m<T extends string>(x: T): T`,
+            // matching tsc and the `implements` heritage path, which already
+            // used this relation.
+            let should_report_mismatch = if is_static {
                 should_report_member_type_mismatch_bivariant(
                     self,
                     resolved_member_type,
@@ -1236,9 +1244,6 @@ impl<'a> CheckerState<'a> {
             };
 
             if should_report_mismatch {
-                let member_type_str = self.format_type(member_type);
-                let base_type_str = self.format_type(base_type);
-
                 // TS2417: Static members use different error message and code
                 // TS2416: Instance members use standard property incompatibility error
                 if is_static {
@@ -1261,10 +1266,10 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
-                    self.report_type_not_assignable_detail(
+                    self.report_type_override_incompatibility_detail(
                         member_name_idx,
-                        &member_type_str,
-                        &base_type_str,
+                        member_type,
+                        base_type,
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
                 }
@@ -1413,8 +1418,6 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let member_type_str = self.format_type(resolved_member_type);
-        let base_type_str = self.format_type(resolved_base_type);
         let display_name = format_property_name_for_diagnostic(member_name);
         let base_class_display_name = base_class_name_for_diagnostic(base_class_name);
         self.error_at_node(
@@ -1424,10 +1427,10 @@ impl<'a> CheckerState<'a> {
             ),
             diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
         );
-        self.report_type_not_assignable_detail(
+        self.report_type_override_incompatibility_detail(
             member_name_idx,
-            &member_type_str,
-            &base_type_str,
+            resolved_member_type,
+            resolved_base_type,
             diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
         );
         true
@@ -1615,12 +1618,10 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
-                    let member_type_str = self.format_type(info.type_id);
-                    let base_type_str = self.format_type(base_type);
-                    self.report_type_not_assignable_detail(
+                    self.report_type_override_incompatibility_detail(
                         info.name_idx,
-                        &member_type_str,
-                        &base_type_str,
+                        info.type_id,
+                        base_type,
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
                     continue;

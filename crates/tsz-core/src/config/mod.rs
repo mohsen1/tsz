@@ -11,12 +11,14 @@ use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
 use tsz_common::diagnostics::format_message;
 mod deprecation_helpers;
 mod extends;
+mod lib_offsets;
 mod lib_resolution;
 
 use extends::{
     anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
     resolve_extends_path,
 };
+use lib_offsets::find_lib_entry_offset;
 
 pub use lib_resolution::{
     LibReference, core_lib_name_for_target, default_lib_dir, default_lib_name_for_target,
@@ -2416,7 +2418,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         //                  `default_module_kind_for_target(target, true)`
         //   moduleResolution unset → `default_module_resolution_for_module(module)`
         // and `Bundler` / `Node16` / `NodeNext` all count as "modern".
-        // See https://github.com/mohsen1/tsz/issues/3509.
+        // See https://github.com/tsz-org/tsz/issues/3509.
         let mr_is_modern = if let Some(serde_json::Value::String(mr_value)) =
             compiler_opts.get("moduleResolution")
         {
@@ -2737,7 +2739,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // TS6046 for invalid `watchOptions.watchFile` / `watchDirectory` /
         // `fallbackPolling` enum values. tsc surfaces these as config
         // diagnostics before compiling; tsz used to skip them entirely.
-        // See https://github.com/mohsen1/tsz/issues/3591 (repro A).
+        // See https://github.com/tsz-org/tsz/issues/3591 (repro A).
         if let Some(serde_json::Value::Object(watch_opts)) = obj.get_mut("watchOptions") {
             validate_option_value(
                 watch_opts,
@@ -4261,19 +4263,6 @@ fn validate_lib_values(
         for &idx in invalid_indices.iter().rev() {
             lib_array.remove(idx);
         }
-    }
-}
-
-/// Find the byte offset of a specific lib entry string within the source text.
-/// Searches for `"entry"` within the lib array section.
-fn find_lib_entry_offset(source: &str, entry: &str) -> u32 {
-    let search = format!("\"{entry}\"");
-    // Look for the lib array first
-    let lib_pos = source.find("\"lib\"").unwrap_or(0);
-    if let Some(pos) = source[lib_pos..].find(&search) {
-        (lib_pos + pos) as u32
-    } else {
-        0
     }
 }
 

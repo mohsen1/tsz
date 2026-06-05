@@ -3,7 +3,7 @@ fn test_apply_changed_to_open_files_applies_span_edits() {
     // tsserver's `applyChangedToOpenFiles` uses byte/UTF-16-offset spans
     // (`{span: {start, length}, newText}`), unlike `updateOpen.changedFiles`
     // which uses line/offset positions. tsz used to reject the command
-    // entirely. Regression for https://github.com/mohsen1/tsz/issues/3766.
+    // entirely. Regression for https://github.com/tsz-org/tsz/issues/3766.
     let mut server = make_server();
     let file = "/a.ts";
     server
@@ -882,7 +882,7 @@ fn test_todo_comments_report_utf16_position_after_non_bmp_text() {
 #[test]
 fn test_todo_comments_match_inside_template_substitutions() {
     // Comments inside `${...}` are real comments and tsc reports TODOs from
-    // them. Regression for https://github.com/mohsen1/tsz/issues/4003 — the
+    // them. Regression for https://github.com/tsz-org/tsz/issues/4003 — the
     // backtick-to-backtick skip used to mask block and line comments inside
     // template substitutions.
     let mut server = make_server();
@@ -922,7 +922,7 @@ fn test_todo_comments_match_inside_template_substitutions() {
 fn test_doc_comment_template_omits_returns_when_configure_disables_pref() {
     // tsserver lets clients turn off `@returns` via the
     // `generateReturnInDocTemplate` preference. tsz-server was hard-coding the
-    // default. Regression for https://github.com/mohsen1/tsz/issues/3972.
+    // default. Regression for https://github.com/tsz-org/tsz/issues/3972.
     let mut server = make_server();
     let file = "/doc-template.ts";
     server.open_files.insert(
