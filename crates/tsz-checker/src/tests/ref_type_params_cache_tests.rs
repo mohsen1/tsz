@@ -75,6 +75,24 @@ fn type_node_validation_cache_is_context_keyed() {
 }
 
 #[test]
+fn reference_composite_alias_body_keeps_missing_name_diagnostics() {
+    let diags = check_source_diagnostics(
+        r#"
+type Known<Value> = { value: Value };
+type Combined<Item> = Known<Item> | Missing<Item>;
+"#,
+    );
+
+    let missing_names: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        missing_names.len(),
+        1,
+        "Reference/composite-only alias bodies should still report unresolved \
+         type names through check_type_node; got: {diags:#?}"
+    );
+}
+
+#[test]
 fn type_node_validation_cache_only_records_clean_walks() {
     let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
         .expect("read type alias checker");
@@ -84,6 +102,19 @@ fn type_node_validation_cache_only_records_clean_walks() {
             && checker_source.contains(".type_node_validation")
             && checker_source.contains(".insert(validation_cache_key)"),
         "type-node validation success caching must not record diagnostic-bearing walks"
+    );
+}
+
+fn mapped_alias_body_keeps_conservative_missing_name_path() {
+    let checker_source =
+        std::fs::read_to_string("src/types/type_checking/type_alias_missing_name_coverage.rs")
+            .expect("read type alias missing-name coverage");
+    assert!(
+        checker_source.contains("type_alias_body_missing_names_syntax_covered_inner")
+            && checker_source.contains("syntax_kind_ext::MAPPED_TYPE")
+            && checker_source.contains("_ => false"),
+        "Mapped alias bodies must keep the resolving coverage path because \
+         mapped parameters and template diagnostics need scoped handling"
     );
 }
 
