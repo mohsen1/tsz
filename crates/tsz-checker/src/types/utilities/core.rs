@@ -493,18 +493,6 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::widen_type_for_display(self.ctx.types, type_id)
     }
 
-    /// Like `widen_type_for_display`, but preserves the literal property types of
-    /// non-fresh objects (declared/computed objects and distributed union
-    /// members), matching tsc's `getWidenedType`. A fresh object literal still
-    /// widens. Use this for rendering an already-typed source/member in
-    /// missing-property assignability diagnostics.
-    pub(crate) fn widen_type_for_display_preserving_non_fresh(&self, type_id: TypeId) -> TypeId {
-        crate::query_boundaries::common::widen_type_for_display_preserving_non_fresh(
-            self.ctx.types,
-            type_id,
-        )
-    }
-
     /// Widen a mutable binding initializer type (let/var semantics).
     ///
     /// In addition to primitive literal widening, TypeScript widens enum member

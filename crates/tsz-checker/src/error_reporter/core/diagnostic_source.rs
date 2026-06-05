@@ -1899,7 +1899,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let widened_element = self.normalize_assignability_display_type(
-            self.widen_type_for_display_preserving_non_fresh(element_type),
+            crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                self.ctx.types,
+                element_type,
+            ),
         );
         let rebuilt = self.ctx.types.array(widened_element);
         // Preserve the readonly modifier: tsc displays `readonly number[]` not `number[]`
