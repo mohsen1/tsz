@@ -829,6 +829,19 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::FUNCTION_TYPE
             || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
         {
+            // Push the function type's own type parameters into scope before
+            // recursing into parameter/return annotations. Annotations may
+            // reference them (e.g. `<T extends Base>() => T["x"]`); without the
+            // scope, resolving the indexed-access object `T` would emit a
+            // spurious TS2304. Mirrors `check_type_node`'s function-type arm.
+            let fn_type_parameters = self
+                .ctx
+                .arena
+                .get_function_type(node)
+                .map(|ft| ft.type_parameters.clone());
+            let fn_type_param_updates = fn_type_parameters
+                .as_ref()
+                .map(|tps| self.push_type_parameters(tps).1);
             if let Some(func_type) = self.ctx.arena.get_function_type(node) {
                 // Check each parameter for parameter property modifiers
                 self.check_strict_mode_reserved_parameter_names(
@@ -881,6 +894,9 @@ impl<'a> CheckerState<'a> {
                 }
                 // Recursively check the return type
                 self.check_type_for_parameter_properties(func_type.type_annotation);
+            }
+            if let Some(updates) = fn_type_param_updates {
+                self.pop_type_parameters(updates);
             }
         }
         // Check type literals (object types) for call/construct signatures and duplicate properties
@@ -946,6 +962,57 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(arg_idx);
                 }
             }
+        } else if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            // TS4105 ("Private or protected member '{0}' cannot be accessed on a
+            // type parameter.") must also fire on indexed-access types in
+            // *signature* annotations — class method return/parameter types,
+            // class/function declaration signatures, function-type literals,
+            // constructor parameters, variable annotations, and `as` assertions.
+            // The recursive `check_type_node` pass only reaches type-alias bodies
+            // and interface members, so without this a `this["secret"]` return
+            // type on a class method silently passes where tsc reports TS4105.
+            //
+            // Scoped deliberately to the TS4105 check (private/protected member
+            // on a type parameter or `this`) rather than the full
+            // `check_indexed_access_type`: the latter also resolves keyof/index
+            // relations whose results vary with the surrounding resolution
+            // context (e.g. `(typeof Enum)[K]`), which would surface false
+            // positives in these newly-visited positions. The TS4105 helper
+            // self-guards to type-parameter-like / `this` objects, and
+            // `error_at_node` dedups by (start, code) so positions also reached
+            // by `check_type_node` do not double-report.
+            let indexed_nodes = self
+                .ctx
+                .arena
+                .get_indexed_access_type(node)
+                .map(|indexed| (indexed.object_type, indexed.index_type));
+            if let Some((object_node, index_node)) = indexed_nodes {
+                // Only resolve the object/index when the object could be a type
+                // parameter or `this`. A `typeof X` object (e.g. `(typeof Enum)[K]`)
+                // is never a type parameter, so resolving it here is both
+                // unnecessary and harmful: evaluating it out of its normal order
+                // can poison the per-node type cache and produce spurious
+                // diagnostics. Skipping it keeps TS4105 precise and side-effect
+                // free.
+                if self.indexed_access_object_is_type_param_candidate(object_node) {
+                    let object_type = self.get_type_from_type_node(object_node);
+                    let index_type = self.get_type_from_type_node(index_node);
+                    if let Some(prop_atom) = crate::query_boundaries::common::string_literal_value(
+                        self.ctx.types,
+                        index_type,
+                    ) {
+                        let property_name = self.ctx.types.resolve_atom(prop_atom);
+                        self.check_ts4105_private_on_type_parameter(
+                            type_idx,
+                            object_type,
+                            &property_name,
+                        );
+                    }
+                }
+                // Recurse for nested indexed-access types (e.g. `T["a"]["b"]`).
+                self.check_type_for_parameter_properties(object_node);
+                self.check_type_for_parameter_properties(index_node);
+            }
         } else if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
             && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
         {
@@ -955,6 +1022,39 @@ impl<'a> CheckerState<'a> {
             && pred.type_node.is_some()
         {
             self.check_type_for_parameter_properties(pred.type_node);
+        }
+    }
+
+    /// Whether the object side of an indexed-access type could be a type
+    /// parameter or the polymorphic `this` type (the only objects for which
+    /// TS4105 applies). Used to gate the signature-position TS4105 check so we
+    /// never resolve concrete object forms such as `typeof X` — resolving those
+    /// out of order can poison the per-node type cache. Conservatively treats a
+    /// bare `this`/type-reference (possibly wrapped in parens or combined in a
+    /// union/intersection) as a candidate; the resolved-type check in
+    /// `check_ts4105_private_on_type_parameter` makes the final decision.
+    fn indexed_access_object_is_type_param_candidate(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::THIS_TYPE || k == syntax_kind_ext::TYPE_REFERENCE => true,
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                self.ctx.arena.get_wrapped_type(node).is_some_and(|paren| {
+                    self.indexed_access_object_is_type_param_candidate(paren.type_node)
+                })
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                self.ctx
+                    .arena
+                    .get_composite_type(node)
+                    .is_some_and(|composite| {
+                        composite.types.nodes.iter().all(|&member| {
+                            self.indexed_access_object_is_type_param_candidate(member)
+                        })
+                    })
+            }
+            _ => false,
         }
     }
 
