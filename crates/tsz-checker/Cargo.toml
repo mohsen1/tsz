@@ -841,6 +841,9 @@ path = "tests/ts2344_any_key_mapped_constraint_tests.rs"
 name = "mapped_type_errors_conformance_tests"
 path = "tests/mapped_type_errors_conformance_tests.rs"
 [[test]]
+name = "mapped_type_missing_template_single_ts7039_tests"
+path = "tests/mapped_type_missing_template_single_ts7039_tests.rs"
+[[test]]
 name = "mapped_type_interface_tests"
 path = "tests/mapped_type_interface_tests.rs"
 [[test]]
