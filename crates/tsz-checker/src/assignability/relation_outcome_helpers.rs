@@ -19,6 +19,16 @@ impl<'a> CheckerState<'a> {
                 property_classification: None,
             };
         }
+        if self.empty_object_deferred_keyof_index_access_accepts(source, target) {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
         if let Some(outcome) = self.variance_accepted_relation_outcome(source, target) {
             return outcome;
         }
