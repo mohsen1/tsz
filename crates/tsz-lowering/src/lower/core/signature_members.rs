@@ -443,6 +443,50 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
+    pub fn lower_method_signature_group(&self, methods: &[NodeIndex]) -> Option<TypeId> {
+        if methods.is_empty() {
+            return None;
+        }
+
+        let mut signatures = Vec::with_capacity(methods.len());
+        for &method_idx in methods {
+            let member = self.arena.get(method_idx)?;
+            if member.kind != syntax_kind_ext::METHOD_SIGNATURE {
+                return None;
+            }
+            let sig = self.arena.get_signature(member)?;
+            if sig.question_token {
+                return None;
+            }
+            let mut lowered = self.lower_call_signature(sig);
+            lowered.is_method = true;
+            signatures.push(lowered);
+        }
+
+        if signatures.len() == 1 {
+            let sig = signatures.pop()?;
+            return Some(self.interner.function(FunctionShape {
+                type_params: sig.type_params,
+                params: sig.params,
+                this_type: sig.this_type,
+                return_type: sig.return_type,
+                type_predicate: sig.type_predicate,
+                is_constructor: false,
+                is_method: true,
+            }));
+        }
+
+        Some(self.interner.callable(CallableShape {
+            call_signatures: signatures,
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        }))
+    }
+
     pub(super) fn lower_method_signature(&self, sig: &SignatureData) -> TypeId {
         let (type_params, (params, this_type, return_type, type_predicate)) = self
             .with_type_params(&sig.type_parameters, || {

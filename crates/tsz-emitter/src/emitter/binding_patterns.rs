@@ -139,12 +139,8 @@ impl<'a> Printer<'a> {
         if !self.should_emit_recovered_root_js_declaration_modifiers() {
             return None;
         }
-        let Some(text) = self.source_text else {
-            return None;
-        };
-        let Some(name_node) = self.arena.get(name) else {
-            return None;
-        };
+        let text = self.source_text?;
+        let name_node = self.arena.get(name)?;
         if name_node.end >= node.end {
             return None;
         }

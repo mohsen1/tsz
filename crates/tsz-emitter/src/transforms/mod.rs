@@ -63,6 +63,7 @@ pub mod helpers;
 pub mod ir;
 pub mod ir_printer;
 pub mod module_commonjs;
+mod module_commonjs_bindings;
 pub mod module_commonjs_ir;
 pub mod namespace_es5;
 pub mod namespace_es5_ir;
