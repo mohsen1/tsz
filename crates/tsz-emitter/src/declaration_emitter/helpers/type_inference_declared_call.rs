@@ -2,6 +2,7 @@ use super::super::DeclarationEmitter;
 use super::type_inference::CallableDeclParts;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::base::NodeList;
 use tsz_parser::parser::node::{CallExprData, Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -274,6 +275,8 @@ impl<'a> DeclarationEmitter<'a> {
             .resolve_portability_import_alias(type_sym, binder)
             .unwrap_or(type_sym);
         let type_sym = self.resolve_portability_declaration_symbol(type_sym, binder);
+        let receiver_type_param_substitutions =
+            self.receiver_declared_type_param_substitutions(base_sym, type_sym, binder);
 
         self.with_symbol_declarations(type_sym, |source_arena, decl_idx| {
             let member_idx =
@@ -300,6 +303,12 @@ impl<'a> DeclarationEmitter<'a> {
                 .trim_end_matches(';')
                 .trim_end()
                 .to_string();
+            if !receiver_type_param_substitutions.is_empty() {
+                type_text = Self::replace_whole_words_in_text(
+                    &type_text,
+                    &receiver_type_param_substitutions,
+                );
+            }
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
@@ -332,9 +341,17 @@ impl<'a> DeclarationEmitter<'a> {
                                     self.source_slice_from_arena(source_arena, param.constraint)
                                 })
                         {
+                            let constraint = Self::replace_whole_words_in_text(
+                                &constraint,
+                                &receiver_type_param_substitutions,
+                            );
                             type_param_constraints.push((name_text.clone(), constraint));
                         }
                         if let Some(fallback) = fallback {
+                            let fallback = Self::replace_whole_words_in_text(
+                                &fallback,
+                                &receiver_type_param_substitutions,
+                            );
                             type_param_fallbacks.push((name_text.clone(), fallback));
                         }
                         type_param_names.push(name_text);
@@ -357,6 +374,14 @@ impl<'a> DeclarationEmitter<'a> {
                             &type_param_constraints,
                         ),
                     );
+                    if !receiver_type_param_substitutions.is_empty() {
+                        for (_, arg_text) in &mut type_param_substitutions {
+                            *arg_text = Self::replace_whole_words_in_text(
+                                arg_text,
+                                &receiver_type_param_substitutions,
+                            );
+                        }
+                    }
                     self.clear_conflicting_literal_substitution(
                         source_arena,
                         member_idx,
@@ -456,6 +481,226 @@ impl<'a> DeclarationEmitter<'a> {
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &formatted)
                     .unwrap_or(formatted),
             )
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn call_expression_declared_return_has_source_conditional_alias(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+
+        if let Some((sym_id, _)) = self.resolve_declared_call_callee_symbol(call.expression, binder)
+        {
+            return self
+                .with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+                    let decl_node = source_arena.get(decl_idx)?;
+                    let callable = Self::callable_decl_parts_from_node(source_arena, decl_node)?;
+                    callable.type_annotation.is_some().then(|| {
+                        self.source_type_contains_conditional_alias_application(
+                            source_arena,
+                            callable.type_annotation,
+                            0,
+                        )
+                    })
+                })
+                .unwrap_or(false);
+        }
+
+        self.property_access_declared_return_has_source_conditional_alias(call.expression, binder)
+    }
+
+    fn property_access_declared_return_has_source_conditional_alias(
+        &self,
+        callee_expr: NodeIndex,
+        binder: &BinderState,
+    ) -> bool {
+        let Some(callee_node) = self.arena.get(callee_expr) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(member_name) = self.get_identifier_text(access.name_or_argument) else {
+            return false;
+        };
+        let Some(base_sym) = self.value_reference_symbol(access.expression) else {
+            return false;
+        };
+        let Some(type_sym) = self.declared_type_symbol_for_symbol(base_sym) else {
+            return false;
+        };
+        let type_sym = self
+            .resolve_portability_import_alias(type_sym, binder)
+            .unwrap_or(type_sym);
+        let type_sym = self.resolve_portability_declaration_symbol(type_sym, binder);
+
+        self.with_symbol_declarations(type_sym, |source_arena, decl_idx| {
+            let member_idx =
+                self.type_member_decl_from_decl(source_arena, decl_idx, &member_name)?;
+            let decl_node = source_arena.get(member_idx)?;
+            let callable =
+                Self::callable_type_member_decl_parts_from_node(source_arena, decl_node)?;
+            callable.type_annotation.is_some().then(|| {
+                self.source_type_contains_conditional_alias_application(
+                    source_arena,
+                    callable.type_annotation,
+                    0,
+                )
+            })
+        })
+        .unwrap_or(false)
+    }
+
+    pub(in crate::declaration_emitter) fn call_receiver_declared_type_param_substitutions(
+        &self,
+        callee_expr: NodeIndex,
+        binder: &BinderState,
+    ) -> Vec<(String, String)> {
+        let Some(callee_node) = self.arena.get(callee_expr) else {
+            return Vec::new();
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return Vec::new();
+        }
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return Vec::new();
+        };
+        let Some(base_sym) = self.value_reference_symbol(access.expression) else {
+            return Vec::new();
+        };
+        let Some(type_sym) = self.declared_type_symbol_for_symbol(base_sym) else {
+            return Vec::new();
+        };
+        let type_sym = self
+            .resolve_portability_import_alias(type_sym, binder)
+            .unwrap_or(type_sym);
+        let type_sym = self.resolve_portability_declaration_symbol(type_sym, binder);
+        self.receiver_declared_type_param_substitutions(base_sym, type_sym, binder)
+    }
+
+    fn receiver_declared_type_param_substitutions(
+        &self,
+        value_sym: SymbolId,
+        type_sym: SymbolId,
+        binder: &BinderState,
+    ) -> Vec<(String, String)> {
+        let type_param_names = self
+            .declared_type_parameter_names_for_symbol(type_sym)
+            .unwrap_or_default();
+        if type_param_names.is_empty() {
+            return Vec::new();
+        }
+
+        let annotation_args = self
+            .with_declared_type_annotation_for_symbol(value_sym, |annotation_arena, type_idx| {
+                let type_node =
+                    annotation_arena.get(annotation_arena.skip_parenthesized(type_idx))?;
+                if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return None;
+                }
+                let annotation_type_sym = self
+                    .declaration_type_symbol_from_type_node(annotation_arena, type_idx)
+                    .map(|sym_id| self.resolve_portability_declaration_symbol(sym_id, binder))?;
+                if annotation_type_sym != type_sym {
+                    return None;
+                }
+                let type_ref = annotation_arena.get_type_ref(type_node)?;
+                let type_args = type_ref.type_arguments.as_ref()?;
+                Some(self.type_argument_texts_from_arena(annotation_arena, type_args))
+            })
+            .unwrap_or_default();
+
+        type_param_names
+            .into_iter()
+            .zip(annotation_args)
+            .filter(|(name, text)| !name.is_empty() && !text.is_empty())
+            .collect()
+    }
+
+    fn declared_type_parameter_names_for_symbol(&self, type_sym: SymbolId) -> Option<Vec<String>> {
+        self.with_symbol_declarations(type_sym, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let type_params = source_arena
+                .get_interface(decl_node)
+                .and_then(|decl| decl.type_parameters.as_ref())
+                .or_else(|| {
+                    source_arena
+                        .get_class(decl_node)
+                        .and_then(|decl| decl.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    source_arena
+                        .get_type_alias(decl_node)
+                        .and_then(|decl| decl.type_parameters.as_ref())
+                })?;
+            Some(self.type_parameter_names_from_arena(source_arena, type_params))
+        })
+    }
+
+    fn type_parameter_names_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        type_params: &NodeList,
+    ) -> Vec<String> {
+        type_params
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                source_arena
+                    .get(param_idx)
+                    .and_then(|node| source_arena.get_type_parameter(node))
+                    .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
+            })
+            .collect()
+    }
+
+    fn type_argument_texts_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        type_args: &NodeList,
+    ) -> Vec<String> {
+        type_args
+            .nodes
+            .iter()
+            .filter_map(|&arg_idx| {
+                if let Some(text) = self.emit_type_node_text_from_arena(source_arena, arg_idx) {
+                    return Some(text.trim().to_string());
+                }
+                self.source_slice_from_arena(source_arena, arg_idx)
+                    .map(|text| Self::trim_type_argument_text(&text))
+            })
+            .collect()
+    }
+
+    fn trim_type_argument_text(text: &str) -> String {
+        let mut trimmed = text.trim().trim_end_matches(',').trim().to_string();
+        while trimmed.ends_with('>') && Self::angle_depth(&trimmed) < 0 {
+            trimmed.pop();
+            trimmed = trimmed.trim_end().to_string();
+        }
+        trimmed
+    }
+
+    fn angle_depth(text: &str) -> i32 {
+        text.chars().fold(0, |depth, ch| match ch {
+            '<' => depth + 1,
+            '>' => depth - 1,
+            _ => depth,
         })
     }
 
