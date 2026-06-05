@@ -747,6 +747,63 @@ fn delegate_cross_arena_source_interface_with_renamed_simple_heritage_lowers_dir
 }
 
 #[test]
+fn delegate_cross_arena_interface_type_allows_source_option_bag_direct_lowering() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "points.ts",
+        r#"
+                export interface SamplePoint {
+                    label: string;
+                    value: number;
+                }
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source_with_name("consumer.ts", "// imports SamplePoint from points");
+
+    let (mut state, point_sym) = setup_cross_file_index_state(
+        "SamplePoint",
+        &types,
+        &requester_arena,
+        &requester_binder,
+        &target_arena,
+        &target_binder,
+    );
+
+    enable_perf_counters_for_direct_lowering_test();
+    let success_before =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_before = with_parent_cache_constructed_count();
+    let ty = state
+        .delegate_cross_arena_interface_type(point_sym)
+        .expect("source-file option-bag interface type should lower directly");
+    let success_after =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_after = with_parent_cache_constructed_count();
+
+    assert_eq!(
+        success_after - success_before,
+        1,
+        "source-file option-bag interface type should use direct lowering"
+    );
+    assert_eq!(
+        child_checkers_after, child_checkers_before,
+        "source-file option-bag interface type should not construct a child checker"
+    );
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    let label = state.ctx.types.intern_string("label");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            label,
+        )
+        .is_some(),
+        "direct-lowered SamplePoint should retain its label property",
+    );
+}
+
+#[test]
 fn delegate_cross_arena_source_interface_with_generic_heritage_still_falls_back() {
     let (target_arena, target_binder, types) = parse_bound_source_with_name(
         "generic.ts",
