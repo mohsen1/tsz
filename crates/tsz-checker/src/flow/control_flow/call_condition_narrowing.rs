@@ -14,7 +14,7 @@ impl<'a> FlowAnalyzer<'a> {
         condition_idx: NodeIndex,
         target: NodeIndex,
         is_true_branch: bool,
-        _narrowing: &NarrowingContext,
+        narrowing: &NarrowingContext,
     ) -> Option<TypeId> {
         if let Some(call) = self.arena.get_call_expr(cond_node)
             && let Some(node_types) = self.node_types
@@ -37,6 +37,7 @@ impl<'a> FlowAnalyzer<'a> {
                     cond_node,
                     target,
                     is_true_branch,
+                    narrowing,
                     guard,
                 ));
             }
@@ -145,6 +146,7 @@ impl<'a> FlowAnalyzer<'a> {
         cond_node: &Node,
         target: NodeIndex,
         is_true_branch: bool,
+        narrowing: &NarrowingContext,
         guard: TypeGuard,
     ) -> TypeId {
         use tracing::trace;
@@ -160,6 +162,7 @@ impl<'a> FlowAnalyzer<'a> {
             self.interner,
             env.as_deref(),
             self.concrete_this_type,
+            narrowing,
             type_id,
             &guard,
             is_true_branch,

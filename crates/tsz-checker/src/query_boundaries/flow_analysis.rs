@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::narrowing::{GuardSense, TypeGuard};
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
 
 use super::{
     assignability::{RelationFlags, RelationOutcome},
@@ -233,15 +233,11 @@ pub(crate) fn narrow_call_predicate_guard(
     db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     concrete_this_type: Option<TypeId>,
+    narrowing: &NarrowingContext<'_>,
     type_id: TypeId,
     guard: &TypeGuard,
     is_true_branch: bool,
 ) -> TypeId {
-    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
-    if let Some(environment) = env {
-        narrowing = narrowing.with_resolver(environment);
-    }
-
     let guard_sense = match guard {
         TypeGuard::Predicate { asserts: true, .. } => GuardSense::Positive,
         _ => GuardSense::from(is_true_branch),
