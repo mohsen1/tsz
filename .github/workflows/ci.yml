@@ -46,8 +46,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REPOSITORY: ${{ github.repository }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -euo pipefail
