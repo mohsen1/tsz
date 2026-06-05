@@ -53,13 +53,20 @@ impl ParserState {
     fn report_definite_assignment_parameter_tail_recovery(&mut self) {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        if !self.is_token(SyntaxKind::CloseParenToken) {
-            return;
-        }
-
         let snapshot = self.scanner.save_state();
         let saved_token = self.current_token;
         let saved_scanner_diagnostics_high_water_mark = self.scanner_diagnostics_high_water_mark;
+
+        if self.is_token(SyntaxKind::GreaterThanToken) {
+            self.next_token();
+        }
+        if !self.is_token(SyntaxKind::CloseParenToken) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+            self.scanner_diagnostics_high_water_mark = saved_scanner_diagnostics_high_water_mark;
+            return;
+        }
+
         let close_start = self.token_pos();
         let close_length = self.token_end().saturating_sub(close_start);
 
@@ -490,6 +497,12 @@ impl ParserState {
                             "',' expected.",
                             tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                         );
+                        if self.is_token(SyntaxKind::GreaterThanToken) {
+                            self.report_definite_assignment_parameter_tail_recovery();
+                            self.abort_function_signature_after_definite_assignment_tail_once =
+                                true;
+                            break;
+                        }
                     } else {
                         self.error_comma_expected();
                     }

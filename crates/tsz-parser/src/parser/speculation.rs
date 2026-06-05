@@ -46,6 +46,7 @@ pub(crate) struct ParserCheckpoint {
     abort_object_literal_recovery_once: bool,
     recovered_template_literal_property_in_object: bool,
     suppress_next_missing_close_paren_error_once: bool,
+    abort_function_signature_after_definite_assignment_tail_once: bool,
     saw_arrow_parameter_recovery: bool,
 }
 
@@ -75,6 +76,8 @@ impl ParserState {
                 .recovered_template_literal_property_in_object,
             suppress_next_missing_close_paren_error_once: self
                 .suppress_next_missing_close_paren_error_once,
+            abort_function_signature_after_definite_assignment_tail_once: self
+                .abort_function_signature_after_definite_assignment_tail_once,
             saw_arrow_parameter_recovery: self.saw_arrow_parameter_recovery,
         }
     }
@@ -100,6 +103,7 @@ impl ParserState {
             abort_object_literal_recovery_once,
             recovered_template_literal_property_in_object,
             suppress_next_missing_close_paren_error_once,
+            abort_function_signature_after_definite_assignment_tail_once,
             saw_arrow_parameter_recovery,
         } = checkpoint;
 
@@ -123,6 +127,8 @@ impl ParserState {
             recovered_template_literal_property_in_object;
         self.suppress_next_missing_close_paren_error_once =
             suppress_next_missing_close_paren_error_once;
+        self.abort_function_signature_after_definite_assignment_tail_once =
+            abort_function_signature_after_definite_assignment_tail_once;
         self.saw_arrow_parameter_recovery = saw_arrow_parameter_recovery;
     }
 
