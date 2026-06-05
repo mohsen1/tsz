@@ -727,7 +727,10 @@ impl TypeInterner {
 
     /// Register a DefId as belonging to a boxed type.
     pub fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
-        self.boxed_def_ids.entry(kind).or_default().push(def_id);
+        let mut def_ids = self.boxed_def_ids.entry(kind).or_default();
+        if !def_ids.contains(&def_id) {
+            def_ids.push(def_id);
+        }
     }
 
     /// Check if a DefId corresponds to a boxed type of the given kind.

@@ -747,6 +747,56 @@ impl<'a> CheckerState<'a> {
         self.instance_type_from_constructor_type_inner(ctor_type, &mut visited)
     }
 
+    pub(crate) fn instance_type_from_named_import_type_reference(
+        &mut self,
+        alias_type: TypeId,
+    ) -> Option<TypeId> {
+        if self.imported_alias_union_contains_plain_type(alias_type) {
+            return None;
+        }
+        self.instance_type_from_constructor_type(alias_type)
+    }
+
+    fn imported_alias_union_contains_plain_type(&mut self, type_id: TypeId) -> bool {
+        let evaluated = self.evaluate_application_type(type_id);
+        let resolved = self.resolve_lazy_type(evaluated);
+        match classify_for_instance_type(self.ctx.types, resolved) {
+            InstanceTypeKind::Union(members) => members
+                .into_iter()
+                .any(|member| self.imported_alias_member_is_plain_type(member)),
+            _ => false,
+        }
+    }
+
+    fn imported_alias_member_is_plain_type(&mut self, type_id: TypeId) -> bool {
+        if type_id == TypeId::NULL || type_id == TypeId::ERROR || type_id == TypeId::ANY {
+            return false;
+        }
+
+        let evaluated = self.evaluate_application_type(type_id);
+        let resolved = self.resolve_lazy_type(evaluated);
+        if resolved != type_id {
+            return self.imported_alias_member_is_plain_type(resolved);
+        }
+
+        match classify_for_instance_type(self.ctx.types, resolved) {
+            InstanceTypeKind::Callable(_)
+            | InstanceTypeKind::Function(_)
+            | InstanceTypeKind::SymbolRef(_)
+            | InstanceTypeKind::NeedsEvaluation => false,
+            InstanceTypeKind::NotConstructor => true,
+            InstanceTypeKind::Readonly(inner) => self.imported_alias_member_is_plain_type(inner),
+            InstanceTypeKind::TypeParameter { constraint } => constraint
+                .is_none_or(|constraint| self.imported_alias_member_is_plain_type(constraint)),
+            InstanceTypeKind::Union(members) => members
+                .into_iter()
+                .any(|member| self.imported_alias_member_is_plain_type(member)),
+            InstanceTypeKind::Intersection(members) => members
+                .into_iter()
+                .all(|member| self.imported_alias_member_is_plain_type(member)),
+        }
+    }
+
     fn instance_type_from_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,

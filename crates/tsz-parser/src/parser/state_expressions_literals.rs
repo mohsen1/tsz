@@ -1152,7 +1152,18 @@ impl ParserState {
     fn parse_template_expression_span(&mut self) -> (u32, NodeIndex, bool) {
         let saved_flags = self.context_flags;
         self.context_flags |= crate::parser::state::CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION;
+        // A `${...}` substitution is an independent expression: any template
+        // literal it contains determines its own tagged status. The enclosing
+        // template's tagged status must not leak in, or a nested *untagged*
+        // template's invalid escapes would be wrongly suppressed. tsc parses the
+        // span expression via `allowInAnd(parseExpression)` and only re-applies
+        // `isTaggedTemplate` when re-scanning the middle/tail literal below, so we
+        // clear the flag for the duration of the substitution and restore it for
+        // the literal-span re-scan that follows.
+        let saved_in_tagged_template = self.in_tagged_template;
+        self.in_tagged_template = false;
         let expression = self.parse_expression();
+        self.in_tagged_template = saved_in_tagged_template;
         self.context_flags = saved_flags;
         if expression.is_none() {
             // Emit TS1109 "Expression expected." for empty template expressions.
@@ -1363,6 +1374,27 @@ impl ParserState {
         } else {
             self.parse_template_expression()
         }
+    }
+
+    /// Parse the template portion of a tagged template, marking the parser as
+    /// being inside a tagged template so the immediate head/middle/tail literals
+    /// suppress invalid-escape errors (TS1125), which tagged templates permit
+    /// since ES2018.
+    ///
+    /// The `in_tagged_template` flag is saved and restored rather than reset to
+    /// `false`, so this works correctly under nesting: a tagged template that
+    /// appears inside another tagged template's substitution must not clobber the
+    /// enclosing template's tagged status when it finishes (which would otherwise
+    /// make the enclosing template's middle/tail literals spuriously report
+    /// TS1125). Substitution expressions themselves are parsed with the flag
+    /// cleared in `parse_template_expression_span`, matching tsc, where
+    /// `isTaggedTemplate` is re-applied only when re-scanning the literal spans.
+    pub(crate) fn parse_tagged_template_literal(&mut self) -> NodeIndex {
+        let saved_in_tagged_template = self.in_tagged_template;
+        self.in_tagged_template = true;
+        let template = self.parse_template_literal();
+        self.in_tagged_template = saved_in_tagged_template;
+        template
     }
 
     /// Parse parenthesized expression
@@ -1801,9 +1833,7 @@ impl ParserState {
                 // `new f\`abc\`.member(...)` parses the tagged template as
                 // part of the member expression, not as `(new f)\`abc\`...`.
                 SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead => {
-                    self.in_tagged_template = true;
-                    let template = self.parse_template_literal();
-                    self.in_tagged_template = false;
+                    let template = self.parse_tagged_template_literal();
                     let end_pos = self.token_end();
 
                     expr = self.arena.add_tagged_template(

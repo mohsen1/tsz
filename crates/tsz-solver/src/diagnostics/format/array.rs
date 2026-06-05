@@ -10,6 +10,12 @@ impl<'a> TypeFormatter<'a> {
     /// Per the TypeScript grammar, `T[]` requires `T` to be a `PrimaryType`.
     /// These variants all bind looser than postfix `[]`, so rendering them
     /// without parens would let `[]` attach to the inner form.
+    ///
+    /// `ReadonlyType` is included because the `readonly` modifier prefix binds
+    /// looser than postfix `[]`: a readonly array/tuple nested as an array
+    /// element (`(readonly string[])[]`, `(readonly [a, b])[]`) must be
+    /// parenthesized, otherwise it renders as `readonly string[][]` and reads
+    /// as a single `readonly` applied to the outer `[][]`.
     pub(super) fn requires_array_element_parens(&self, elem: TypeId) -> bool {
         matches!(
             self.interner.lookup(elem),
@@ -21,6 +27,7 @@ impl<'a> TypeFormatter<'a> {
                     | TypeData::Conditional(_)
                     | TypeData::Infer(_)
                     | TypeData::KeyOf(_)
+                    | TypeData::ReadonlyType(_)
             )
         )
     }
@@ -138,6 +145,19 @@ mod tests {
         let readonly_array_base = db.unresolved_type_name(db.intern_string("ReadonlyArray"));
         let app = db.application(readonly_array_base, vec![infer]);
         assert_eq!(fmt.format(app), "readonly (infer E)[]");
+    }
+
+    #[test]
+    fn format_array_of_readonly_array_is_parenthesized() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        // `(readonly string[])[]`: the inner readonly array must be parenthesized
+        // as an array element, otherwise the `readonly` prefix reads as applying
+        // to the outer `[][]` (`readonly string[][]`).
+        let readonly_string_array = db.readonly_type(db.array(TypeId::STRING));
+        let outer = db.array(readonly_string_array);
+        assert_eq!(fmt.format(outer), "(readonly string[])[]");
     }
 
     #[test]

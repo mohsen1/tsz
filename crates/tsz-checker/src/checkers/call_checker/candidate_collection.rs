@@ -535,6 +535,14 @@ impl<'a> CheckerState<'a> {
                         // tuple spreads — a bare array/iterable spread carries no
                         // per-position element types to infer from, so its
                         // TS2556 path (below) still fires for such callees.
+                        //
+                        // `preserve_open_tail`: whether the spread's open-ended
+                        // (array-backed) tail must be preserved as a spread-argument
+                        // marker so rest-tuple inference can reconstruct the open
+                        // length. Only true when the tail lands on a non-array rest
+                        // parameter (a rest tuple or a bare type-parameter rest); see
+                        // `open_spread_tail_needs_marker`.
+                        let mut preserve_open_tail = false;
                         if let Some(variable_offset) =
                             tuple_slice_variable_rest_offset(self.ctx.types, &elems)
                         {
@@ -568,29 +576,43 @@ impl<'a> CheckerState<'a> {
                                 // into TS2345/TS2554).
                                 continue;
                             }
+                            preserve_open_tail =
+                                self.open_spread_tail_needs_marker(callable_ctx.callable_type);
                         }
                         for elem in &elems {
                             if elem.rest {
                                 // Rest element (e.g., `...boolean[]` in `[number, string, ...boolean[]]`).
                                 // If the rest element is itself a concrete tuple (including
-                                // readonly tuple wrappers), expand that tuple first. Only fall
-                                // back to one representative array element for genuinely
-                                // variadic array rests.
+                                // readonly tuple wrappers), expand that tuple first.
+                                //
+                                // A genuinely variadic (array-backed) rest has indeterminate
+                                // length. When it lands on a rest *tuple* or bare type-parameter
+                                // rest (`preserve_open_tail`), it is pushed as a spread-argument
+                                // marker rather than materialized into a single representative
+                                // element: collapsing it to one fixed argument silently drops the
+                                // open-ended tail, which `[first, ...T]`-style rest-tuple inference
+                                // then reconstructs as a fixed-length `T` instead of the
+                                // open-ended `[..., ...E[]]` tsc infers. The marker is
+                                // reconstructed into a `...E[]` rest element by
+                                // `rest_tuple_inference_target` and the aggregate-rest checks,
+                                // exactly like a bare `f(...arrayValue)` spread. For a plain array
+                                // rest parameter the historical positional materialization is kept
+                                // (no open-ended type parameter depends on the exact length).
                                 if let Some(sub_elems) =
                                     tuple_elements_for_type(self.ctx.types, elem.type_id)
                                 {
                                     // Rest element is a nested tuple (variadic tuple spread).
-                                    // Expand its fixed elements; for nested rest elements,
-                                    // extract the array element type.
+                                    // Expand its fixed elements; a nested variadic rest is
+                                    // preserved as a spread marker (or materialized) the same
+                                    // way as a top-level variadic rest.
                                     for sub in &sub_elems {
                                         if sub.rest {
-                                            if let Some(inner) = array_element_type_for_type(
-                                                self.ctx.types,
+                                            self.push_open_ended_rest_arg(
                                                 sub.type_id,
-                                            ) {
-                                                arg_types.push(inner);
-                                                effective_index += 1;
-                                            }
+                                                preserve_open_tail,
+                                                &mut arg_types,
+                                                &mut effective_index,
+                                            );
                                         } else {
                                             let sub_type = if sub.optional {
                                                 self.ctx
@@ -604,13 +626,14 @@ impl<'a> CheckerState<'a> {
                                             effective_index += 1;
                                         }
                                     }
-                                } else if let Some(inner) =
-                                    array_element_type_for_type(self.ctx.types, elem.type_id)
-                                {
-                                    arg_types.push(inner);
-                                    effective_index += 1;
+                                } else {
+                                    self.push_open_ended_rest_arg(
+                                        elem.type_id,
+                                        preserve_open_tail,
+                                        &mut arg_types,
+                                        &mut effective_index,
+                                    );
                                 }
-                                // else: unknown rest type — skip (no args pushed)
                             } else {
                                 let elem_type = if elem.optional {
                                     self.ctx
@@ -1548,6 +1571,85 @@ impl<'a> CheckerState<'a> {
             callable_type,
         )
         .is_some_and(|params| params.iter().any(|param| param.name == rest_param.name))
+    }
+
+    /// Push one expanded argument for a variadic (array-backed) rest element of a
+    /// spread tuple. When `preserve_open_tail` the open-ended length is preserved
+    /// as a spread-argument marker; otherwise the historical single representative
+    /// array-element materialization is used. A rest element whose type is neither
+    /// (an unknown shape) contributes no argument. Shared by the top-level and
+    /// nested-tuple rest expansion paths so the policy lives in one place.
+    fn push_open_ended_rest_arg(
+        &mut self,
+        rest_type: TypeId,
+        preserve_open_tail: bool,
+        arg_types: &mut Vec<TypeId>,
+        effective_index: &mut usize,
+    ) {
+        if preserve_open_tail {
+            arg_types.push(self.spread_argument_marker_type(rest_type));
+            *effective_index += 1;
+        } else if let Some(inner) = array_element_type_for_type(self.ctx.types, rest_type) {
+            arg_types.push(inner);
+            *effective_index += 1;
+        }
+        // else: unknown rest type — skip (no args pushed)
+    }
+
+    /// Decide whether an open-ended (array-backed) tuple-spread tail must be
+    /// preserved as a spread-argument marker.
+    ///
+    /// The marker is needed only when the tail lands on a rest parameter whose
+    /// type is not a plain array — a rest *tuple* (`...args: [..., ...E[]]`) or a
+    /// bare type-parameter rest (`...args: T`), where the open-ended length feeds
+    /// an inference variable that rest-tuple inference reconstructs. For a plain
+    /// array rest (`...rest: E[]`) the historical positional materialization is
+    /// correct and avoids leaking a marker into array-rest validation paths,
+    /// which only special-case the rest-tuple inference flow. When the callee
+    /// type or rest parameter cannot be determined, fall back to the historical
+    /// materialization (no marker).
+    fn open_spread_tail_needs_marker(&self, callable_type: Option<TypeId>) -> bool {
+        let Some(callable_type) = callable_type else {
+            return false;
+        };
+        // Inspect the *whole* declared rest-parameter type rather than indexing
+        // into it: `get_rest_parameter_type(index)` resolves a type-parameter rest
+        // to its constraint (`...args: T` -> `unknown[]`), which would look like a
+        // plain array and defeat the distinction. The rest parameter is the last
+        // parameter of the contextual signature.
+        let Some(rest_type) = self.callable_rest_parameter_type(callable_type) else {
+            return false;
+        };
+        let rest_type =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, rest_type)
+                .unwrap_or(rest_type);
+        let is_plain_array = array_element_type_for_type(self.ctx.types, rest_type).is_some()
+            && tuple_elements_for_type(self.ctx.types, rest_type).is_none()
+            && !is_type_parameter_type(self.ctx.types, rest_type);
+        !is_plain_array
+    }
+
+    /// The declared type of the contextual signature's rest parameter (`...args`),
+    /// or `None` when the callee has no rest parameter or is not a single-shape
+    /// function/callable. For overloaded callables the last call signature is used
+    /// (tsc's resolution preference); an open-ended spread only reaches here at a
+    /// rest position, so the rest-parameter shape is what governs preservation.
+    fn callable_rest_parameter_type(&self, callable_type: TypeId) -> Option<TypeId> {
+        let last_param = if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, callable_type)
+        {
+            shape.params.last().copied()
+        } else if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, callable_type)
+        {
+            shape
+                .call_signatures
+                .last()
+                .and_then(|sig| sig.params.last().copied())
+        } else {
+            None
+        }?;
+        last_param.rest.then_some(last_param.type_id)
     }
 
     fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {

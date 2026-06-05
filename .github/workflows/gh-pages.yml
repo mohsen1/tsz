@@ -29,8 +29,10 @@ permissions:
 
 concurrency:
   # Never cancel an in-flight deploy — the check job skips if one is already
-  # running so we don't queue up stale work.
-  group: pages-${{ github.ref }}
+  # running so we don't queue up stale work. Manual redeploys are kept out of
+  # the workflow_run pending slot so fresh benchmark publishes cannot be
+  # cancelled by unrelated CI completion churn before their jobs start.
+  group: ${{ github.event_name == 'workflow_dispatch' && format('pages-manual-{0}', github.ref) || format('pages-{0}', github.ref) }}
   cancel-in-progress: false
 
 jobs:

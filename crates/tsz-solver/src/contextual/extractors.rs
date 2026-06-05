@@ -51,6 +51,30 @@ pub(crate) fn collect_single_or_union_no_reduce(
     }
 }
 
+/// Like [`collect_single_or_union`] but preserves every member without any
+/// reduction (neither subtype nor literal absorption).
+///
+/// This mirrors tsc's `getTypeOfPropertyOfContextualType` /
+/// `getContextualTypeForElementExpression`, which build the per-member
+/// contextual type with `mapType(..., /*noReductions*/ true)`
+/// (`UnionReduction.None`). Reduction here would fold a literal member into
+/// its base primitive (e.g. `number | 2` → `number`) and silently drop the
+/// contextual literal arm, so a fresh literal element/property like `[2]`
+/// against `[number, boolean] | [2]` would widen to `number` and fail to
+/// match the literal union arm. Keeping `number | 2` lets the downstream
+/// literal-preservation check (`contextual_type_allows_literal`) find the
+/// matching literal arm.
+pub(crate) fn collect_single_or_union_preserve(
+    db: &dyn TypeDatabase,
+    types: Vec<TypeId>,
+) -> Option<TypeId> {
+    match types.len() {
+        0 => None,
+        1 => Some(types[0]),
+        _ => Some(db.union_preserve_members(types)),
+    }
+}
+
 /// Merge contextual candidates gathered from intersection members.
 ///
 /// Intersections frequently mix a precise member with a broad index-signature or
@@ -535,7 +559,8 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         // For unions of tuple/array types, extract the element type from each member
-        // and create a union of the results.
+        // and union the results, preserving literal arms (see
+        // `collect_single_or_union_preserve`) so fresh literal elements survive.
         let members = self.db.type_list(TypeListId(list_id));
         let types: Vec<TypeId> = members
             .iter()
@@ -545,7 +570,7 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
                 extractor.extract(member)
             })
             .collect();
-        collect_single_or_union(self.db, types)
+        collect_single_or_union_preserve(self.db, types)
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
@@ -745,9 +770,10 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        // For unions, extract the property from each member and combine as a union.
-        // e.g., for { foo: ... } with contextual type A | B,
-        // the contextual type of `foo` is A["foo"] | B["foo"].
+        // For unions, extract the property from each member and combine as a union
+        // (`{ foo: ... }` with contextual `A | B` gives `foo` type `A["foo"] |
+        // B["foo"]`), preserving literal arms (see `collect_single_or_union_preserve`)
+        // so fresh literal properties are not widened.
         let members = self.db.type_list(TypeListId(list_id));
         let types: Vec<TypeId> = members
             .iter()
@@ -761,7 +787,7 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
                 extractor.extract(member)
             })
             .collect();
-        collect_single_or_union(self.db, types)
+        collect_single_or_union_preserve(self.db, types)
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {

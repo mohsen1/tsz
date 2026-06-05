@@ -1731,7 +1731,7 @@ fn compile_respects_no_emit_on_error() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "noEmitOnError": true
           },

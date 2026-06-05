@@ -301,6 +301,99 @@ target = source;
     );
 }
 
+/// A shorthand **method member** in an object literal (`{ m(x: string) {} }`)
+/// must elaborate the same parameter chain that the property-arrow form
+/// (`{ m: (x: string) => {} }`) already produces. Previously the method-member
+/// path emitted a bare signature line with no `Types of parameters` frame.
+#[test]
+fn object_literal_method_member_parameter_mismatch_elaborates_chain() {
+    let text = elaboration(
+        r#"
+interface I { m(x: number): void; }
+const i: I = { m(x: string) {} };
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Types of parameters 'x' and 'x' are incompatible."),
+        "Expected the parameter frame for an object-literal method member. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the contravariant parameter leaf. Got: {text:?}"
+    );
+}
+
+/// Routing the method-member mismatch through the canonical relation -> reason
+/// -> diagnostic boundary must not resolve the method name as a value reference.
+/// A regression here surfaces a spurious TS2304 "Cannot find name 'm'".
+#[test]
+fn object_literal_method_member_mismatch_emits_no_cannot_find_name() {
+    let diags = check_source_diagnostics(
+        r#"
+interface I { m(x: number): void; }
+const i: I = { m(x: string) {} };
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != 2304),
+        "Method-member elaboration must not resolve the method name as a value (no TS2304). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The shorthand method member and the property-arrow member describe the same
+/// structural mismatch, so they must render the identical elaboration chain
+/// (headline plus related information).
+#[test]
+fn object_literal_method_member_matches_property_arrow_chain() {
+    let method_form = elaboration(
+        r#"
+interface I { m: (x: number) => void; }
+const i: I = { m(x: string) {} };
+"#,
+        2322,
+    );
+    let arrow_form = elaboration(
+        r#"
+interface I { m: (x: number) => void; }
+const i: I = { m: (x: string) => {} };
+"#,
+        2322,
+    );
+    assert_eq!(
+        method_form, arrow_form,
+        "Method-member and property-arrow members must render the same chain. \
+         method={method_form:?} arrow={arrow_form:?}"
+    );
+}
+
+/// The same chain must surface on the call-argument (TS2345-adjacent) surface
+/// when an object literal with a mismatched method member is passed as an
+/// argument; the per-property elaboration still anchors a TS2322 at the member.
+#[test]
+fn call_argument_object_literal_method_member_parameter_mismatch_elaborates_chain() {
+    let text = elaboration(
+        r#"
+interface I { m(x: number): void; }
+declare function take(i: I): void;
+take({ m(x: string) {} });
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Types of parameters 'x' and 'x' are incompatible."),
+        "Expected the parameter frame for a method member passed as an argument. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the contravariant parameter leaf. Got: {text:?}"
+    );
+}
+
 #[test]
 fn class_method_with_fewer_params_implements_interface_with_more_params() {
     // TypeScript allows a class method to implement an interface method with

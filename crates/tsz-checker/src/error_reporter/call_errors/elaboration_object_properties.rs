@@ -511,27 +511,28 @@ impl<'a> CheckerState<'a> {
                     elaborated = true;
                     continue;
                 }
-                // For method declarations, emit TS2322 directly to avoid triggering
-                // name resolution on the method name identifier (which would cause
-                // a spurious TS2552 "Cannot find name" error). The anchor-based
-                // diagnosis path calls get_type_of_node on the anchor which for
-                // method name identifiers triggers scope lookup.
+                // Shorthand method members (`{ m(x: string) {} }`) elaborate the
+                // same way tsc does for property-arrow members
+                // (`{ m: (x: string) => {} }`): route through the canonical
+                // relation -> reason -> diagnostic boundary so the TS2322 carries
+                // the nested elaboration chain (e.g. "Types of parameters 'x' and
+                // 'x' are incompatible.").
+                //
+                // The anchor is the method name; `assignment_source_expression`
+                // resolves a method-name anchor to the method declaration itself,
+                // so the source display is the method's call signature and the
+                // method name is not resolved as a value reference (which would
+                // otherwise surface a spurious "Cannot find name").
                 let is_method = self
                     .ctx
                     .arena
                     .get(prop_value_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::METHOD_DECLARATION);
                 if is_method {
-                    let source_str = self.format_type_diagnostic(source_prop_type_for_diagnostic);
-                    let target_str = self.format_type_diagnostic(target_for_diag);
-                    let message = crate::diagnostics::format_message(
-                        crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&source_str, &target_str],
-                    );
-                    self.error_at_node(
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
                         prop_name_idx,
-                        &message,
-                        crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 } else {
                     // For arrow/function expression property values, try deeper
@@ -1295,12 +1296,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 continue;
             };
-            // For diagnostic display, prefer the un-evaluated array element type
-            // when the parameter is a plain array `(keyof T)[]`. Evaluating
-            // `keyof T` for a free type parameter collapses it to the constraint's
-            // keys union (e.g., `"a" | "b"`); tsc preserves the abstract `keyof T`
-            // form in TS2322 messages, so we anchor the diagnostic on the
-            // original element type whenever it differs from the evaluated form.
+            // For diagnostic display, use the unevaluated element type from
+            // `param_type` (the declared array type) rather than `target_element_type`
+            // (which comes from `effective_param_type` after `evaluate_type_with_env`
+            // has resolved `keyof T` to the constraint's keys union `"a" | "b"`).
+            // tsc preserves `keyof T` in TS2322 messages for free type parameters,
+            // so we anchor on the raw element type stored in the declared array type.
             let display_target_element_type = if tuple_target_elements.is_none() {
                 crate::query_boundaries::common::array_element_type(self.ctx.types, param_type)
                     .unwrap_or(target_element_type)
