@@ -1908,17 +1908,40 @@ impl<'a> Printer<'a> {
             .cloned()
             .collect();
 
-        let mut same_location_ref_vars = file_level_class_temps;
-        same_location_ref_vars.extend(
-            self.hoisted_deferred_static_class_result_temps
-                .iter()
-                .cloned(),
-        );
-        same_location_ref_vars.extend(ref_vars);
-        if !same_location_ref_vars.is_empty() {
-            let var_decl = format!("var {};", same_location_ref_vars.join(", "));
-            self.writer
-                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        if !self.ctx.options.legacy_decorators {
+            let mut same_location_ref_vars = file_level_class_temps;
+            same_location_ref_vars.extend(
+                self.hoisted_deferred_static_class_result_temps
+                    .iter()
+                    .cloned(),
+            );
+            same_location_ref_vars.extend(ref_vars);
+            if !same_location_ref_vars.is_empty() {
+                let var_decl = format!("var {};", same_location_ref_vars.join(", "));
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
+        } else {
+            if !self.hoisted_deferred_static_class_result_temps.is_empty() {
+                let var_decl = format!(
+                    "var {};",
+                    self.hoisted_deferred_static_class_result_temps.join(", ")
+                );
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
+
+            if !ref_vars.is_empty() {
+                let var_decl = format!("var {};", ref_vars.join(", "));
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
+
+            if !file_level_class_temps.is_empty() {
+                let var_decl = format!("var {};", file_level_class_temps.join(", "));
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
         }
 
         if !self.hoisted_assignment_value_temps.is_empty() {
