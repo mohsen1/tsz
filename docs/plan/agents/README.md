@@ -66,6 +66,20 @@ Rules:
 9. If a session pauses or abandons work, leave a signed comment with findings,
    blocker or reason, verification already run, and next owner/action.
 
+Comment budget:
+
+- Use the PR body as the routine state surface: scope, current blocker,
+  verification, Project Corpus Impact, and Coordination Notes.
+- Do not leave heartbeat comments for "checking", "waiting", "still running",
+  or unchanged CI/queue state. The ownership report and GitHub checks already
+  carry that state.
+- Leave at most one signed PR conversation comment for a state transition:
+  draft/WIP change, blocker, handoff/takeover, closure/superseded evidence,
+  queue failure root cause, or readiness risk.
+- Prefer submitted review comments for code findings. Use a PR conversation
+  comment only for cross-file scope, metadata, queue, blocker, or handoff
+  decisions.
+
 ## Live Intake Rule
 
 Every lane starts with its live PRs. Owned PRs are the work queue; issues are
@@ -98,6 +112,11 @@ node scripts/ci/pr-ownership-report.mjs
 node scripts/ci/pr-ownership-report.mjs --json /tmp/tsz-pr-ownership.json
 gh issue list --repo tsz-org/tsz --state open --limit 200 --json number,title,labels,updatedAt,url
 ```
+
+The `Manager Next Actions` section from `node scripts/ci/pr-ownership-report.mjs`
+is the default triage queue. Follow it before posting new PR comments; when an
+entry says `comment: none`, act through queueing, CI inspection, rebasing, or
+PR-body updates instead.
 
 ## Source-Of-Truth Goal Loop
 
