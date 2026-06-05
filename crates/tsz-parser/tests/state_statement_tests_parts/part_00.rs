@@ -699,6 +699,14 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
         expect_diag(expected.0, expected.1, expected.2);
     }
     assert!(
+        !has_diag(diagnostic_codes::EXPECTED, for_open_paren_tail, "',' expected."),
+        "recovered for-await header should not also report a comma at `const`; got {diags:?}"
+    );
+    assert!(
+        !has_diag(diagnostic_codes::EXPECTED, call_semicolon - 1, "',' expected."),
+        "recovered dot-call tail should not report a comma at `)`; got {diags:?}"
+    );
+    assert!(
         !has_diag(diagnostic_codes::EXPECTED, call_argument, "',' expected."),
         "recovered dot-call tail should not report a method-parameter comma at `v`; got {diags:?}"
     );
