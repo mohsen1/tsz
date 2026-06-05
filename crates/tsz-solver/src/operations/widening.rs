@@ -105,7 +105,7 @@ pub fn widen_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -
     // still contain widenable data, so they must go through the full path.
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true, false, false)
+    widen_type_cached(db, type_id, &mut cache, true, true, false, false, false)
 }
 
 /// Widen for diagnostic display: like `widen_type` but preserves boolean
@@ -121,7 +121,30 @@ pub fn widen_type_for_display(
 ) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, false, false, false, false)
+    widen_type_cached(db, type_id, &mut cache, false, false, false, false, false)
+}
+
+/// Widen for diagnostic display while preserving the literal property types of
+/// *non-fresh* objects, mirroring tsc's `getWidenedType` (which only widens
+/// types carrying the widening flag — `FRESH_LITERAL` here).
+///
+/// Like `widen_type_for_display`, but a declared/computed object such as
+/// `{ kind: "other" }` — or any member produced by distributing a conditional
+/// over a union — keeps its literal members instead of being widened to
+/// `{ kind: string }`. A *fresh* object literal still widens, matching tsc's
+/// diagnostics for fresh sources.
+///
+/// This is the correct widener for rendering an already-typed source/member in
+/// assignability diagnostics. The plain `widen_type_for_display` keeps widening
+/// non-fresh objects because some callers compare its result for display-equal
+/// suppression and rely on that legacy shape.
+pub fn widen_type_for_display_preserving_non_fresh(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    use rustc_hash::FxHashMap;
+    let mut cache = FxHashMap::default();
+    widen_type_cached(db, type_id, &mut cache, false, false, false, false, true)
 }
 
 /// Widen for call-argument diagnostic display: widens boolean literal
@@ -147,7 +170,7 @@ pub fn widen_argument_type_for_display(
 ) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, false, false, true)
+    widen_type_cached(db, type_id, &mut cache, true, false, false, true, false)
 }
 
 /// Widen type for inference resolution: like `widen_type` but does NOT
@@ -164,7 +187,7 @@ pub fn widen_type_for_inference(
 ) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, false, true, false)
+    widen_type_cached(db, type_id, &mut cache, true, false, true, false, false)
 }
 
 /// Display-widen a type for TS2403 (subsequent variable declaration) messages.
@@ -226,7 +249,7 @@ pub fn widen_type_deep(db: &dyn crate::construction::TypeDatabase, type_id: Type
     }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true, false, false)
+    widen_type_cached(db, type_id, &mut cache, true, true, false, false, false)
 }
 
 fn widen_type_cached(
@@ -252,6 +275,17 @@ fn widen_type_cached(
     // `[true, ...string[]]` keep widening their fixed-prefix booleans, as
     // `inference/infer_resolve.rs:721` explicitly relies on.
     preserve_booleans_in_rest_tuples: bool,
+    // When true, object types that are NOT fresh object literals are left
+    // untouched (their literal property types are preserved, not widened).
+    // This mirrors tsc's `getWidenedType`, which only widens types carrying
+    // the widening flag (`FRESH_LITERAL` here): a declared/computed object such
+    // as `{ kind: "other" }` keeps its literal members in diagnostics, while a
+    // fresh object literal `{ kind: "other" }` written at an assignment still
+    // widens to `{ kind: string }`. Display widening paths set this so they
+    // match tsc; semantic/inference paths leave it false because they already
+    // gate object-property widening on freshness via
+    // `widen_object_union_members`.
+    respect_object_freshness: bool,
 ) -> TypeId {
     // Fast path: most intrinsic types are never widened, but boolean
     // literal intrinsics (BOOLEAN_TRUE / BOOLEAN_FALSE) must widen to BOOLEAN.
@@ -380,6 +414,7 @@ fn widen_type_cached(
                             widen_functions,
                             widen_object_union_members,
                             preserve_booleans_in_rest_tuples,
+                            respect_object_freshness,
                         )
                     })
                     .collect();
@@ -406,11 +441,15 @@ fn widen_type_cached(
         // Objects: recursively widen properties (critical for mutable variables)
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
-            // In inference contexts (widen_object_union_members = true), only widen fresh
-            // object literals. Non-fresh objects (from type annotations or explicit type
-            // constructions) are returned as-is, matching tsc's getWidenedType which only
-            // widens types carrying the ContainsWideningType flag (FRESH_LITERAL in tsz).
-            if widen_object_union_members && !shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+            // In inference contexts (widen_object_union_members = true) and in
+            // display contexts (respect_object_freshness = true), only widen fresh
+            // object literals. Non-fresh objects (from type annotations or explicit
+            // type constructions) are returned as-is, matching tsc's getWidenedType
+            // which only widens types carrying the ContainsWideningType flag
+            // (FRESH_LITERAL in tsz).
+            if (widen_object_union_members || respect_object_freshness)
+                && !shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+            {
                 return type_id;
             }
             let mut new_props = Vec::with_capacity(shape.properties.len());
@@ -442,6 +481,7 @@ fn widen_type_cached(
                         widen_functions,
                         widen_object_union_members,
                         preserve_booleans_in_rest_tuples,
+                        respect_object_freshness,
                     )
                 };
 
@@ -459,6 +499,7 @@ fn widen_type_cached(
                         widen_functions,
                         widen_object_union_members,
                         preserve_booleans_in_rest_tuples,
+                        respect_object_freshness,
                     )
                 };
 
@@ -517,6 +558,7 @@ fn widen_type_cached(
                 widen_functions,
                 widen_object_union_members,
                 preserve_booleans_in_rest_tuples,
+                respect_object_freshness,
             );
             if widened != element_type {
                 let widened_arr = db.array(widened);
@@ -556,6 +598,7 @@ fn widen_type_cached(
                     widen_functions,
                     widen_object_union_members,
                     preserve_booleans_in_rest_tuples,
+                    respect_object_freshness,
                 );
                 if widened != elem.type_id {
                     changed = true;
@@ -591,6 +634,7 @@ fn widen_type_cached(
                         widen_functions,
                         widen_object_union_members,
                         preserve_booleans_in_rest_tuples,
+                        respect_object_freshness,
                     );
                     if widened.type_id != param.type_id {
                         changed = true;
@@ -607,6 +651,7 @@ fn widen_type_cached(
                     widen_functions,
                     widen_object_union_members,
                     preserve_booleans_in_rest_tuples,
+                    respect_object_freshness,
                 );
                 if widened != this_ty {
                     changed = true;
@@ -621,6 +666,7 @@ fn widen_type_cached(
                 widen_functions,
                 widen_object_union_members,
                 preserve_booleans_in_rest_tuples,
+                respect_object_freshness,
             );
             if widened_return != widened_shape.return_type {
                 changed = true;
@@ -659,6 +705,7 @@ fn widen_type_cached(
                                 widen_functions,
                                 widen_object_union_members,
                                 preserve_booleans_in_rest_tuples,
+                                respect_object_freshness,
                             );
                             if widened.type_id != param.type_id {
                                 changed = true;
@@ -675,6 +722,7 @@ fn widen_type_cached(
                             widen_functions,
                             widen_object_union_members,
                             preserve_booleans_in_rest_tuples,
+                            respect_object_freshness,
                         );
                         if widened != this_ty {
                             changed = true;
@@ -689,6 +737,7 @@ fn widen_type_cached(
                         widen_functions,
                         widen_object_union_members,
                         preserve_booleans_in_rest_tuples,
+                        respect_object_freshness,
                     );
                     if widened_return != widened_sig.return_type {
                         changed = true;

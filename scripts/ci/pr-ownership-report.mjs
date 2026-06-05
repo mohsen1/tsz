@@ -373,6 +373,152 @@ function requiredCheckSummary(pr) {
   };
 }
 
+function requiredCheckState(checks) {
+  if (checks.some((check) => check.bucket === "fail")) return "fail";
+  if (checks.some((check) => check.bucket === "pending")) return "pending";
+  if (checks.some((check) => check.bucket === "missing")) return "missing";
+  return "pass";
+}
+
+function makeManagerActions(report) {
+  const actions = [];
+  const conflictingMainNumbers = new Set(report.conflictingMainPrs.map((pr) => pr.number));
+  for (const pr of report.readyMainNotQueuedPrs) {
+    if (conflictingMainNumbers.has(pr.number)) {
+      continue;
+    }
+    if (pr.queueCandidate) {
+      actions.push({
+        priority: "P0",
+        kind: "queue",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "queue verified ready PR",
+        commentPolicy: "none; queue and verify merge result",
+        reason: "PR-head required checks passed and branch is mergeable",
+      });
+      continue;
+    }
+
+    const state = requiredCheckState(pr.checks);
+    if (state === "fail") {
+      actions.push({
+        priority: "P0",
+        kind: "fix-ci",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "route failed required check to owner",
+        commentPolicy: "comment only with root cause or handoff",
+        reason: pr.checkSummary,
+      });
+    } else if (state === "pending") {
+      actions.push({
+        priority: "P1",
+        kind: "wait-ci",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "wait for active PR-head checks",
+        commentPolicy: "none",
+        reason: pr.checkSummary,
+      });
+    } else if (state === "missing") {
+      actions.push({
+        priority: "P1",
+        kind: "refresh-ci",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "refresh or request PR-head CI evidence",
+        commentPolicy: "none unless rerun/fix is blocked",
+        reason: pr.checkSummary,
+      });
+    }
+  }
+
+  for (const pr of report.conflictingReadyMainPrs) {
+    actions.push({
+      priority: "P0",
+      kind: "rebase-ready",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "rebase or hand off conflicting ready PR",
+      commentPolicy: "comment only if taking over or handing off",
+      reason: `${pr.mergeStateStatus}/${pr.mergeable}`,
+    });
+  }
+
+  for (const pr of report.conflictingMainPrs.filter((candidate) => candidate.draft)) {
+    actions.push({
+      priority: "P1",
+      kind: "rebase-draft",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "refresh, supersede, or close conflicting draft",
+      commentPolicy: "prefer PR body; comment for handoff/closure evidence",
+      reason: `${pr.mergeStateStatus}/${pr.mergeable}`,
+    });
+  }
+
+  for (const pr of report.staleDraftPrs) {
+    if (conflictingMainNumbers.has(pr.number)) {
+      continue;
+    }
+    actions.push({
+      priority: "P1",
+      kind: "stale-draft",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "refresh blocker, hand off, or close stale draft",
+      commentPolicy: "one signed blocker/handoff comment if state changes",
+      reason: `draft age ${pr.ageHours}h`,
+    });
+  }
+
+  for (const pr of report.staleWipPrs) {
+    actions.push({
+      priority: "P1",
+      kind: "stale-wip",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "refresh WIP blocker or split durable follow-up issue",
+      commentPolicy: "one signed blocker/handoff comment if keeping WIP open",
+      reason: `WIP age ${pr.ageHours}h`,
+    });
+  }
+
+  for (const owner of report.draftParkingOwners.filter((entry) => entry.overBudget)) {
+    actions.push({
+      priority: "P2",
+      kind: "draft-budget",
+      number: null,
+      owner: owner.owner,
+      action: "reduce unstacked draft runway",
+      commentPolicy: "batch by owner; do not comment on every PR",
+      reason: `${owner.unstackedDraft} unstacked drafts`,
+    });
+  }
+
+  for (const duplicate of report.duplicateDraftCleanupTargets) {
+    actions.push({
+      priority: "P2",
+      kind: "duplicate-drafts",
+      number: null,
+      owner: "mixed",
+      action: "deduplicate draft PRs for one issue",
+      commentPolicy: "comment only on PRs closed or handed off",
+      reason: `issue #${duplicate.issue}: ${duplicate.prs.map((pr) => `#${pr}`).join(", ")}`,
+    });
+  }
+
+  return actions.sort((a, b) => {
+    const priority = a.priority.localeCompare(b.priority);
+    if (priority !== 0) return priority;
+    const left = a.number ?? Number.MAX_SAFE_INTEGER;
+    const right = b.number ?? Number.MAX_SAFE_INTEGER;
+    if (left !== right) return left - right;
+    return a.kind.localeCompare(b.kind);
+  });
+}
+
 function makeReport(pulls) {
   const now = reportNow();
   const staleDraftHours = Number.parseInt(
@@ -639,6 +785,21 @@ function makeReport(pulls) {
     .filter((pr) => pr.ageHours !== null && pr.ageHours >= staleDraftHours)
     .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
 
+  const staleWipPrs = normalized
+    .filter((pr) => pr.draft && isWipPr(pr))
+    .map((pr) => ({
+      number: pr.number,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      updatedAt: pr.updatedAt,
+      ageHours: ageHours(pr.updatedAt, now),
+      stackRole: pr.stackRole,
+      markers: wipMarkers(pr),
+      title: pr.title,
+    }))
+    .filter((pr) => pr.ageHours !== null && pr.ageHours >= staleDraftHours)
+    .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
+
   const readyMainNotQueuedPrs = normalized
     .filter((pr) => (
       !pr.draft
@@ -665,7 +826,7 @@ function makeReport(pulls) {
     })
     .sort((a, b) => Number(b.queueCandidate) - Number(a.queueCandidate) || a.number - b.number);
 
-  return {
+  const report = {
     generatedAt: new Date().toISOString(),
     counts: {
       open: normalized.length,
@@ -679,6 +840,7 @@ function makeReport(pulls) {
       queueCandidates: readyMainNotQueuedPrs.filter((pr) => pr.queueCandidate).length,
       draftParkingOwners: draftParkingOwners.length,
       staleDraftPrs: staleDraftPrs.length,
+      staleWipPrs: staleWipPrs.length,
     },
     byBase: [...byBase.entries()]
       .map(([base, prs]) => ({ base, prs: prs.sort((a, b) => a - b) }))
@@ -687,6 +849,7 @@ function makeReport(pulls) {
     draftRunwayByOwner,
     draftParkingOwners,
     staleDraftPrs,
+    staleWipPrs,
     readyMainNotQueuedPrs,
     stacks,
     duplicateTitleScopes,
@@ -703,6 +866,8 @@ function makeReport(pulls) {
     agentLabelMismatches,
     prs: normalized.sort((a, b) => a.number - b.number),
   };
+  report.managerActions = makeManagerActions(report);
+  return report;
 }
 
 function printMarkdown(report) {
@@ -710,8 +875,20 @@ function printMarkdown(report) {
   console.log("# Open PR Ownership Report");
   console.log("");
   console.log(
-    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; native queued: ${report.counts.nativeQueued}; ready not queued: ${report.counts.readyNotQueued}; queue candidates: ${report.counts.queueCandidates}; draft parking owners: ${report.counts.draftParkingOwners}; stale drafts: ${report.counts.staleDraftPrs}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
+    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; native queued: ${report.counts.nativeQueued}; ready not queued: ${report.counts.readyNotQueued}; queue candidates: ${report.counts.queueCandidates}; draft parking owners: ${report.counts.draftParkingOwners}; stale drafts: ${report.counts.staleDraftPrs}; stale WIP: ${report.counts.staleWipPrs}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
   );
+  console.log("");
+  console.log("## Manager Next Actions");
+  if (report.managerActions.length === 0) {
+    console.log("- none; wait and refresh without commenting");
+  } else {
+    for (const action of report.managerActions) {
+      const target = action.number === null ? action.owner : `#${action.number}`;
+      console.log(
+        `- ${action.priority} ${action.kind} ${target}: ${action.action}; comment: ${action.commentPolicy}; reason: ${action.reason}`,
+      );
+    }
+  }
   console.log("");
   console.log("## Owner Summary");
   if (report.ownerSummaries.length === 0) {
@@ -748,7 +925,11 @@ function printMarkdown(report) {
   }
   console.log("");
   console.log("## Draft Parking Risks");
-  if (report.draftParkingOwners.length === 0 && report.staleDraftPrs.length === 0) {
+  if (
+    report.draftParkingOwners.length === 0
+    && report.staleDraftPrs.length === 0
+    && report.staleWipPrs.length === 0
+  ) {
     console.log("- none");
   } else {
     if (report.draftParkingOwners.length) {
@@ -769,6 +950,17 @@ function printMarkdown(report) {
         const stack = pr.stackRole ? `; ${pr.stackRole}` : "";
         console.log(
           `- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; age ${pr.ageHours}h${stack}; ${pr.title}`,
+        );
+      }
+    }
+    if (report.staleWipPrs.length) {
+      console.log("");
+      console.log("Stale WIP PRs:");
+      for (const pr of report.staleWipPrs) {
+        const owner = ownerOf(pr);
+        const stack = pr.stackRole ? `; ${pr.stackRole}` : "";
+        console.log(
+          `- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; age ${pr.ageHours}h; ${pr.markers.join("+")}${stack}; ${pr.title}`,
         );
       }
     }
