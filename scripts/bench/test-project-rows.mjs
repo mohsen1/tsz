@@ -240,7 +240,10 @@ assert.deepEqual(
   "COMPATIBILITY_CORPUS_ROWS must describe every required and compile-canary project row",
 );
 
-const benchRunnerScript = readRepoFile("scripts/bench/bench-vs-tsgo.sh");
+const benchRunnerScript = [
+  readRepoFile("scripts/bench/bench-vs-tsgo.sh"),
+  readRepoFile("scripts/bench/lib/bench-vs-tsgo-results.sh"),
+].join("\n");
 const projectFixturesScript = readRepoFile("scripts/bench/project-fixtures.sh");
 const projectCompileGuardScript = readRepoFile("scripts/ci/project-compile-guard.sh");
 const benchRows = extractBenchRunnerRows(benchRunnerScript);
