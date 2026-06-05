@@ -1014,6 +1014,9 @@ mod object_spread_discriminant_narrowing_tests;
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
 #[cfg(test)]
+#[path = "tests/operator_chain_overload_resolution_tests.rs"]
+mod operator_chain_overload_resolution_tests;
+#[cfg(test)]
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[cfg(test)]

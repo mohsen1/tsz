@@ -200,6 +200,43 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env(param_type)
     }
 
+    /// Contextual type contributed by the parameter that supplies argument
+    /// `index`, instantiated under `substitution`.
+    ///
+    /// Argument collection only consumes the parameter at the argument's own
+    /// position — or the trailing rest parameter when the argument index runs
+    /// past the fixed parameters. Building the entire instantiated parameter
+    /// list once per argument made the per-argument loop `O(args * params)`,
+    /// i.e. quadratic for long generic call chains such as
+    /// `pipe(op1, ..., opN)` whose matched overload carries one parameter per
+    /// stage. Instantiating only the parameter that is actually read keeps the
+    /// loop linear while producing the identical contextual type.
+    ///
+    /// `instantiate_type` short-circuits on an empty/identity substitution and
+    /// otherwise routes through the cross-call instantiation cache, so the
+    /// per-argument cost stays `O(1)` amortized.
+    pub(crate) fn instantiated_contextual_param_type_at(
+        &mut self,
+        params: &[tsz_solver::ParamInfo],
+        index: usize,
+        substitution: &common::TypeSubstitution,
+    ) -> Option<TypeId> {
+        let (param_type, rest) = params
+            .get(index)
+            .map(|param| (param.type_id, param.rest))
+            .or_else(|| {
+                let last = params.last()?;
+                last.rest.then_some((last.type_id, true))
+            })?;
+        let param_type = common::instantiate_type(self.ctx.types, param_type, substitution);
+        let param_type = if rest {
+            self.rest_argument_element_type_with_env(param_type)
+        } else {
+            param_type
+        };
+        Some(self.normalize_contextual_call_param_type(param_type))
+    }
+
     pub(crate) fn finalize_generic_call_result(
         &mut self,
         ctx: GenericCallFinalizeCtx<'_>,
