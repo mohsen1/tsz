@@ -80,6 +80,14 @@ impl<'a> CheckerState<'a> {
                 self.type_alias_body_missing_names_syntax_covered_inner(indexed.object_type)
                     && self.type_alias_body_missing_names_syntax_covered_inner(indexed.index_type)
             }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                let Some(type_lit) = self.ctx.arena.get_type_literal(node) else {
+                    return false;
+                };
+                type_lit.members.nodes.iter().copied().all(|member_idx| {
+                    self.type_literal_property_member_missing_names_syntax_covered(member_idx)
+                })
+            }
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 let Some(op) = self.ctx.arena.get_type_operator(node) else {
                     return false;
@@ -92,6 +100,20 @@ impl<'a> CheckerState<'a> {
             k if Self::primitive_or_literal_type_kind_is_covered(k) => true,
             _ => false,
         }
+    }
+
+    fn type_literal_property_member_missing_names_syntax_covered(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return false;
+        };
+        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+            return false;
+        };
+        prop.type_annotation.is_some()
+            && self.type_alias_body_missing_names_syntax_covered_inner(prop.type_annotation)
     }
 
     pub(crate) fn type_alias_body_missing_names_covered_by_type_node_checking(
