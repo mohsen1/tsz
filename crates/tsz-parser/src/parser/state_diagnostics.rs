@@ -612,6 +612,22 @@ impl ParserState {
         self.error_token_expected(",");
     }
 
+    pub(crate) fn current_token_has_scanner_diagnostic(&self, code: u32) -> bool {
+        let token_pos = self.token_pos() as usize;
+        self.scanner
+            .get_scanner_diagnostics()
+            .iter()
+            .any(|diag| diag.code == code && diag.pos == token_pos)
+    }
+
+    pub(crate) fn current_token_has_numeric_literal_follow_error(&self) -> bool {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        self.current_token_has_scanner_diagnostic(
+            diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+        )
+    }
+
     /// Error: Array element destructuring pattern expected (TS1181)
     /// Used in array binding-pattern-like contexts when an element-like token is invalid.
     pub(crate) fn error_array_element_destructuring_pattern_expected(&mut self) {
