@@ -604,21 +604,6 @@ impl<'a> CheckerState<'a> {
         if inserted_for_circular_check && let Some(sid) = alias_sym_id {
             self.ctx.symbol_resolution_set.remove(&sid);
         }
-        // Pre-compute flow-narrowed types for `typeof expr` in the type alias body.
-        // This allows `typeof c` inside a type alias to pick up narrowing from
-        // control flow (e.g., inside an `if (typeof c === 'string')` block).
-        // The results are stored in `node_types` and consumed by `TypeLowering`
-        // via the `type_query_override` callback during `ensure_type_alias_resolved`.
-        let flow_timing_start = alias_timing_enabled.then(web_time::Instant::now);
-        self.precompute_type_query_flow_types(alias.type_node);
-        record_type_alias_phase_timing(
-            &self.ctx.file_name,
-            alias_name_str.as_deref(),
-            "type_query_flow",
-            alias_pos,
-            alias_end,
-            flow_timing_start,
-        );
         self.pop_type_parameters(updates);
     }
 
