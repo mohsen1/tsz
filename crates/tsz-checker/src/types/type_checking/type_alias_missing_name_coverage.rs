@@ -851,7 +851,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn type_ref_is_bare_scoped_type_parameter(
+    pub(crate) fn type_ref_is_bare_scoped_type_parameter(
         &self,
         type_name: NodeIndex,
         type_arguments: Option<&tsz_parser::parser::base::NodeList>,
