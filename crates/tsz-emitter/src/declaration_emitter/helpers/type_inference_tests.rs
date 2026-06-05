@@ -870,6 +870,78 @@ let z = ImportedWidget.make({ label: "ok" });
 }
 
 #[test]
+fn declared_call_return_substitutes_receiver_type_parameters_before_member_type_parameters() {
+    let source = r#"
+type InferPipe<State, Fn> =
+    Fn extends (value: State) => unknown ? (value: State) => ReturnType<Fn> : never;
+interface PipeBox<State> {
+    pipe<Fn extends (value: State) => unknown>(fn: Fn): PipeBox<InferPipe<State, Fn>>;
+}
+declare const source: PipeBox<string>;
+declare const parseValue: (value: string) => number;
+let out = source.pipe(parseValue);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert!(emitter.call_expression_declared_return_has_source_conditional_alias(call_idx));
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        Some("PipeBox<InferPipe<string, (value: string) => number>>".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_substitutes_receiver_type_parameters_with_renamed_binders() {
+    let source = r#"
+type Next<Input, Handler> =
+    Handler extends (item: Input) => unknown ? (item: Input) => ReturnType<Handler> : never;
+interface Chain<Input> {
+    map<Handler extends (item: Input) => unknown>(handler: Handler): Chain<Next<Input, Handler>>;
+}
+declare const chain: Chain<number>;
+declare const handler: (item: number) => string;
+let out = chain.map(handler);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert!(emitter.call_expression_declared_return_has_source_conditional_alias(call_idx));
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        Some("Chain<Next<number, (item: number) => string>>".to_string())
+    );
+}
+
+#[test]
 fn instantiation_expression_source_surface_detects_unresolved_declaration_text() {
     assert!(
         !DeclarationEmitter::instantiated_source_type_needs_semantic_surface(

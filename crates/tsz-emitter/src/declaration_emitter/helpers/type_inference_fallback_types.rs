@@ -991,7 +991,11 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(text) = self.mixin_call_intersection_source_text(expr_idx) {
                     return Some(text);
                 }
-                let reused_type_text = self.call_expression_reused_type_text(expr_idx);
+                let suppress_declared_conditional_alias_surface =
+                    self.call_expression_declared_return_has_source_conditional_alias(expr_idx);
+                let reused_type_text = (!suppress_declared_conditional_alias_surface)
+                    .then(|| self.call_expression_reused_type_text(expr_idx))
+                    .flatten();
                 let reused_type_uses_function_local_alias =
                     reused_type_text.as_deref().is_some_and(|type_text| {
                         self.type_text_starts_with_function_local_type_alias(type_text)
@@ -1061,8 +1065,16 @@ impl<'a> DeclarationEmitter<'a> {
                     })
                     .filter(|type_text| !type_text.is_empty() && type_text != "any");
                 reused_type_text
-                    .or_else(|| self.call_expression_source_return_type_text(expr_idx))
-                    .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
+                    .or_else(|| {
+                        (!suppress_declared_conditional_alias_surface)
+                            .then(|| self.call_expression_source_return_type_text(expr_idx))
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        (!suppress_declared_conditional_alias_surface)
+                            .then(|| self.call_expression_declared_return_type_text(expr_idx))
+                            .flatten()
+                    })
             }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 self.tagged_template_declared_return_type_text(expr_idx)
