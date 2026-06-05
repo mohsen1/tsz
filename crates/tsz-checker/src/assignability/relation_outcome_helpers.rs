@@ -1,7 +1,7 @@
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
-fn cached_relation_outcome(
+const fn cached_relation_outcome(
     cached: crate::context::CachedRelationOutcome,
 ) -> crate::query_boundaries::assignability::RelationOutcome {
     crate::query_boundaries::assignability::RelationOutcome {

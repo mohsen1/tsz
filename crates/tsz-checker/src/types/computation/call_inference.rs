@@ -1070,12 +1070,8 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_location) else {
-            return None;
-        };
-        let Some(decl_node) = arena.get(decl_idx) else {
-            return None;
-        };
+        let (decl_idx, arena) = self.ctx.node_at_stable_location(stable_location)?;
+        let decl_node = arena.get(decl_idx)?;
         let annotation = arena
             .get_variable_declaration(decl_node)
             .map(|decl| decl.type_annotation)
