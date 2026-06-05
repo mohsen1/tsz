@@ -311,6 +311,7 @@ mod js_define_property;
 mod js_expando_features;
 mod jsdoc_template_defaults;
 mod misc_features;
+mod misc_features_import_exports;
 mod misc_inference_features;
 mod probes_issues;
 mod probes_systematic;
