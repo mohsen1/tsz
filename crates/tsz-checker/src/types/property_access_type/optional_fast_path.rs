@@ -7,6 +7,16 @@ use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
 use tsz_solver::narrowing::CachedPropertyType;
 
+pub(super) struct OptionalPropertyChainFastPathRequest<'a> {
+    pub(super) object_type: TypeId,
+    pub(super) original_object_type: TypeId,
+    pub(super) question_dot_token: bool,
+    pub(super) skip_flow_narrowing: bool,
+    pub(super) skip_result_flow_for_result: bool,
+    pub(super) write_presence_only: bool,
+    pub(super) optional_property_chain_cache_key: Option<&'a OptionalPropertyChainKey>,
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn try_resolve_optional_property_chain_fast_path(
         &mut self,
@@ -14,14 +24,17 @@ impl<'a> CheckerState<'a> {
         expression: NodeIndex,
         name_or_argument: NodeIndex,
         name_node: &tsz_parser::parser::node::Node,
-        object_type: TypeId,
-        original_object_type: TypeId,
-        question_dot_token: bool,
-        skip_flow_narrowing: bool,
-        skip_result_flow_for_result: bool,
-        write_presence_only: bool,
-        optional_property_chain_cache_key: Option<&OptionalPropertyChainKey>,
+        request: OptionalPropertyChainFastPathRequest<'_>,
     ) -> Option<TypeId> {
+        let OptionalPropertyChainFastPathRequest {
+            object_type,
+            original_object_type,
+            question_dot_token,
+            skip_flow_narrowing,
+            skip_result_flow_for_result,
+            write_presence_only,
+            optional_property_chain_cache_key,
+        } = request;
         // Fast path for optional chaining on non-class receivers when the
         // property resolves successfully without diagnostics.
         //
@@ -89,7 +102,6 @@ impl<'a> CheckerState<'a> {
         };
         let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
         let cache_key = |base, name| (base, resolver_generation, name);
-        let factory = self.ctx.types.factory();
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
                 if write_presence_only {
@@ -116,13 +128,11 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 entry.type_id,
             );
-            if base_nullish.is_some()
-                && !crate::query_boundaries::common::type_contains_undefined(
+            if base_nullish.is_some() {
+                result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                     self.ctx.types,
                     result_type,
-                )
-            {
-                result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                );
             }
             if skip_result_flow_for_result {
                 self.ctx
@@ -195,13 +205,11 @@ impl<'a> CheckerState<'a> {
                     )),
                 );
                 let mut result_type = effective_write_result(refined_type_id, write_type);
-                if base_nullish.is_some()
-                    && !crate::query_boundaries::common::type_contains_undefined(
+                if base_nullish.is_some() {
+                    result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                         self.ctx.types,
                         result_type,
-                    )
-                {
-                    result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                    );
                 }
                 if skip_result_flow_for_result {
                     self.ctx
@@ -230,13 +238,11 @@ impl<'a> CheckerState<'a> {
                     property_type.map(CachedPropertyType::explicit),
                 );
                 let mut result_type = property_type.unwrap_or(TypeId::ERROR);
-                if base_nullish.is_some()
-                    && !crate::query_boundaries::common::type_contains_undefined(
+                if base_nullish.is_some() {
+                    result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                         self.ctx.types,
                         result_type,
-                    )
-                {
-                    result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                    );
                 }
                 Some(self.finalize_property_access_result(
                     idx,
