@@ -19,6 +19,7 @@
 //! ```
 
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::fmt::Write;
 use std::sync::Arc;
 
@@ -1710,11 +1711,15 @@ impl<'a> IRPrinter<'a> {
                     let mut printer = self.build_nested_ast_printer(arena);
                     printer.scoped_static_this_alias = Some(Arc::<str>::from(this_alias.as_ref()));
                     if let Some(counter) = Self::temp_counter_after_name(this_alias.as_ref()) {
+                        let class_temp = Self::temp_name_for_counter(counter);
+                        printer
+                            .file_level_class_temp_reservations
+                            .insert(*node, VecDeque::from([class_temp]));
                         printer.ctx.destructuring_state.temp_var_counter = printer
                             .ctx
                             .destructuring_state
                             .temp_var_counter
-                            .max(counter);
+                            .max(counter + 1);
                     }
                     printer.emit_expression(*node);
                     self.merge_ast_printer_block_scope_reserved_names(&printer);
