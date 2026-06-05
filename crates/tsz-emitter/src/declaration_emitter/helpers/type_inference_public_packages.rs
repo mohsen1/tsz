@@ -244,24 +244,31 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if !module_specifier.starts_with('.') && !module_specifier.starts_with('/') {
-            let mut matches = binder
-                .module_exports
-                .iter()
-                .filter_map(|(module_path, exports)| {
-                    if !(self
-                        .node_modules_path_matches_import_specifier(module_path, module_specifier)
-                        || self.node_modules_package_path_matches_import_specifier(
+            let mut matches =
+                binder
+                    .module_exports
+                    .iter()
+                    .filter_map(|(module_path, exports)| {
+                        if !(self.node_modules_path_matches_import_specifier(
                             module_path,
                             module_specifier,
-                        ))
-                    {
-                        return None;
-                    }
-                    exports
-                        .get(export_name)
-                        .map(|sym_id| (module_path.len(), sym_id))
-                })
-                .collect::<Vec<_>>();
+                        ) || self.node_modules_package_path_matches_import_specifier(
+                            module_path,
+                            module_specifier,
+                        ) || self.node_modules_package_contains_import_specifier(
+                            module_path,
+                            module_specifier,
+                        ) || self.package_json_name_matches_import_specifier(
+                            module_path,
+                            module_specifier,
+                        )) {
+                            return None;
+                        }
+                        exports
+                            .get(export_name)
+                            .map(|sym_id| (module_path.len(), sym_id))
+                    })
+                    .collect::<Vec<_>>();
             matches.sort_by_key(|(path_len, _)| *path_len);
             return matches.into_iter().map(|(_, sym_id)| sym_id).next();
         }
