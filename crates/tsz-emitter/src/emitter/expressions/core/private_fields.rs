@@ -1098,10 +1098,10 @@ impl<'a> Printer<'a> {
         // No flag state has been modified yet at this point, so no restore needed.
         if self.is_compound_assignment(binary.operator_token)
             && self.arena.is_missing_recovery_identifier(binary.left)
-            && !self
+            && self
                 .arena
                 .get(binary.right)
-                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                .is_none_or(|n| n.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
         {
             self.emit(binary.right);
             return;
