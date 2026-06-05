@@ -344,12 +344,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ) -> Option<(NodeIndex, &NodeArena)> {
         use tsz_parser::parser::syntax_kind_ext;
 
+        // When `sym_id` is a cross-file symbol (authoritative file ≠ current file),
+        // resolve the binder for that file so its declaration_arenas are searched first.
+        // Without this, `self.ctx.binder` (the current file's binder) never holds
+        // declarations for types defined in other files, and the arena falls back to
+        // `self.ctx.arena` which produces NodeIndex collisions.
+        let auth_binder: Option<&tsz_binder::BinderState> = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .filter(|&f| f != self.ctx.current_file_idx)
+            .and_then(|f| self.ctx.get_binder_for_file(f));
+
         for decl_idx in symbol.all_declarations() {
             if decl_idx.is_none() {
                 continue;
             }
 
             let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
+            // Prefer the authoritative (cross-file) binder's arenas to avoid
+            // NodeIndex collisions with the current file's binder.
+            if let Some(auth) = auth_binder {
+                if let Some(arenas) = auth.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+                }
+                if let Some(symbol_arena) = auth.symbol_arenas.get(&sym_id) {
+                    candidate_arenas.push(symbol_arena.as_ref());
+                }
+            }
             if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                 candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
             }
