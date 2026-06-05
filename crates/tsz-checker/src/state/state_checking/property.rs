@@ -381,6 +381,57 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // A fully concrete homomorphic mapped target — e.g. `{ [K in keyof A]?:
+        // A[K] }` over a non-generic `A` — is kept as a deferred `Mapped` in the
+        // declared type, so the solver's object-literal excess path never runs
+        // against its expanded shape and the generic-mapped loop above defers it
+        // (its evaluated object carries no free type parameters). tsc evaluates
+        // such a target to a concrete object and reports excess properties
+        // against that object. Mirror that here using the already-computed
+        // `evaluated_target`, scoped to concrete mapped targets so plain objects
+        // (handled by the solver relation) and generic/deferred mapped targets
+        // (where the property set is not knowable) are untouched.
+        if evaluated_target != target
+            && crate::query_boundaries::common::mapped_type_id(self.ctx.types, target).is_some()
+            && !tsz_solver::type_queries::mapped_type_is_deferred_generic(self.ctx.types, target)
+            // A homomorphic mapped type over a union source distributes to a
+            // union (and an intersection target keeps an intersection shape), so
+            // leave those to the union/intersection paths below.
+            && query::union_members(self.ctx.types, evaluated_target).is_none()
+            && query::intersection_members(self.ctx.types, evaluated_target).is_none()
+            && let Some(shape) = query::object_shape(self.ctx.types, evaluated_target)
+            && shape.string_index.is_none()
+        {
+            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
+            for source_prop in source_props {
+                if explicit_property_names.is_some()
+                    && !explicit_property_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&source_prop.name))
+                {
+                    continue;
+                }
+                let covered = shape
+                    .properties
+                    .iter()
+                    .any(|prop| prop.name == source_prop.name)
+                    || (shape.number_index.is_some() && {
+                        let name = self.ctx.types.resolve_atom(source_prop.name);
+                        tsz_solver::utils::is_numeric_literal_name(&name)
+                    });
+                if !covered {
+                    let report_idx = self
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
+                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+                }
+            }
+            // Display the expanded object shape (matching tsc), not the deferred
+            // mapped form.
+            self.emit_tracked_excess_property(first_excess, evaluated_target);
+            return;
+        }
+
         if let Some(members) = query::intersection_members(self.ctx.types, union_check_target) {
             let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
             for source_prop in source_props {
