@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WEBSITE_DIR="$ROOT/crates/tsz-website"
 GITHUB_PAGES_BENCH_URL="https://tsz.dev/benchmark-data/latest.json"
-GITHUB_PAGES_FALLBACK_BENCH_URL="https://mohsen1.github.io/tsz/benchmark-data/latest.json"
+GITHUB_PAGES_FALLBACK_BENCH_URL="https://tsz-org.github.io/tsz/benchmark-data/latest.json"
 GCS_BENCH_URL="https://storage.googleapis.com/storage/v1/b/thirdface-ai-oauth_cloudbuild/o/tsz-ci-cache%2Fbench-runs%2Flatest.json?alt=media"
 
 if ! command -v npm >/dev/null 2>&1; then
