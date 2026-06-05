@@ -147,7 +147,7 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
@@ -399,7 +399,7 @@ jobs:
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
                     compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
-                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                       || true)
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \
@@ -905,10 +905,10 @@ jobs:
           compression-level: 1
 
   unit:
-    # Required unit context. Run on the Cloud Build private pool instead of
-    # the 8-vCPU self-hosted runner: the old local path repeatedly hit
-    # linker/process kills while the same suite passed through Cloud Build.
-    # Keep the status name as `unit` so branch protection remains stable.
+    # Required unit context. Keep this on the Cloud Build private pool: direct
+    # Cloud Run unit still OOMs while linking checker integration test targets
+    # even with one test thread and single-threaded lld. The remaining compiler
+    # shards run on the Cloud Run runner fleet.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
@@ -935,19 +935,27 @@ jobs:
 
   unit-cloudbuild:
     # Compatibility status for dashboards and branch-protection rules that may
-    # still look for the experimental Cloud Build context. The Cloud Build unit
-    # suite is now executed by the required `unit` job above.
+    # still look for the old experimental Cloud Build context. The required
+    # Cloud Build unit suite is enforced by the `unit` job above.
     name: unit-cloudbuild
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    needs: [gate, unit]
+    if: always() && needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Report promoted unit path
-        run: echo "Cloud Build unit suite is enforced by the required unit job."
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$UNIT_RESULT" != "success" ]]; then
+            echo "Required Cloud Build unit job did not pass: ${UNIT_RESULT}"
+            exit 1
+          fi
+          echo "Cloud Build unit suite is enforced by the required unit job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
