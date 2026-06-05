@@ -34,6 +34,7 @@ import {
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const BENCH_SCRIPT = path.join(SCRIPT_DIR, "bench-vs-tsgo.sh");
+const BENCH_PREREQS_SCRIPT = path.join(SCRIPT_DIR, "lib", "bench-vs-tsgo-prereqs.sh");
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -509,7 +510,7 @@ SCRIPT_DIR='${SCRIPT_DIR.replace(/'/g, "'\\''")}'
 if [ -f '${BENCH_SCRIPT.replace(/'/g, "'\\''")}.helpers' ]; then
   source '${BENCH_SCRIPT.replace(/'/g, "'\\''")}.helpers'
 else
-  awk '/^sum_ts_stats\\(\\)/{flag=1} flag{print} /^}/{if(flag){exit}}' '${BENCH_SCRIPT.replace(/'/g, "'\\''")}' > /tmp/tsz-sum-ts-stats-$$.sh
+  awk '/^sum_ts_stats\\(\\)/{flag=1} flag{print} /^}/{if(flag){exit}}' '${BENCH_PREREQS_SCRIPT.replace(/'/g, "'\\''")}' > /tmp/tsz-sum-ts-stats-$$.sh
   source /tmp/tsz-sum-ts-stats-$$.sh
   rm -f /tmp/tsz-sum-ts-stats-$$.sh
 fi

@@ -2,9 +2,45 @@
 
 use crate::state::CheckerState;
 use crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena;
+use std::hash::{Hash, Hasher};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn active_resolving_alias_set_key(&self) -> u64 {
+        if self.ctx.symbol_resolution_set.is_empty() {
+            return 0;
+        }
+        if self.ctx.symbol_resolution_set.len() == 1 {
+            let Some(&sym_id) = self.ctx.symbol_resolution_set.iter().next() else {
+                return 0;
+            };
+            return self
+                .ctx
+                .get_existing_def_id(sym_id)
+                .map_or(u64::from(sym_id.0), |def_id| {
+                    (1_u64 << 32) | u64::from(def_id.0)
+                });
+        }
+
+        let mut entries = self
+            .ctx
+            .symbol_resolution_set
+            .iter()
+            .map(|&sym_id| {
+                self.ctx
+                    .get_existing_def_id(sym_id)
+                    .map_or(u64::from(sym_id.0), |def_id| {
+                        (1_u64 << 32) | u64::from(def_id.0)
+                    })
+            })
+            .collect::<Vec<_>>();
+        entries.sort_unstable();
+
+        let mut hasher = rustc_hash::FxHasher::default();
+        entries.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Validate the diagnostics not covered by type-literal construction and
     /// return whether the normal alias-body validation walk can be skipped.
     pub(crate) fn validate_signature_only_type_literal_alias_body(
