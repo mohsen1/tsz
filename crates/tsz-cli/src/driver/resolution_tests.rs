@@ -198,6 +198,169 @@ fn test_resolve_module_specifier_from_node_modules_package_finds_sibling_package
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Build the shared options used by the pnpm-symlink resolution tests.
+#[cfg(test)]
+fn pnpm_symlink_test_options(preserve_symlinks: bool) -> ResolvedCompilerOptions {
+    ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Build a pnpm sandbox where the top-level `@types/express` is a symlink into
+/// the `.pnpm` store and `@types/express-serve-static-core` exists *only* as its
+/// transitive (un-hoisted) sibling inside that store. Returns `(project_dir,
+/// sandbox_types_dir)`; `express/index.d.ts` is written with `express_content`.
+#[cfg(test)]
+fn setup_pnpm_express_sandbox(dir_name: &str, express_content: &str) -> (PathBuf, PathBuf) {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join(dir_name);
+    let _ = fs::remove_dir_all(&dir);
+    let sandbox = dir.join("node_modules/.pnpm/@types+express@5.0.6/node_modules/@types");
+    fs::create_dir_all(sandbox.join("express")).unwrap();
+    fs::create_dir_all(sandbox.join("express-serve-static-core")).unwrap();
+    fs::write(sandbox.join("express/index.d.ts"), express_content).unwrap();
+    fs::write(
+        sandbox.join("express-serve-static-core/index.d.ts"),
+        "export type Core = number;",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join("node_modules/@types")).unwrap();
+    symlink(
+        sandbox.join("express"),
+        dir.join("node_modules/@types/express"),
+    )
+    .unwrap();
+    (dir, sandbox)
+}
+
+/// `/// <reference types="..." />` from inside a pnpm-symlinked `@types/*`
+/// package must reach the package's *transitive* `@types/*` sibling, which
+/// lives only inside the realpath `.pnpm/<pkg>@<ver>/node_modules` sandbox and
+/// is never hoisted to the top-level `node_modules/@types`.
+#[test]
+fn test_type_reference_resolves_transitive_sibling_in_pnpm_symlink_sandbox() {
+    let (dir, sandbox) = setup_pnpm_express_sandbox(
+        "tsz_driver_resolution_pnpm_triple_slash",
+        "/// <reference types=\"express-serve-static-core\" />\nexport {};",
+    );
+
+    let options = pnpm_symlink_test_options(false);
+    let mut cache = ModuleResolutionCache::default();
+
+    // Resolve from the *symlink* path, exactly as file discovery records it.
+    let from_file = dir.join("node_modules/@types/express/index.d.ts");
+    let resolved = resolve_type_reference_from_node_modules_with_cache(
+        "express-serve-static-core",
+        &from_file,
+        &dir,
+        None,
+        &options,
+        &mut cache,
+    );
+
+    let expected = canonicalize_or_owned(&sandbox.join("express-serve-static-core/index.d.ts"));
+    assert_eq!(resolved.map(|p| canonicalize_or_owned(&p)), Some(expected));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `preserveSymlinks` keeps `tsc`'s symlink-path resolution: the transitive
+/// sibling is *not* visible from the top-level symlink path, so the reference
+/// stays unresolved. This pins the gate so the realpath anchor only applies
+/// when symlinks are followed.
+#[test]
+fn test_type_reference_preserve_symlinks_does_not_reach_sandbox_sibling() {
+    let (dir, _sandbox) = setup_pnpm_express_sandbox(
+        "tsz_driver_resolution_pnpm_triple_slash_preserve",
+        "export {};",
+    );
+
+    let options = pnpm_symlink_test_options(true);
+    let mut cache = ModuleResolutionCache::default();
+    let from_file = dir.join("node_modules/@types/express/index.d.ts");
+    let resolved = resolve_type_reference_from_node_modules_with_cache(
+        "express-serve-static-core",
+        &from_file,
+        &dir,
+        None,
+        &options,
+        &mut cache,
+    );
+
+    assert_eq!(resolved, None);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A bare `import`/`require` from inside a pnpm-symlinked package must reach the
+/// package's transitive dependency in the realpath sandbox — the same root
+/// cause as the triple-slash case, exercised through the bare-specifier
+/// walk-up.
+#[test]
+fn test_bare_import_resolves_transitive_dependency_in_pnpm_symlink_sandbox() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_pnpm_bare_import");
+    let _ = fs::remove_dir_all(&dir);
+    let sandbox = dir.join("node_modules/.pnpm/@types+react@19.0.0/node_modules");
+    fs::create_dir_all(sandbox.join("@types/react")).unwrap();
+    fs::create_dir_all(sandbox.join("csstype")).unwrap();
+    fs::write(
+        sandbox.join("@types/react/index.d.ts"),
+        "import type { Properties } from \"csstype\";\nexport type R = Properties;",
+    )
+    .unwrap();
+    fs::write(
+        sandbox.join("csstype/package.json"),
+        "{\"name\":\"csstype\",\"version\":\"3.0.0\",\"types\":\"index.d.ts\"}",
+    )
+    .unwrap();
+    fs::write(
+        sandbox.join("csstype/index.d.ts"),
+        "export interface Properties {}",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join("node_modules/@types")).unwrap();
+    symlink(
+        sandbox.join("@types/react"),
+        dir.join("node_modules/@types/react"),
+    )
+    .unwrap();
+
+    let options = pnpm_symlink_test_options(false);
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    let from_file = dir.join("node_modules/@types/react/index.d.ts");
+    let resolved = resolve_module_specifier(
+        &from_file,
+        "csstype",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    let expected = canonicalize_or_owned(&sandbox.join("csstype/index.d.ts"));
+    assert_eq!(resolved.map(|p| canonicalize_or_owned(&p)), Some(expected));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn test_normalize_resolved_path_collapses_segments_for_symlinked_package_identity() {
     use std::fs;
