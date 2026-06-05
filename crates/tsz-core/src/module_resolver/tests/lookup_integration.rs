@@ -1953,3 +1953,48 @@ fn test_lookup_at_types_declarations_win_over_closer_runtime_js() {
         "resolution must prefer the parent @types declaration file"
     );
 }
+
+#[test]
+fn test_lookup_unscoped_runtime_js_prefers_at_types_declarations() {
+    use super::fixtures::TempFixture;
+    let fx = TempFixture::new();
+    fx.write(
+        "node_modules/gadget/package.json",
+        r#"{"name":"gadget","version":"1.0.0","main":"index.js"}"#,
+    );
+    fx.write("node_modules/gadget/index.js", "module.exports = {};");
+    fx.write(
+        "node_modules/@types/gadget/package.json",
+        r#"{"name":"@types/gadget","version":"1.0.0","types":"index.d.ts"}"#,
+    );
+    let types_entry = fx.write(
+        "node_modules/@types/gadget/index.d.ts",
+        "export declare const gadget: number;",
+    );
+    let containing = fx.write("src/index.ts", "import { gadget } from 'gadget';\n");
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let request = ModuleLookupRequest {
+        specifier: "gadget",
+        containing_file: &containing,
+        specifier_span: Span::new(0, 0),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: true,
+        implied_classic_resolution: false,
+    };
+    let outcome = resolver
+        .lookup(&request, |_, _| None, |_| false, None)
+        .classify();
+
+    assert!(outcome.error.is_none());
+    assert_eq!(
+        outcome.resolved_path.as_deref(),
+        Some(types_entry.as_path())
+    );
+}

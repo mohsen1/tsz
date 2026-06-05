@@ -206,6 +206,72 @@ let badCtor: typeof Token = Token.create();
         );
     }
 
+    // Regression: a cross-file named import of a *type alias* whose body is a
+    // union containing `null` must resolve to the full union, not collapse to
+    // `null`. A named type reference routed through the value-in-type-position
+    // "instance type" extraction (`instance_type_from_constructor_type`) used
+    // to partially extract instance types from union members: `null` maps to
+    // itself while a sibling primitive such as `string` is `NotConstructor`
+    // and was silently dropped, leaving the alias as bare `null`. That produced
+    // false TS2322 on valid values and false TS2344 ("does not satisfy the
+    // constraint 'null'") in constraint position for any imported union alias
+    // with a `null` member (e.g. type-fest's `Primitive`). Renamed binders and
+    // varied null positions prove the rule is structural, not name-keyed.
+    #[test]
+    fn project_mode_cross_file_null_union_alias_import_does_not_collapse_to_null() {
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/scalars.ts",
+                    r#"
+export type Scalarish = null | string;            // null first
+export type Tailable = boolean | null;            // null last
+export type Mixed = null | string | number | boolean;
+"#,
+                ),
+                (
+                    "/p/consumer.ts",
+                    r#"
+import { Scalarish, Tailable, Mixed } from "./scalars";
+
+// Valid values for the union members must be accepted (these previously
+// failed because the alias collapsed to bare `null`).
+const a: Scalarish = "ok";
+const b: Tailable = true;
+const c: Mixed = 42;
+const d: Scalarish = null;
+
+// Constraint position must accept a union member (previously false TS2344
+// "does not satisfy the constraint 'null'").
+type Constrain<Q extends Mixed> = Q;
+type Probe = Constrain<string>;
+
+// A genuine non-member value must still be rejected.
+const bad: Scalarish = 123;
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diagnostic| diagnostic.code != 2344),
+            "imported union alias constraints must not collapse to `null` (no false TS2344), got: {diagnostics:?}"
+        );
+        let assignment_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2322)
+            .collect();
+        assert_eq!(
+            assignment_errors.len(),
+            1,
+            "only `const bad: Scalarish = 123` should fail; valid union values must be accepted, got: {diagnostics:?}"
+        );
+    }
+
     // Kysely-shape regression coverage for the cross-file class instance-type
     // resolution fixed by #10686. These tests pin down adjacent shapes from
     // issue #10672 (Readonly mapped-type members, PromiseLike conformance via

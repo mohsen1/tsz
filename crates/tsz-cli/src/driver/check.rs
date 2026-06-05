@@ -261,7 +261,16 @@ fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
 /// Build a fresh checker-facing lib set from the already-loaded lib sources so program
 /// binding and checker lib resolution stay isolated without requiring disk reloads.
 pub(super) fn load_checker_libs(lib_files: &[Arc<LibFile>]) -> CheckerLibSet {
-    let files = parallel::clone_lib_files_for_checker(lib_files, lib_files.len() > 1);
+    let should_clone_libs_in_parallel = lib_files.len() > 1;
+    let clone_start = tsz_common::perf_counters::enabled_fast().then(std::time::Instant::now);
+    let files = parallel::clone_lib_files_for_checker(lib_files, should_clone_libs_in_parallel);
+    if let Some(start) = clone_start {
+        tsz_common::perf_counters::record_checker_lib_clone(
+            lib_files.len() as u64,
+            should_clone_libs_in_parallel,
+            start.elapsed().as_nanos() as u64,
+        );
+    }
     let contexts = files
         .iter()
         .map(|lib| LibContext {

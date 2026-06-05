@@ -213,20 +213,34 @@ run_benchmark() {
 
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
-    local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
-    local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
+    # Read the fixture once via `wc -lc` (newline + byte counts in a single
+    # pass) instead of opening the same source twice (`wc -l` then `wc -c`); wc
+    # prints requested counts in the canonical lines-then-bytes order. `|| true`
+    # keeps a missing/unreadable fixture (empty output -> `read` hits EOF) from
+    # aborting under `set -e`; the zeroed defaults preserve the prior
+    # "0 lines, 0KB" behavior for a vanished fixture.
+    local lines bytes
+    read -r lines bytes < <(wc -lc < "$file" 2>/dev/null) || true
+    lines="${lines:-0}"
+    bytes="${bytes:-0}"
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB"
 
     # Benchmark fixtures must be valid TypeScript for the reference compiler.
-    # If tsc fails or times out, treat the fixture as invalid benchmark input and skip it.
+    # If tsc fails or times out, treat the fixture as invalid benchmark input and
+    # skip it. Capture combined output from this one validation run so a fixture
+    # error can be surfaced without a second `tsc` invocation that re-parses the
+    # same source (run_project_benchmark already reads diagnostics from its
+    # captured check log rather than re-running the compiler).
     local tsc_check=0
-    run_with_timeout "$BENCH_TIMEOUT" $TSC --noEmit $extra_args "$file" >/dev/null 2>&1 || tsc_check=$?
+    local tsc_output=""
+    tsc_output="$(run_with_timeout "$BENCH_TIMEOUT" $TSC --noEmit $extra_args "$file" 2>&1)" || tsc_check=$?
     if [ "$tsc_check" -ne 0 ]; then
         if [ "$tsc_check" -eq 124 ]; then
             echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${BENCH_TIMEOUT}s)"
         else
-            local tsc_error=$($TSC --noEmit $extra_args "$file" 2>&1 | head -1)
+            local tsc_error
+            tsc_error="$(printf '%s\n' "$tsc_output" | head -1)"
             echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
             echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
         fi
@@ -235,11 +249,15 @@ run_benchmark() {
 
     record_benchmark_source "$name" "$file"
 
-    # Pre-validate with timeout: record errors/timeouts in summary table
+    # Pre-validate with timeout: record errors/timeouts in summary table. As
+    # with tsc above, capture each compiler's output here so the error branch
+    # can report diagnostics without re-running (re-parsing) the fixture.
     local tsz_check=0
-    run_with_timeout "$BENCH_TIMEOUT" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1 || tsz_check=$?
+    local tsz_output=""
+    tsz_output="$(run_with_timeout "$BENCH_TIMEOUT" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" 2>&1)" || tsz_check=$?
     local tsgo_check=0
-    run_with_timeout "$BENCH_TIMEOUT" $TSGO --noEmit $extra_args "$file" >/dev/null 2>&1 || tsgo_check=$?
+    local tsgo_output=""
+    tsgo_output="$(run_with_timeout "$BENCH_TIMEOUT" $TSGO --noEmit $extra_args "$file" 2>&1)" || tsgo_check=$?
 
     if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
         local status=""
@@ -259,7 +277,8 @@ run_benchmark() {
         elif [ "$tsz_check" -ne 0 ]; then
             status="tsz error"
             tsz_ms="ERR"
-            local tsz_error=$(run_with_timeout "$BENCH_TIMEOUT" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
+            local tsz_error
+            tsz_error="$(printf '%s\n' "$tsz_output" | head -1)"
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
@@ -270,7 +289,8 @@ run_benchmark() {
         elif [ "$tsgo_check" -ne 0 ]; then
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
-            local tsgo_error=$($TSGO --noEmit $extra_args "$file" 2>&1 | head -1)
+            local tsgo_error
+            tsgo_error="$(printf '%s\n' "$tsgo_output" | head -1)"
             echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
         fi
 

@@ -356,7 +356,10 @@ impl<'a> Printer<'a> {
                 && expr_node.kind == SyntaxKind::StringLiteral as u16
             {
                 let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
-                    lit.text == "use strict"
+                    tsz_common::directives::is_use_strict_directive(
+                        lit.raw_text.as_deref(),
+                        &lit.text,
+                    )
                 } else if let Some(text) = self.source_text {
                     // safe_slice: B (decision-affecting). On a bad span we
                     // treat the directive as not "use strict", which makes us
@@ -368,7 +371,7 @@ impl<'a> Printer<'a> {
                         expr_node.pos as usize,
                         expr_node.end as usize,
                     ) {
-                        Ok(s) => s == "\"use strict\"" || s == "'use strict'",
+                        Ok(s) => tsz_common::directives::is_use_strict_directive_raw_text(s),
                         Err(_) => false,
                     }
                 } else {

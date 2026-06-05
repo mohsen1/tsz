@@ -3,7 +3,25 @@
 use super::common;
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
-use tsz_solver::def::{DefKind, DefinitionStore};
+use tsz_solver::def::{DefId, DefKind, DefinitionStore};
+
+/// tsc `aliasSymbol` display policy for a non-generic type alias: when the alias
+/// named by `def_id` must be rendered as its underlying type (the computed
+/// conditional / indexed-access / `keyof` / application / template / string
+/// intrinsic body that collapses to a shared singleton, or a direct
+/// intrinsic/literal body) rather than by its declared name, returns that
+/// underlying `TypeId`.
+///
+/// This delegates to the solver's shared display policy so the checker's
+/// assignability-message formatter and the solver's `TypeFormatter` agree on
+/// alias rendering instead of maintaining two drifting copies of the rule.
+pub(crate) fn type_alias_displayed_as_underlying(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    def_id: DefId,
+) -> Option<TypeId> {
+    tsz_solver::type_alias_displayed_as_underlying(db, definitions, def_id)
+}
 
 pub(crate) fn source_preserves_declared_generic_alias_display(
     db: &dyn TypeDatabase,

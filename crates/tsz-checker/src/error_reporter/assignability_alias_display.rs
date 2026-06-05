@@ -196,6 +196,15 @@ impl<'a> CheckerState<'a> {
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))?;
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
+        // A non-generic alias whose body is a computed operator collapsing to a
+        // shared singleton (or a direct intrinsic/literal) drops its alias symbol
+        // in tsc, which displays the underlying scalar. The resolved
+        // `source_display` already holds that scalar; repainting it with the
+        // alias annotation name (`X1`) would diverge from tsc, so suppress the
+        // rewrite for such aliases.
+        if self.declared_source_annotation_alias_displayed_as_underlying(expr_idx) {
+            return None;
+        }
         if annotation_text == source_display
             || annotation_text.trim_start().starts_with("typeof ")
             // No structural query for module-import types yet; keep as display fallback.

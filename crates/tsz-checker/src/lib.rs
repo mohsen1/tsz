@@ -228,6 +228,12 @@ mod heritage_constraint_structural_name_lookup_arch_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "tests/higher_order_regeneralization_tests.rs"]
+mod higher_order_regeneralization_tests;
+#[cfg(test)]
+#[path = "tests/homomorphic_mapped_member_override_tests.rs"]
+mod homomorphic_mapped_member_override_tests;
+#[cfg(test)]
 #[path = "../tests/imported_generator_iterable_tests.rs"]
 mod imported_generator_iterable_tests;
 #[cfg(test)]
@@ -617,6 +623,9 @@ mod class_static_side_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
+#[cfg(test)]
+#[path = "tests/computed_alias_source_display_tests.rs"]
+mod computed_alias_source_display_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
@@ -1167,6 +1176,9 @@ mod ts18048_unary_arithmetic_nullish_tests;
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
 #[cfg(test)]
+#[path = "tests/ts2322_readonly_array_element_elaboration_tests.rs"]
+mod ts2322_readonly_array_element_elaboration_tests;
+#[cfg(test)]
 #[path = "tests/ts2322_same_generic_type_argument_elaboration_tests.rs"]
 mod ts2322_same_generic_type_argument_elaboration_tests;
 #[cfg(test)]
@@ -1220,6 +1232,9 @@ mod union_multi_overload_unified_sig_tests;
 #[cfg(test)]
 #[path = "tests/unique_symbol_assignment_ts2322_tests.rs"]
 mod unique_symbol_assignment_ts2322_tests;
+#[cfg(test)]
+#[path = "tests/variadic_tuple_alias_display_tests.rs"]
+mod variadic_tuple_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;
