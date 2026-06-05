@@ -1377,6 +1377,18 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                            {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                let emitted_literal_diagnostic =
+                                    self.check_computed_property_requires_literal(
+                                        sig.name,
+                                        diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                        diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                    );
+                                if !emitted_literal_diagnostic {
+                                    self.check_computed_property_name(sig.name);
+                                }
+                            }
                             let (_type_params, type_param_updates) =
                                 self.push_type_parameters(&sig.type_parameters);
                             if let Some(params) = &sig.parameters {
@@ -1409,6 +1421,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                            self.check_computed_property_name(accessor.name);
                             if accessor.type_annotation != NodeIndex::NONE {
                                 check_child_type_node!(self, accessor.type_annotation);
                             }
@@ -1429,10 +1442,22 @@ impl<'a> CheckerState<'a> {
                         }
                         // Property signatures/declarations: recurse into type
                         // annotations to validate nested type references.
-                        if let Some(prop) = self.ctx.arena.get_property_decl(member_node)
-                            && prop.type_annotation != NodeIndex::NONE
-                        {
-                            check_child_type_node!(self, prop.type_annotation);
+                        if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
+                            {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                let emitted_literal_diagnostic = self
+                                    .check_computed_property_requires_literal(
+                                        prop.name,
+                                        diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                        diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                    );
+                                if !emitted_literal_diagnostic {
+                                    self.check_computed_property_name(prop.name);
+                                }
+                            }
+                            if prop.type_annotation != NodeIndex::NONE {
+                                check_child_type_node!(self, prop.type_annotation);
+                            }
                         }
                     }
 
