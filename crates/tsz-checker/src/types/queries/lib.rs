@@ -536,13 +536,24 @@ impl<'a> CheckerState<'a> {
     ///
     /// For already-resolved symbols (e.g., re-exported members that have already
     /// been followed through alias chains).
-    fn get_validated_member_type(
+    pub(crate) fn get_validated_member_type(
         &mut self,
         resolved_member_id: SymbolId,
         property_name: &str,
     ) -> Option<TypeId> {
         if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
             return None;
+        }
+        if let Some(target_member_id) =
+            self.default_export_identifier_value_target(resolved_member_id)
+        {
+            let mut visited_aliases = AliasCycleTracker::new();
+            let target_member_id = self
+                .resolve_alias_symbol(target_member_id, &mut visited_aliases)
+                .unwrap_or(target_member_id);
+            if target_member_id != resolved_member_id {
+                return self.get_validated_member_type(target_member_id, property_name);
+            }
         }
         // Namespace export tables may point at EXPORT_VALUE wrapper symbols
         // (e.g. `export { x }`). Treat them as runtime-value members.
@@ -554,22 +565,19 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // For merged interface+variable symbols (e.g., `export interface Point` +
-        // `export var Point = 1`), `get_type_of_symbol` returns the interface type
-        // because compute_type_of_symbol enters the INTERFACE branch. In namespace
-        // member access (value position), we need the VALUE side type.
+        // For merged interface+value symbols (e.g., `export interface Point` +
+        // `export var Point = 1` or a function value), `get_type_of_symbol`
+        // returns the interface type because compute_type_of_symbol enters the
+        // INTERFACE branch. In namespace member access (value position), we
+        // need the VALUE side type.
         // This mirrors the `is_merged_interface_value` path in `get_type_of_identifier`.
-        //
-        // Only apply to INTERFACE + VARIABLE merges, NOT CLASS+INTERFACE or
-        // FUNCTION+INTERFACE merges, since get_type_of_symbol already handles
-        // those correctly (CLASS/FUNCTION branches precede INTERFACE).
-        let (flags, value_decl) = {
+        let (flags, value_decl, declarations) = {
             let member_symbol = self
                 .get_cross_file_symbol(resolved_member_id)
                 .or_else(|| self.ctx.binder.get_symbol(resolved_member_id));
             match member_symbol {
-                Some(sym) => (sym.flags, sym.value_declaration),
-                None => (0, NodeIndex::default()),
+                Some(sym) => (sym.flags, sym.value_declaration, sym.declarations.clone()),
+                None => (0, NodeIndex::default(), Vec::new()),
             }
         };
 
@@ -585,20 +593,76 @@ impl<'a> CheckerState<'a> {
         }
 
         if flags != 0 {
-            let is_merged_interface_variable = (flags & symbol_flags::INTERFACE) != 0
-                && (flags & symbol_flags::VARIABLE) != 0
+            let is_merged_interface_value = (flags & symbol_flags::INTERFACE) != 0
+                && (flags & (symbol_flags::VARIABLE | symbol_flags::FUNCTION)) != 0
                 && (flags & symbol_flags::CLASS) == 0
-                && (flags & symbol_flags::FUNCTION) == 0;
-            if is_merged_interface_variable {
-                let value_type =
-                    self.type_of_value_declaration_for_symbol(resolved_member_id, value_decl);
-                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                    return Some(value_type);
+                && (flags & symbol_flags::ENUM) == 0;
+            if is_merged_interface_value {
+                let preferred = self
+                    .preferred_value_declaration(resolved_member_id, value_decl, &declarations)
+                    .unwrap_or(value_decl);
+                let mut candidates = Vec::with_capacity(declarations.len() + 1);
+                if preferred.is_some() {
+                    candidates.push(preferred);
+                }
+                for &decl_idx in &declarations {
+                    if decl_idx.is_some() && decl_idx != preferred {
+                        candidates.push(decl_idx);
+                    }
+                }
+
+                for decl_idx in candidates {
+                    let mut value_type = if let Some(file_idx) =
+                        self.ctx.resolve_symbol_file_index(resolved_member_id)
+                        && file_idx != self.ctx.current_file_idx
+                    {
+                        self.type_of_value_declaration_for_cross_file_symbol(
+                            resolved_member_id,
+                            decl_idx,
+                            file_idx,
+                        )
+                    } else {
+                        self.type_of_value_declaration_for_symbol(resolved_member_id, decl_idx)
+                    };
+                    if matches!(value_type, TypeId::UNKNOWN | TypeId::ERROR)
+                        && let Some(cross_file_type) =
+                            self.cross_file_value_declaration_type(resolved_member_id, decl_idx)
+                    {
+                        value_type = cross_file_type;
+                    }
+                    if !matches!(value_type, TypeId::UNKNOWN | TypeId::ERROR) {
+                        return Some(value_type);
+                    }
                 }
             }
         }
 
         Some(self.get_type_of_symbol(resolved_member_id))
+    }
+
+    fn default_export_identifier_value_target(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
+        if !symbol.has_any_flags(symbol_flags::ALIAS)
+            || symbol.import_module.is_some()
+            || !(symbol.escaped_name == "default"
+                || symbol.import_name.as_deref() == Some("default"))
+        {
+            return None;
+        }
+        let decl_idx = symbol.primary_declaration()?;
+        let target_file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let ident = target_arena.get_identifier_at(decl_idx)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_sym_id = target_binder.file_locals.get(&ident.escaped_text)?;
+        if target_sym_id == sym_id {
+            return None;
+        }
+        self.ctx
+            .register_symbol_file_target(target_sym_id, target_file_idx);
+        Some(target_sym_id)
     }
 
     /// Resolve a namespace value member by name.
@@ -746,7 +810,9 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if let Some(module_specifier) = import_module.as_deref()
+                if direct_member_id.is_none()
+                    && module_export_member_id.is_none()
+                    && let Some(module_specifier) = import_module.as_deref()
                     && let Some(member_type) = self.namespace_default_reexport_property_type(
                         module_specifier,
                         self.ctx
@@ -920,7 +986,9 @@ impl<'a> CheckerState<'a> {
                         .map(|prop| prop.type_id);
                 }
 
-                if let Some(module_specifier) = import_module.as_deref()
+                if direct_member_id.is_none()
+                    && module_export_member_id.is_none()
+                    && let Some(module_specifier) = import_module.as_deref()
                     && let Some(member_type) = self.namespace_default_reexport_property_type(
                         module_specifier,
                         self.ctx
