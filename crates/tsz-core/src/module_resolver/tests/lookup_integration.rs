@@ -1785,3 +1785,171 @@ fn test_lookup_bare_json_specifier_nonexistent_upgrades_to_ts2732() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_lookup_scoped_runtime_js_prefers_at_types_declarations() {
+    // Regression for the `@babel/core` -> `@types/babel__core` shape: a scoped
+    // runtime package that only ships JavaScript must resolve to its matching
+    // `@types/scope__name` declaration package instead of reporting TS7016.
+    use super::fixtures::TempFixture;
+    let fx = TempFixture::new();
+    // Runtime, JS-only scoped package (no bundled declarations).
+    fx.write(
+        "node_modules/@scope/widget/package.json",
+        r#"{"name":"@scope/widget","version":"1.0.0","main":"index.js"}"#,
+    );
+    fx.write(
+        "node_modules/@scope/widget/index.js",
+        "module.exports = {};",
+    );
+    // Declarations supplied via the mangled `@types/scope__name` package.
+    fx.write(
+        "node_modules/@types/scope__widget/package.json",
+        r#"{"name":"@types/scope__widget","version":"1.0.0","types":"index.d.ts"}"#,
+    );
+    let types_entry = fx.write(
+        "node_modules/@types/scope__widget/index.d.ts",
+        "export declare const widget: number;",
+    );
+    let containing = fx.write(
+        "src/index.ts",
+        "import { widget } from '@scope/widget';\nwidget;\n",
+    );
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "@scope/widget",
+        containing_file: &containing,
+        specifier_span: Span::new(0, 0),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: true,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+    let outcome = result.classify();
+
+    assert!(
+        outcome.error.is_none(),
+        "scoped runtime JS with @types declarations must not report TS7016: {:?}",
+        outcome.error
+    );
+    assert_eq!(
+        outcome.resolved_path.as_deref(),
+        Some(types_entry.as_path()),
+        "scoped runtime JS package must resolve to its @types declaration file"
+    );
+}
+
+#[test]
+fn test_lookup_scoped_runtime_js_without_at_types_still_reports_ts7016() {
+    // The declaration-priority fallback must not mask the genuine "untyped JS"
+    // case: a scoped runtime package with no matching @types package still
+    // resolves to its JS entry and surfaces TS7016 under noImplicitAny.
+    use super::fixtures::TempFixture;
+    let fx = TempFixture::new();
+    fx.write(
+        "node_modules/@scope/untyped/package.json",
+        r#"{"name":"@scope/untyped","version":"1.0.0","main":"index.js"}"#,
+    );
+    fx.write(
+        "node_modules/@scope/untyped/index.js",
+        "module.exports = {};",
+    );
+    let containing = fx.write("src/index.ts", "import x from '@scope/untyped';\nx;\n");
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "@scope/untyped",
+        containing_file: &containing,
+        specifier_span: Span::new(0, 0),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: true,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+    let outcome = result.classify();
+
+    let error = outcome
+        .error
+        .expect("untyped scoped JS package must still report a diagnostic");
+    assert_eq!(
+        error.code, COULD_NOT_FIND_DECLARATION_FILE,
+        "expected TS7016 for untyped scoped JS package, got TS{}",
+        error.code
+    );
+}
+
+#[test]
+fn test_lookup_at_types_declarations_win_over_closer_runtime_js() {
+    // Declaration priority is global across the node_modules walk: a closer
+    // JS-only runtime package must not shadow a matching @types declaration
+    // package living in a parent node_modules directory.
+    use super::fixtures::TempFixture;
+    let fx = TempFixture::new();
+    // Closer runtime JS-only package under app/node_modules.
+    fx.write(
+        "app/node_modules/@scope/cross/package.json",
+        r#"{"name":"@scope/cross","version":"1.0.0","main":"index.js"}"#,
+    );
+    fx.write(
+        "app/node_modules/@scope/cross/index.js",
+        "module.exports = {};",
+    );
+    // Declarations in the parent node_modules/@types.
+    fx.write(
+        "node_modules/@types/scope__cross/package.json",
+        r#"{"name":"@types/scope__cross","version":"1.0.0","types":"index.d.ts"}"#,
+    );
+    let types_entry = fx.write(
+        "node_modules/@types/scope__cross/index.d.ts",
+        "export declare const cross: string;",
+    );
+    let containing = fx.write(
+        "app/src/index.ts",
+        "import { cross } from '@scope/cross';\ncross;\n",
+    );
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "@scope/cross",
+        containing_file: &containing,
+        specifier_span: Span::new(0, 0),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: true,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+    let outcome = result.classify();
+
+    assert!(
+        outcome.error.is_none(),
+        "parent @types declarations must win over closer JS-only package: {:?}",
+        outcome.error
+    );
+    assert_eq!(
+        outcome.resolved_path.as_deref(),
+        Some(types_entry.as_path()),
+        "resolution must prefer the parent @types declaration file"
+    );
+}

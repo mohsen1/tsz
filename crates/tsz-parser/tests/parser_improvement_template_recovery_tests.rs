@@ -3,6 +3,92 @@
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
 
+/// Collect the diagnostic codes for `source` in emission order.
+fn diagnostic_codes(source: &str) -> Vec<u32> {
+    let (parser, _root) = parse_source(source);
+    parser.get_diagnostics().iter().map(|d| d.code).collect()
+}
+
+/// Structural rule: inside a template-literal *type*, each `${...}` substitution
+/// is a full type expression terminated by `}`. tsc's `parseLiteralOfTemplateSpan`
+/// only re-scans the brace as a template middle/tail when the substitution
+/// actually closes with `}`. If a syntax error leaves the parser parked on some
+/// other token, tsc emits `'}' expected` (TS1005) and synthesizes a *missing*
+/// `TemplateTail` without consuming the token — so the rest of the source is
+/// recovered from its real position. tsz must not blindly re-scan a template
+/// token from a non-`}` position, which would reinterpret unrelated source as
+/// template text and lose token boundaries during recovery.
+///
+/// `type R = ` + "`${A B}`" closes the substitution after `A`; the stray `B`
+/// must trigger the `TS1005` / `TS1128` / `TS1160` recovery cascade exactly as
+/// tsc produces, rather than being silently absorbed as template text.
+#[test]
+fn template_type_substitution_unterminated_by_stray_token_recovers_like_tsc() {
+    assert_eq!(
+        diagnostic_codes("type R = `${A B}`;"),
+        vec![1005, 1128, 1160],
+        "stray token after a template-type substitution type must emit the \
+         '}}' expected / declaration-expected / unterminated-template cascade"
+    );
+}
+
+/// The same rule must hold regardless of the binder spelling and across a
+/// statement-terminator stray token, proving the recovery is structural and not
+/// keyed on a particular identifier or token.
+#[test]
+fn template_type_substitution_stray_token_recovery_is_structural() {
+    // A different binder name and a `;` (instead of an identifier) as the stray
+    // token: still `'}' expected` + declaration-expected + unterminated.
+    assert_eq!(
+        diagnostic_codes("type Mapped = `${Outer;}`;"),
+        vec![1005, 1128, 1160],
+    );
+}
+
+/// A failed type parse inside the substitution (no valid type at all) reports
+/// `Type expected` (TS1110) at the offending token; tsc's same-position
+/// deduplication then suppresses the redundant `'}' expected`, leaving the
+/// declaration-expected / unterminated cascade. The previous tsz behavior
+/// swallowed everything after the bogus substitution into a phantom tail and
+/// emitted only the single TS1110.
+#[test]
+fn template_type_substitution_empty_or_invalid_recovers_like_tsc() {
+    assert_eq!(diagnostic_codes("type X = `${,}`;"), vec![1110, 1128, 1160]);
+    // A bare, well-formed empty substitution `${}` reports only `Type expected`,
+    // since the `}` legitimately closes the (empty) substitution.
+    assert_eq!(diagnostic_codes("type Y = `${}`;"), vec![1110]);
+}
+
+/// Multi-span template types must recover at the first broken span and not
+/// cascade phantom tails through the remaining spans.
+#[test]
+fn template_type_multi_span_recovers_at_first_broken_span() {
+    assert_eq!(
+        diagnostic_codes("type Q = `pre${A}mid${,}post`;"),
+        vec![1110, 1128, 1160],
+    );
+}
+
+/// Regression guard: a *valid* constrained-`infer` template-literal type in a
+/// conditional `extends` branch — the exact surface family in the originating
+/// benchmark row — must still parse with zero diagnostics. The fix only changes
+/// the error-recovery branch, so the well-formed grammar stays untouched.
+#[test]
+fn template_type_constrained_infer_extends_branch_parses_clean() {
+    for source in [
+        "type Foo<T> = T extends `${infer A extends string}` ? A : never;",
+        "type Split<S> = S extends `${infer H extends string}${infer R}` ? H : never;",
+        "type Joined = `a${string}b${number}c`;",
+        "type Nested<T> = T extends `x${T extends string ? `${infer A}` : never}y` ? A : never;",
+    ] {
+        assert!(
+            diagnostic_codes(source).is_empty(),
+            "expected no parse errors for {source:?}, got {:?}",
+            diagnostic_codes(source),
+        );
+    }
+}
+
 /// Structural rule: when a template literal appears where an object-literal
 /// property name is expected, tsc closes the object literal at the template,
 /// recovers the template as a tagged-template tail on the object expression,

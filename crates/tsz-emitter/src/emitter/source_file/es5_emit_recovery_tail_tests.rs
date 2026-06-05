@@ -120,6 +120,40 @@ fn invalid_var_class_keyword_emits_recovered_class_tail() {
 }
 
 #[test]
+fn class_mapped_type_member_emits_recovered_tail() {
+    let source = "type PlaceType = 'openSky' | 'roofed' | 'garage';\nclass C {\n    [P in PlaceType]: any\n}\nconst D = class {\n    [P in PlaceType]: any\n};\nconst E = class {\n    [P in 'a' | 'b']: any\n};\n";
+
+    let (parser, root) = parse_test_source(source);
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, _b;"),
+        "Class expressions with recovered mapped members should reserve comma temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class C {\n}\nP in PlaceType;"),
+        "Class declarations should emit recovered mapped-member tails after the class.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const D = (_a = class {\n    },\n    P in PlaceType,\n    _a);"),
+        "Class expression mapped-member tail should be a comma item before the temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const E = (_b = class {\n    },\n    P in 'a' | 'b',\n    _b);"),
+        "String-literal mapped clauses should preserve the recovered tail text.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn reserved_enum_name_emits_anonymous_enum_and_reserved_statement() {
     for (source, recovered_statement) in [
         ("enum void {}", "void {};"),
@@ -580,6 +614,7 @@ return {
         ..Default::default()
     };
     let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_current_root_js_source(true);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
@@ -649,6 +684,7 @@ fn root_js_recovery_preserves_invalid_declaration_modifiers() {
 class C {
     async constructor() { }
     async field = 1
+    set invariant() { }
 }
 async export function f() { }
 async async function g() { }
@@ -656,11 +692,21 @@ function params(static x, export y, async z) { }
 async const value = 1
 async import 'assert'
 async export { f }
+export import 'fs'
+export export { g }
 export export var duplicateExport = 1
 export static var staticExport = 1
 function outer() {
     static function inner() { }
 }
+const object = {
+    static method() { }
+    [console.log('oh no'), 2]: 'hi',
+    #secret: 1,
+    export cantExportProperties: 4,
+}
+const { ...rest = true } = object
+const tri = import('1','2','3')
 ";
     let mut parser = ParserState::new("plain.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -671,22 +717,32 @@ function outer() {
         ..Default::default()
     };
     let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_current_root_js_source(true);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
     for expected in [
-        "async constructor()",
+        "constructor()",
         "async field = 1;",
+        "set invariant() { }",
         "async export function f() { }",
         "async async function g() { }",
         "function params(static x, export y, async z) { }",
         "async const value = 1;",
         "async import 'assert';",
         "export { f };",
+        "export import 'fs';",
+        "export { g };",
         "export export var duplicateExport = 1;",
         "export static var staticExport = 1;",
         "static function inner() { }",
+        "static method() { }",
+        "[console.log('oh no'), 2]: 'hi'",
+        "#secret: 1",
+        "cantExportProperties: 4",
+        "const { ...rest = true } = object;",
+        "const tri = import('1','2','3');",
     ] {
         assert!(
             output.contains(expected),
@@ -700,5 +756,9 @@ function outer() {
     assert!(
         !output.contains("async export {"),
         "Stray async before a named export should not be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var iant"),
+        "Recovered setter name tail should not emit as a synthetic variable statement.\nOutput:\n{output}"
     );
 }

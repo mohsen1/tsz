@@ -819,16 +819,44 @@ impl ParserState {
         loop {
             let type_node = self.parse_type();
 
-            // Now we need to rescan for the template continuation
-            // The scanner needs to be told to rescan as template
-            self.scanner.re_scan_template_token(false);
-            self.current_token = self.scanner.get_token();
-
+            // tsc's `parseLiteralOfTemplateSpan`: only when the `${...}` substitution
+            // actually closes with `}` do we re-scan the brace as a template
+            // middle/tail. If a syntax error left the scanner parked on some other
+            // token, re-scanning a template token from that non-`}` position would
+            // reinterpret unrelated source as template text and lose token
+            // boundaries during recovery. In that case tsc emits `'}' expected` and
+            // synthesizes a missing `TemplateTail` without consuming the token, so
+            // the surrounding statement context recovers from the real position.
+            // `re_scan_template_token` only rewinds `pos` to the token start, so the
+            // span start is the same whether or not we re-scan; read it once.
             let span_start = self.token_pos();
-            let is_tail = self.is_token(SyntaxKind::TemplateTail);
+            let (literal, is_tail) = if self.is_token(SyntaxKind::CloseBraceToken) {
+                // Tell the scanner to rescan the `}` as a template continuation.
+                self.scanner.re_scan_template_token(false);
+                self.current_token = self.scanner.get_token();
 
-            // Parse the template middle/tail literal
-            let literal = self.parse_template_literal_span();
+                let is_tail = self.is_token(SyntaxKind::TemplateTail);
+
+                // Parse the template middle/tail literal.
+                let literal = self.parse_template_literal_span();
+                (literal, is_tail)
+            } else {
+                use tsz_common::diagnostics::diagnostic_codes;
+                let literal_end = self.token_end();
+                self.parse_error_at_current_token("'}' expected.", diagnostic_codes::EXPECTED);
+                let literal = self.arena.add_literal(
+                    SyntaxKind::TemplateTail as u16,
+                    span_start,
+                    literal_end,
+                    node::LiteralData {
+                        text: String::new(),
+                        raw_text: None,
+                        value: None,
+                        has_invalid_escape: false,
+                    },
+                );
+                (literal, true)
+            };
             let span_end = self.token_full_start();
 
             // Create a template span node
