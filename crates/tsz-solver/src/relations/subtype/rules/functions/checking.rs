@@ -505,6 +505,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // whose result satisfies the constraint is accepted (matches
                 // tsc for overloaded generic builder methods). Bare or
                 // unconstrained parameters stay opaque.
+                //
+                // `type_param_appears_bare` matches the parameter by name as
+                // well as by `TypeId`, because the erase substitution below is
+                // keyed on `tp.name` and a signature's `type_params` list can
+                // carry a different `TypeId` for the same logical parameter than
+                // its body does (the list is re-interned while the return keeps
+                // its original reference). Without the name match a bare `T`,
+                // `T[]`, or `T | null` in the return would read as "absent",
+                // and the name-keyed substitution would erase it anyway — a
+                // covariant leak that wrongly accepts a concrete member for a
+                // universally-quantified one (issue #10812).
                 let mut target_canonical = TypeSubstitution::new();
                 for tp in &target_instantiated.type_params {
                     let tp_id = self.interner.type_param(*tp);
