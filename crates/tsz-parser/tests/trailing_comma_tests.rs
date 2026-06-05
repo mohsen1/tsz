@@ -3,11 +3,166 @@
 //! These tests verify that the parser correctly identifies trailing commas
 //! in various contexts where TypeScript allows them.
 
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{parse_source, parse_source_named};
 
 fn parse_code(code: &str) -> Vec<crate::parser::ParseDiagnostic> {
     let (parser, _root) = parse_source(code);
     parser.get_diagnostics().to_vec()
+}
+
+/// Count TS1013 ("A rest parameter or binding pattern may not have a trailing comma")
+/// diagnostics produced when parsing `code` under `file_name`.
+fn rest_trailing_comma_errors(file_name: &str, code: &str) -> usize {
+    let (parser, _root) = parse_source_named(file_name, code);
+    parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1013)
+        .count()
+}
+
+/// In non-ambient contexts, `tsc` reports TS1013 for a trailing comma after a
+/// rest parameter. These mirror the `tsc` oracle (TypeScript 6.0.x).
+#[test]
+fn test_rest_trailing_comma_errors_in_non_ambient_contexts() {
+    let cases = [
+        ("function declaration", "function f(...a: number[],) {}"),
+        ("arrow function", "const f = (...a: number[],) => {};"),
+        ("class method", "class C { m(...a: number[],) {} }"),
+        (
+            "interface method signature",
+            "interface I { m(...a: number[],): void; }",
+        ),
+        ("function type alias", "type F = (...a: number[],) => void;"),
+        (
+            "constructor type alias",
+            "type C = new (...a: number[],) => object;",
+        ),
+        (
+            "interface call signature",
+            "interface I { (...a: number[],): void; }",
+        ),
+        (
+            "interface construct signature",
+            "interface I { new (...a: number[],): object; }",
+        ),
+        (
+            "plain (non-declare) namespace function",
+            "namespace N { export function f(...a: number[],) {} }",
+        ),
+        (
+            "overload signature",
+            "function f(...a: number[],): void;\nfunction f(...a: number[]): void {}",
+        ),
+    ];
+    for (label, code) in cases {
+        assert_eq!(
+            rest_trailing_comma_errors("test.ts", code),
+            1,
+            "expected exactly one TS1013 for {label}: {code:?}",
+        );
+    }
+}
+
+/// In ambient contexts (inside `declare ...` or anywhere in a `.d.ts` file),
+/// `tsc` tolerates a trailing comma after a rest parameter and emits no TS1013.
+/// This is the real-world `@types/node` `pipeline`-overload shape from the bug.
+#[test]
+fn test_rest_trailing_comma_allowed_in_ambient_contexts() {
+    // `declare`-modified declarations inside a regular `.ts` file.
+    let ts_cases = [
+        (
+            "declare function",
+            "declare function f(...a: number[],): void;",
+        ),
+        (
+            "declare namespace function",
+            "declare namespace N { function f(...a: number[],): void; }",
+        ),
+        (
+            "declare class method",
+            "declare class C { m(...a: number[],): void; }",
+        ),
+        (
+            "declare const function type",
+            "declare const f: (...a: number[],) => void;",
+        ),
+        (
+            "declare const constructor type",
+            "declare const C: new (...a: number[],) => object;",
+        ),
+        (
+            "declare module function",
+            "declare module \"m\" { export function f(...a: number[],): void; }",
+        ),
+    ];
+    for (label, code) in ts_cases {
+        assert_eq!(
+            rest_trailing_comma_errors("test.ts", code),
+            0,
+            "expected no TS1013 for ambient {label}: {code:?}",
+        );
+    }
+
+    // Everything in a declaration file is ambient, even without `declare`.
+    let dts_cases = [
+        (
+            "declaration-file function (pipeline shape)",
+            "declare function pipeline(\n    stream1: unknown,\n    ...streams: Array<unknown>,\n): unknown;",
+        ),
+        (
+            "declaration-file interface method",
+            "interface I { m(...a: number[],): void; }",
+        ),
+        (
+            "declaration-file function type alias",
+            "type F = (...a: number[],) => void;",
+        ),
+        (
+            "declaration-file constructor type alias",
+            "type C = new (...a: number[],) => object;",
+        ),
+        (
+            "declaration-file call signature",
+            "interface I { (...a: number[],): void; }",
+        ),
+        (
+            "declaration-file plain function",
+            "declare function f(...a: number[],): void;",
+        ),
+    ];
+    for (label, code) in dts_cases {
+        assert_eq!(
+            rest_trailing_comma_errors("test.d.ts", code),
+            0,
+            "expected no TS1013 for {label} in a .d.ts file: {code:?}",
+        );
+    }
+}
+
+/// The ambient exception is specific to the trailing comma: a rest parameter
+/// that is *not* last must still report TS1014 in every context, and a trailing
+/// comma after a non-rest parameter is always fine.
+#[test]
+fn test_rest_parameter_grammar_unaffected_by_ambient_exception() {
+    // Rest-not-last still errors (TS1014) even in ambient contexts.
+    let (parser, _root) = parse_source_named(
+        "test.d.ts",
+        "declare function f(...a: number[], b: number): void;",
+    );
+    let ts1014 = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1014)
+        .count();
+    assert_eq!(ts1014, 1, "rest-not-last should still emit TS1014 in .d.ts");
+
+    // Trailing comma after a non-rest final parameter never emits TS1013.
+    assert_eq!(
+        rest_trailing_comma_errors("test.ts", "function f(a: number, b: number,) {}"),
+        0,
+        "trailing comma after a non-rest parameter must not emit TS1013",
+    );
 }
 
 #[test]

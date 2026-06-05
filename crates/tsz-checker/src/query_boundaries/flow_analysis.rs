@@ -1,3 +1,4 @@
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
@@ -204,11 +205,49 @@ pub(crate) fn cases_exhaust_type(
         return false;
     }
 
+    if case_types_exactly_cover_switch_domain(db.as_type_database(), switch_type, case_types) {
+        return true;
+    }
+
     let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
     if let Some(environment) = env {
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+}
+
+fn case_type_domain(db: &dyn TypeDatabase, case_type: TypeId) -> TypeId {
+    enum_member_domain(db, case_type)
+}
+
+fn case_types_exactly_cover_switch_domain(
+    db: &dyn TypeDatabase,
+    switch_type: TypeId,
+    case_types: &[TypeId],
+) -> bool {
+    let Some(members) = union_members_for_type(db, switch_type) else {
+        return case_types
+            .iter()
+            .any(|&case_type| case_type_domain(db, case_type) == switch_type);
+    };
+
+    let mut remaining: FxHashSet<TypeId> = FxHashSet::default();
+    remaining.reserve(members.len());
+    remaining.extend(
+        members
+            .iter()
+            .copied()
+            .map(|member| enum_member_domain(db, member)),
+    );
+
+    for &case_type in case_types {
+        remaining.remove(&case_type_domain(db, case_type));
+        if remaining.is_empty() {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Apply a solver-owned type guard to a flow type.
@@ -1087,6 +1126,23 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert!(members.contains(&db.literal_string("string")));
         assert!(members.contains(&db.literal_string("number")));
+    }
+
+    #[test]
+    fn cases_exhaust_type_uses_exact_literal_union_coverage() {
+        let db = TypeInterner::new();
+        let first = db.literal_string("first");
+        let second = db.literal_string("second");
+        let third = db.literal_string("third");
+        let switch_type = db.union(vec![first, second, third]);
+
+        assert!(cases_exhaust_type(
+            &db,
+            None,
+            switch_type,
+            &[second, first, third],
+        ));
+        assert!(!cases_exhaust_type(&db, None, switch_type, &[first, third]));
     }
 
     #[test]

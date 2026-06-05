@@ -1,7 +1,7 @@
 use super::*;
 use crate::construction::TypeInterner;
 use crate::recursion::RecursionResult;
-use crate::types::{PropertyInfo, TupleElement, TypeParamInfo};
+use crate::types::{MappedModifier, PropertyInfo, TupleElement, TypeParamInfo};
 
 #[test]
 fn evaluate_keyof_or_constraint_preserves_reentrant_constraint() {
@@ -982,4 +982,80 @@ fn distributed_mapped_over_intersection_is_idempotent() {
         first, second,
         "re-evaluating the same distributed mapped id must be stable (cached)"
     );
+}
+
+/// Build the identity homomorphic mapped `{ [K in keyof T]: T[K] }` over
+/// `source`, optionally adding an identity `as K` remap and a readonly modifier.
+/// Reuses [`build_identity_homomorphic_mapped`] for the shared base shape.
+fn build_homomorphic_mapped_over(
+    interner: &TypeInterner,
+    iter_name: &str,
+    source: TypeId,
+    as_clause: bool,
+    readonly_modifier: Option<MappedModifier>,
+) -> MappedType {
+    let mut mapped = build_identity_homomorphic_mapped(interner, iter_name, source);
+    if as_clause {
+        let iter_atom = interner.intern_string(iter_name);
+        mapped.name_type = Some(interner.type_param(TypeParamInfo::simple(iter_atom)));
+    }
+    mapped.readonly_modifier = readonly_modifier;
+    mapped
+}
+
+/// A homomorphic mapped type over `readonly T[]` / `ReadonlyArray<T>` must
+/// preserve the readonly array shape rather than collapsing to a plain object
+/// (which dropped the `readonly` modifier and synthesized mutable-array methods
+/// like `push`). Readonly is kept for a plain `{ [K in keyof T]: T[K] }`, an
+/// identity `as K` remap, and an explicit `+readonly`; a no-`as` `-readonly`
+/// yields a mutable array, matching tsc's `instantiateMappedArrayType`.
+#[test]
+fn homomorphic_mapped_over_readonly_array_preserves_readonly() {
+    let interner = TypeInterner::new();
+    // source: readonly number[]
+    let source = interner.readonly_type(interner.array(TypeId::NUMBER));
+
+    // (as_clause, readonly_modifier, expect_readonly_result, label)
+    let cases = [
+        (false, None, true, "plain identity"),
+        (true, None, true, "identity as K"),
+        (false, Some(MappedModifier::Add), true, "+readonly"),
+        (
+            false,
+            Some(MappedModifier::Remove),
+            false,
+            "-readonly (no as)",
+        ),
+    ];
+
+    for iter_name in ["K", "P", "Item"] {
+        for &(as_clause, readonly_modifier, expect_readonly, label) in &cases {
+            let mapped = build_homomorphic_mapped_over(
+                &interner,
+                iter_name,
+                source,
+                as_clause,
+                readonly_modifier,
+            );
+            let mut evaluator = TypeEvaluator::new(&interner);
+            let result = evaluator.evaluate_mapped(&mapped);
+            let inner = match interner.lookup(result) {
+                Some(TypeData::ReadonlyType(inner)) if expect_readonly => inner,
+                Some(TypeData::Array(_)) if !expect_readonly => result,
+                other => panic!(
+                    "iter `{iter_name}`: {label}: expected a {} array, got {other:?}",
+                    if expect_readonly {
+                        "readonly"
+                    } else {
+                        "mutable"
+                    }
+                ),
+            };
+            assert!(
+                matches!(interner.lookup(inner), Some(TypeData::Array(_))),
+                "iter `{iter_name}`: {label}: result must wrap an Array, inner was {:?}",
+                interner.lookup(inner)
+            );
+        }
+    }
 }

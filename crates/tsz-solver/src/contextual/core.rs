@@ -8,7 +8,8 @@ use crate::contextual::extractors::{
     PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
     RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
     TupleElementExtractor, collect_from_intersection, collect_single_or_union,
-    collect_single_or_union_no_reduce, extract_param_type_at_for_call,
+    collect_single_or_union_no_reduce, collect_single_or_union_preserve,
+    extract_param_type_at_for_call,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -1087,7 +1088,9 @@ impl<'a> ContextualTypeContext<'a> {
     ) -> Option<TypeId> {
         let expected = self.expected?;
 
-        // Handle Union explicitly - collect tuple element types from all members
+        // Handle Union explicitly - collect tuple element types from all members,
+        // preserving literal arms (see `collect_single_or_union_preserve`) so a
+        // fresh literal element keyed by `number | 2` is not widened to `number`.
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let elem_types: Vec<TypeId> = members
@@ -1097,7 +1100,7 @@ impl<'a> ContextualTypeContext<'a> {
                     ctx.get_tuple_element_type_inner(index, element_count)
                 })
                 .collect();
-            return collect_single_or_union(self.interner, elem_types);
+            return collect_single_or_union_preserve(self.interner, elem_types);
         }
 
         // Handle Intersection explicitly - collect tuple element types from all members
