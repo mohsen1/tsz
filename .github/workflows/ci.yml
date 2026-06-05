@@ -15,10 +15,11 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  # A newer pull_request event means the old PR run can no longer satisfy
-  # strict required checks for the current head SHA. Cancel stale PR runs so
-  # exact-head CI does not sit queued behind obsolete ready-review work.
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && 'metadata' || 'suite' }}
+  # A newer suite pull_request event means the old PR run can no longer
+  # satisfy strict required checks for the current head SHA. Body/title edits
+  # run only the metadata gates and use a separate group so repairing PR body
+  # metadata does not cancel the real suite run for the same SHA.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -60,14 +61,11 @@ jobs:
           compiler_checks_required=true
           unit_packages=""
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            # Native merge queue has already admitted a PR whose current head
-            # satisfied the required PR status checks. The queued commit is a
-            # GitHub-owned synthetic merge; keep the required CI Summary alive
-            # for branch protection without scheduling the self-hosted suite.
-            echo "Native merge queue group - validating queue admission without self-hosted CI."
-            should_run=false
-            full_run=false
-            compiler_checks_required=false
+            # Native merge queue validates a GitHub-owned synthetic merge
+            # commit. Run the same Cloud Run-backed compiler suite here so
+            # branch protection is checking the actual queued commit, not only
+            # the PR head that entered the queue.
+            echo "Native merge queue group - running full Cloud Run CI for the queued merge commit."
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             if [[ "${{ github.event.action }}" == "edited" ]]; then
               # Body/title edits can repair AgentName, project-corpus, or WIP
@@ -149,7 +147,7 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
@@ -401,7 +399,7 @@ jobs:
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
                     compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
-                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                       || true)
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \
