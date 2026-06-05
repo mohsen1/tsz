@@ -28,7 +28,7 @@ impl<'a> Printer<'a> {
                 .filter(|&&idx| self.call_argument_should_emit(idx))
                 .count()
         });
-        if emitted_arg_count >= Self::top_level_comma_count(source_args) + 1 {
+        if emitted_arg_count > Self::top_level_comma_count(source_args) {
             return false;
         }
 
