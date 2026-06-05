@@ -223,6 +223,9 @@ impl<'a> CheckerState<'a> {
             if !sig.type_params.is_empty() {
                 continue;
             }
+            if self.substituted_return_can_stay_lazy_identity(sig.return_type) {
+                continue;
+            }
             // Only evaluate the return type. Params, `this`, and predicate
             // are intentionally left as substituted-but-not-evaluated:
             // contextual-typing and contravariant matching paths rely on
@@ -232,6 +235,36 @@ impl<'a> CheckerState<'a> {
             // resolution).
             sig.return_type = eval(sig.return_type);
         }
+    }
+
+    fn substituted_return_can_stay_lazy_identity(&self, return_type: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let mut saw_identity = false;
+        if let Some(members) = common_query::union_members(db, return_type) {
+            for member in members.iter() {
+                if matches!(*member, TypeId::NULL | TypeId::UNDEFINED) {
+                    continue;
+                }
+                if !self.type_is_lazy_class_or_interface_identity(*member) {
+                    return false;
+                }
+                saw_identity = true;
+            }
+            return saw_identity;
+        }
+        self.type_is_lazy_class_or_interface_identity(return_type)
+    }
+
+    fn type_is_lazy_class_or_interface_identity(&self, type_id: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let base = common_query::type_application(db, type_id)
+            .map_or(type_id, |application| application.base);
+        query::lazy_def_id(db, base).is_some_and(|def_id| {
+            matches!(
+                self.ctx.definition_store.get_kind(def_id),
+                Some(DefKind::Class | DefKind::Interface)
+            )
+        })
     }
 
     fn instantiate_instantiation_expression_signature(
