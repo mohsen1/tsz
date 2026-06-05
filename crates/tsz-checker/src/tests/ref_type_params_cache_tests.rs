@@ -40,7 +40,7 @@ fn property_only_type_literal_alias_body_missing_names_covered_by_validation() {
     assert!(
         checker_source.contains("syntax_kind_ext::TYPE_LITERAL")
             && checker_source.contains("get_property_decl")
-            && checker_source.contains("prop.type_annotation.is_none()"),
+            && checker_source.contains("prop.type_annotation.is_some()"),
         "property-only type literal alias bodies should be covered by the \
          validation walk without broadening to signatures or unannotated members"
     );
@@ -58,6 +58,32 @@ fn tuple_alias_body_missing_names_covered_by_validation() {
             && checker_source.contains("get_named_tuple_member"),
         "tuple and named-tuple alias bodies should be covered by the validation \
          walk without falling back to a second missing-name traversal"
+    );
+}
+
+#[test]
+fn type_node_validation_cache_is_context_keyed() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    assert!(
+        checker_source.contains("active_resolving_alias_set_key")
+            && checker_source.contains("type_reference_arg_validation_scope_key")
+            && checker_source.contains("type_node_validation"),
+        "type-node validation success caching must be keyed by lexical scope \
+         and active alias-resolution context"
+    );
+}
+
+#[test]
+fn type_node_validation_cache_only_records_clean_walks() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    assert!(
+        checker_source.contains("let diagnostics_before = self.ctx.diagnostics.len();")
+            && checker_source.contains("if self.ctx.diagnostics.len() == diagnostics_before")
+            && checker_source.contains(".type_node_validation")
+            && checker_source.contains(".insert(validation_cache_key)"),
+        "type-node validation success caching must not record diagnostic-bearing walks"
     );
 }
 

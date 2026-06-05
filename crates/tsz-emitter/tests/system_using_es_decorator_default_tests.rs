@@ -50,4 +50,14 @@ fn system_using_es5_threads_default_tracker_for_tc39_decorated_anonymous_default
          `_default` so live-binding re-exports observe the post-decorator value.\n\
          Output:\n{output}"
     );
+    assert!(
+        !output.contains("class_1"),
+        "System top-level using default export should request the default_1 binding instead \
+         of leaking the fallback class_1 name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_classThis, \"default\")"),
+        "System top-level using default export should keep the runtime function name as \
+         `default`.\nOutput:\n{output}"
+    );
 }

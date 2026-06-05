@@ -484,6 +484,40 @@ impl<'a> CheckerState<'a> {
                     ));
                 }
 
+                // Member names with more than one declaration in this base
+                // (method overloads or a get/set accessor pair). For those, any
+                // single declaration's type is incomplete: collecting only the
+                // first overload signature drops the rest, which produces a false
+                // TS2416/TS2420 when the implemented interface relies on a later
+                // overload. The base class's instance-type shape already
+                // aggregates the full overload set (and hides the implementation
+                // signature) exactly as the own-class overloaded path does, so
+                // pull the merged member type from there for these names.
+                let overloaded_member_names: rustc_hash::FxHashSet<String> = {
+                    let mut counts: rustc_hash::FxHashMap<String, u32> =
+                        rustc_hash::FxHashMap::default();
+                    for &member_idx in &base_class.members.nodes {
+                        if let Some(name) = self.get_member_name(member_idx) {
+                            *counts.entry(name).or_default() += 1;
+                        }
+                    }
+                    counts
+                        .into_iter()
+                        .filter_map(|(name, count)| (count >= 2).then_some(name))
+                        .collect()
+                };
+                let base_aggregated_member_types: rustc_hash::FxHashMap<String, TypeId> =
+                    if overloaded_member_names.is_empty() {
+                        rustc_hash::FxHashMap::default()
+                    } else {
+                        let base_instance_type =
+                            self.get_class_instance_type(base_decl, base_class);
+                        crate::query_boundaries::class::instance_member_types_by_name(
+                            self.ctx.types,
+                            base_instance_type,
+                        )
+                    };
+
                 // Collect public members from the base class
                 for &member_idx in &base_class.members.nodes {
                     if let Some(name) = self.get_member_name(member_idx)
@@ -500,7 +534,14 @@ impl<'a> CheckerState<'a> {
                         let visibility_mask =
                             tsz_binder::symbol_flags::PRIVATE | tsz_binder::symbol_flags::PROTECTED;
                         if sym_flags & visibility_mask == 0 {
-                            let member_type = self.get_type_of_class_member(member_idx);
+                            let member_type = if overloaded_member_names.contains(&name) {
+                                base_aggregated_member_types
+                                    .get(&name)
+                                    .copied()
+                                    .unwrap_or_else(|| self.get_type_of_class_member(member_idx))
+                            } else {
+                                self.get_type_of_class_member(member_idx)
+                            };
                             result.insert(
                                 name,
                                 self.apply_inherited_member_substitutions(

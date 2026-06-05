@@ -1831,6 +1831,18 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
+        // A plain `expr as T` / `<T>expr` assertion argument yields the asserted
+        // type `T` as written. `tsc` reports it with its literal element /
+        // property types intact (a regular, non-fresh type) rather than widening
+        // them as for a fresh array/object literal argument. Detect the assertion
+        // before the `skip_parenthesized_and_assertions` below peels it away to
+        // the inner literal (which would otherwise route the operand through the
+        // fresh-literal widening). `format_type_diagnostic` renders the asserted
+        // type with literals preserved. `as const` and `satisfies` are excluded.
+        if self.expression_is_plain_type_assertion(arg_idx) {
+            return self.format_type_diagnostic(arg_type);
+        }
+
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
         let is_array_literal_arg = self
             .ctx

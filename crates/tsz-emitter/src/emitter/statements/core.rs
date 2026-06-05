@@ -1152,6 +1152,7 @@ impl<'a> Printer<'a> {
         if self.should_emit_invalid_namespace_static_modifier(node, &var_stmt.modifiers) {
             self.write("static ");
         }
+        self.emit_recovered_root_js_declaration_modifiers(&var_stmt.modifiers, false);
         let is_accessor = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword);

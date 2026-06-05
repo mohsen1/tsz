@@ -1,16 +1,23 @@
 use super::state::checking as state_checking;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::relations::subtype::TypeResolver;
+use tsz_solver::def::{DefKind, DefinitionStore};
 
 pub(crate) use super::common::{
-    PropertyAccessResult, application_info, array_element_type, callable_shape_for_type,
-    contains_free_type_parameters, enum_def_id, get_indexed_access_type, get_type_query_symbol_ref,
-    intersection_list_id, intersection_members, is_symbol_or_unique_symbol,
-    is_template_literal_type, lazy_def_id, literal_value, no_infer_inner_type,
-    object_shape_for_type, string_literal_value, type_has_displayable_name,
-    type_parameter_constraint, union_list_id, union_members, widen_literal_to_primitive,
-    widen_type_deep,
+    PropertyAccessResult, TypeResolver, TypeSubstitution, application_info, array_element_type,
+    callable_shape_for_type, callable_shape_for_type_extended, collect_referenced_types,
+    construct_signatures_for_type, contains_free_type_parameters,
+    contains_generic_indexed_access_surface, contains_type_parameter_named,
+    contains_type_parameters, enum_def_id, enum_member_type, function_shape_for_type,
+    get_indexed_access_type, get_type_query_symbol_ref, has_function_shape, index_access_types,
+    instantiate_type, intersection_list_id, intersection_members, is_fresh_object_type,
+    is_generic_mapped_type, is_number_literal, is_symbol_or_unique_symbol,
+    is_template_literal_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_info,
+    no_infer_inner_type, object_shape_for_type, readonly_inner_type, return_type_for_type,
+    string_literal_value, tuple_elements, type_has_displayable_name,
+    type_is_conditional_type_result_with_unresolved_inference, type_may_display_iterator_protocol,
+    type_param_info, type_parameter_constraint, union_list_id, union_members,
+    widen_literal_to_primitive, widen_type_deep,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
@@ -41,6 +48,68 @@ pub(crate) fn application_base_is_mapped_type<R: TypeResolver>(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::application_base_is_mapped_type_db(db, resolver, type_id)
+}
+
+pub(crate) fn alias_application_body_reduces_through_conditional_or_indexed(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let Some(def_id) = super::common::get_application_lazy_def_id(db, type_id) else {
+        return false;
+    };
+    let Some(def) = definitions.get(def_id) else {
+        return false;
+    };
+    def.kind == DefKind::TypeAlias
+        && def.body.is_some_and(|body| {
+            alias_body_reduces_through_conditional_or_indexed(db, definitions, body, 0)
+        })
+}
+
+pub(crate) fn evaluated_alias_application_has_concrete_display(
+    db: &dyn TypeDatabase,
+    candidate: TypeId,
+    evaluated: TypeId,
+) -> bool {
+    candidate != evaluated
+        && evaluated != TypeId::ERROR
+        && !super::common::is_conditional_type(db, evaluated)
+        && !super::common::is_index_access_type(db, evaluated)
+        && !super::common::contains_type_parameters(db, evaluated)
+}
+
+fn alias_body_reduces_through_conditional_or_indexed(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    type_id: TypeId,
+    depth: usize,
+) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if super::common::is_index_access_type(db, type_id)
+        || super::common::is_conditional_type(db, type_id)
+    {
+        return true;
+    }
+    if let Some(app) = super::common::type_application(db, type_id)
+        && let Some(def_id) = super::common::lazy_def_id(db, app.base)
+        && let Some(def) = definitions.get(def_id)
+        && def.kind == DefKind::TypeAlias
+        && let Some(body) = def.body
+        && alias_body_reduces_through_conditional_or_indexed(db, definitions, body, depth + 1)
+    {
+        return true;
+    }
+    if let Some(def_id) = super::common::lazy_def_id(db, type_id)
+        && let Some(def) = definitions.get(def_id)
+        && def.kind == DefKind::TypeAlias
+        && let Some(body) = def.body
+    {
+        return alias_body_reduces_through_conditional_or_indexed(db, definitions, body, depth + 1);
+    }
+    false
 }
 
 pub(crate) fn is_typeof_result_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

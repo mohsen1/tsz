@@ -484,6 +484,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.try_emit_recovered_native_dynamic_import_extra_args(
+            node,
+            call.expression,
+            &call.arguments,
+        ) {
+            return;
+        }
+
         // Signal access position so `(new a)()` keeps parens (vs `new a()`).
         let prev = self.paren_in_access_position;
         let prev_call = self.paren_is_direct_call_callee;
@@ -1158,7 +1166,7 @@ impl<'a> Printer<'a> {
         self.write(")");
     }
 
-    fn call_argument_should_emit(&self, idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn call_argument_should_emit(&self, idx: NodeIndex) -> bool {
         if idx.is_none() {
             return false;
         }

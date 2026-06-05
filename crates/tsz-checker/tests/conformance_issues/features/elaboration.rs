@@ -446,7 +446,7 @@ objAndPartial({ x: 0, y: 0 }, { x: 1, y: 1, z: 1 });
 /// `PassportStatic extends Passport`, so `let p: Passport = passport.use()` is
 /// a plain subtype assignment that tsc accepts without error. The polymorphic-this
 /// check must not override structural assignability for ordinary subtype receivers.
-/// See: <https://github.com/mohsen1/tsz/issues/3135>
+/// See: <https://github.com/tsz-org/tsz/issues/3135>
 #[test]
 fn test_export_equals_named_import_polymorphic_this_no_false_ts2322() {
     let passport_dts = r#"

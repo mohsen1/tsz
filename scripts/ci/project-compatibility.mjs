@@ -276,6 +276,7 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   if (exitClass === "timeout") add("timeout during project check");
   if (exitClass === "oom") add("OOM or killed during project check");
   if (exitClass === "crash") add("compiler crash during project check");
+  if (exitClass === "slowdown") add("runtime slowdown during project timing");
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
@@ -313,6 +314,7 @@ function rowStateFrom({ exitClass, diagnosticStatus }) {
     exitClass === "timeout" ||
     exitClass === "oom" ||
     exitClass === "crash" ||
+    exitClass === "slowdown" ||
     exitClass === "runner error"
   ) {
     return "red";
@@ -324,6 +326,7 @@ function ownerTrackFrom({ exitClass, diagnosticSubsystems }) {
   if (exitClass === "timeout") return "Track 1 runtime/timeout triage";
   if (exitClass === "oom") return "Track 1 residency triage";
   if (exitClass === "crash") return "Track 1 crash triage";
+  if (exitClass === "slowdown") return "Track 10 runtime slowdown triage";
   if (exitClass === "fixture invalid") return "Track 1 project-corpus harness/config";
   if (exitClass === "runner error") return "Track 1 benchmark runner";
   if (exitClass === "tsz unavailable") return "Track 1 benchmark runner";

@@ -358,7 +358,7 @@ impl<'a> Printer<'a> {
             // evaluation order matches the source — e.g.
             // `static a = 1; static { console.log(this.a); } static b = 2;`
             // must emit the static block AFTER `_a.a = 1` and BEFORE `_a.b = 2`.
-            // Devin review: <https://github.com/mohsen1/tsz/pull/2279#discussion_r3176494185>
+            // Devin review: <https://github.com/tsz-org/tsz/pull/2279#discussion_r3176494185>
             //
             // We build a single position-keyed list. `field` items reuse the
             // owned `StaticFieldInit` entries; `block` items consume the
@@ -423,12 +423,16 @@ impl<'a> Printer<'a> {
                         name_emit,
                         init_idx,
                         _member_pos,
-                        _leading_comments,
-                        _trailing_comments,
+                        leading_comments,
+                        trailing_comments,
                     )) => {
                         self.write(",");
                         self.write_line();
                         self.increase_indent();
+                        for (comment_text, source_pos) in leading_comments {
+                            self.write_comment_with_reindent(&comment_text, Some(source_pos));
+                            self.write_line();
+                        }
                         if self.ctx.options.use_define_for_class_fields {
                             let define_name = match &name_emit {
                                 PropertyNameEmit::Dot(s) => format!("\"{s}\""),
@@ -496,6 +500,10 @@ impl<'a> Printer<'a> {
                                     self.write(&replaced);
                                 }
                             }
+                        }
+                        for comment_text in trailing_comments {
+                            self.write_space();
+                            self.write_comment(&comment_text);
                         }
                         self.decrease_indent();
                     }

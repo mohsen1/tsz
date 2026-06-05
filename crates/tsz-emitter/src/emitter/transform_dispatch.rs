@@ -1011,7 +1011,14 @@ impl<'a> Printer<'a> {
                 && class.name.is_none()
                 && !self.collect_class_decorators(&class.modifiers).is_empty()
             {
-                emitter.set_anonymous_class_name(self.next_tc39_anonymous_class_name());
+                let default_export_class_name = self
+                    .pending_tc39_class_expression_name
+                    .as_ref()
+                    .filter(|(name, is_expression)| !*is_expression && name == "default")
+                    .and_then(|_| self.anonymous_default_export_name.clone());
+                let class_name = default_export_class_name
+                    .unwrap_or_else(|| self.next_tc39_anonymous_class_name());
+                emitter.set_anonymous_class_name(class_name);
             }
         }
         if let Some(text) = self.source_text_for_map() {

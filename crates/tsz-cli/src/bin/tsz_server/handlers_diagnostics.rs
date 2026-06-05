@@ -452,7 +452,7 @@ impl Server {
         // tsserver acknowledges immediately, then asynchronously fires
         // `syntaxDiag`, `semanticDiag`, `suggestionDiag`, and finally
         // `requestCompleted`. Without these events, clients see no
-        // diagnostics. See https://github.com/mohsen1/tsz/issues/3544.
+        // diagnostics. See https://github.com/tsz-org/tsz/issues/3544.
         let files: Vec<String> = request
             .arguments
             .get("files")

@@ -20,19 +20,60 @@ const DOCS_ALLOWLIST = [
   "DEVELOPMENT.md",
   "HOW_TO_CODE.md",
 ];
+const WATCH_DEBOUNCE_MS = 100;
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function copyMarkdownTree(srcDir, destDir) {
+function copyFileIfChanged(srcPath, destPath) {
+  if (
+    fs.existsSync(destPath)
+    && fs.readFileSync(srcPath).equals(fs.readFileSync(destPath))
+  ) {
+    return;
+  }
+
+  ensureDir(path.dirname(destPath));
+  fs.copyFileSync(srcPath, destPath);
+}
+
+function writeFileIfChanged(destPath, content) {
+  if (fs.existsSync(destPath) && fs.readFileSync(destPath, "utf8") === content) {
+    return;
+  }
+
+  ensureDir(path.dirname(destPath));
+  fs.writeFileSync(destPath, content);
+}
+
+function pruneTree(rootDir, expectedFiles) {
+  if (!fs.existsSync(rootDir)) return;
+
+  for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+    const entryPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      pruneTree(entryPath, expectedFiles);
+      if (fs.readdirSync(entryPath).length === 0) {
+        fs.rmdirSync(entryPath);
+      }
+      continue;
+    }
+
+    if (!expectedFiles.has(entryPath)) {
+      fs.rmSync(entryPath, { force: true });
+    }
+  }
+}
+
+function syncMarkdownTree(srcDir, destDir, expectedFiles) {
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
     const srcPath = path.join(srcDir, entry.name);
     const destPath = path.join(destDir, entry.name);
 
     if (entry.isDirectory()) {
       ensureDir(destPath);
-      copyMarkdownTree(srcPath, destPath);
+      syncMarkdownTree(srcPath, destPath, expectedFiles);
       continue;
     }
 
@@ -40,11 +81,13 @@ function copyMarkdownTree(srcDir, destDir) {
       continue;
     }
 
-    fs.copyFileSync(srcPath, destPath);
+    expectedFiles.add(destPath);
+    copyFileIfChanged(srcPath, destPath);
   }
 }
 
 function copyAllowedDocs() {
+  const expectedFiles = new Set();
   for (const relPath of DOCS_ALLOWLIST) {
     const sourcePath = path.join(DOCS, relPath);
     const targetPath = path.join(TARGET_DOCS, relPath);
@@ -53,12 +96,14 @@ function copyAllowedDocs() {
     const stat = fs.statSync(sourcePath);
     if (stat.isDirectory()) {
       ensureDir(targetPath);
-      copyMarkdownTree(sourcePath, targetPath);
+      syncMarkdownTree(sourcePath, targetPath, expectedFiles);
     } else if (relPath.endsWith(".md")) {
-      ensureDir(path.dirname(targetPath));
-      fs.copyFileSync(sourcePath, targetPath);
+      expectedFiles.add(targetPath);
+      copyFileIfChanged(sourcePath, targetPath);
     }
   }
+
+  pruneTree(TARGET_DOCS, expectedFiles);
 }
 
 function buildArchitecturePage() {
@@ -85,7 +130,7 @@ function buildArchitecturePage() {
   };
 
   ensureDir(path.dirname(TARGET_ARCH_DATA));
-  fs.writeFileSync(TARGET_ARCH_DATA, `export default ${JSON.stringify(archData, null, 2)};\n`);
+  writeFileIfChanged(TARGET_ARCH_DATA, `export default ${JSON.stringify(archData, null, 2)};\n`);
 
   const archTemplate = `---
 title: Deep Dive
@@ -99,26 +144,31 @@ eleventyComputed:
 {{ architecture_page.body | safe }}
 `;
 
-  fs.writeFileSync(TARGET_ARCH_TEMPLATE, archTemplate);
+  writeFileIfChanged(TARGET_ARCH_TEMPLATE, archTemplate);
 }
 
 function syncPlaygroundLibFiles() {
-  fs.rmSync(TARGET_LIB, { recursive: true, force: true });
+  const expectedFiles = new Set();
   ensureDir(TARGET_LIB);
 
-  if (!fs.existsSync(LIB_ASSETS)) return;
+  if (!fs.existsSync(LIB_ASSETS)) {
+    pruneTree(TARGET_LIB, expectedFiles);
+    return;
+  }
 
   for (const entry of fs.readdirSync(LIB_ASSETS, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
     if (!entry.name.endsWith(".d.ts")) continue;
     const sourcePath = path.join(LIB_ASSETS, entry.name);
     const destPath = path.join(TARGET_LIB, `lib.${entry.name}`);
-    fs.copyFileSync(sourcePath, destPath);
+    expectedFiles.add(destPath);
+    copyFileIfChanged(sourcePath, destPath);
   }
+
+  pruneTree(TARGET_LIB, expectedFiles);
 }
 
 function main() {
-  fs.rmSync(TARGET_DOCS, { recursive: true, force: true });
   fs.rmSync(TARGET_ARCH_LEGACY_DIR, { recursive: true, force: true });
   ensureDir(TARGET_DOCS);
   copyAllowedDocs();
@@ -127,4 +177,109 @@ function main() {
   console.log(`Synced docs markdown into ${path.relative(ROOT, TARGET_DOCS)}`);
 }
 
-main();
+function sourceWatchPaths() {
+  const paths = DOCS_ALLOWLIST
+    .map((relPath) => path.join(DOCS, relPath))
+    .filter((sourcePath) => fs.existsSync(sourcePath));
+
+  const architectureHtml = path.join(DOCS, "architecture.html");
+  if (fs.existsSync(architectureHtml)) {
+    paths.push(architectureHtml);
+  }
+
+  if (fs.existsSync(LIB_ASSETS)) {
+    paths.push(LIB_ASSETS);
+  }
+
+  return paths;
+}
+
+function watchDirectoryTree(rootDir, onChange, watchers) {
+  watchers.push(fs.watch(rootDir, onChange));
+
+  for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    watchDirectoryTree(path.join(rootDir, entry.name), onChange, watchers);
+  }
+}
+
+function watchPath(sourcePath, onChange, watchers) {
+  const stat = fs.statSync(sourcePath);
+  if (stat.isDirectory()) {
+    try {
+      watchers.push(fs.watch(sourcePath, { recursive: true }, onChange));
+      return;
+    } catch {
+      watchDirectoryTree(sourcePath, onChange, watchers);
+      return;
+    }
+  }
+
+  const basename = path.basename(sourcePath);
+  watchers.push(
+    fs.watch(path.dirname(sourcePath), (_eventType, filename) => {
+      if (!filename || filename.toString() === basename) {
+        onChange();
+      }
+    }),
+  );
+}
+
+function watchSources() {
+  const watchers = [];
+  let timer = null;
+  let running = false;
+  let rerun = false;
+
+  const runSynced = () => {
+    if (running) {
+      rerun = true;
+      return;
+    }
+
+    running = true;
+    try {
+      main();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      running = false;
+      if (rerun) {
+        rerun = false;
+        runSynced();
+      }
+    }
+  };
+
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(runSynced, WATCH_DEBOUNCE_MS);
+  };
+
+  for (const sourcePath of sourceWatchPaths()) {
+    watchPath(sourcePath, schedule, watchers);
+  }
+
+  console.log("Watching docs and lib assets for website sync...");
+
+  const close = () => {
+    clearTimeout(timer);
+    for (const watcher of watchers) {
+      watcher.close();
+    }
+    process.exit(0);
+  };
+
+  process.on("SIGINT", close);
+  process.on("SIGTERM", close);
+}
+
+const watchMode = process.argv.includes("--watch") || process.argv.includes("--watch-only");
+
+if (!process.argv.includes("--watch-only")) {
+  main();
+}
+
+if (watchMode) {
+  watchSources();
+}

@@ -5,7 +5,7 @@ use tsz_checker::test_utils::check_source_code_messages;
 /// declaration in an external module. Each illegal `await` binding must get its
 /// own TS1262 (plus any TS2451 redeclaration diagnostics).
 ///
-/// See: <https://github.com/mohsen1/tsz/issues/2816>
+/// See: <https://github.com/tsz-org/tsz/issues/2816>
 #[test]
 fn ts1262_emitted_for_each_await_declaration_in_module() {
     let diagnostics = check_source_code_messages(

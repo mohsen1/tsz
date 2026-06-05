@@ -9,6 +9,7 @@ mod emit_es6_field_inits;
 mod emit_es6_header;
 mod emit_es6_helpers;
 mod emit_es6_members;
+mod emit_es6_options;
 mod emit_es6_private_accessors;
 mod emit_es6_recovery;
 mod helpers;

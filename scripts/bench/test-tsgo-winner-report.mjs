@@ -42,6 +42,27 @@ withTempDir((dir) => {
     },
     results: [
       {
+        name: "type-fest-project",
+        lines: 8044,
+        kb: 216,
+        project_files: 242,
+        tsz_ms: null,
+        tsgo_ms: null,
+        winner: "error",
+        factor: 0,
+        status: "tsz slowdown (9.21x slower than tsgo; threshold 8x)",
+        compatibility: {
+          state: "red",
+          exit_class: "slowdown",
+          phase: "timing",
+          last_successful_phase: null,
+          diagnostic_status: "runtime slowdown",
+          files_reached: 242,
+          peak_memory_bytes: 734003200,
+          semantic_owner_family: "mapped/conditional/key-space utility surface",
+        },
+      },
+      {
         name: "ts-toolbelt-project",
         lines: 8044,
         kb: 216,
@@ -146,7 +167,7 @@ withTempDir((dir) => {
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.source.quick_mode, true);
-  assert.equal(report.totals.rows, 6);
+  assert.equal(report.totals.rows, 7);
   assert.equal(report.totals.duplicate_project_rows, 0);
   assert.equal(report.totals.green_tsgo_winners, 3);
   assert.equal(report.totals.project_green_tsgo_winners, 2);
@@ -188,7 +209,7 @@ withTempDir((dir) => {
     operation: "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
     command: "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
     issue: 8356,
-    url: "https://github.com/mohsen1/tsz/issues/8356",
+    url: "https://github.com/tsz-org/tsz/issues/8356",
   });
   assert.deepEqual(report.worst.attribution_status, {
     present: true,
@@ -204,6 +225,10 @@ withTempDir((dir) => {
     ["ts-toolbelt-project", "vite-vanilla-ts-app", "single-file-loss"],
   );
   assert.equal(report.rows[1].loss_closure.issue, 7378);
+  assert.match(
+    report.rows[1].loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.vite-vanilla-ts-app\.perf\.json --noEmit -p .*vite-vanilla-ts-live\/tsconfig\.json/,
+  );
   assert.deepEqual(report.rows[1].attribution_status, {
     present: false,
     path: null,
@@ -283,6 +308,55 @@ withTempDir((dir) => {
     "200 classes",
     "BCT candidates=200",
   ]);
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "utility types plus recursive JSON shapes",
+        },
+      },
+      {
+        name: "nextjs-fresh-app",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "generated app dependency graph",
+        },
+      },
+    ],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  const byName = new Map(report.rows.map((row) => [row.name, row]));
+  assert.match(
+    byName.get("ts-essentials-project").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.ts-essentials-project\.perf\.json --noEmit -p .*ts-essentials\/tsconfig\.flat\.json/,
+  );
+  assert.match(
+    byName.get("nextjs-fresh-app").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.nextjs-fresh-app\.perf\.json --noEmit -p .*next-app-live\/tsconfig\.json/,
+  );
 });
 
 // Duplicate known project rows make the green-tsgo-winner summary non-authoritative.

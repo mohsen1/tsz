@@ -1382,6 +1382,50 @@ export class Outer extends Inner {
 }
 
 #[test]
+fn test_js_extends_imported_typeof_entity_heritage_stays_nameable() {
+    let source = r#"
+import { LitElement } from "lit";
+export class ElementB extends LitElement {
+}
+"#;
+    let mut parser = ParserState::new("index.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "ElementB",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+    let lit_element_sym = binder
+        .file_locals
+        .get("LitElement")
+        .expect("missing imported LitElement symbol");
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    let typeof_lit_element = interner.type_query(SymbolRef(lit_element_sym.0));
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, typeof_lit_element);
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "index.js".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export class ElementB extends LitElement {"),
+        "Expected imported `typeof` entity heritage to stay nameable: {output}"
+    );
+    assert!(
+        !output.contains("ElementB_base"),
+        "Did not expect a synthetic base alias for nameable `typeof` heritage: {output}"
+    );
+}
+
+#[test]
 fn test_js_extends_imported_namespace_without_class_member_is_not_class_constructor() {
     // Negative case: the imported namespace's self-named member is a *variable*,
     // not a class, so its value meaning is NOT a class constructor. The new

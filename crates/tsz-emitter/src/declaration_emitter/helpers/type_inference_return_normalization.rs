@@ -425,7 +425,7 @@ impl<'a> DeclarationEmitter<'a> {
         body_idx: NodeIndex,
     ) -> Option<String> {
         let mut yield_type = None;
-        if !self.collect_unique_yield_type_text_from_node(body_idx, &mut yield_type, 0) {
+        if !self.collect_unique_yield_type_text_from_node(body_idx, is_async, &mut yield_type, 0) {
             return None;
         }
         let yield_type = yield_type.unwrap_or_else(|| "undefined".to_string());
@@ -440,6 +440,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn collect_unique_yield_type_text_from_node(
         &self,
         node_idx: NodeIndex,
+        is_async: bool,
         preferred: &mut Option<String>,
         depth: usize,
     ) -> bool {
@@ -456,7 +457,18 @@ impl<'a> DeclarationEmitter<'a> {
                     return false;
                 };
                 if yield_expr.asterisk_token {
-                    return false;
+                    // `yield* <iterable>` contributes the *element* type of the
+                    // delegated iterable to the enclosing generator's inferred
+                    // yield type (e.g. `yield* [1, 2]` yields `number`). Resolve
+                    // that element type through the solver's iterator protocol so
+                    // delegated yields participate in declaration inference instead
+                    // of forcing the conservative `any` fallback.
+                    let Some(type_text) =
+                        self.yield_star_delegated_yield_type_text(yield_expr.expression, is_async)
+                    else {
+                        return false;
+                    };
+                    return self.merge_unique_type_text(preferred, type_text);
                 }
                 let type_text = if yield_expr.expression.is_none() {
                     "undefined".to_string()
@@ -496,9 +508,48 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_children(node_idx)
                 .into_iter()
                 .all(|child_idx| {
-                    self.collect_unique_yield_type_text_from_node(child_idx, preferred, depth + 1)
+                    self.collect_unique_yield_type_text_from_node(
+                        child_idx,
+                        is_async,
+                        preferred,
+                        depth + 1,
+                    )
                 }),
         }
+    }
+
+    /// Resolve the declaration-emit text for the element type delegated by a
+    /// `yield* <iterable>` expression.
+    ///
+    /// The element type is the iterable's iteration (`yield`) type, e.g. `number`
+    /// for `yield* [1, 2]`. Resolution goes through the solver's iterator
+    /// protocol (`get_iterator_info`), which covers array and tuple operands
+    /// structurally; async generators consult the async iterator protocol first
+    /// and fall back to the sync one (mirroring how `yield*` is checked). Returns
+    /// `None` whenever the element type cannot be resolved (or widens to `any`),
+    /// so the caller keeps its conservative `Generator<any, …>` fallback rather
+    /// than emitting a wrong type.
+    fn yield_star_delegated_yield_type_text(
+        &self,
+        expression: NodeIndex,
+        is_async: bool,
+    ) -> Option<String> {
+        let interner = self.type_interner?;
+        let iterable_type = self.get_node_type_or_names(&[expression])?;
+        let element = if is_async {
+            // `get_async_iterable_element_type` tries the async iterator protocol,
+            // then the sync protocol, and returns `any` when neither resolves.
+            tsz_solver::operations::get_async_iterable_element_type(interner, iterable_type)
+        } else {
+            tsz_solver::operations::get_iterator_info(interner, iterable_type, false)
+                .map(|info| info.yield_type)?
+        };
+        let element = self.widen_unique_symbol_value_type_for_dts(element, 0);
+        let type_text = self.print_type_id_for_inferred_declaration(element);
+        if type_text.is_empty() || type_text == "any" {
+            return None;
+        }
+        Some(type_text)
     }
 
     fn merge_unique_type_text(&self, preferred: &mut Option<String>, type_text: String) -> bool {
@@ -1334,7 +1385,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn source_indexed_access_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn source_indexed_access_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(expr_idx);
@@ -1829,140 +1883,6 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(type_text)
-    }
-
-    fn enclosing_class_declaration_index(&self, from_idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = from_idx;
-        for _ in 0..64 {
-            let parent_idx = self.arena.parent_of(current)?;
-            let parent_node = self.arena.get(parent_idx)?;
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                return Some(parent_idx);
-            }
-            current = parent_idx;
-        }
-        None
-    }
-
-    fn collect_type_param_names_from_arena(
-        &self,
-        source_arena: &NodeArena,
-        type_params: &NodeList,
-    ) -> Vec<String> {
-        type_params
-            .nodes
-            .iter()
-            .filter_map(|&param_idx| {
-                let param_node = source_arena.get(param_idx)?;
-                let param = source_arena.get_type_parameter(param_node)?;
-                self.identifier_text_from_arena(source_arena, param.name)
-            })
-            .collect()
-    }
-
-    fn indexed_call_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
-        let arg_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(arg_idx);
-        let arg_node = self.arena.get(arg_idx)?;
-        if arg_node.kind == SyntaxKind::ThisKeyword as u16 {
-            return Some("this".to_string());
-        }
-        if arg_node.kind == SyntaxKind::StringLiteral as u16
-            || arg_node.kind == SyntaxKind::NumericLiteral as u16
-            || arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        {
-            return self
-                .get_source_slice(arg_node.pos, arg_node.end)
-                .map(|text| text.trim().to_string());
-        }
-        if arg_node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .enclosing_parameter_source_type_annotation_text_for_identifier(arg_idx)
-                .or_else(|| self.reference_declared_type_annotation_text(arg_idx))
-                .filter(|text| !text.trim().is_empty() && text != "any");
-        }
-        None
-    }
-
-    fn indexed_access_receiver_type_text(&self, receiver_idx: NodeIndex) -> Option<String> {
-        let receiver_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(receiver_idx);
-        let receiver_node = self.arena.get(receiver_idx)?;
-        if receiver_node.kind == SyntaxKind::ThisKeyword as u16 {
-            return Some("this".to_string());
-        }
-        if receiver_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            return self.source_indexed_access_return_type_text(receiver_idx);
-        }
-        if receiver_node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .enclosing_parameter_source_type_annotation_text_for_identifier(receiver_idx)
-                .or_else(|| self.reference_declared_type_annotation_text(receiver_idx))
-                .filter(|text| !text.trim().is_empty() && text != "any");
-        }
-        None
-    }
-
-    fn indexed_access_key_type_text(&self, key_idx: NodeIndex) -> Option<String> {
-        let key_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(key_idx);
-        let key_node = self.arena.get(key_idx)?;
-        if key_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let access = self.arena.get_access_expr(key_node)?;
-            let receiver_text = self.indexed_access_receiver_type_text(access.expression)?;
-            return Self::array_element_type_text(&receiver_text);
-        }
-        if key_node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .enclosing_parameter_source_type_annotation_text_for_identifier(key_idx)
-                .or_else(|| self.reference_declared_type_annotation_text(key_idx))
-                .filter(|text| !text.trim().is_empty() && text != "any");
-        }
-        if key_node.kind == SyntaxKind::StringLiteral as u16
-            || key_node.kind == SyntaxKind::NumericLiteral as u16
-        {
-            return self
-                .get_source_slice(key_node.pos, key_node.end)
-                .map(|text| text.trim().to_string());
-        }
-        None
-    }
-
-    fn enclosing_parameter_source_type_annotation_text_for_identifier(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let name = self.get_identifier_text(expr_idx)?;
-        let mut current = expr_idx;
-        for _ in 0..32 {
-            let parent_idx = self.arena.parent_of(current)?;
-            let parent_node = self.arena.get(parent_idx)?;
-            if let Some(func) = self.arena.get_function(parent_node) {
-                for &param_idx in &func.parameters.nodes {
-                    let param_node = self.arena.get(param_idx)?;
-                    let param = self.arena.get_parameter(param_node)?;
-                    if self.get_identifier_text(param.name).as_deref() == Some(name.as_str()) {
-                        return self
-                            .source_slice_from_arena(self.arena, param.type_annotation)
-                            .or_else(|| {
-                                self.type_annotation_text_from_arena_node(
-                                    self.arena,
-                                    param.type_annotation,
-                                )
-                            })
-                            .map(|text| text.trim().to_string());
-                    }
-                }
-                return None;
-            }
-            current = parent_idx;
-        }
-        None
     }
 }
 

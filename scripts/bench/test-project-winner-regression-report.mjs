@@ -37,7 +37,7 @@ function artifact(rows, sourceCommit = "abc123") {
   return {
     generated_at: "2026-05-19T01:02:03.000Z",
     source_commit: sourceCommit,
-    workflow_run_url: `https://github.com/mohsen1/tsz/actions/runs/${sourceCommit}`,
+    workflow_run_url: `https://github.com/tsz-org/tsz/actions/runs/${sourceCommit}`,
     results: rows,
   };
 }

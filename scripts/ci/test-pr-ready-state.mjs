@@ -49,14 +49,14 @@ assert.deepEqual(
     title: "chore(ci): sample",
     body: "AgentName: TestAgent\n",
     draft: false,
-    labels: [{ name: "agent:Studio-manager" }, { name: "merge-queue" }],
+    labels: [{ name: "agent:Studio-manager" }, { name: "ready-review" }],
   }),
   {
     number: 456,
     title: "chore(ci): sample",
     body: "AgentName: TestAgent\n",
     draft: false,
-    labels: ["agent:Studio-manager", "merge-queue"],
+    labels: ["agent:Studio-manager", "ready-review"],
   },
 );
 
@@ -139,6 +139,26 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
-  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?compiler_checks_required=false/,
-  "edited PR events should refresh body/ready-state gates without heavy CI",
+  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?required_summary=false[\s\S]+?compiler_checks_required=false/,
+  "edited PR events should refresh body/ready-state gates without publishing protected CI Summary",
 );
+
+assert.doesNotMatch(
+  ciWorkflow,
+  /CI run superseded[\s\S]+?sys\.exit\(0\)/,
+  "CI Summary must not pass when required heavy jobs were cancelled",
+);
+
+assert.doesNotMatch(
+  ciWorkflow,
+  /Treating as neutral/,
+  "CI Summary must not treat cancelled required jobs as a neutral protected check",
+);
+
+for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
+  assert.match(
+    ciWorkflow,
+    new RegExp(`\\n\\s{2}${job}:\\n[\\s\\S]+?runs-on: ubuntu-latest`),
+    `${job} should run on hosted Ubuntu so cheap gates are not blocked by the self-hosted pool`,
+  );
+}

@@ -33,6 +33,13 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "zod-project"
   "kysely-project"
   "type-challenges-solutions-project"
+  "valibot-project"
+  "msw-project"
+  "comlink-project"
+  "effect-project"
+  "drizzle-orm-project"
+  "ts-rest-project"
+  "ofetch-project"
 )
 
 # Row metadata pre-loaded by tsz_load_fixture_pins_from_rows (pipe-delimited).
@@ -208,6 +215,21 @@ NODE
 
 tsz_load_fixture_pins_from_rows
 
+tsz_project_slowdown_failure_factor() {
+  printf '%s\n' "${TSZ_BENCH_PROJECT_SLOWDOWN_FAILURE_FACTOR:-8}"
+}
+
+tsz_project_slowdown_failure_reached() {
+  local tsz_mean="$1"
+  local tsgo_mean="$2"
+  local threshold
+  threshold="$(tsz_project_slowdown_failure_factor)"
+
+  [[ "$threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  (( $(echo "$threshold > 0" | bc -l) )) || return 1
+  (( $(echo "$tsz_mean / $tsgo_mean >= $threshold" | bc -l) ))
+}
+
 tsz_project_fixture_sources() {
   case "$1" in
     utility-types-project)
@@ -239,6 +261,27 @@ tsz_project_fixture_sources() {
       ;;
     type-challenges-solutions-project)
       printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+    valibot-project)
+      printf 'valibot|%s|%s\n' "$VALIBOT_REPO" "$VALIBOT_REF"
+      ;;
+    msw-project)
+      printf 'msw|%s|%s\n' "$MSW_REPO" "$MSW_REF"
+      ;;
+    comlink-project)
+      printf 'comlink|%s|%s\n' "$COMLINK_REPO" "$COMLINK_REF"
+      ;;
+    effect-project)
+      printf 'effect|%s|%s\n' "$EFFECT_REPO" "$EFFECT_REF"
+      ;;
+    drizzle-orm-project)
+      printf 'drizzle-orm|%s|%s\n' "$DRIZZLE_ORM_REPO" "$DRIZZLE_ORM_REF"
+      ;;
+    ts-rest-project)
+      printf 'ts-rest|%s|%s\n' "$TS_REST_REPO" "$TS_REST_REF"
+      ;;
+    ofetch-project)
+      printf 'ofetch|%s|%s\n' "$OFETCH_REPO" "$OFETCH_REF"
       ;;
     vite-vanilla-ts-app)
       local fixture_dir="${VITE_APP_BENCH_DIR:-}"
@@ -514,6 +557,68 @@ tsz_write_kysely_config() {
   ]
 }
 JSON
+}
+
+tsz_write_basic_external_project_config() {
+  local output="$1"
+  local source_dir="$2"
+  cat > "$output" <<JSON
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["${source_dir}/**/*.ts", "${source_dir}/**/*.tsx"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/__tests__/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**"
+  ]
+}
+JSON
+}
+
+tsz_write_valibot_config() {
+  tsz_write_basic_external_project_config "$1" "library/src"
+}
+
+tsz_write_msw_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_comlink_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_effect_config() {
+  tsz_write_basic_external_project_config "$1" "packages/effect/src"
+}
+
+tsz_write_drizzle_orm_config() {
+  tsz_write_basic_external_project_config "$1" "drizzle-orm/src"
+}
+
+tsz_write_ts_rest_config() {
+  tsz_write_basic_external_project_config "$1" "libs/ts-rest/core/src"
+}
+
+tsz_write_ofetch_config() {
+  tsz_write_basic_external_project_config "$1" "src"
 }
 
 # The full Next.js row uses a sparse source checkout, not an installed Next.js

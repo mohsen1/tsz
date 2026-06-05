@@ -30,5 +30,29 @@ fn assert_function_body_recovery_uses_statement_errors(source: &str) {
     );
 }
 
+#[test]
+fn catch_missing_block_dangling_question_is_not_a_following_statement() {
+    let source = "for (var x in { x: 0 }) {\n    !\n    try { throw null; }\n    catch (Exception) ?\n}\nfinally { }\n";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let for_node = arena
+        .get(sf.statements.nodes[0])
+        .expect("expected recovered for statement");
+    let for_data = arena.get_for_in_of(for_node).expect("expected for-in data");
+    let body_node = arena.get(for_data.statement).expect("expected for body");
+    let body = arena.get_block(body_node).expect("expected block body");
+
+    assert_eq!(
+        body.statements.nodes.len(),
+        2,
+        "dangling `?` after a missing catch block should be consumed by catch recovery"
+    );
+    assert_eq!(
+        arena.get(body.statements.nodes[1]).unwrap().kind,
+        syntax_kind_ext::TRY_STATEMENT
+    );
+}
+
 include!("state_statement_tests_parts/part_00.rs");
 include!("state_statement_tests_parts/part_01.rs");

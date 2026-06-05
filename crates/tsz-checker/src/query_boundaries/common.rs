@@ -37,14 +37,10 @@ pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
 /// body `TypeId` so the caller can evaluate it with a resolver-equipped
 /// evaluator. Otherwise return `None`.
 ///
-/// tsc loses the outer alias when this specific reduction collapses to a
-/// concrete type. The classic case is
-/// `type WeakKey = WeakKeyTypes[keyof WeakKeyTypes]` (where `WeakKeyTypes`
-/// has only `object: object` in the es2022 lib) which displays as `object`,
-/// not `WeakKey`. The match is intentionally narrow — generic indexed-access
-/// aliases (`type Pair<T> = Pairs<T>[keyof T]`) and non-self-keyof aliases
-/// stay opaque because pre-resolving them in the formatter can blow up
-/// recursion fuel and emit spurious TS2589s.
+/// tsc loses the outer alias when this reduction collapses to a concrete type.
+/// The match is intentionally narrow: generic indexed-access aliases and
+/// non-self-keyof aliases stay opaque to avoid recursion-fuel blowups and
+/// spurious TS2589s.
 pub(crate) fn indexed_access_alias_body(
     db: &dyn TypeDatabase,
     def_store: &tsz_solver::def::DefinitionStore,
@@ -177,19 +173,9 @@ pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::contains_error_type_db(db, type_id)
 }
 
-/// Like `contains_error_type` but also detects `TypeId::ERROR` nested inside
-/// Application type arguments.
-///
-/// `contains_error_type_db` delegates to `contains_type_matching` which uses
-/// `is_intrinsic()` as a fast-path. `TypeId::ERROR` (value 1) IS intrinsic, so
-/// `contains_type_matching` returns false for errors buried in Application args like
-/// `Application(Vector, [ERROR])`. The visitor's `contains_error_type_recursive`
-/// checks `type_id == TypeId::ERROR` BEFORE the intrinsic guard, correctly
-/// traversing Application argument lists.
-///
-/// Use this in contexts where manually-lowered types may contain `TypeId::ERROR`
-/// as a type argument (e.g., overload compatibility where class type params are
-/// not in scope during lowering).
+/// Like `contains_error_type`, but also detects `TypeId::ERROR` nested in
+/// Application arguments. The visitor checks the error sentinel before the
+/// intrinsic fast path, which is needed for manually-lowered overload types.
 pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::contains_error_type(db, type_id)
 }
