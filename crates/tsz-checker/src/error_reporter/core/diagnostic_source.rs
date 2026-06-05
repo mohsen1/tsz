@@ -1181,10 +1181,8 @@ impl<'a> CheckerState<'a> {
             // base must match so a numeric source against a string-literal target
             // still widens. The former check recognized string literals only, so
             // numeric/boolean/bigint properties were wrongly widened.
-            let source_literal_base = crate::query_boundaries::common::widen_literal_to_primitive(
-                self.ctx.types,
-                value_type,
-            );
+            let source_literal_base =
+                diagnostic_query::widen_literal_to_primitive(self.ctx.types, value_type);
             let target_accepts_literal = property_name
                 .and_then(|name| {
                     // First try the direct object shape
@@ -1205,8 +1203,7 @@ impl<'a> CheckerState<'a> {
                     // per-member gate already enforces the base match, so the
                     // returned type needs no re-check below.
                     let target = target?;
-                    let members =
-                        crate::query_boundaries::common::union_members(self.ctx.types, target)?;
+                    let members = diagnostic_query::union_members(self.ctx.types, target)?;
                     for member in &members {
                         if let Some(member_shape) =
                             crate::query_boundaries::common::object_shape_for_type(

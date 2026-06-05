@@ -1629,15 +1629,12 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         primitive_base: TypeId,
     ) -> bool {
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
             return members.iter().any(|&member| {
                 self.type_contains_literal_of_primitive_base(member, primitive_base)
             });
         }
-        let widened =
-            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, type_id);
+        let widened = query::widen_literal_to_primitive(self.ctx.types, type_id);
         widened != type_id && widened == primitive_base
     }
 
