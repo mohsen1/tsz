@@ -110,6 +110,7 @@ impl RelationOverflowFlags {
 pub struct JSDocGlobalTypedefLookupCache {
     pub miss_cache: RefCell<FxHashSet<String>>,
     pub in_progress: RefCell<FxHashSet<String>>,
+    pub typedef_presence_by_file: Arc<dashmap::DashMap<(u32, u32, String), bool>>,
 }
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
