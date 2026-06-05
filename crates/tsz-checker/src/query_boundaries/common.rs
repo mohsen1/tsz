@@ -533,6 +533,18 @@ pub(crate) fn widen_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> 
     widening::widen_type_for_display(db, type_id)
 }
 
+/// Widen a type for diagnostic display while preserving the literal property
+/// types of non-fresh objects, matching tsc's `getWidenedType`. Use this when
+/// rendering an already-typed source/member in a missing-property elaboration so
+/// declared/computed objects (and distributed union members) keep their literal
+/// members instead of widening to their primitives.
+pub(crate) fn widen_type_for_display_preserving_non_fresh(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    widening::widen_type_for_display_preserving_non_fresh(db, type_id)
+}
+
 /// Widen a type for call-argument diagnostic display: widens boolean
 /// literals inside compound shapes (tuples/objects) so TS2345 source-type
 /// renders match tsc, e.g. `[number, number, boolean, boolean]` instead of

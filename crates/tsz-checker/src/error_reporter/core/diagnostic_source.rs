@@ -1898,8 +1898,9 @@ impl<'a> CheckerState<'a> {
         if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        let widened_element =
-            self.normalize_assignability_display_type(self.widen_type_for_display(element_type));
+        let widened_element = self.normalize_assignability_display_type(
+            self.widen_type_for_display_preserving_non_fresh(element_type),
+        );
         let rebuilt = self.ctx.types.array(widened_element);
         // Preserve the readonly modifier: tsc displays `readonly number[]` not `number[]`
         // when the source type was a readonly array (ReadonlyType(Array(...))).
