@@ -233,7 +233,11 @@ pub(crate) fn resolve_node_module_specifier(
         }
     }
 
-    let mut current = from_file.parent().unwrap_or(base_dir);
+    // Anchor the walk-up at the containing file's real path so bare imports
+    // from inside a symlinked package (pnpm's `.pnpm` sandbox) can reach the
+    // package's private/transitive dependencies. See `node_modules_walkup_dir`.
+    let start_dir = node_modules_walkup_dir(from_file, base_dir, options);
+    let mut current = start_dir.as_path();
 
     loop {
         // 1. Look for the package itself in node_modules

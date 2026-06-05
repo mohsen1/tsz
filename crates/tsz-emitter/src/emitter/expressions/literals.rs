@@ -1178,7 +1178,6 @@ impl<'a> Printer<'a> {
             self.emit(prop.name);
         } else if !self.emit_recovered_root_js_object_private_property_name(node, prop) {
             self.emit_property_key_name(prop.name);
-        } else {
         }
         self.write(": ");
         if self.ctx.target_es5

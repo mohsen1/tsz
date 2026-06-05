@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
         self.is_well_known_lib_type_name(&name).then_some(name)
     }
 
-    fn type_reference_arg_validation_scope_key(&self) -> u64 {
+    pub(crate) fn type_reference_arg_validation_scope_key(&self) -> u64 {
         let mut entries = self
             .ctx
             .type_parameter_scope
