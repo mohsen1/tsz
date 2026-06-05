@@ -108,6 +108,37 @@ class DefaultCargoBuildJobsTests(unittest.TestCase):
         )
         self.assertEqual(result_int(r), 1)
 
+    def test_dist_suite_uses_separate_mb_knob(self):
+        # dist-binaries reads TSZ_CI_DIST_CARGO_MB_PER_JOB, not the generic knob.
+        r = call_function(
+            "default_cargo_build_jobs",
+            host_cpus=32,
+            env_overrides={
+                "TSZ_CI_SUITE": "dist-binaries",
+                "TSZ_CI_DIST_CARGO_MB_PER_JOB": "999999",
+                "TSZ_CI_CARGO_MB_PER_JOB": "1",
+            },
+        )
+        self.assertEqual(result_int(r), 1)
+
+    def test_dist_suite_cloud_run_shape_gets_four_jobs(self):
+        env = os.environ.copy()
+        env["HOST_CPUS"] = "8"
+        env["TSZ_CI_SUITE"] = "dist-binaries"
+        cmd = (
+            f"source {SCRIPT}; "
+            "host_memory_mb() { echo 32097; }; "
+            "default_cargo_build_jobs"
+        )
+        r = subprocess.run(
+            ["bash", "-c", cmd],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(result_int(r), 4)
+
     def test_does_not_exceed_host_cpus(self):
         r = call_function("default_cargo_build_jobs", host_cpus=4,
                           env_overrides={"TSZ_CI_CARGO_MB_PER_JOB": "1"})

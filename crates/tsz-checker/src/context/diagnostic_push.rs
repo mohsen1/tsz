@@ -5,7 +5,7 @@
 //! and contain no cross-method dependencies beyond what `self` provides.
 
 use crate::context::CheckerContext;
-use crate::diagnostics::{Diagnostic, diagnostic_codes};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
 
 /// Decide whether a freshly produced diagnostic should replace an already
 /// emitted one that collides with it on the dedup key.
@@ -211,6 +211,33 @@ impl<'a> CheckerContext<'a> {
             message,
             code,
         ));
+    }
+
+    /// Emit TS7039 ("Mapped object type implicitly has an 'any' template
+    /// type.") for a mapped-type node that omits its template type under
+    /// `noImplicitAny`.
+    ///
+    /// Single source of truth for the diagnostic: the type-lowering path
+    /// (`get_type_from_mapped_type`) and the type-alias / member missing-name
+    /// validation walks all route through here, so the message, code, and span
+    /// have one owner and the same mapped-type node cannot emit the diagnostic
+    /// more than once for structural reasons. Previously each walk emitted it
+    /// twice and only the `(start, code)` dedup collapsed the redundant pair —
+    /// a fragile masking that depended on both emissions resolving to the same
+    /// span. Anchors on the mapped-type node, matching the span `tsc` reports.
+    pub(crate) fn report_mapped_type_missing_template(
+        &mut self,
+        mapped_idx: tsz_parser::parser::NodeIndex,
+    ) {
+        let Some((start, end)) = self.get_node_span(mapped_idx) else {
+            return;
+        };
+        self.error(
+            start,
+            end.saturating_sub(start),
+            diagnostic_messages::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE.to_string(),
+            diagnostic_codes::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
+        );
     }
 
     /// Push a diagnostic with deduplication.

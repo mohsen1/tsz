@@ -15,6 +15,8 @@
 //!
 //! No module should depend on a module that appears later in this chain.
 
+pub mod directives;
+
 fn normalize_ts_option(value: &str) -> String {
     let trimmed = value.trim();
     let mut normalized = String::with_capacity(trimmed.len());

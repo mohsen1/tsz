@@ -13,6 +13,16 @@
 #   current-main row, keyofIsLiteralContexualType.ts.
 # - PR #12495 run 26941560765 at faec9f5e found four additional current-head
 #   rows after #12491 landed the partial ledger restoration.
+# - PR #12649 run 27008940643 at f2db335b3d found five rows returned and five
+#   previous accepted rows resolved after exact-head shard rerun.
+# - PR #12649 run 27013631682 at synthetic merge 9a9f5fb46f found four rows
+#   returned and twelve previous accepted rows resolved after merging main.
+# - PR #12649 run 27015324920 attempt 2 at synthetic merge 2f1ff2f987 found
+#   three rows returned and ten previous accepted rows resolved after cancelled
+#   shard rerun.
+# - PR #12649 run 27016857260 attempt 2 at synthetic merge 3d599062d3 found
+#   thirteen rows returned and no previous accepted rows resolved after the
+#   exact-head cancelled shard rerun.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
@@ -22,16 +32,21 @@ TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules
 TypeScript/tests/cases/compiler/declarationsIndirectGeneratedAliasReference.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
-TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
+TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
+TypeScript/tests/cases/compiler/letInConstDeclarations_ES6.ts
+TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
+TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+TypeScript/tests/cases/compiler/strictModeReservedWord.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
-TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
+TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
+TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
@@ -46,3 +61,16 @@ TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varia
 # covariant TS2322 again. Removed from this ledger; covered by
 # nullable_union_callback_variance_tests.
 TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation.ts
+
+# Current-main aggregate drift after PR branches first made the duplicate
+# type-query-flow module compileable again. Exact evidence:
+# - PR #12606 run 26999340595 at bb6caa8011 aggregated 12552/12585 and
+#   listed exactly these seven unaccepted rows after all conformance shards
+#   themselves completed successfully.
+TypeScript/tests/cases/compiler/declarationEmitComputedPropertyNameEnum3.ts
+TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
+TypeScript/tests/cases/conformance/salsa/plainJSGrammarErrors.ts
+TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts
+TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors2.ts
+TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
+TypeScript/tests/cases/conformance/types/tuple/variadicTuples2.ts
