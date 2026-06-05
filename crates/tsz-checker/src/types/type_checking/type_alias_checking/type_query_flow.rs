@@ -1,3 +1,5 @@
+//! `typeof` flow-type precomputation for type alias bodies.
+
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -11,7 +13,7 @@ impl<'a> CheckerState<'a> {
     /// type alias body is later lowered by `ensure_type_alias_resolved`, the
     /// `TypeLowering` can use these pre-computed types instead of creating
     /// deferred `TypeQuery` types that would lose flow narrowing information.
-    pub(crate) fn precompute_type_query_flow_types(&mut self, node_idx: NodeIndex) {
+    pub(super) fn precompute_type_query_flow_types(&mut self, node_idx: NodeIndex) {
         if node_idx == NodeIndex::NONE {
             return;
         }
@@ -20,7 +22,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind == syntax_kind_ext::TYPE_QUERY {
-            // Found a `typeof expr` in type position — compute the flow-narrowed
+            // Found a `typeof expr` in type position; compute the flow-narrowed
             // type of the expression and store it in node_types.
             if let Some(type_query) = self.ctx.arena.get_type_query(node) {
                 let expr_name = type_query.expr_name;
