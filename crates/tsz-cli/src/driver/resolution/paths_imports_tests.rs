@@ -218,8 +218,8 @@ fn hash_prefix_falls_back_to_package_imports_when_paths_does_not_match() {
         &known_files,
     );
     assert_eq!(
-        resolved.as_deref(),
-        Some(dir.join("from-imports.ts").as_path()),
+        resolved.map(|path| canonicalize_or_owned(&path)),
+        Some(canonicalize_or_owned(&dir.join("from-imports.ts"))),
         "specifiers that don't match any `paths` entry must still resolve through \
          package.json `imports`"
     );
@@ -264,8 +264,8 @@ fn hash_prefix_paths_take_priority_over_package_imports() {
         &known_files,
     );
     assert_eq!(
-        resolved.as_deref(),
-        Some(dir.join("from-paths.ts").as_path()),
+        resolved.map(|path| canonicalize_or_owned(&path)),
+        Some(canonicalize_or_owned(&dir.join("from-paths.ts"))),
         "tsconfig `paths` must take priority over package.json `imports` for \
          #-prefixed specifiers"
     );
@@ -302,8 +302,8 @@ fn hash_prefix_without_paths_still_uses_package_imports() {
         &known_files,
     );
     assert_eq!(
-        resolved.as_deref(),
-        Some(dir.join("util.ts").as_path()),
+        resolved.map(|path| canonicalize_or_owned(&path)),
+        Some(canonicalize_or_owned(&dir.join("util.ts"))),
         "with no `paths` configured, #-specifiers must still resolve through \
          package.json `imports`"
     );

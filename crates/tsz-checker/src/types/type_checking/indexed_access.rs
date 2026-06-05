@@ -498,6 +498,11 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        if self
+            .type_literal_dispatch_index_is_declared_key_subset(data.object_type, data.index_type)
+        {
+            return;
+        }
 
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};

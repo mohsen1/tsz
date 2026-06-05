@@ -480,6 +480,258 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(super) fn type_literal_dispatch_index_is_declared_key_subset(
+        &self,
+        object_type_node: NodeIndex,
+        index_type_node: NodeIndex,
+    ) -> bool {
+        let Some(keys) = self.type_literal_declared_property_keys(object_type_node) else {
+            return false;
+        };
+        !keys.is_empty()
+            && self.type_node_declared_literal_subset(index_type_node, &keys, &mut Vec::new(), 0)
+    }
+
+    fn type_literal_declared_property_keys(&self, type_node_idx: NodeIndex) -> Option<Vec<String>> {
+        let obj_node = self.ctx.arena.get(type_node_idx)?;
+        if obj_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let type_lit = self.ctx.arena.get_type_literal(obj_node)?;
+        let mut keys = Vec::new();
+        for &member_idx in &type_lit.members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                return None;
+            }
+            let (name_idx, _type_annotation) =
+                self.type_literal_member_name_and_type(member_node)?;
+            let name = crate::types_domain::queries::core::get_literal_property_name(
+                self.ctx.arena,
+                name_idx,
+            )?;
+            keys.push(name);
+        }
+        Some(keys)
+    }
+
+    fn type_node_declared_literal_subset(
+        &self,
+        node_idx: NodeIndex,
+        allowed_keys: &[String],
+        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+        depth: usize,
+    ) -> bool {
+        if depth > 12 || node_idx == NodeIndex::NONE {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if let Some(literal) = self.ctx.arena.get_literal(node) {
+            return allowed_keys.iter().any(|key| key == &literal.text);
+        }
+        if let Some(literal_type) = self.ctx.arena.get_literal_type(node) {
+            return self.type_node_declared_literal_subset(
+                literal_type.literal,
+                allowed_keys,
+                visited_aliases,
+                depth + 1,
+            );
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
+                self.ctx
+                    .arena
+                    .get_wrapped_type(node)
+                    .is_some_and(|wrapped| {
+                        self.type_node_declared_literal_subset(
+                            wrapped.type_node,
+                            allowed_keys,
+                            visited_aliases,
+                            depth + 1,
+                        )
+                    })
+            }
+            k if k == syntax_kind_ext::UNION_TYPE => self
+                .ctx
+                .arena
+                .get_composite_type(node)
+                .is_some_and(|composite| {
+                    !composite.types.nodes.is_empty()
+                        && composite.types.nodes.iter().copied().all(|member_idx| {
+                            self.type_node_declared_literal_subset(
+                                member_idx,
+                                allowed_keys,
+                                visited_aliases,
+                                depth + 1,
+                            )
+                        })
+                }),
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => self
+                .ctx
+                .arena
+                .get_conditional_type(node)
+                .is_some_and(|conditional| {
+                    self.type_node_declared_literal_subset(
+                        conditional.true_type,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    ) && self.type_node_declared_literal_subset(
+                        conditional.false_type,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    )
+                }),
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => self
+                .ctx
+                .arena
+                .get_indexed_access_type(node)
+                .is_some_and(|indexed| {
+                    self.indexed_access_declared_values_subset(
+                        indexed.object_type,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    )
+                }),
+            k if k == syntax_kind_ext::TYPE_REFERENCE => self
+                .ctx
+                .arena
+                .get_type_ref(node)
+                .and_then(|type_ref| {
+                    self.type_reference_alias_body(type_ref.type_name, visited_aliases)
+                })
+                .is_some_and(|body| {
+                    self.type_node_declared_literal_subset(
+                        body,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    )
+                }),
+            _ => false,
+        }
+    }
+
+    fn indexed_access_declared_values_subset(
+        &self,
+        object_type_node: NodeIndex,
+        allowed_keys: &[String],
+        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+        depth: usize,
+    ) -> bool {
+        let Some(type_literals) =
+            self.possible_type_literals_from_indexed_dispatch(object_type_node, depth)
+        else {
+            return false;
+        };
+        !type_literals.is_empty()
+            && type_literals.into_iter().all(|type_lit_idx| {
+                let Some(type_lit_node) = self.ctx.arena.get(type_lit_idx) else {
+                    return false;
+                };
+                let Some(type_lit) = self.ctx.arena.get_type_literal(type_lit_node) else {
+                    return false;
+                };
+                !type_lit.members.nodes.is_empty()
+                    && type_lit.members.nodes.iter().copied().all(|member_idx| {
+                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                            return false;
+                        };
+                        let Some((_name_idx, type_annotation)) =
+                            self.type_literal_member_name_and_type(member_node)
+                        else {
+                            return false;
+                        };
+                        self.type_node_declared_literal_subset(
+                            type_annotation,
+                            allowed_keys,
+                            visited_aliases,
+                            depth + 1,
+                        )
+                    })
+            })
+    }
+
+    fn possible_type_literals_from_indexed_dispatch(
+        &self,
+        node_idx: NodeIndex,
+        depth: usize,
+    ) -> Option<Vec<NodeIndex>> {
+        if depth > 12 {
+            return None;
+        }
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return Some(vec![node_idx]);
+        }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.possible_type_literals_from_indexed_dispatch(wrapped.type_node, depth + 1);
+        }
+        let indexed = self.ctx.arena.get_indexed_access_type(node)?;
+        let inner_literals =
+            self.possible_type_literals_from_indexed_dispatch(indexed.object_type, depth + 1)?;
+        let mut values = Vec::new();
+        for type_lit_idx in inner_literals {
+            let type_lit_node = self.ctx.arena.get(type_lit_idx)?;
+            let type_lit = self.ctx.arena.get_type_literal(type_lit_node)?;
+            for &member_idx in &type_lit.members.nodes {
+                let member_node = self.ctx.arena.get(member_idx)?;
+                let (_name_idx, type_annotation) =
+                    self.type_literal_member_name_and_type(member_node)?;
+                let value_node = self.ctx.arena.get(type_annotation)?;
+                let value_idx = if value_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                    self.ctx.arena.get_wrapped_type(value_node)?.type_node
+                } else {
+                    type_annotation
+                };
+                if self
+                    .ctx
+                    .arena
+                    .get(value_idx)
+                    .is_some_and(|value_node| value_node.kind == syntax_kind_ext::TYPE_LITERAL)
+                {
+                    values.push(value_idx);
+                } else {
+                    return None;
+                }
+            }
+        }
+        Some(values)
+    }
+
+    fn type_reference_alias_body(
+        &self,
+        type_name: NodeIndex,
+        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+    ) -> Option<NodeIndex> {
+        let raw_sym_id = self.resolve_type_symbol_for_lowering(type_name)?;
+        let sym_id = tsz_binder::SymbolId(raw_sym_id);
+        if visited_aliases.contains(&sym_id) {
+            return None;
+        }
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+            || symbol.declarations.len() != 1
+        {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(symbol.declarations[0])?;
+        let alias = self.ctx.arena.get_type_alias(decl_node)?;
+        visited_aliases.push(sym_id);
+        Some(alias.type_node)
+    }
+
     fn type_literal_member_name_and_type(
         &self,
         member_node: &tsz_parser::parser::node::Node,
