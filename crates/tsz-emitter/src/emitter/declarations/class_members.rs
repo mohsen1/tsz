@@ -932,6 +932,13 @@ impl<'a> Printer<'a> {
         let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
         let field_inits = std::mem::take(&mut self.pending_class_field_inits);
 
+        // Emit invalid modifiers on constructors for error-recovery fidelity
+        // (e.g., `static constructor()`, `export constructor()`).
+        // `accessor` is never valid on a constructor and tsc suppresses it.
+        // JS source files (allowJs) strip invalid constructor modifiers instead.
+        if !self.source_is_js_file {
+            self.emit_class_member_modifiers_js_impl(&ctor.modifiers, false);
+        }
         self.write("constructor");
         // Emit type parameters for error recovery (e.g., `constructor<T>() {}`)
         if let Some(ref type_params) = ctor.type_parameters

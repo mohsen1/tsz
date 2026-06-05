@@ -906,3 +906,80 @@ fn identity_as_clause_with_renamed_iter_var_is_name_agnostic() {
         );
     }
 }
+
+/// Build `{ a: number } & { b: string }` and return the intersection source
+/// plus the two disjoint key atoms, the shared setup for the distribution tests
+/// below.
+fn build_disjoint_object_intersection(interner: &TypeInterner) -> (TypeId, Atom, Atom) {
+    let a_atom = interner.intern_string("a");
+    let b_atom = interner.intern_string("b");
+    let obj_a = interner.object(vec![PropertyInfo::new(a_atom, TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(b_atom, TypeId::STRING)]);
+    (interner.intersection(vec![obj_a, obj_b]), a_atom, b_atom)
+}
+
+/// Intersection sources are distributed by `try_distribute_mapped_over_composite_source`
+/// → `distribute_mapped_over_members`: a generic homomorphic `M<A & B>` becomes
+/// `M<A> & M<B>`. The distributed result must carry every key contributed by
+/// each member object (here `a` from `A` and `b` from `B`), proving the
+/// distribution iterated both members rather than collapsing the intersection.
+#[test]
+fn instantiated_homomorphic_mapped_distributes_over_object_intersection() {
+    let interner = TypeInterner::new();
+    let (source, a_atom, b_atom) = build_disjoint_object_intersection(&interner);
+
+    // Constant `boolean` template: every produced property is `boolean`, so we
+    // can assert purely on the *key set* surviving distribution.
+    let mapped = build_instantiated_homomorphic_mapped(&interner, "P", source, TypeId::BOOLEAN);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate(interner.mapped(mapped));
+
+    // Collect the keys reachable on the distributed result.
+    let mut names = std::collections::BTreeSet::new();
+    let collect = |obj: TypeId, names: &mut std::collections::BTreeSet<Atom>| {
+        if let Some(TypeData::Object(shape_id)) = interner.lookup(obj) {
+            for prop in &interner.object_shape(shape_id).properties {
+                names.insert(prop.name);
+                assert_eq!(
+                    prop.type_id,
+                    TypeId::BOOLEAN,
+                    "distributed property must carry the mapped template"
+                );
+            }
+        }
+    };
+    match interner.lookup(result) {
+        Some(TypeData::Intersection(list_id)) => {
+            for member in interner.type_list(list_id).to_vec() {
+                collect(member, &mut names);
+            }
+        }
+        Some(TypeData::Object(_)) => collect(result, &mut names),
+        other => panic!("expected object/intersection result, got {other:?}"),
+    }
+    assert!(
+        names.contains(&a_atom) && names.contains(&b_atom),
+        "distributed result must keep keys from every intersection member, got {names:?}"
+    );
+}
+
+/// Routing distribution through the cached `evaluate` makes evaluation
+/// idempotent: re-evaluating the same interned mapped id returns the identical
+/// `TypeId` (the evaluator memo / interner collapse repeats). This guards the
+/// over-instantiation fix — structurally-identical member instantiations must
+/// not produce divergent fresh ids on re-evaluation.
+#[test]
+fn distributed_mapped_over_intersection_is_idempotent() {
+    let interner = TypeInterner::new();
+    let (source, _a, _b) = build_disjoint_object_intersection(&interner);
+    let mapped = build_instantiated_homomorphic_mapped(&interner, "P", source, TypeId::BOOLEAN);
+    let mapped_id = interner.mapped(mapped);
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let first = evaluator.evaluate(mapped_id);
+    let second = evaluator.evaluate(mapped_id);
+    assert_eq!(
+        first, second,
+        "re-evaluating the same distributed mapped id must be stable (cached)"
+    );
+}
