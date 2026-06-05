@@ -304,7 +304,9 @@ withTempDir((dir) => {
     /TSZ_PERF_COUNTERS=1 .*<generated-200-classes>\.ts/,
   );
   assert.match(
-    byName.get("200 generic functions").loss_closure.attribution_command,
+    report.target_gaps
+      .find((row) => row.name === "200 generic functions")
+      .loss_closure.attribution_command,
     /TSZ_PERF_COUNTERS=1 .*<generated-200-generic-functions>\.ts/,
   );
   assert.deepEqual(report.totals.missing_attribution_rows, [
