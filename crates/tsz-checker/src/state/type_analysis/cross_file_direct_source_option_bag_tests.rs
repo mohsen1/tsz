@@ -18,9 +18,11 @@
 //! is admitted; computed/complex shapes still fall back to the child-checker
 //! path.
 
-use crate::context::{CheckerContext, CheckerOptions};
+use crate::context::{CheckerContext, CheckerOptions, LibContext};
+use crate::module_resolution::build_module_resolution_maps;
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
+use crate::test_utils::load_lib_files;
 use std::sync::Arc;
 use tsz_binder::{BinderState, ModuleAugmentation};
 use tsz_common::perf_counters::{DirectCrossFileInterfaceLoweringOutcome, PerfCounters};
@@ -98,6 +100,71 @@ fn setup_cross_file_index_state<'a>(
     (state, sym)
 }
 
+fn with_program_state_with_libs<F, R>(
+    files: &[(&str, &str)],
+    requester_file: &str,
+    target_file: &str,
+    libs: &[&str],
+    test: F,
+) -> R
+where
+    F: FnOnce(&mut CheckerState<'_>, &Arc<BinderState>, usize) -> R,
+{
+    let lib_files = load_lib_files(libs);
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut file_names = Vec::with_capacity(files.len());
+    let mut types = None;
+    for (file_name, source) in files {
+        let (arena, binder, file_types) = parse_bound_source_with_name(file_name, source);
+        arenas.push(arena);
+        binders.push(binder);
+        file_names.push((*file_name).to_string());
+        if types.is_none() {
+            types = Some(file_types);
+        }
+    }
+    let requester_idx = file_names
+        .iter()
+        .position(|name| name == requester_file)
+        .unwrap_or_else(|| panic!("requester_file {requester_file:?} not found"));
+    let target_idx = file_names
+        .iter()
+        .position(|name| name == target_file)
+        .unwrap_or_else(|| panic!("target_file {target_file:?} not found"));
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = types.unwrap_or_else(TypeInterner::new);
+    let ctx = CheckerContext::new_with_shared_def_store(
+        all_arenas[requester_idx].as_ref(),
+        all_binders[requester_idx].as_ref(),
+        &types,
+        requester_file.to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.share_owner_symbol_type_results = true;
+    state.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    state.ctx.set_all_binders(Arc::clone(&all_binders));
+    state.ctx.set_current_file_idx(requester_idx);
+    state
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    state.ctx.set_resolved_modules(resolved_modules);
+    let lib_contexts = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect::<Vec<_>>();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+    test(&mut state, &all_binders[target_idx], target_idx)
+}
+
 fn enable_perf_counters_for_direct_lowering_test() {
     #[cfg(any(test, debug_assertions))]
     tsz_common::perf_counters::force_enable_perf_counters_for_tests();
@@ -115,6 +182,185 @@ fn with_parent_cache_constructed_count() -> u64 {
     PerfCounters::snapshot()
         .checker
         .with_parent_cache_constructed
+}
+
+#[test]
+fn delegate_cross_arena_source_option_bag_lowers_imported_return_type_members() {
+    with_program_state_with_libs(
+        &[
+            (
+                "metrics.ts",
+                r#"
+                    export interface DataPoint {
+                        label: string;
+                        value: number;
+                    }
+                    export function summarizeSeries(points: readonly DataPoint[]): {
+                        count: number;
+                        total: number;
+                    } {
+                        return { count: points.length, total: 0 };
+                    }
+                "#,
+            ),
+            (
+                "view.ts",
+                r#"
+                    import { summarizeSeries, type DataPoint } from "./metrics";
+
+                    export interface DashboardInput {
+                        title: string;
+                        logos: readonly string[];
+                    }
+
+                    export interface DashboardModel extends DashboardInput {
+                        points: DataPoint[];
+                        summary: ReturnType<typeof summarizeSeries>;
+                    }
+                "#,
+            ),
+            (
+                "main.ts",
+                r#"import { type DashboardModel } from "./view";"#,
+            ),
+        ],
+        "main.ts",
+        "view.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let model_sym = target_binder
+                .file_locals
+                .get("DashboardModel")
+                .expect("DashboardModel symbol");
+            state.ctx.register_symbol_file_index(model_sym, target_idx);
+
+            enable_perf_counters_for_direct_lowering_test();
+            let success_before =
+                direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+            let child_checkers_before = with_parent_cache_constructed_count();
+            let (ty, params) = state
+                .delegate_cross_arena_symbol_resolution(model_sym)
+                .expect("imported source-file option-bag members should lower directly");
+            let success_after =
+                direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+            let child_checkers_after = with_parent_cache_constructed_count();
+
+            assert_eq!(
+                success_after - success_before,
+                1,
+                "DashboardModel should hit direct cross-file interface lowering"
+            );
+            assert_eq!(
+                child_checkers_after, child_checkers_before,
+                "imported option-bag members must not construct a delegated child checker"
+            );
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "DashboardModel should be non-generic");
+
+            for name in ["title", "points", "summary"] {
+                let atom = state.ctx.types.intern_string(name);
+                assert!(
+                    crate::query_boundaries::common::raw_property_type(
+                        state.ctx.types.as_type_database(),
+                        ty,
+                        atom,
+                    )
+                    .is_some(),
+                    "directly lowered DashboardModel should retain '{name}' property",
+                );
+            }
+        },
+    );
+}
+
+#[test]
+fn delegate_cross_arena_source_option_bag_uses_shadowed_return_type_member() {
+    with_program_state_with_libs(
+        &[
+            (
+                "metrics.ts",
+                r#"
+                    export interface DataPoint {
+                        value: number;
+                    }
+                    export function summarizeSeries(points: readonly DataPoint[]): {
+                        count: number;
+                    } {
+                        return { count: points.length };
+                    }
+                "#,
+            ),
+            (
+                "view.ts",
+                r#"
+                    import { summarizeSeries, type DataPoint } from "./metrics";
+
+                    type ReturnType<T> = { shadow: T };
+
+                    export interface DashboardModel {
+                        points: DataPoint[];
+                        summary: ReturnType<typeof summarizeSeries>;
+                    }
+                "#,
+            ),
+            (
+                "main.ts",
+                r#"import { type DashboardModel } from "./view";"#,
+            ),
+        ],
+        "main.ts",
+        "view.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let model_sym = target_binder
+                .file_locals
+                .get("DashboardModel")
+                .expect("DashboardModel symbol");
+            state.ctx.register_symbol_file_index(model_sym, target_idx);
+
+            let local_return_type_sym = target_binder
+                .file_locals
+                .get("ReturnType")
+                .expect("local ReturnType symbol");
+            let local_return_type_def = state.ctx.get_or_create_def_id(local_return_type_sym);
+
+            enable_perf_counters_for_direct_lowering_test();
+            let success_before =
+                direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+            let (ty, _params) = state
+                .delegate_cross_arena_symbol_resolution(model_sym)
+                .expect("shadowed ReturnType source-file option-bag should resolve");
+            let success_after =
+                direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+
+            assert_eq!(
+                success_after - success_before,
+                1,
+                "lowerable local ReturnType shadow should stay on the direct interface path"
+            );
+            let summary = state.ctx.types.intern_string("summary");
+            let summary_type = crate::query_boundaries::common::raw_property_type(
+                state.ctx.types.as_type_database(),
+                ty,
+                summary,
+            )
+            .expect("directly lowered DashboardModel should retain summary");
+            let (base, _args) = crate::query_boundaries::common::application_info(
+                state.ctx.types.as_type_database(),
+                summary_type,
+            )
+            .expect("summary should be an application of the local ReturnType alias");
+            assert_eq!(
+                crate::query_boundaries::common::lazy_def_id(
+                    state.ctx.types.as_type_database(),
+                    base,
+                ),
+                Some(local_return_type_def),
+                "same-named local ReturnType alias must shadow the actual-lib utility"
+            );
+        },
+    );
 }
 
 /// Root cause #1: the cross-file delegation path always sees

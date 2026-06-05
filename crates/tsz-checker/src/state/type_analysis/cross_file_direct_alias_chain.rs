@@ -655,6 +655,8 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 Self::source_file_type_query_is_well_known_global_symbol_property(
                     arena, binder, node_idx,
+                ) || Self::source_file_type_query_targets_direct_lowerable_value(
+                    arena, binder, node_idx, proof,
                 )
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => arena.get_array_type(node).is_some_and(|array| {
@@ -947,6 +949,13 @@ impl<'a> CheckerState<'a> {
                         )
                     });
                 }
+                if !has_type_arguments && symbol.flags & symbol_flags::INTERFACE != 0 {
+                    return Self::source_file_local_interface_application_is_lowerable(
+                        resolved.arena,
+                        symbol,
+                        0,
+                    );
+                }
                 if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
                     return false;
                 }
@@ -1164,6 +1173,8 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 Self::source_file_type_query_is_well_known_global_symbol_property(
                     arena, binder, node_idx,
+                ) || Self::source_file_type_query_targets_direct_lowerable_value(
+                    arena, binder, node_idx, proof,
                 )
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
@@ -1369,7 +1380,7 @@ impl<'a> CheckerState<'a> {
             .type_parameters
             .as_ref()
             .map_or(0, |params| params.nodes.len());
-        if arg_count == 0 || arg_count != param_count {
+        if arg_count != param_count {
             return false;
         }
 
@@ -1418,7 +1429,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn source_file_resolve_alias_symbol_for_lowering<'b>(
+    pub(super) fn source_file_resolve_alias_symbol_for_lowering<'b>(
         arena: &'b NodeArena,
         binder: &'b BinderState,
         sym_id: SymbolId,

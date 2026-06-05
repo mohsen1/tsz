@@ -67,7 +67,7 @@ impl<'a> CheckerState<'a> {
                 heritage_or_computed_reason();
                 return None;
             }
-            if !Self::source_file_interface_declarations_are_direct_lowerable(
+            if !self.source_file_interface_declarations_are_direct_lowerable_with_imports(
                 &declarations,
                 delegate_binder,
             ) {
@@ -109,12 +109,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
+        let direct_source_file_idx = direct_source_file_arena
+            .then(|| self.ctx.get_file_idx_for_arena(symbol_arena))
+            .flatten();
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
             if direct_source_file_arena {
-                return self.source_file_local_name_def_id_for_lowering(
+                return self.source_file_name_def_id_for_lowering(
                     delegate_binder,
                     symbol_arena,
                     type_name,
+                    direct_source_file_idx,
                 );
             }
             (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
@@ -124,7 +128,17 @@ impl<'a> CheckerState<'a> {
         };
         let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
         let no_def_id = |_node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> { None };
-        let no_value_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
+        let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            if direct_source_file_arena {
+                return self.source_file_value_symbol_for_lowering(
+                    delegate_binder,
+                    symbol_arena,
+                    node_idx,
+                    direct_source_file_idx,
+                );
+            }
+            None
+        };
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
 
@@ -133,7 +147,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             &no_type_symbol,
             &no_def_id,
-            &no_value_symbol,
+            &value_resolver,
         )
         .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_name_def_id_resolver(&name_resolver)
@@ -204,12 +218,16 @@ impl<'a> CheckerState<'a> {
         if direct_member_arena {
             let direct_source_file_arena =
                 allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena);
+            let direct_source_file_idx = direct_source_file_arena
+                .then(|| self.ctx.get_file_idx_for_arena(interface_arena))
+                .flatten();
             let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
                 if direct_source_file_arena {
-                    return self.source_file_local_name_def_id_for_lowering(
+                    return self.source_file_name_def_id_for_lowering(
                         delegate_binder,
                         interface_arena,
                         type_name,
+                        direct_source_file_idx,
                     );
                 }
                 (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
@@ -219,7 +237,17 @@ impl<'a> CheckerState<'a> {
             };
             let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
             let no_def_id = |_node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> { None };
-            let no_value_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
+            let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+                if direct_source_file_arena {
+                    return self.source_file_value_symbol_for_lowering(
+                        delegate_binder,
+                        interface_arena,
+                        node_idx,
+                        direct_source_file_idx,
+                    );
+                }
+                None
+            };
             let lazy_type_params_resolver =
                 |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
             let lowering = TypeLowering::with_hybrid_resolver(
@@ -227,7 +255,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &no_type_symbol,
                 &no_def_id,
-                &no_value_symbol,
+                &value_resolver,
             )
             .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
             .with_name_def_id_resolver(&name_resolver)
