@@ -4,6 +4,15 @@ use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
     pub fn parse_error_at_current_token(&mut self, message: &str, code: u32) {
+        if code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+            && self.is_token(SyntaxKind::CloseParenToken)
+            && self.speculate(|parser| {
+                parser.next_token();
+                parser.is_token(SyntaxKind::SemicolonToken)
+            })
+        {
+            return;
+        }
         let start = self.u32_from_usize(self.scanner.get_token_start());
         let end = self.u32_from_usize(self.scanner.get_token_end());
         self.parse_error_at(start, end - start, message, code);
@@ -582,6 +591,25 @@ impl ParserState {
                 diagnostic_codes::ARGUMENT_EXPRESSION_EXPECTED,
             );
         }
+    }
+
+    /// Error: Comma expected (TS1005) between parameters or arguments.
+    pub(crate) fn error_comma_expected(&mut self) {
+        if self.is_token(SyntaxKind::CloseParenToken)
+            && self.speculate(|parser| {
+                parser.next_token();
+                parser.is_token(SyntaxKind::SemicolonToken)
+            })
+        {
+            return;
+        }
+        if self.parse_diagnostics.iter().any(|diag| {
+            diag.start == self.token_pos()
+                && diag.code == tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED
+        }) {
+            return;
+        }
+        self.error_token_expected(",");
     }
 
     /// Error: Array element destructuring pattern expected (TS1181)

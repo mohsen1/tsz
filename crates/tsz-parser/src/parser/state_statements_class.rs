@@ -273,6 +273,7 @@ impl ParserState {
 
         self.scanner.restore_state(snapshot);
         self.current_token = saved_token;
+        self.last_error_pos = self.token_pos();
         self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
     }
 

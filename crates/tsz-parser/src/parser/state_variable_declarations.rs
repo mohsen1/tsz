@@ -460,8 +460,8 @@ impl ParserState {
             self.reserved_parameter_yielded_to_statement = false;
             self.recover_reserved_parameter_as_statement_tail_allowed =
                 previous_reserved_parameter_recovery;
-            if self.abort_function_signature_after_definite_assignment_tail_once
-                || !reserved_parameter_yielded_to_statement
+            if !self.abort_function_signature_after_definite_assignment_tail_once
+                && !reserved_parameter_yielded_to_statement
             {
                 self.parse_expected(SyntaxKind::CloseParenToken);
             }
