@@ -1345,12 +1345,30 @@ impl<'a> CheckerState<'a> {
     /// - Mapped types (check constraint is valid key type via TS2322, recurse into template)
     pub(crate) fn check_type_node(&mut self, node_idx: NodeIndex) {
         let nested_in_type_literal = self.type_node_is_nested_in_type_literal(node_idx);
-        self.check_type_node_with_literal_context(node_idx, nested_in_type_literal);
+        let scope_key = self.type_reference_arg_validation_scope_key();
+        let active_alias_key = self.active_resolving_alias_set_key();
+        self.check_type_node_with_literal_context(
+            node_idx,
+            nested_in_type_literal,
+            scope_key,
+            active_alias_key,
+        );
     }
 
     fn active_resolving_alias_set_key(&self) -> u64 {
         if self.ctx.symbol_resolution_set.is_empty() {
             return 0;
+        }
+        if self.ctx.symbol_resolution_set.len() == 1 {
+            let Some(&sym_id) = self.ctx.symbol_resolution_set.iter().next() else {
+                return 0;
+            };
+            return self
+                .ctx
+                .get_existing_def_id(sym_id)
+                .map_or(u64::from(sym_id.0), |def_id| {
+                    (1_u64 << 32) | u64::from(def_id.0)
+                });
         }
 
         let mut entries = self
@@ -1376,6 +1394,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         node_idx: NodeIndex,
         nested_in_type_literal: bool,
+        scope_key: u64,
+        active_alias_key: u64,
     ) {
         if node_idx == NodeIndex::NONE {
             return;
@@ -1386,8 +1406,8 @@ impl<'a> CheckerState<'a> {
         let validation_cache_key = (
             node_idx.0,
             nested_in_type_literal,
-            self.type_reference_arg_validation_scope_key(),
-            self.active_resolving_alias_set_key(),
+            scope_key,
+            active_alias_key,
         );
         if self
             .ctx
@@ -1402,7 +1422,22 @@ impl<'a> CheckerState<'a> {
             nested_in_type_literal || node.kind == syntax_kind_ext::TYPE_LITERAL;
         macro_rules! check_child_type_node {
             ($checker:expr, $child:expr) => {
-                $checker.check_type_node_with_literal_context($child, child_nested_in_type_literal)
+                $checker.check_type_node_with_literal_context(
+                    $child,
+                    child_nested_in_type_literal,
+                    scope_key,
+                    active_alias_key,
+                )
+            };
+        }
+        macro_rules! check_child_type_node_in_current_scope {
+            ($checker:expr, $child:expr) => {
+                $checker.check_type_node_with_literal_context(
+                    $child,
+                    child_nested_in_type_literal,
+                    $checker.type_reference_arg_validation_scope_key(),
+                    $checker.active_resolving_alias_set_key(),
+                )
             };
         }
 
@@ -1480,12 +1515,15 @@ impl<'a> CheckerState<'a> {
                                             self.ctx.arena.get_parameter(param_node)
                                         && param.type_annotation != NodeIndex::NONE
                                     {
-                                        check_child_type_node!(self, param.type_annotation);
+                                        check_child_type_node_in_current_scope!(
+                                            self,
+                                            param.type_annotation
+                                        );
                                     }
                                 }
                             }
                             if sig.type_annotation != NodeIndex::NONE {
-                                check_child_type_node!(self, sig.type_annotation);
+                                check_child_type_node_in_current_scope!(self, sig.type_annotation);
                             }
                             self.pop_type_parameters(type_param_updates);
                             continue;
@@ -1586,7 +1624,7 @@ impl<'a> CheckerState<'a> {
                         if !check_is_type_param {
                             let infer_pushes =
                                 self.push_infer_bindings_from_extends(cond.extends_type);
-                            check_child_type_node!(self, cond.true_type);
+                            check_child_type_node_in_current_scope!(self, cond.true_type);
                             self.pop_infer_bindings(infer_pushes);
                         }
                     }
@@ -1642,12 +1680,12 @@ impl<'a> CheckerState<'a> {
                         pushed_name = Some((name, previous));
                     }
                     if mapped.type_node != NodeIndex::NONE {
-                        check_child_type_node!(self, mapped.type_node);
+                        check_child_type_node_in_current_scope!(self, mapped.type_node);
                     }
                     // Also recurse into the name_type (the `as` clause) which may
                     // reference the mapped type parameter.
                     if mapped.name_type != NodeIndex::NONE {
-                        check_child_type_node!(self, mapped.name_type);
+                        check_child_type_node_in_current_scope!(self, mapped.name_type);
                     }
                     if let Some((name, previous)) = pushed_name {
                         if let Some(prev_type) = previous {
@@ -1701,11 +1739,11 @@ impl<'a> CheckerState<'a> {
                                 .then_some(param.type_annotation)
                         })();
                         if let Some(param_type_annotation) = param_type_annotation {
-                            check_child_type_node!(self, param_type_annotation);
+                            check_child_type_node_in_current_scope!(self, param_type_annotation);
                         }
                     }
                     if type_annotation.is_some() {
-                        check_child_type_node!(self, type_annotation);
+                        check_child_type_node_in_current_scope!(self, type_annotation);
                     }
                     self.check_rest_parameter_types(&parameters);
                     self.pop_type_parameters(tp_updates);
