@@ -2,7 +2,7 @@
 //! of `mapped.rs` to keep each source shard under the file-size limit. These
 //! are additional inherent methods on [`TypeEvaluator`]; behavior is unchanged.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{MappedModifier, MappedType, TupleElement, TupleListId, TypeData, TypeId};
 use rustc_hash::FxHashMap;
@@ -25,8 +25,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
 
         // Substitute into the template to get the mapped element type
-        let mut mapped_element =
-            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let mut mapped_element = self.evaluate(instantiate_type_cached(
+            self.interner(),
+            self.query_db(),
+            mapped.template,
+            &subst,
+        ));
 
         // CRITICAL: Handle optional modifier (Partial<T[]> case)
         // TypeScript adds undefined to the element type when ? modifier is present
@@ -59,8 +63,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
 
         // Substitute into the template to get the mapped element type
-        let mut mapped_element =
-            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let mut mapped_element = self.evaluate(instantiate_type_cached(
+            self.interner(),
+            self.query_db(),
+            mapped.template,
+            &subst,
+        ));
 
         // CRITICAL: Handle optional modifier (Partial<T[]> case)
         if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
@@ -289,7 +297,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.substitute_exact_type(template, old_source, new_source, &mut memo)
         };
         let subst = TypeSubstitution::single(iter_var, key);
-        let instantiated = instantiate_type(self.interner(), rewritten, &subst);
+        let instantiated =
+            instantiate_type_cached(self.interner(), self.query_db(), rewritten, &subst);
         self.evaluate(instantiated)
     }
 
