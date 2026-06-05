@@ -1141,6 +1141,30 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn get_global_this_type(&mut self, _error_node: NodeIndex) -> TypeId {
+        if let Some(cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .type_node_surface
+            .global_this_type
+            .get()
+        {
+            return cached;
+        }
+        if self
+            .ctx
+            .type_reference_validation_caches
+            .type_node_surface
+            .global_this_type_in_progress
+            .get()
+        {
+            return TypeId::UNKNOWN;
+        }
+        self.ctx
+            .type_reference_validation_caches
+            .type_node_surface
+            .global_this_type_in_progress
+            .set(true);
+
         let mut names = rustc_hash::FxHashSet::default();
         for (name, _) in self.ctx.binder.file_locals.iter() {
             names.insert(name.clone());
@@ -1183,10 +1207,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             properties.push(prop);
         }
 
-        self.ctx.types.factory().object_with_index(ObjectShape {
+        let global_this_type = self.ctx.types.factory().object_with_index(ObjectShape {
             properties,
             ..ObjectShape::default()
-        })
+        });
+        self.ctx
+            .type_reference_validation_caches
+            .type_node_surface
+            .global_this_type
+            .set(Some(global_this_type));
+        self.ctx
+            .type_reference_validation_caches
+            .type_node_surface
+            .global_this_type_in_progress
+            .set(false);
+        global_this_type
     }
 
     fn global_this_surface_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
