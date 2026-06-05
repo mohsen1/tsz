@@ -11,6 +11,7 @@ mod discovery;
 mod exports_imports;
 mod package_resolution;
 mod path_resolution;
+mod probe_counts;
 mod program_file_index;
 mod type_packages;
 
@@ -27,6 +28,7 @@ pub(crate) use path_resolution::{
     build_duplicate_package_redirects, normalize_path, normalize_resolved_path,
     resolve_module_specifier,
 };
+use probe_counts::*;
 pub(crate) use program_file_index::ProgramFileIndex;
 pub(crate) use type_packages::{
     collect_type_packages_from_root, default_type_roots, resolve_type_package_entry_with_cache,
@@ -62,63 +64,6 @@ pub(crate) enum AmbientModuleDeclarationSpecifierPolicy {
     Check {
         is_external_module: bool,
     },
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Counting filesystem probes (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up)
-//
-// The plan calls for `resolver.is_file/is_dir/read_dir` counters so the
-// 2026-05-10 attribution decision matrix can prove (or refute) that the
-// resolver is on the hot path. Rather than sprinkle inline `inc()` calls
-// before every `Path::is_file()`, we wrap the three probe primitives in
-// thin counting helpers and route resolver code through them. Call sites
-// in this file now use `count_is_file(p)` instead of `p.is_file()`, which
-// keeps the diff one token per call and makes future swaps to a real
-// `CountingFs` trait (the eventual T2.0 wrapper) a one-place change.
-//
-// The counter bumps themselves now live in `tsz_common::perf_counters`
-// as `record_resolver_*` helpers (sibling to the cross-arena / interner
-// helpers consolidated in #5097 / #5103 / #5112 / #5115 / #5118). Each
-// wrapper here keeps its file-local identity because it bundles the
-// counter with the underlying syscall — that's intentional grouping —
-// while the gate-and-deref pattern lives in one place.
-#[inline]
-pub(super) fn count_is_file(path: &Path) -> bool {
-    tsz_common::perf_counters::record_resolver_is_file();
-    path.is_file()
-}
-
-#[inline]
-pub(super) fn count_is_dir(path: &Path) -> bool {
-    tsz_common::perf_counters::record_resolver_is_dir();
-    path.is_dir()
-}
-
-#[inline]
-pub(super) fn count_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
-    tsz_common::perf_counters::record_resolver_read_dir();
-    std::fs::read_dir(path)
-}
-
-/// Bump `resolver_candidate_paths_total` once per invocation. The
-/// `tsz_common::perf_counters::record_resolver_candidate_path` helper
-/// gates and dereferences once; this wrapper preserves the file-local
-/// `count_candidate_path` name so the two emit sites
-/// (path-mapping virtual roots and suffix-extension expansion) stay
-/// stable.
-#[inline]
-pub(super) fn count_candidate_path() {
-    tsz_common::perf_counters::record_resolver_candidate_path();
-}
-
-/// Bump `resolver_read_package_json_calls` once per uncached read.
-/// Sits inside `read_package_json_uncached`, which `large-ts-repo`
-/// profiles flag as the dominant resolver work — keeping the gate
-/// cheap matters even though the surrounding `read_to_string` is
-/// several orders of magnitude more expensive.
-#[inline]
-pub(super) fn count_read_package_json() {
-    tsz_common::perf_counters::record_resolver_read_package_json();
 }
 
 #[derive(Default)]
