@@ -130,7 +130,15 @@ impl<'a> TypeFormatter<'a> {
                 && (def.kind == DefKind::TypeAlias
                     || (matches!(def.kind, DefKind::Interface | DefKind::Class)
                         && !def.type_params.is_empty()));
-            if !skip_for_empty_alias {
+            // A type alias whose body was produced by a reducing operator (a
+            // conditional / indexed access that resolved into this object shape)
+            // carries no `aliasSymbol` in tsc, so render the shape structurally
+            // instead of repainting it with the alias name. The def store's
+            // "direct wins" guard keeps the name for a directly-written alias
+            // that happens to share the same interned shape.
+            let skip_for_computed_alias = def.kind == DefKind::TypeAlias
+                && def.body.is_some_and(|b| def_store.is_computed_body(b));
+            if !skip_for_empty_alias && !skip_for_computed_alias {
                 return Some(self.format_def_name(&def));
             }
         }
