@@ -741,6 +741,103 @@ if (app) {
 }
 
 #[test]
+fn value_merged_builtin_dom_interface_keeps_inherited_members_in_project_mode() {
+    let lib_files = load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2016.array.include.d.ts",
+        "lib.es2016.d.ts",
+        "lib.es2017.arraybuffer.d.ts",
+        "lib.es2017.date.d.ts",
+        "lib.es2017.object.d.ts",
+        "lib.es2017.sharedmemory.d.ts",
+        "lib.es2017.string.d.ts",
+        "lib.es2017.typedarrays.d.ts",
+        "lib.es2017.d.ts",
+        "lib.es2018.asyncgenerator.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.es2018.promise.d.ts",
+        "lib.es2018.regexp.d.ts",
+        "lib.es2018.d.ts",
+        "lib.es2019.array.d.ts",
+        "lib.es2019.object.d.ts",
+        "lib.es2019.string.d.ts",
+        "lib.es2019.symbol.d.ts",
+        "lib.es2019.d.ts",
+        "lib.es2020.bigint.d.ts",
+        "lib.es2020.date.d.ts",
+        "lib.es2020.number.d.ts",
+        "lib.es2020.promise.d.ts",
+        "lib.es2020.sharedmemory.d.ts",
+        "lib.es2020.string.d.ts",
+        "lib.es2020.symbol.wellknown.d.ts",
+        "lib.es2020.d.ts",
+        "lib.dom.d.ts",
+        "lib.dom.iterable.d.ts",
+    ]);
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "main.ts",
+                r##"
+import { renderDashboard } from "./view";
+
+const app = document.querySelector<HTMLDivElement>("#app");
+
+if (app) {
+  app.innerHTML = renderDashboard();
+}
+"##,
+            ),
+            (
+                "view.ts",
+                r#"
+export function renderDashboard(): string {
+  return "<main></main>";
+}
+"#,
+            ),
+            (
+                "env.d.ts",
+                r#"
+export {};
+
+declare global {
+  interface ImportMetaEnv {
+    readonly MODE: string;
+  }
+}
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2020,
+            module: ModuleKind::ESNext,
+            module_explicitly_set: true,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected DOM querySelector type argument to keep inherited members in project mode, got: {diagnostics:?}",
+    );
+}
+
+#[test]
 fn cross_file_return_type_property_stays_assignable_to_declared_model() {
     let lib_files = load_compiled_lib_files(&["lib.es5.d.ts"]);
     let diagnostics = check_multi_file_with_libs(
