@@ -93,8 +93,12 @@ export function extractFixtureSourceRows(scriptText) {
 export function readSurfaceData() {
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
   const fixtureScript = read("scripts/bench/project-fixtures.sh");
+  const benchRunnerScript = [
+    read("scripts/bench/bench-vs-tsgo.sh"),
+    read("scripts/bench/lib/bench-vs-tsgo-results.sh"),
+  ].join("\n");
   return {
-    benchRunnerRows: extractBenchRunnerRows(read("scripts/bench/bench-vs-tsgo.sh")),
+    benchRunnerRows: extractBenchRunnerRows(benchRunnerScript),
     compileGuardRows: extractCompileGuardRows(read("scripts/ci/project-compile-guard.sh")),
     compileGuardFallbackRows: extractCompileGuardFallbackRows(fixtureScript),
     fixtureSourceRows: extractFixtureSourceRows(fixtureScript),

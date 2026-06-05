@@ -1262,47 +1262,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                // Two or more adjacent variadic type parameters (`...args: [...A, ...B]`)
-                // cannot be split without an implied arity, which a tuple-typed rest
-                // parameter never has (tsc's `getNonArrayRestType` returns `undefined`
-                // for it). tsc infers nothing here, leaving `A`/`B` to fall back to
-                // their constraints — so bail out of the single-variadic slicing below
-                // rather than mis-distributing the arguments.
+                // A tuple-typed rest parameter is, to tsc, just a tuple parameter:
+                // its fixed prefix, single variadic middle, and fixed suffix are all
+                // inferred together by `inferFromTupleTypes`. We mirror that by packing
+                // EVERY trailing argument into one source tuple and inferring it against
+                // the whole rest tuple type, so `constrain_tuple_types` can recover every
+                // element position — including the fixed prefix/suffix type parameters
+                // (`H` and `L` in `...args: [H, ...M, L]`) that a middle-only slice drops.
+                //
+                // This is correct precisely when the tuple has exactly one variadic
+                // element that is an inference variable:
+                //   * 0 such elements — nothing variadic to distribute; a fully fixed
+                //     tuple rest param (`...args: [T, number]`) is inferred positionally
+                //     by the normal argument loop, and a concrete-only spread
+                //     (`...args: [string, ...number[]]`) carries no inference variable.
+                //   * 2+ such elements (`...args: [...A, ...B]`) cannot be split without
+                //     an implied arity, which a tuple-typed rest parameter never has
+                //     (tsc's `getNonArrayRestType` returns `undefined`); tsc infers
+                //     nothing and both fall back to their constraints, so we bail and let
+                //     Round 1's positional loop leave them unconstrained.
                 let infer_var_rest_count = elements
                     .iter()
                     .filter(|elem| elem.rest && var_map.contains_key(&elem.type_id))
                     .count();
-                if infer_var_rest_count >= 2 {
+                if infer_var_rest_count != 1 {
                     return None;
                 }
-                elements.iter().enumerate().find_map(|(i, elem)| {
-                    if !elem.rest {
-                        return None;
-                    }
-                    if !var_map.contains_key(&elem.type_id) {
-                        return None;
-                    }
-
-                    // Count trailing elements after the variadic part, but allow optional
-                    // tail elements to be omitted when they don't match.
-                    let tail = &elements[i + 1..];
-                    let min_index = rest_start + i;
-                    let mut trailing_count = 0usize;
-                    let mut arg_index = arg_types.len();
-                    for tail_elem in tail.iter().rev() {
-                        if arg_index <= min_index {
-                            break;
-                        }
-                        let arg_type = arg_types[arg_index - 1];
-                        let assignable = self.checker.is_assignable_to(arg_type, tail_elem.type_id);
-                        if tail_elem.optional && !assignable {
-                            break;
-                        }
-                        trailing_count += 1;
-                        arg_index -= 1;
-                    }
-                    Some((rest_start + i, elem.type_id, trailing_count))
-                })
+                let source_tuple = self.build_rest_argument_source_tuple(arg_types, rest_start);
+                return Some((rest_start, rest_param_type, source_tuple));
             }
             // Application rest param: e.g., `...args: TupleMapper<Tuple>` where Tuple
             // is an inference variable and TupleMapper is a mapped type alias.
@@ -1346,39 +1333,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // The variadic arguments start at start_index and end before trailing elements.
         let end_index = arg_types.len().saturating_sub(trailing_count);
         let tuple_elements: Vec<TupleElement> = if start_index < end_index {
-            arg_types[start_index..end_index]
-                .iter()
-                .flat_map(|&ty| {
-                    if let Some(inner) = self.spread_argument_marker_inner(ty) {
-                        return vec![TupleElement {
-                            type_id: inner,
-                            name: None,
-                            optional: false,
-                            rest: true,
-                        }];
-                    }
-                    // Recognize spread marker tuples [...T] from the checker.
-                    // Only match markers whose inner type is a TypeParameter.
-                    if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(ty) {
-                        let elems = self.interner.tuple_list(elems_id);
-                        if elems.len() == 1
-                            && elems[0].rest
-                            && matches!(
-                                self.interner.lookup(elems[0].type_id),
-                                Some(TypeData::TypeParameter(_))
-                            )
-                        {
-                            return elems.to_vec();
-                        }
-                    }
-                    vec![TupleElement {
-                        type_id: ty,
-                        name: None,
-                        optional: false,
-                        rest: false,
-                    }]
-                })
-                .collect()
+            self.rest_argument_tuple_elements(&arg_types[start_index..end_index])
         } else {
             Vec::new()
         };
@@ -1394,6 +1349,58 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target_type,
             self.interner.tuple(tuple_elements),
         ))
+    }
+
+    /// Convert a slice of call-argument types into tuple elements for variadic
+    /// tuple inference. A spread-argument marker (`f(...xs)`) and a checker
+    /// `[...T]` marker tuple whose inner type is a bare type parameter both
+    /// become `rest` elements so the resulting source tuple keeps the same
+    /// variadic structure tsc sees; every other argument becomes a fixed
+    /// element.
+    fn rest_argument_tuple_elements(&self, args: &[TypeId]) -> Vec<TupleElement> {
+        args.iter()
+            .flat_map(|&ty| {
+                if let Some(inner) = self.spread_argument_marker_inner(ty) {
+                    return vec![TupleElement {
+                        type_id: inner,
+                        name: None,
+                        optional: false,
+                        rest: true,
+                    }];
+                }
+                // Recognize spread marker tuples [...T] from the checker.
+                // Only match markers whose inner type is a TypeParameter.
+                if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(ty) {
+                    let elems = self.interner.tuple_list(elems_id);
+                    if elems.len() == 1
+                        && elems[0].rest
+                        && matches!(
+                            self.interner.lookup(elems[0].type_id),
+                            Some(TypeData::TypeParameter(_))
+                        )
+                    {
+                        return elems.to_vec();
+                    }
+                }
+                vec![TupleElement {
+                    type_id: ty,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                }]
+            })
+            .collect()
+    }
+
+    /// Pack every trailing argument (`arg_types[rest_start..]`) into one source
+    /// tuple so it can be inferred against a tuple-typed rest parameter as a
+    /// whole. tsc treats a tuple-typed rest parameter exactly like a tuple
+    /// parameter, so the entire argument list — fixed prefix, variadic middle,
+    /// and fixed suffix — is distributed in a single `inferFromTupleTypes` pass.
+    fn build_rest_argument_source_tuple(&self, arg_types: &[TypeId], rest_start: usize) -> TypeId {
+        let elements =
+            self.rest_argument_tuple_elements(arg_types.get(rest_start..).unwrap_or(&[]));
+        self.interner.tuple(elements)
     }
 
     /// Check if a type evaluates to or contains a function type.

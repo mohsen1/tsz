@@ -11,13 +11,19 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 GCP_FULL_CI = ROOT / "scripts" / "ci" / "gcp-full-ci.sh"
+GCP_FULL_CI_CONFORMANCE = ROOT / "scripts" / "ci" / "lib" / "gcp-full-ci-conformance.sh"
 
 
 class ConformanceArtifactHandoffTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.workflow = CI_WORKFLOW.read_text(encoding="utf-8")
-        cls.script = GCP_FULL_CI.read_text(encoding="utf-8")
+        cls.script = "\n".join(
+            [
+                GCP_FULL_CI.read_text(encoding="utf-8"),
+                GCP_FULL_CI_CONFORMANCE.read_text(encoding="utf-8"),
+            ],
+        )
 
     def function_body(self, name, end_marker):
         start = self.script.index(f"{name}() {{")

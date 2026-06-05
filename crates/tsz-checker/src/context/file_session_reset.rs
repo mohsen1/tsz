@@ -266,6 +266,9 @@ impl<'a> CheckerContext<'a> {
         self.type_parameter_scope.clear();
         self.type_reference_validation_caches.arg_validation.clear();
         self.type_reference_validation_caches
+            .type_node_validation
+            .clear();
+        self.type_reference_validation_caches
             .syntax_instantiation
             .clear();
         self.type_reference_validation_caches
