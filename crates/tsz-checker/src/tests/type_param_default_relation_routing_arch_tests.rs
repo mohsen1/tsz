@@ -53,3 +53,27 @@ fn type_parameter_default_relation_outcome_uses_default_request() {
         "type-parameter default diagnostics should have a request-shaped RelationKind::TypeParameterDefault helper"
     );
 }
+
+#[test]
+fn clean_type_parameter_default_validation_is_cached_per_checker_file() {
+    let source = fs::read_to_string("src/state/type_analysis/type_param_defaults.rs")
+        .expect("failed to read type_param_defaults.rs");
+    let caches = fs::read_to_string("src/context/caches.rs").expect("failed to read caches.rs");
+    let reset =
+        fs::read_to_string("src/context/file_session_reset.rs").expect("failed to read reset.rs");
+
+    assert!(
+        source.contains("type_param_default_constraint")
+            && source.contains("let diagnostics_before = self.ctx.diagnostics.len();")
+            && source.contains("diagnostics.len() == diagnostics_before"),
+        "successful default/constraint validations should be cached only after a clean diagnostic pass"
+    );
+    assert!(
+        caches.contains("pub type_param_default_constraint: FxHashSet<(u32, TypeId, TypeId)>"),
+        "default/constraint validation cache should be keyed by declaration and resolved types"
+    );
+    assert!(
+        reset.contains(".type_param_default_constraint") && reset.contains(".clear()"),
+        "default/constraint validation cache should reset between checker file sessions"
+    );
+}
