@@ -1,0 +1,54 @@
+# Cloud Build config for the `unit` job — runs on private pool
+# `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU × 32 GiB, 200 GB SSD).
+#
+# Why: the Cloud Run worker pool used by GitHub Actions self-hosted runners
+# caps at 8 vCPU × 32 GiB. The unit-suite compile is ~14 min on 8 vCPU and
+# is gated by frontend-parse + LLVM codegen, both of which scale with cores.
+# On 32 vCPU the same compile is ~4-5 min, cutting CI critical path by ~8 min.
+#
+# Cost: ~$0.024/min for e2-highcpu-32 in a private pool. Expected per-run cost
+# at ~5 min total = $0.12/build. At 200 PR runs/day, ~$720/month. Within the
+# $1k/month budget approved for the Cloud Build CI experiment.
+
+steps:
+  - id: unit-test
+    # Pin rustc to match the Cloud Run self-hosted runner's toolchain
+    # (verified 1.95.0 on 2026-05-16). The bare `rust:1` tag floats forward
+    # and surfaced determinism gaps in overload resolution
+    # (test `overload_with_outer_contextual_type_no_spurious_ts2769`) — the
+    # checker's std HashMap iteration order is rustc-version-sensitive in
+    # one code path. Same rustc → same behaviour.
+    name: rust:1.95
+    env:
+      # Use all available vCPUs. CARGO_BUILD_JOBS is workspace-wide.
+      - 'CARGO_BUILD_JOBS=32'
+      # CI gets fresh containers; nothing to gain from incremental fingerprints,
+      # and they add their own non-determinism on multi-container builds.
+      - 'CARGO_INCREMENTAL=0'
+      # Use the same stack budget as the existing CI unit path.
+      - 'RUST_MIN_STACK=16777216'
+      - 'CARGO_TERM_COLOR=always'
+      - 'TSZ_CI_SUITE=unit'
+      - 'TSZ_CI_SKIP_HOST_APT=1'
+      - 'TSZ_CI_DISABLE_SCCACHE=1'
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      cargo --version
+      rustc --version
+
+      # Use the same setup path as the Cloud Run `unit` job so the TypeScript
+      # source tree is available for lib-backed checker tests. The source tar
+      # submitted to Cloud Build intentionally omits the ignored TypeScript
+      # working tree, so gcp-full-ci creates a synthetic checkout and fetches
+      # the pinned TypeScript ref before running nextest.
+      scripts/ci/gcp-full-ci.sh unit
+
+options:
+  pool:
+    name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool
+  # Cloud Build private pools require CLOUD_LOGGING_ONLY (no Cloud Storage logs).
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
