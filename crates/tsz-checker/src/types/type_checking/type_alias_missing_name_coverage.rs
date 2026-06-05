@@ -3,6 +3,7 @@
 use crate::query_boundaries::name_resolution::NameLookupKind;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -11,94 +12,290 @@ impl<'a> CheckerState<'a> {
         &self,
         root: NodeIndex,
     ) -> bool {
-        let mut stack = vec![root];
-        while let Some(node_idx) = stack.pop() {
-            if node_idx == NodeIndex::NONE {
-                continue;
-            }
-            let Some(node) = self.ctx.arena.get(node_idx) else {
-                return false;
-            };
-            match node.kind {
-                k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                    let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
-                        return false;
-                    };
-                    if !self.type_reference_name_is_resolved_for_missing_name_coverage(node_idx) {
-                        return false;
-                    }
-                    if let Some(args) = &type_ref.type_arguments {
-                        stack.extend(args.nodes.iter().copied());
-                    }
-                }
-                k if k == syntax_kind_ext::UNION_TYPE
-                    || k == syntax_kind_ext::INTERSECTION_TYPE =>
-                {
-                    let Some(composite) = self.ctx.arena.get_composite_type(node) else {
-                        return false;
-                    };
-                    stack.extend(composite.types.nodes.iter().copied());
-                }
-                k if k == syntax_kind_ext::ARRAY_TYPE => {
-                    let Some(array) = self.ctx.arena.get_array_type(node) else {
-                        return false;
-                    };
-                    stack.push(array.element_type);
-                }
-                k if k == syntax_kind_ext::TUPLE_TYPE => {
-                    let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
-                        return false;
-                    };
-                    stack.extend(tuple.elements.nodes.iter().copied());
-                }
-                k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
-                    let Some(member) = self.ctx.arena.get_named_tuple_member(node) else {
-                        return false;
-                    };
-                    stack.push(member.type_node);
-                }
-                k if k == syntax_kind_ext::OPTIONAL_TYPE
-                    || k == syntax_kind_ext::REST_TYPE
-                    || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
-                {
-                    let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) else {
-                        return false;
-                    };
-                    stack.push(wrapped.type_node);
-                }
-                k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-                    let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) else {
-                        return false;
-                    };
-                    stack.push(indexed.object_type);
-                    stack.push(indexed.index_type);
-                }
-                k if k == syntax_kind_ext::TYPE_LITERAL => {
-                    let Some(type_lit) = self.ctx.arena.get_type_literal(node) else {
-                        return false;
-                    };
-                    for &member_idx in &type_lit.members.nodes {
-                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                            return false;
-                        };
-                        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                            return false;
-                        };
-                        if prop.type_annotation.is_none() {
-                            return false;
-                        }
-                        stack.push(prop.type_annotation);
-                    }
-                }
-                _ => return false,
-            }
+        self.type_alias_body_missing_names_covered_inner(root, false, &mut Vec::new())
+    }
+
+    fn type_alias_body_missing_names_covered_inner(
+        &self,
+        node_idx: NodeIndex,
+        in_conditional_extends: bool,
+        scoped_names: &mut Vec<String>,
+    ) -> bool {
+        if node_idx == NodeIndex::NONE {
+            return true;
         }
-        true
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                    return false;
+                };
+                if !self.type_reference_name_is_resolved_for_missing_name_coverage(
+                    node_idx,
+                    scoped_names,
+                ) {
+                    return false;
+                }
+                if let Some(args) = &type_ref.type_arguments {
+                    return args.nodes.iter().copied().all(|arg_idx| {
+                        self.type_alias_body_missing_names_covered_inner(
+                            arg_idx,
+                            in_conditional_extends,
+                            scoped_names,
+                        )
+                    });
+                }
+                true
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                let Some(composite) = self.ctx.arena.get_composite_type(node) else {
+                    return false;
+                };
+                composite.types.nodes.iter().copied().all(|member_idx| {
+                    self.type_alias_body_missing_names_covered_inner(
+                        member_idx,
+                        in_conditional_extends,
+                        scoped_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                self.ctx.arena.get_array_type(node).is_some_and(|array| {
+                    self.type_alias_body_missing_names_covered_inner(
+                        array.element_type,
+                        in_conditional_extends,
+                        scoped_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
+                    return false;
+                };
+                tuple.elements.nodes.iter().copied().all(|element_idx| {
+                    self.type_alias_body_missing_names_covered_inner(
+                        element_idx,
+                        in_conditional_extends,
+                        scoped_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => self
+                .ctx
+                .arena
+                .get_named_tuple_member(node)
+                .is_some_and(|member| {
+                    self.type_alias_body_missing_names_covered_inner(
+                        member.type_node,
+                        in_conditional_extends,
+                        scoped_names,
+                    )
+                }),
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                self.ctx
+                    .arena
+                    .get_wrapped_type(node)
+                    .is_some_and(|wrapped| {
+                        self.type_alias_body_missing_names_covered_inner(
+                            wrapped.type_node,
+                            in_conditional_extends,
+                            scoped_names,
+                        )
+                    })
+            }
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) else {
+                    return false;
+                };
+                self.type_alias_body_missing_names_covered_inner(
+                    indexed.object_type,
+                    in_conditional_extends,
+                    scoped_names,
+                ) && self.type_alias_body_missing_names_covered_inner(
+                    indexed.index_type,
+                    in_conditional_extends,
+                    scoped_names,
+                )
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                let Some(cond) = self.ctx.arena.get_conditional_type(node) else {
+                    return false;
+                };
+                if is_unique_symbol_type_annotation_unwrapped(self.ctx.arena, cond.extends_type)
+                    || self.conditional_extends_may_need_infer_constraint_consistency(
+                        cond.extends_type,
+                    )
+                {
+                    return false;
+                }
+                if !self.type_alias_body_missing_names_covered_inner(
+                    cond.check_type,
+                    false,
+                    scoped_names,
+                ) || !self.type_alias_body_missing_names_covered_inner(
+                    cond.extends_type,
+                    true,
+                    scoped_names,
+                ) {
+                    return false;
+                }
+
+                let infer_names = self.collect_infer_type_parameters(cond.extends_type);
+                let old_len = scoped_names.len();
+                for name in infer_names {
+                    if !scoped_names.contains(&name) {
+                        scoped_names.push(name);
+                    }
+                }
+                let true_covered = self.type_alias_body_missing_names_covered_inner(
+                    cond.true_type,
+                    false,
+                    scoped_names,
+                );
+                scoped_names.truncate(old_len);
+                true_covered
+                    && self.type_alias_body_missing_names_covered_inner(
+                        cond.false_type,
+                        false,
+                        scoped_names,
+                    )
+            }
+            k if k == syntax_kind_ext::INFER_TYPE => {
+                if !in_conditional_extends {
+                    return false;
+                }
+                let Some(infer) = self.ctx.arena.get_infer_type(node) else {
+                    return false;
+                };
+                self.type_parameter_missing_name_coverage_is_safe(
+                    infer.type_parameter,
+                    in_conditional_extends,
+                    scoped_names,
+                )
+            }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                let Some(op) = self.ctx.arena.get_type_operator(node) else {
+                    return false;
+                };
+                if op.operator == SyntaxKind::ReadonlyKeyword as u16
+                    && let Some(operand_node) = self.ctx.arena.get(op.type_node)
+                    && operand_node.kind != syntax_kind_ext::ARRAY_TYPE
+                    && operand_node.kind != syntax_kind_ext::TUPLE_TYPE
+                {
+                    return false;
+                }
+                self.type_alias_body_missing_names_covered_inner(
+                    op.type_node,
+                    in_conditional_extends,
+                    scoped_names,
+                )
+            }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                let Some(mapped) = self.ctx.arena.get_mapped_type(node) else {
+                    return false;
+                };
+                if (self.ctx.no_implicit_any() && mapped.type_node.is_none())
+                    || mapped.members.is_some()
+                    || !self.type_parameter_missing_name_coverage_is_safe(
+                        mapped.type_parameter,
+                        in_conditional_extends,
+                        scoped_names,
+                    )
+                {
+                    return false;
+                }
+                let Some(name) =
+                    self.type_parameter_name_for_missing_name_coverage(mapped.type_parameter)
+                else {
+                    return false;
+                };
+                let old_len = scoped_names.len();
+                if !scoped_names.contains(&name) {
+                    scoped_names.push(name);
+                }
+                let name_type_covered = mapped.name_type.is_none()
+                    || self.type_alias_body_missing_names_covered_inner(
+                        mapped.name_type,
+                        in_conditional_extends,
+                        scoped_names,
+                    );
+                let type_node_covered = mapped.type_node.is_none()
+                    || self.type_alias_body_missing_names_covered_inner(
+                        mapped.type_node,
+                        in_conditional_extends,
+                        scoped_names,
+                    );
+                scoped_names.truncate(old_len);
+                name_type_covered && type_node_covered
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                let Some(type_lit) = self.ctx.arena.get_type_literal(node) else {
+                    return false;
+                };
+                type_lit.members.nodes.iter().copied().all(|member_idx| {
+                    self.type_member_missing_name_coverage_is_safe(
+                        member_idx,
+                        in_conditional_extends,
+                        scoped_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                let Some(template) = self.ctx.arena.get_template_literal_type(node) else {
+                    return false;
+                };
+                template
+                    .template_spans
+                    .nodes
+                    .iter()
+                    .copied()
+                    .all(|span_idx| {
+                        let Some(span_node) = self.ctx.arena.get(span_idx) else {
+                            return false;
+                        };
+                        let Some(span) = self.ctx.arena.get_template_span(span_node) else {
+                            return false;
+                        };
+                        self.type_alias_body_missing_names_covered_inner(
+                            span.expression,
+                            in_conditional_extends,
+                            scoped_names,
+                        )
+                    })
+            }
+            k if k == syntax_kind_ext::TYPE_PREDICATE => {
+                let Some(pred) = self.ctx.arena.get_type_predicate(node) else {
+                    return false;
+                };
+                pred.type_node.is_none()
+                    || self.type_alias_body_missing_names_covered_inner(
+                        pred.type_node,
+                        in_conditional_extends,
+                        scoped_names,
+                    )
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                self.function_type_missing_name_coverage_is_safe(
+                    node,
+                    in_conditional_extends,
+                    scoped_names,
+                )
+            }
+            k if Self::primitive_or_literal_type_kind_is_covered(k) => true,
+            _ => false,
+        }
     }
 
     fn type_reference_name_is_resolved_for_missing_name_coverage(
         &self,
         type_idx: NodeIndex,
+        scoped_names: &[String],
     ) -> bool {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return false;
@@ -123,6 +320,9 @@ impl<'a> CheckerState<'a> {
                 .is_some();
         };
         let name = ident.escaped_text.as_str();
+        if type_ref.type_arguments.is_none() && scoped_names.iter().any(|scoped| scoped == name) {
+            return true;
+        }
         let shadows_managed_array = matches!(name, "Array" | "ReadonlyArray")
             && self.ctx.file_local_type_shadow_for_lib_name(name);
         let primitive_type = matches!(
@@ -146,6 +346,225 @@ impl<'a> CheckerState<'a> {
         }
         self.resolve_type_symbol_for_lowering(type_ref.type_name)
             .is_some()
+    }
+
+    fn type_parameter_missing_name_coverage_is_safe(
+        &self,
+        param_idx: NodeIndex,
+        in_conditional_extends: bool,
+        scoped_names: &mut Vec<String>,
+    ) -> bool {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(param.name) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if crate::error_reporter::assignability::is_reserved_type_name(&ident.escaped_text) {
+            return false;
+        }
+        (param.constraint.is_none()
+            || self.type_alias_body_missing_names_covered_inner(
+                param.constraint,
+                in_conditional_extends,
+                scoped_names,
+            ))
+            && (param.default.is_none()
+                || self.type_alias_body_missing_names_covered_inner(
+                    param.default,
+                    in_conditional_extends,
+                    scoped_names,
+                ))
+    }
+
+    fn type_parameter_name_for_missing_name_coverage(
+        &self,
+        param_idx: NodeIndex,
+    ) -> Option<String> {
+        let param_node = self.ctx.arena.get(param_idx)?;
+        let param = self.ctx.arena.get_type_parameter(param_node)?;
+        let name_node = self.ctx.arena.get(param.name)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        Some(ident.escaped_text.clone())
+    }
+
+    fn type_member_missing_name_coverage_is_safe(
+        &self,
+        member_idx: NodeIndex,
+        in_conditional_extends: bool,
+        scoped_names: &mut Vec<String>,
+    ) -> bool {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return false;
+        };
+        if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
+            return prop.type_annotation.is_some()
+                && self.type_alias_body_missing_names_covered_inner(
+                    prop.type_annotation,
+                    in_conditional_extends,
+                    scoped_names,
+                );
+        }
+        if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+            let old_len = scoped_names.len();
+            if let Some(type_params) = &sig.type_parameters {
+                for &tp_idx in &type_params.nodes {
+                    if !self.type_parameter_missing_name_coverage_is_safe(
+                        tp_idx,
+                        in_conditional_extends,
+                        scoped_names,
+                    ) {
+                        scoped_names.truncate(old_len);
+                        return false;
+                    }
+                    let Some(name) = self.type_parameter_name_for_missing_name_coverage(tp_idx)
+                    else {
+                        scoped_names.truncate(old_len);
+                        return false;
+                    };
+                    if !scoped_names.contains(&name) {
+                        scoped_names.push(name);
+                    }
+                }
+            }
+            if let Some(params) = &sig.parameters {
+                for &param_idx in &params.nodes {
+                    if !self.parameter_missing_name_coverage_is_safe(
+                        param_idx,
+                        in_conditional_extends,
+                        scoped_names,
+                    ) {
+                        scoped_names.truncate(old_len);
+                        return false;
+                    }
+                }
+            }
+            let covered = sig.type_annotation.is_none()
+                || self.type_alias_body_missing_names_covered_inner(
+                    sig.type_annotation,
+                    in_conditional_extends,
+                    scoped_names,
+                );
+            scoped_names.truncate(old_len);
+            return covered;
+        }
+        false
+    }
+
+    fn function_type_missing_name_coverage_is_safe(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        in_conditional_extends: bool,
+        scoped_names: &mut Vec<String>,
+    ) -> bool {
+        let Some(func_type) = self.ctx.arena.get_function_type(node) else {
+            return false;
+        };
+        let old_len = scoped_names.len();
+        if let Some(type_params) = &func_type.type_parameters {
+            for &tp_idx in &type_params.nodes {
+                if !self.type_parameter_missing_name_coverage_is_safe(
+                    tp_idx,
+                    in_conditional_extends,
+                    scoped_names,
+                ) {
+                    scoped_names.truncate(old_len);
+                    return false;
+                }
+                let Some(name) = self.type_parameter_name_for_missing_name_coverage(tp_idx) else {
+                    scoped_names.truncate(old_len);
+                    return false;
+                };
+                if !scoped_names.contains(&name) {
+                    scoped_names.push(name);
+                }
+            }
+        }
+        for &param_idx in &func_type.parameters.nodes {
+            if !self.parameter_missing_name_coverage_is_safe(
+                param_idx,
+                in_conditional_extends,
+                scoped_names,
+            ) {
+                scoped_names.truncate(old_len);
+                return false;
+            }
+        }
+        let covered = func_type.type_annotation.is_none()
+            || self.type_alias_body_missing_names_covered_inner(
+                func_type.type_annotation,
+                in_conditional_extends,
+                scoped_names,
+            );
+        scoped_names.truncate(old_len);
+        covered
+    }
+
+    fn parameter_missing_name_coverage_is_safe(
+        &self,
+        param_idx: NodeIndex,
+        in_conditional_extends: bool,
+        scoped_names: &mut Vec<String>,
+    ) -> bool {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+            return false;
+        };
+        param.type_annotation.is_none()
+            || self.type_alias_body_missing_names_covered_inner(
+                param.type_annotation,
+                in_conditional_extends,
+                scoped_names,
+            )
+    }
+
+    fn conditional_extends_may_need_infer_constraint_consistency(
+        &self,
+        extends_type: NodeIndex,
+    ) -> bool {
+        let infer_decls = self.collect_infer_type_params_with_constraints(extends_type);
+        for (idx, (name, constraint, _)) in infer_decls.iter().enumerate() {
+            if constraint.is_none() {
+                continue;
+            }
+            if infer_decls
+                .iter()
+                .skip(idx + 1)
+                .any(|(other, other_constraint, _)| other == name && other_constraint.is_some())
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn primitive_or_literal_type_kind_is_covered(kind: u16) -> bool {
+        matches!(
+            kind,
+            k if k == SyntaxKind::AnyKeyword as u16
+                || k == SyntaxKind::UnknownKeyword as u16
+                || k == SyntaxKind::NeverKeyword as u16
+                || k == SyntaxKind::VoidKeyword as u16
+                || k == SyntaxKind::UndefinedKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::BooleanKeyword as u16
+                || k == SyntaxKind::NumberKeyword as u16
+                || k == SyntaxKind::BigIntKeyword as u16
+                || k == SyntaxKind::StringKeyword as u16
+                || k == SyntaxKind::SymbolKeyword as u16
+                || k == SyntaxKind::ObjectKeyword as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == syntax_kind_ext::LITERAL_TYPE
+        )
     }
 
     pub(crate) fn check_type_alias_body_for_missing_names_after_type_node_check(
