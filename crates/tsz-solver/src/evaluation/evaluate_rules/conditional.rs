@@ -992,14 +992,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn is_concrete_application_branch(&self, branch: TypeId, evaluated: TypeId) -> bool {
-        matches!(
-            self.interner().lookup(branch),
-            Some(TypeData::Application(_))
-        ) && Self::is_displayable_conditional_branch_result(self.interner(), evaluated)
-            && !crate::type_queries::contains_generic_type_parameters_db(self.interner(), branch)
+        self.is_concrete_application_display_branch(branch, evaluated)
     }
 
-    fn is_displayable_conditional_branch_result(
+    pub(in crate::evaluation) fn is_displayable_conditional_branch_result(
         interner: &dyn crate::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {

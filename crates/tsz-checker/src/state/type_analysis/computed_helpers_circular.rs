@@ -138,37 +138,98 @@ impl<'a> CheckerState<'a> {
     /// collapses it to a non-generic error type (TS2456 + TS2315). Structural
     /// wrappers defer resolution and are NOT followed here, so legitimate
     /// recursion such as `type List<T> = T | List<T>[]` is never flagged.
+    ///
+    /// Template literal types are an additional eagerly-evaluated form: their
+    /// interpolated spans are resolved immediately, so a self-application in any
+    /// span re-enters the alias mid-resolution just like a bare self-reference
+    /// (a body such as a template literal whose interpolation applies the alias
+    /// to itself). Legitimate recursive template-literal aliases always route the
+    /// self-reference through a deferred branch (e.g. a conditional type), so the
+    /// immediate body is the conditional rather than the template literal and is
+    /// never reached here.
     pub(crate) fn generic_alias_body_is_self_circular(
         &self,
         root_sym: SymbolId,
         body_node: NodeIndex,
     ) -> bool {
-        let mut current = body_node;
         let mut visited: FxHashSet<SymbolId> = FxHashSet::default();
         visited.insert(root_sym);
-        loop {
-            let Some(name_idx) = self.unwrapped_type_reference_name(current) else {
-                return false;
-            };
-            let Some(sym_raw) = self.resolve_type_symbol_for_lowering(name_idx) else {
-                return false;
-            };
-            let sym_id = SymbolId(sym_raw);
-            if sym_id == root_sym {
-                return true;
-            }
-            // Only simple-reference alias hops can extend the cycle. A type
-            // parameter, interface, class, enum, or builtin breaks it. A repeat
-            // visit is a cycle that does not pass through `root_sym`; that alias
-            // reports its own diagnostic when it is computed.
-            if !visited.insert(sym_id) {
-                return false;
-            }
-            match self.type_alias_decl_parts(sym_id) {
-                Some((_, body)) => current = body,
-                None => return false,
-            }
+        self.alias_body_reaches_self_application(root_sym, body_node, &mut visited)
+    }
+
+    /// Walk an eagerly-evaluated alias body looking for a self-application that
+    /// cycles back to `root_sym`. Follows simple-reference alias hops and
+    /// recurses into template-literal interpolation spans. `visited` guards
+    /// against non-root alias cycles, which report their own diagnostics.
+    fn alias_body_reaches_self_application(
+        &self,
+        root_sym: SymbolId,
+        body_node: NodeIndex,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let Some(inner) = self.unwrap_parenthesized_type(body_node) else {
+            return false;
+        };
+        // A template literal type is evaluated eagerly: scan each `${...}` span.
+        if self
+            .ctx
+            .arena
+            .get(inner)
+            .is_some_and(|node| node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE)
+        {
+            return self
+                .template_literal_type_span_expressions(inner)
+                .into_iter()
+                .any(|span_expr| {
+                    self.alias_body_reaches_self_application(root_sym, span_expr, visited)
+                });
         }
+
+        let Some(name_idx) = self.unwrapped_type_reference_name(inner) else {
+            return false;
+        };
+        let Some(sym_raw) = self.resolve_type_symbol_for_lowering(name_idx) else {
+            return false;
+        };
+        let sym_id = SymbolId(sym_raw);
+        if sym_id == root_sym {
+            return true;
+        }
+        // Only simple-reference alias hops can extend the cycle. A type
+        // parameter, interface, class, enum, or builtin breaks it. A repeat
+        // visit is a cycle that does not pass through `root_sym`; that alias
+        // reports its own diagnostic when it is computed.
+        if !visited.insert(sym_id) {
+            return false;
+        }
+        match self.type_alias_decl_parts(sym_id) {
+            Some((_, body)) => self.alias_body_reaches_self_application(root_sym, body, visited),
+            None => false,
+        }
+    }
+
+    /// The interpolated `${...}` span expression type nodes of a template
+    /// literal type node, in source order. The leading/tail literal text spans
+    /// carry no type and are skipped.
+    pub(crate) fn template_literal_type_span_expressions(
+        &self,
+        template_literal_type_node: NodeIndex,
+    ) -> Vec<NodeIndex> {
+        self.ctx
+            .arena
+            .get(template_literal_type_node)
+            .and_then(|node| self.ctx.arena.get_template_literal_type(node))
+            .map(|tpl| tpl.template_spans.nodes.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|span_idx| {
+                let span_node = self.ctx.arena.get(span_idx)?;
+                self.ctx
+                    .arena
+                    .get_template_span(span_node)
+                    .map(|s| s.expression)
+            })
+            .collect()
     }
 
     /// True for direct circular aliases (`type A = B; type B = A`), false for

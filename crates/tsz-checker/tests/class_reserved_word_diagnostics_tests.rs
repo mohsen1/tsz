@@ -1,4 +1,4 @@
-use tsz_checker::test_utils::check_source_code_messages;
+use tsz_checker::test_utils::{check_js_source_code_messages, check_source_code_messages};
 
 #[test]
 fn class_reserved_word_diagnostics_match_strict_class_context() {
@@ -61,5 +61,35 @@ class H extends package.A { }
     assert!(
         diagnostics.iter().all(|(code, _)| *code != 7051),
         "did not expect TS7051 for class-context reserved parameters; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn js_module_let_named_lexical_declaration_uses_ts2480_not_ts1214() {
+    let diagnostics = check_js_source_code_messages(
+        r#"
+export const marker = 0;
+let let = 1;
+const yield = 2;
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2480 && message.contains("'let'")),
+        "expected TS2480 for `let` as a lexical binding name; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 1214 && message.contains("'yield'")),
+        "expected adjacent JS module `yield` binding to keep TS1214; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, message)| *code != 1214 || !message.contains("'let'")),
+        "did not expect TS1214 for `let` as a lexical binding name; got {diagnostics:#?}"
     );
 }

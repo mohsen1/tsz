@@ -171,6 +171,11 @@ family rows are suppressed by default. Pass `--include-stale-detail` only when
 the report is explicitly framed as historical checked-detail triage rather than
 the current public remaining set.
 
+When checked detail and README/public aggregates match, the named rows are still
+aggregate-only evidence. `--freshness-json` reports
+`rowFreshnessProven: false` until the detail artifact carries row-level source
+metadata.
+
 ### Mutation Testing
 
 `cargo-mutants` is intentionally scoped by default. Use it to audit whether

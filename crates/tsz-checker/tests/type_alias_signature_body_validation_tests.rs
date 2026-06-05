@@ -108,3 +108,26 @@ type Container = {
         "expected no TS2315/TS2344 for valid property type reference, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn nested_type_literal_alias_reports_invalid_computed_entity_name_type() {
+    let diagnostics = codes(
+        r#"
+namespace Foo {
+    export enum Enum {
+        A = "a",
+        B = "b",
+    }
+}
+
+type Container = {
+    x?: { [Foo.Enum]: 0 };
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&2464),
+        "expected TS2464 for enum namespace object used as computed property name, got {diagnostics:?}"
+    );
+}

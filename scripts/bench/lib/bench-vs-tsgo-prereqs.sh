@@ -433,6 +433,18 @@ exit_codes_from_status() {
 /g' | sed '/^$/d'
 }
 
+# Resolve the directory backing the project-file-stats cache. That cache only
+# avoids re-line-counting unchanged fixture sources when it OUTLIVES a single
+# bench invocation; a previous default placed it under the per-run `$TEMP_DIR`,
+# which the harness `rm -rf`s on EXIT, so the persistence machinery was dead and
+# every row re-read every fixture from cold (issue #10923). Anchor the default
+# to the run-surviving, gitignored `$BENCH_TARGET_DIR` (alongside the cached
+# binary and external fixtures). An explicit `TSZ_PROJECT_FILE_STATS_CACHE_DIR`
+# always wins; `$TMPDIR` is only the last resort when no persistent dir is known.
+bench_project_file_stats_cache_dir() {
+    printf '%s\n' "${TSZ_PROJECT_FILE_STATS_CACHE_DIR:-${BENCH_TARGET_DIR:-${TMPDIR:-/tmp}}/project-file-stats-cache}"
+}
+
 # Single-pass aggregate of (lines, bytes, files) under a TypeScript source
 # tree. Used as the offline fallback when `project-file-stats.mjs` cannot load
 # the TypeScript package (e.g. tsc tooling not yet installed). Walks the tree
@@ -464,9 +476,11 @@ project_tsconfig_stats() {
     local tsconfig="$1"
     local fallback_src_dir="$2"
     local stats
+    local cache_dir
+    cache_dir="$(bench_project_file_stats_cache_dir)"
 
     if stats="$(TSC_TOOL_DIR_VALUE="$TSC_TOOL_DIR" TSC_BIN_VALUE="$TSC" \
-        TSZ_PROJECT_FILE_STATS_CACHE_DIR="${TSZ_PROJECT_FILE_STATS_CACHE_DIR:-${TEMP_DIR:-${TMPDIR:-/tmp}}/tsz-project-file-stats}" \
+        TSZ_PROJECT_FILE_STATS_CACHE_DIR="$cache_dir" \
         node "$SCRIPT_DIR/project-file-stats.mjs" "$tsconfig" 2>/dev/null)"; then
         echo "$stats"
         return

@@ -2,6 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::module_resolution::{
     module_specifier_candidates, probe_file_name_index, resolve_specifier_via_file_index,
+    resolve_specifier_via_file_index_for_source,
 };
 
 use super::CheckerContext;
@@ -55,9 +56,12 @@ impl<'a> CheckerContext<'a> {
                 .and_then(|a| a.source_files.first())
                 .map(|sf| sf.file_name.as_str())
             {
-                if let Some(result) =
-                    resolve_specifier_via_file_index(source_file_name, specifier, idx)
-                {
+                if let Some(result) = resolve_specifier_via_file_index_for_source(
+                    Some(source_file_idx),
+                    source_file_name,
+                    specifier,
+                    idx,
+                ) {
                     return Some(
                         self.types_versions_redirected_target_index(specifier, result)
                             .unwrap_or(result),
