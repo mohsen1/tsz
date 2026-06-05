@@ -10,6 +10,7 @@
 mod contextual;
 mod core;
 pub(crate) mod format;
+mod jsdoc_format;
 
 use tsz_common::position::Range;
 // Re-export Position for test module (uses `super::*`)

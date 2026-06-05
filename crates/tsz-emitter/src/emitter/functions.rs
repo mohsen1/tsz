@@ -616,8 +616,17 @@ impl<'a> Printer<'a> {
                 // Skip `this` parameter - it's TypeScript-only and erased in JS emit.
                 // The parser may represent `this` as either a ThisKeyword token
                 // or as an Identifier with text "this".
+                // Exception: `...this` (rest `this`) must emit `...` without the name,
+                // matching tsc's error-recovery emit for this parse error.
                 if let Some(name_node) = self.arena.get(param.name) {
                     if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                        if param.dot_dot_dot_token {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
+                            self.write("...");
+                        }
                         continue;
                     }
                     if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
@@ -635,6 +644,13 @@ impl<'a> Printer<'a> {
                             name_node.end as usize,
                         ) {
                             if name_text.trim() == "this" {
+                                if param.dot_dot_dot_token {
+                                    if !first {
+                                        self.write(", ");
+                                    }
+                                    first = false;
+                                    self.write("...");
+                                }
                                 continue;
                             }
                         }
