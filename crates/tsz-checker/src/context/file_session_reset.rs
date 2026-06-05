@@ -172,6 +172,11 @@ impl<'a> CheckerContext<'a> {
         self.flow_numeric_atom_cache.borrow_mut().clear();
         self.flow_reference_match_cache.borrow_mut().clear();
         self.symbol_last_assignment_pos.borrow_mut().clear();
+        self.symbol_nested_closure_assignment.borrow_mut().clear();
+        self.symbol_has_non_initializer_assignment
+            .borrow_mut()
+            .clear();
+        self.symbol_first_identifier_ref.borrow_mut().clear();
         self.symbol_flow_confirmed.borrow_mut().clear();
         self.emitted_ts2454_errors.clear();
         // `CallPredicateMap` has no `.clear()`; replace with default.

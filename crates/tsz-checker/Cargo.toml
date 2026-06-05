@@ -1480,6 +1480,10 @@ path = "tests/operator_literal_annotation_widen_tests.rs"
 name = "flow_dp_memoization_tests"
 path = "tests/flow_dp_memoization_tests.rs"
 [[test]]
+name = "flow_captured_let_memoization_tests"
+path = "tests/flow_captured_let_memoization_tests.rs"
+
+[[test]]
 name = "public_package_unique_symbol_emit_tests"
 path = "tests/public_package_unique_symbol_emit_tests.rs"
 [[test]]

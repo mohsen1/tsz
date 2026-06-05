@@ -152,6 +152,70 @@ const fn flow_step_budget(flow_node_count: usize) -> usize {
     }
 }
 
+/// Find a symbol's representative identifier node, preferring a usage site over
+/// a declaration identifier (binding/variable/parameter), because usage nodes
+/// carry richer flow facts (e.g. switch discriminants).
+///
+/// The scan walks the whole `node_symbols` table, so it is memoized per
+/// `SymbolId` when a cache is supplied: correlated destructured-narrowing queries
+/// the same sibling symbols once per reference, and without the cache each query
+/// re-scans the entire symbol table (`O(references · node_symbols)`).
+pub(crate) fn symbol_first_identifier_ref(
+    arena: &NodeArena,
+    binder: &BinderState,
+    cache: Option<&RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>>,
+    sym: SymbolId,
+) -> Option<NodeIndex> {
+    if let Some(cache) = cache
+        && let Some(&cached) = cache.borrow().get(&sym)
+    {
+        return cached;
+    }
+
+    let result = compute_symbol_first_identifier_ref(arena, binder, sym);
+
+    if let Some(cache) = cache {
+        cache.borrow_mut().insert(sym, result);
+    }
+
+    result
+}
+
+fn compute_symbol_first_identifier_ref(
+    arena: &NodeArena,
+    binder: &BinderState,
+    sym: SymbolId,
+) -> Option<NodeIndex> {
+    let mut declaration_ident = None;
+    for (&node_id, &node_sym) in binder.node_symbols.iter() {
+        if node_sym != sym {
+            continue;
+        }
+        let idx = NodeIndex(node_id);
+        let Some(node) = arena.get(idx) else {
+            continue;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            continue;
+        }
+
+        let is_declaration_ident = arena
+            .get_extended(idx)
+            .and_then(|ext| arena.get(ext.parent))
+            .is_some_and(|parent| {
+                parent.kind == syntax_kind_ext::BINDING_ELEMENT
+                    || parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                    || parent.kind == syntax_kind_ext::PARAMETER
+            });
+
+        if !is_declaration_ident {
+            return Some(idx);
+        }
+        declaration_ident = Some(idx);
+    }
+    declaration_ident
+}
+
 /// Re-enqueue `current_flow` after an antecedent whose narrowing result is needed.
 /// Caller must still `continue`; the helper only manages shared buffers.
 fn defer_to_antecedent(
@@ -444,6 +508,17 @@ pub struct FlowAnalyzer<'a> {
     /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
     pub(crate) shared_symbol_last_assignment_pos:
         Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>>,
+    /// Shared cache for "symbol is reassigned inside a nested closure".
+    /// Key: `SymbolId` -> whether any reassignment lives in a nested closure.
+    /// The predicate is symbol-stable, so memoizing it avoids a per-reference
+    /// full flow-node scan in `is_effectively_const_for_narrowing`.
+    pub(crate) shared_symbol_nested_closure_assignment:
+        Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, bool>>>,
+    /// Shared cache for a symbol's representative identifier node.
+    /// Key: `SymbolId` -> preferred identifier node (usage over declaration), if any.
+    /// Memoizes the `node_symbols` scan in correlated destructured-binding narrowing.
+    pub(crate) shared_symbol_first_identifier_ref:
+        Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, Option<NodeIndex>>>>,
     pub(crate) destructured_bindings:
         Option<&'a FxHashMap<SymbolId, crate::context::DestructuredBindingInfo>>,
     pub(crate) concrete_this_type: Option<TypeId>,
@@ -653,6 +728,8 @@ impl<'a> FlowAnalyzer<'a> {
             flow_visited: None,
             flow_results: None,
             shared_symbol_last_assignment_pos: None,
+            shared_symbol_nested_closure_assignment: None,
+            shared_symbol_first_identifier_ref: None,
             destructured_bindings: None,
             concrete_this_type: None,
         }
@@ -688,6 +765,8 @@ impl<'a> FlowAnalyzer<'a> {
             flow_visited: None,
             flow_results: None,
             shared_symbol_last_assignment_pos: None,
+            shared_symbol_nested_closure_assignment: None,
+            shared_symbol_first_identifier_ref: None,
             destructured_bindings: None,
             concrete_this_type: None,
         }
@@ -756,6 +835,24 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>,
     ) -> Self {
         self.shared_symbol_last_assignment_pos = Some(cache);
+        self
+    }
+
+    /// Set a shared nested-closure-assignment cache for "effectively const" detection.
+    pub const fn with_symbol_nested_closure_assignment(
+        mut self,
+        cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, bool>>,
+    ) -> Self {
+        self.shared_symbol_nested_closure_assignment = Some(cache);
+        self
+    }
+
+    /// Set a shared symbol-identifier-node cache for destructured-binding narrowing.
+    pub const fn with_symbol_first_identifier_ref(
+        mut self,
+        cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, Option<NodeIndex>>>,
+    ) -> Self {
+        self.shared_symbol_first_identifier_ref = Some(cache);
         self
     }
 
@@ -1049,35 +1146,12 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn symbol_identifier_ref(&self, sym: SymbolId) -> Option<NodeIndex> {
-        let mut declaration_ident = None;
-        for (&node_id, &node_sym) in self.binder.node_symbols.iter() {
-            if node_sym != sym {
-                continue;
-            }
-            let idx = NodeIndex(node_id);
-            let Some(node) = self.arena.get(idx) else {
-                continue;
-            };
-            if node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-
-            let is_declaration_ident = self
-                .arena
-                .get_extended(idx)
-                .and_then(|ext| self.arena.get(ext.parent))
-                .is_some_and(|parent| {
-                    parent.kind == syntax_kind_ext::BINDING_ELEMENT
-                        || parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                        || parent.kind == syntax_kind_ext::PARAMETER
-                });
-
-            if !is_declaration_ident {
-                return Some(idx);
-            }
-            declaration_ident = Some(idx);
-        }
-        declaration_ident
+        symbol_first_identifier_ref(
+            self.arena,
+            self.binder,
+            self.shared_symbol_first_identifier_ref,
+            sym,
+        )
     }
 
     fn binding_type_from_member(

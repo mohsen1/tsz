@@ -465,6 +465,35 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         sym_id: SymbolId,
     ) -> bool {
+        // Symbol-stable predicate: every assignment flow node targeting `sym_id`
+        // is the same regardless of which reference `idx` we started from, so the
+        // full flow-node scan below only needs to run once per symbol. Without
+        // this memo, each reference to the symbol re-scans every flow node,
+        // turning N references into an O(N · flow_nodes) cost.
+        if let Some(&cached) = self
+            .ctx
+            .symbol_has_non_initializer_assignment
+            .borrow()
+            .get(&sym_id)
+        {
+            return cached;
+        }
+
+        let result = self.compute_has_non_initializer_assignment_for_reference(idx, sym_id);
+
+        self.ctx
+            .symbol_has_non_initializer_assignment
+            .borrow_mut()
+            .insert(sym_id, result);
+
+        result
+    }
+
+    fn compute_has_non_initializer_assignment_for_reference(
+        &self,
+        idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
         let analyzer = self.flow_analyzer();
         analyzer
             .reference_symbol_cache
@@ -576,6 +605,8 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_results,
         )
         .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+        .with_symbol_nested_closure_assignment(&self.ctx.symbol_nested_closure_assignment)
+        .with_symbol_first_identifier_ref(&self.ctx.symbol_first_identifier_ref)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         if let Some(class_info) = &self.ctx.enclosing_class

@@ -239,6 +239,8 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_results,
         )
         .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+        .with_symbol_nested_closure_assignment(&self.ctx.symbol_nested_closure_assignment)
+        .with_symbol_first_identifier_ref(&self.ctx.symbol_first_identifier_ref)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         // Strip `undefined` from the initial type for parameters with default values.
@@ -811,38 +813,12 @@ impl<'a> CheckerState<'a> {
             }
         };
         let symbol_identifier_ref = |sym: SymbolId| -> Option<NodeIndex> {
-            let mut declaration_ident: Option<NodeIndex> = None;
-            for (&node_id, &node_sym) in self.ctx.binder.node_symbols.iter() {
-                if node_sym != sym {
-                    continue;
-                }
-                let idx = NodeIndex(node_id);
-                let Some(node) = self.ctx.arena.get(idx) else {
-                    continue;
-                };
-                if node.kind != SyntaxKind::Identifier as u16 {
-                    continue;
-                }
-
-                // Prefer a usage site over declaration identifier nodes in binding/variable/parameter
-                // declarations, because usage nodes carry richer flow facts (e.g. switch discriminants).
-                let is_declaration_ident = self
-                    .ctx
-                    .arena
-                    .get_extended(idx)
-                    .and_then(|ext| self.ctx.arena.get(ext.parent))
-                    .is_some_and(|parent| {
-                        parent.kind == syntax_kind_ext::BINDING_ELEMENT
-                            || parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                            || parent.kind == syntax_kind_ext::PARAMETER
-                    });
-
-                if !is_declaration_ident {
-                    return Some(idx);
-                }
-                declaration_ident = Some(idx);
-            }
-            declaration_ident
+            crate::control_flow::symbol_first_identifier_ref(
+                self.ctx.arena,
+                self.ctx.binder,
+                Some(&self.ctx.symbol_first_identifier_ref),
+                sym,
+            )
         };
         let switch_flow_node = {
             let mut found = None;

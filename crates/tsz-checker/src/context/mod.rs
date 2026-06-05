@@ -585,6 +585,30 @@ pub struct CheckerContext<'a> {
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub symbol_last_assignment_pos: RefCell<FxHashMap<SymbolId, u32>>,
 
+    /// Cache for "does this symbol have a reassignment inside a nested closure"
+    /// used by `is_effectively_const_for_narrowing`. The predicate is
+    /// symbol-stable (it depends only on the symbol's declaration and the set of
+    /// assignment flow nodes, not on the particular reference), so memoizing it
+    /// per `SymbolId` collapses an otherwise per-reference full flow-node scan
+    /// from `O(references · flow_nodes)` to `O(flow_nodes)` total.
+    /// Key: `SymbolId` -> whether any reassignment lives in a nested closure.
+    pub symbol_nested_closure_assignment: RefCell<FxHashMap<SymbolId, bool>>,
+
+    /// Cache for "does this symbol have a non-initializer assignment" used by the
+    /// evolving-array implicit-any capture diagnostic. Like the nested-closure
+    /// predicate above it scans every assignment flow node but only depends on
+    /// the symbol, so it is memoized per `SymbolId` to avoid a per-reference
+    /// `O(flow_nodes)` scan.
+    /// Key: `SymbolId` -> whether any non-initializer assignment targets it.
+    pub symbol_has_non_initializer_assignment: RefCell<FxHashMap<SymbolId, bool>>,
+
+    /// Cache for a symbol's representative identifier node, used by correlated
+    /// destructured-binding narrowing. Resolving it scans the whole `node_symbols`
+    /// table, and the same symbols are queried once per reference, so the result
+    /// is memoized per `SymbolId`.
+    /// Key: `SymbolId` -> preferred identifier node (usage over declaration), if any.
+    pub symbol_first_identifier_ref: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
+
     /// Stable flow cache: maps `(SymbolId, DeclaredTypeId)` to the last `FlowNodeId`
     /// where flow analysis confirmed no narrowing (returned the declared type unchanged).
     /// When a new flow node for the same symbol can reach the confirmed node via a
