@@ -493,6 +493,59 @@ let x = 1;
     );
 }
 
+#[test]
+fn single_quoted_use_strict_enables_strict_mode() {
+    // A single-quoted `'use strict'` is a valid directive, like the double-quoted form.
+    let (binder, _parser) = parse_and_bind(
+        r"
+'use strict';
+let x = 1;
+",
+    );
+
+    assert!(
+        binder.is_strict_scope,
+        "'use strict' should enable strict mode"
+    );
+}
+
+#[test]
+fn escaped_use_strict_does_not_enable_strict_mode() {
+    // Per the ECMAScript spec a Use Strict Directive may not contain an escape
+    // sequence, so `"use strict"` — whose cooked value is `use strict` — is
+    // NOT a Use Strict Directive and must leave the file non-strict (matching tsc).
+    let (binder, _parser) = parse_and_bind(
+        "
+\"use\\u0020strict\";
+let x = 1;
+",
+    );
+
+    assert!(
+        !binder.is_strict_scope,
+        "escaped \"use\\u0020strict\" must not enable strict mode"
+    );
+}
+
+#[test]
+fn other_directives_do_not_enable_strict_mode() {
+    // React directives like `"use client"` / `"use server"` are ordinary prologue
+    // directives with no strict-mode semantics in TypeScript.
+    for directive in [r#""use client""#, r#""use server""#, r#""use cache""#] {
+        let source = format!(
+            "
+{directive};
+let x = 1;
+"
+        );
+        let (binder, _parser) = parse_and_bind(&source);
+        assert!(
+            !binder.is_strict_scope,
+            "directive {directive} must not enable strict mode"
+        );
+    }
+}
+
 // =============================================================================
 // 9. DECLARED MODULES
 // =============================================================================

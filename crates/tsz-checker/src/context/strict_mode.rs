@@ -125,7 +125,9 @@ fn statement_is_use_strict(ctx: &CheckerContext<'_>, stmt_idx: NodeIndex) -> boo
         .and_then(|expr_stmt| ctx.arena.get(expr_stmt.expression))
         .filter(|expr_node| expr_node.kind == SyntaxKind::StringLiteral as u16)
         .and_then(|expr_node| ctx.arena.get_literal(expr_node))
-        .is_some_and(|lit| lit.text == "use strict")
+        .is_some_and(|lit| {
+            tsz_common::directives::is_use_strict_directive(lit.raw_text.as_deref(), &lit.text)
+        })
 }
 
 /// Check if a block contains a `"use strict"` directive in its prologue.
