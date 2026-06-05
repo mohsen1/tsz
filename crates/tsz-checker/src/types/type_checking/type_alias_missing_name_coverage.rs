@@ -28,11 +28,7 @@ impl<'a> CheckerState<'a> {
                 let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
                     return false;
                 };
-                type_ref.type_arguments.as_ref().is_none_or(|args| {
-                    args.nodes.iter().copied().all(|arg_idx| {
-                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(arg_idx)
-                    })
-                })
+                type_ref.type_arguments.is_none()
             }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 let Some(composite) = self.ctx.arena.get_composite_type(node) else {
