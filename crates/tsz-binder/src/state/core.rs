@@ -951,7 +951,10 @@ impl BinderState {
             };
             if expr.kind == SyntaxKind::StringLiteral as u16 {
                 if let Some(lit) = arena.get_literal(expr)
-                    && lit.text == "use strict"
+                    && tsz_common::directives::is_use_strict_directive(
+                        lit.raw_text.as_deref(),
+                        &lit.text,
+                    )
                 {
                     return true;
                 }
