@@ -10,8 +10,6 @@
 //! - `check_type_node` — recursive type node validation (mapped types, conditionals, etc.)
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
-mod type_query_flow;
-
 use super::alias_defid_visited_pool::with_alias_defid_visited;
 use crate::state::CheckerState;
 use tsz_parser::parser::node::NodeAccess;
@@ -234,6 +232,10 @@ impl<'a> CheckerState<'a> {
         let should_check_variance_annotations = self
             .check_variance_annotations_supported_for_type_alias(alias)
             && self.type_alias_has_variance_annotation_to_check(alias.type_parameters.as_ref());
+        let has_type_params = alias
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty());
 
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
@@ -243,13 +245,21 @@ impl<'a> CheckerState<'a> {
                 && self.ctx.symbol_resolution_set.contains(&alias_sid)
                 && self.alias_ast_refs_symbol_or_resolution_chain_alias(alias.type_node, alias_sid)
         });
+        // Generic aliases still get the syntax/diagnostic body walk below.
+        // Defer semantic body construction until a use site supplies type args.
+        let skip_eager_generic_alias_body = has_type_params
+            && !should_check_variance_annotations
+            && !is_generic_self_circular
+            && !has_deferred_self_reference;
         let body_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
             // Clear any stale tuple_too_large flag before constructing the body
             // so that flag reads below are attributable to this alias alone.
             let _ = self.ctx.types.take_tuple_too_large();
-            let body_type = if has_deferred_self_reference {
+            let body_type = if skip_eager_generic_alias_body {
+                TypeId::UNKNOWN
+            } else if has_deferred_self_reference {
                 crate::TypeNodeChecker::new(&mut self.ctx).check(alias.type_node)
             } else {
                 self.get_type_from_type_node(alias.type_node)
@@ -278,31 +288,29 @@ impl<'a> CheckerState<'a> {
         );
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
         let mut body_produced_too_large_tuple = self.alias_body_owns_too_large_tuple(body_type);
-        let has_type_params = alias
-            .type_parameters
-            .as_ref()
-            .is_some_and(|params| !params.nodes.is_empty());
         // Generic aliases are checked at declaration time, but their bodies are
         // not fully instantiated until concrete type arguments are supplied.
-        let body_evaluation_too_complex = if has_deferred_self_reference || has_type_params {
-            false
-        } else {
-            let evaluation_timing_start = alias_timing_enabled.then(web_time::Instant::now);
-            let _ = self.evaluate_type_with_env_uncached(body_type);
-            record_type_alias_phase_timing(
-                &self.ctx.file_name,
-                alias_name_str.as_deref(),
-                "evaluation",
-                alias_pos,
-                alias_end,
-                evaluation_timing_start,
-            );
-            body_produced_too_large_tuple =
-                body_produced_too_large_tuple || self.alias_body_owns_too_large_tuple(body_type);
-            self.ctx.types.take_union_too_complex()
-        };
+        let body_evaluation_too_complex =
+            if has_deferred_self_reference || has_type_params || skip_eager_generic_alias_body {
+                false
+            } else {
+                let evaluation_timing_start = alias_timing_enabled.then(web_time::Instant::now);
+                let _ = self.evaluate_type_with_env_uncached(body_type);
+                record_type_alias_phase_timing(
+                    &self.ctx.file_name,
+                    alias_name_str.as_deref(),
+                    "evaluation",
+                    alias_pos,
+                    alias_end,
+                    evaluation_timing_start,
+                );
+                body_produced_too_large_tuple = body_produced_too_large_tuple
+                    || self.alias_body_owns_too_large_tuple(body_type);
+                self.ctx.types.take_union_too_complex()
+            };
         let registration_timing_start = alias_timing_enabled.then(web_time::Instant::now);
-        if body_type != TypeId::ERROR
+        if !skip_eager_generic_alias_body
+            && body_type != TypeId::ERROR
             && let Some(alias_sid) = alias_sym_id
         {
             let type_params = self.current_alias_type_params(alias.type_parameters.as_ref());
@@ -346,7 +354,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
             );
         }
-        if body_construction_too_complex || body_evaluation_too_complex {
+        if !skip_eager_generic_alias_body
+            && (body_construction_too_complex || body_evaluation_too_complex)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let anchor = if body_evaluation_too_complex {
                 self.too_complex_union_member_anchor(alias.type_node)
@@ -360,7 +370,8 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
             );
         }
-        if let Some(alias_sid) = alias_sym_id
+        if !skip_eager_generic_alias_body
+            && let Some(alias_sid) = alias_sym_id
             && let Some(body_node) = self.ctx.arena.get(alias.type_node)
             && let Some(conditional) = self.ctx.arena.get_conditional_type(body_node)
             && self.type_node_references_defaulted_alias_with_omitted_args(
@@ -385,7 +396,7 @@ impl<'a> CheckerState<'a> {
         // 2. Registering the body temporarily so the evaluator can resolve it
         // 3. Evaluating with a special flag that detects Application cycle = TS2589
         let recursion_timing_start = alias_timing_enabled.then(web_time::Instant::now);
-        if let Some(alias_sid) = alias_sym_id {
+        if !skip_eager_generic_alias_body && let Some(alias_sid) = alias_sym_id {
             let def_id = self.ctx.get_or_create_def_id(alias_sid);
             // Only check when the body is a conditional type — tsc emits TS2589
             // at definition time specifically for recursive conditional types,
@@ -534,7 +545,11 @@ impl<'a> CheckerState<'a> {
             }
         } else if !self.validate_signature_only_type_literal_alias_body(alias.type_node) {
             self.check_type_node(alias.type_node);
-            if !self.type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node) {
+            if !self
+                .type_alias_body_missing_names_syntax_covered_by_type_node_checking(alias.type_node)
+                && !self
+                    .type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node)
+            {
                 self.check_type_alias_body_for_missing_names_after_type_node_check(alias.type_node);
             }
         }
