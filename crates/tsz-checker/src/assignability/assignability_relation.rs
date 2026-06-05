@@ -1364,19 +1364,26 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let mut visited = FxHashSet::default();
-        let rejects_empty = candidate_types
-            .iter()
-            .any(|&candidate| self.candidate_rejects_empty_object_shallow(candidate, &mut visited));
-        if rejects_empty {
-            return false;
-        }
-
         // Broad key maps can pull in deeply-expanded lib helper types while
         // probing `O[k]` candidates. For `{}` sources, `tsc` does not
         // manufacture an extra source-to-`O[K]` diagnostic in that shape, but
         // required properties and callable targets still reject `{}`.
         const LARGE_DEFERRED_INDEX_EMPTY_OBJECT_CANDIDATES: usize = 8;
+        let mut visited = FxHashSet::default();
+        let rejects_empty = if candidate_types.len() >= LARGE_DEFERRED_INDEX_EMPTY_OBJECT_CANDIDATES
+        {
+            candidate_types.iter().any(|&candidate| {
+                self.candidate_rejects_empty_object_shallow(candidate, &mut visited)
+            })
+        } else {
+            candidate_types
+                .iter()
+                .any(|&candidate| self.candidate_rejects_empty_object(candidate, &mut visited))
+        };
+        if rejects_empty {
+            return false;
+        }
+
         if candidate_types.len() >= LARGE_DEFERRED_INDEX_EMPTY_OBJECT_CANDIDATES {
             return true;
         }
