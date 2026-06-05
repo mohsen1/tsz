@@ -1001,10 +1001,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(property_type) = self
-            .ctx
-            .types
-            .contextual_property_type(original_contextual_type, property_name)
+        // Skip the un-resolved contextual extraction for a non-identity
+        // homomorphic mapped application: the solver's resolver-less fallback
+        // would read the property off the source type argument, dropping the
+        // mapped template's modifiers and producing a wrongly-narrowed type that
+        // then wins `prefer_more_specific`. The fully-resolved form below
+        // supplies the correct property type for these targets.
+        if !self.application_alias_body_is_non_identity_mapped(original_contextual_type)
+            && let Some(property_type) = self
+                .ctx
+                .types
+                .contextual_property_type(original_contextual_type, property_name)
         {
             // When the property type is `any`, it may come from an index signature
             // in a distributed intersection. Don't return eagerly — fall through
@@ -1052,6 +1059,8 @@ impl<'a> CheckerState<'a> {
         let resolved_original_contextual_type =
             self.resolve_type_for_property_access(original_contextual_type);
         if resolved_original_contextual_type != original_contextual_type
+            && !self
+                .application_alias_body_is_non_identity_mapped(resolved_original_contextual_type)
             && let Some(property_type) = self
                 .ctx
                 .types
@@ -1221,6 +1230,35 @@ impl<'a> CheckerState<'a> {
             "contextual_object_literal_property_type: no property type"
         );
         None
+    }
+
+    /// Whether `type_id` is a generic alias application whose alias body is a
+    /// mapped type that is **not** identity homomorphic (`{ [K in keyof T]: T[K] }`).
+    ///
+    /// For such a target (e.g. `Outer<T> = { [K in keyof T]?: Partial<T[K]> }`),
+    /// the resolver-less contextual property extraction's "read the property
+    /// directly off the first type argument" shortcut is unsound: it discards
+    /// the mapped template and the inner mapped's optional/readonly modifiers,
+    /// yielding a wrongly-narrowed property type (`{ b: number }` instead of
+    /// `{ b?: number }`). Because the narrower type wins the
+    /// `prefer_more_specific` comparison, it would override the correct,
+    /// fully-resolved property type. This predicate lets the un-resolved
+    /// extraction be skipped so the resolved application form stays
+    /// authoritative.
+    ///
+    /// Identity homomorphic aliases (`Partial`, `Readonly`, `Required`, an
+    /// `Id`-style passthrough — all with template `T[K]`) are intentionally not
+    /// matched: their result property *value* type equals the source property
+    /// type, so the shortcut remains correct for them (the optionality they add
+    /// is a property-level modifier, not a change to the value type).
+    fn application_alias_body_is_non_identity_mapped(&mut self, type_id: TypeId) -> bool {
+        let Some((base, _)) = common::application_info(self.ctx.types, type_id) else {
+            return false;
+        };
+        let body = self.resolve_lazy_type(base);
+        common::mapped_type_id(self.ctx.types, body).is_some_and(|mapped_id| {
+            tsz_solver::type_queries::classify_identity_mapped(self.ctx.types, mapped_id).is_none()
+        })
     }
 
     fn mapped_contextual_property_type(

@@ -12,8 +12,8 @@ use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::syntax::transform_utils::{
-    contains_async_arrow_function, contains_new_target_reference, contains_this_keyword_reference,
-    is_private_identifier,
+    collect_class_computed_name_this_references, contains_async_arrow_function,
+    contains_new_target_reference, contains_this_keyword_reference, is_private_identifier,
 };
 use tsz_scanner::SyntaxKind;
 
@@ -749,6 +749,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // tsc emits methods/accessors (both instance and static) in source order,
         // but defers static property initializer assignments to after all methods/accessors.
         let mut deferred_static_prop_inits: Vec<IRNode> = Vec::new();
+        let mut deferred_static_temp_decls: Vec<String> = Vec::new();
 
         // Single pass: emit all members in source order
         for (member_i, &member_idx) in class_data.members.nodes.iter().enumerate() {
@@ -1307,6 +1308,17 @@ impl<'a> ES5ClassTransformer<'a> {
                                 }
                             }
                         };
+                        let reserved_static_class_expression_temps = self
+                            .reserve_static_class_expression_initializer_temps(
+                                prop_data.initializer,
+                            );
+                        let reserved_static_class_expression_temp_count =
+                            reserved_static_class_expression_temps.len();
+                        for temp in reserved_static_class_expression_temps {
+                            if !deferred_static_temp_decls.contains(&temp) {
+                                deferred_static_temp_decls.push(temp);
+                            }
+                        }
                         let value = if !self.class_decorators.is_empty() {
                             if let Some(alias) = self.class_self_reference_alias.as_ref() {
                                 self.convert_expression_static_with_decorator_self_alias(
@@ -1347,8 +1359,10 @@ impl<'a> ES5ClassTransformer<'a> {
                                 leading_comment: self.extract_leading_comment(member_node),
                             });
                         } else {
-                            if self
-                                .expression_contains_static_class_expression(prop_data.initializer)
+                            if reserved_static_class_expression_temp_count == 0
+                                && self.expression_contains_static_class_expression(
+                                    prop_data.initializer,
+                                )
                             {
                                 deferred_static_prop_inits.push(IRNode::VarDecl {
                                     name: self.generate_temp_name().into(),
@@ -1489,11 +1503,27 @@ impl<'a> ES5ClassTransformer<'a> {
                 });
             }
             // Emit class alias preamble before the first static property init
+            let class_alias_declared_in_static_temp_decls = class_alias
+                .as_ref()
+                .is_some_and(|alias| deferred_static_temp_decls.contains(alias));
+            if !deferred_static_temp_decls.is_empty() {
+                body.push(IRNode::VarDeclList(
+                    deferred_static_temp_decls
+                        .into_iter()
+                        .map(|name| IRNode::VarDecl {
+                            name: name.into(),
+                            initializer: None,
+                        })
+                        .collect(),
+                ));
+            }
             if let Some(ref alias) = class_alias {
-                body.push(IRNode::VarDecl {
-                    name: alias.clone().into(),
-                    initializer: None,
-                });
+                if !class_alias_declared_in_static_temp_decls {
+                    body.push(IRNode::VarDecl {
+                        name: alias.clone().into(),
+                        initializer: None,
+                    });
+                }
                 body.push(IRNode::expr_stmt(IRNode::assign(
                     IRNode::id(alias.clone()),
                     IRNode::id(self.class_name.clone()),
@@ -1581,6 +1611,60 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         false
+    }
+
+    fn reserve_static_class_expression_initializer_temps(&self, idx: NodeIndex) -> Vec<String> {
+        let Some(temp_count) = self.static_class_expression_initializer_temp_count(idx) else {
+            return Vec::new();
+        };
+
+        let mut temps = Vec::with_capacity(temp_count + 1);
+        if let Some(alias) = self.current_static_class_alias.as_ref() {
+            temps.push(alias.clone());
+        }
+        for _ in 0..temp_count {
+            temps.push(self.generate_temp_name());
+        }
+        temps
+    }
+
+    fn static_class_expression_initializer_temp_count(&self, idx: NodeIndex) -> Option<usize> {
+        let node = self.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            let class_data = self.arena.get_class(node)?;
+            if self.has_static_property_initializer(&class_data.members) {
+                return Some(
+                    1 + collect_class_computed_name_this_references(self.arena, idx).len(),
+                );
+            }
+            return None;
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.static_class_expression_initializer_temp_count(paren.expression);
+        }
+        if (node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && let Some(assertion) = self.arena.get_type_assertion(node)
+        {
+            return self.static_class_expression_initializer_temp_count(assertion.expression);
+        }
+        if node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(expr_type_args) = self.arena.get_expr_type_args(node)
+        {
+            return self.static_class_expression_initializer_temp_count(expr_type_args.expression);
+        }
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr_ex(node)
+        {
+            return self.static_class_expression_initializer_temp_count(unary.expression);
+        }
+
+        None
     }
 
     /// Check if any static property initializer or static block uses `this`.
