@@ -224,6 +224,23 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Shorthand method and accessor member names (`{ m(x) {} }`,
+        // `{ get x() {} }`, `{ set x(v) {} }`) are declaration names, not source
+        // expressions. The member's value is the declaration itself; resolving
+        // the name as a value reference would emit a false TS2304 "Cannot find
+        // name". This mirrors the property-assignment guard above so
+        // object-literal method/accessor members elaborate like property-arrow
+        // members; `get_declaration_name_node` owns the per-kind name lookup.
+        if matches!(
+            parent_node.kind,
+            syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+        ) && self.get_declaration_name_node(parent_idx) == Some(expr_idx)
+        {
+            return None;
+        }
+
         // Class property names are assignment targets; the initializer is the
         // source expression, and resolving the name can emit false TS2304.
         if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION

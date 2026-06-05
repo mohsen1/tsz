@@ -511,27 +511,28 @@ impl<'a> CheckerState<'a> {
                     elaborated = true;
                     continue;
                 }
-                // For method declarations, emit TS2322 directly to avoid triggering
-                // name resolution on the method name identifier (which would cause
-                // a spurious TS2552 "Cannot find name" error). The anchor-based
-                // diagnosis path calls get_type_of_node on the anchor which for
-                // method name identifiers triggers scope lookup.
+                // Shorthand method members (`{ m(x: string) {} }`) elaborate the
+                // same way tsc does for property-arrow members
+                // (`{ m: (x: string) => {} }`): route through the canonical
+                // relation -> reason -> diagnostic boundary so the TS2322 carries
+                // the nested elaboration chain (e.g. "Types of parameters 'x' and
+                // 'x' are incompatible.").
+                //
+                // The anchor is the method name; `assignment_source_expression`
+                // resolves a method-name anchor to the method declaration itself,
+                // so the source display is the method's call signature and the
+                // method name is not resolved as a value reference (which would
+                // otherwise surface a spurious "Cannot find name").
                 let is_method = self
                     .ctx
                     .arena
                     .get(prop_value_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::METHOD_DECLARATION);
                 if is_method {
-                    let source_str = self.format_type_diagnostic(source_prop_type_for_diagnostic);
-                    let target_str = self.format_type_diagnostic(target_for_diag);
-                    let message = crate::diagnostics::format_message(
-                        crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&source_str, &target_str],
-                    );
-                    self.error_at_node(
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
                         prop_name_idx,
-                        &message,
-                        crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 } else {
                     // For arrow/function expression property values, try deeper
