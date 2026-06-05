@@ -1221,6 +1221,9 @@ mod union_multi_overload_unified_sig_tests;
 #[path = "tests/unique_symbol_assignment_ts2322_tests.rs"]
 mod unique_symbol_assignment_ts2322_tests;
 #[cfg(test)]
+#[path = "tests/variadic_tuple_alias_display_tests.rs"]
+mod variadic_tuple_alias_display_tests;
+#[cfg(test)]
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;
 #[cfg(test)]
