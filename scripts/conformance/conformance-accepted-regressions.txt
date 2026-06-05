@@ -61,3 +61,16 @@ TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varia
 # covariant TS2322 again. Removed from this ledger; covered by
 # nullable_union_callback_variance_tests.
 TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation.ts
+
+# Current-main aggregate drift after PR branches first made the duplicate
+# type-query-flow module compileable again. Exact evidence:
+# - PR #12606 run 26999340595 at bb6caa8011 aggregated 12552/12585 and
+#   listed exactly these seven unaccepted rows after all conformance shards
+#   themselves completed successfully.
+TypeScript/tests/cases/compiler/declarationEmitComputedPropertyNameEnum3.ts
+TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
+TypeScript/tests/cases/conformance/salsa/plainJSGrammarErrors.ts
+TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts
+TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors2.ts
+TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
+TypeScript/tests/cases/conformance/types/tuple/variadicTuples2.ts
