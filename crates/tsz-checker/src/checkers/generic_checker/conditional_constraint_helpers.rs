@@ -15,7 +15,30 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        let cache_key = (type_arg, constraint);
+        if let Some(&cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .conditional_branch_constraint
+            .get(&cache_key)
+        {
+            return cached;
+        }
 
+        let result =
+            self.conditional_result_branches_satisfy_constraint_uncached(type_arg, constraint);
+        self.ctx
+            .type_reference_validation_caches
+            .conditional_branch_constraint
+            .insert(cache_key, result);
+        result
+    }
+
+    fn conditional_result_branches_satisfy_constraint_uncached(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+    ) -> bool {
         let components =
             query::full_conditional_type_components(self.ctx.types.as_type_database(), type_arg)
                 .or_else(|| self.type_alias_application_conditional_components(type_arg))

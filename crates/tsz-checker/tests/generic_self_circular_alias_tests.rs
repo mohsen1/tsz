@@ -168,3 +168,99 @@ fn identity_alias_not_flagged() {
         "identity alias must not error. got: {c:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Template-literal-type bodies (issue #12177).
+//
+// Template literal types are evaluated eagerly, like a bare self-reference, so
+// a self-application in any interpolation span re-enters the alias
+// mid-resolution and collapses it (TS2456 + TS2315). Legitimate recursive
+// template-literal aliases always route the self-reference through a deferred
+// branch (a conditional type), so the immediate body is the conditional and
+// the cycle is never flagged. Before this fix tsz eagerly expanded the
+// infinite template into a truncated garbage string literal instead.
+// ---------------------------------------------------------------------------
+
+/// Direct self-application inside a template literal span is circular.
+#[test]
+fn template_literal_direct_self_application_is_circular() {
+    let source = "type Str<T extends string> = `${T}${Str<`${T}x`>}`;\nconst x: Str<\"a\"> = \"a\" as any;\n";
+    let c = codes(source);
+    assert!(
+        c.contains(&2456),
+        "expected TS2456 at the circular template-literal alias. got: {c:?}"
+    );
+    assert!(
+        c.iter().filter(|&&x| x == 2315).count() >= 2,
+        "expected TS2315 at the body span self-ref and the use site. got: {c:?}"
+    );
+    assert!(
+        !c.contains(&2322),
+        "the collapsed alias is an error type; no cascading TS2322. got: {c:?}"
+    );
+}
+
+/// Anti-hardcoding: the rule keys on the structural cycle, not the name `Str`.
+#[test]
+fn template_literal_self_application_renamed() {
+    let source = "type Tpl<T extends string> = `p${Tpl<`${T}q`>}`;\n";
+    let c = codes(source);
+    assert!(c.contains(&2456), "expected TS2456. got: {c:?}");
+    assert!(c.contains(&2315), "expected TS2315. got: {c:?}");
+}
+
+/// A mutual template-literal cycle is circular for both aliases.
+#[test]
+fn template_literal_mutual_cycle() {
+    let source =
+        "type MA<T extends string> = `a${MB<T>}`;\ntype MB<T extends string> = `b${MA<T>}`;\n";
+    let c = codes(source);
+    assert!(
+        c.iter().filter(|&&x| x == 2456).count() >= 2,
+        "expected TS2456 on both aliases of the mutual template cycle. got: {c:?}"
+    );
+}
+
+/// An unused (declaration-only) circular template alias still errors.
+#[test]
+fn template_literal_unused_alias_still_errors() {
+    let source = "type Loop<T extends string> = `${T}${Loop<T>}`;\n";
+    let c = codes(source);
+    assert!(c.contains(&2456), "expected TS2456. got: {c:?}");
+    assert!(c.contains(&2315), "expected TS2315. got: {c:?}");
+}
+
+/// Negative: a non-recursive template literal alias must NOT error.
+#[test]
+fn template_literal_non_recursive_not_flagged() {
+    let source = "type Pre<T extends string> = `pre_${T}`;\nconst x: Pre<\"y\"> = \"pre_y\";\n";
+    let c = codes(source);
+    assert!(
+        !c.contains(&2456) && !c.contains(&2315),
+        "non-recursive template alias must not error. got: {c:?}"
+    );
+}
+
+/// Negative: a template literal referencing a *different* alias is not a cycle.
+#[test]
+fn template_literal_cross_alias_not_flagged() {
+    let source = "type Other<T extends string> = `o_${T}`;\ntype Uses<T extends string> = `u_${Other<T>}`;\nconst x: Uses<\"z\"> = \"u_o_z\";\n";
+    let c = codes(source);
+    assert!(
+        !c.contains(&2456) && !c.contains(&2315),
+        "cross-alias template must not error. got: {c:?}"
+    );
+}
+
+/// Negative: a legitimate recursive template alias whose self-reference is
+/// deferred behind a conditional branch must NOT be flagged. The immediate
+/// body is the conditional type, so the eager-template walk never reaches it.
+#[test]
+fn template_literal_recursive_via_conditional_not_flagged() {
+    let source = "type Join<T extends string[], D extends string> = T extends [infer F extends string, ...infer R extends string[]] ? R extends [] ? F : `${F}${D}${Join<R, D>}` : '';\nconst x: Join<[\"a\", \"b\"], \"-\"> = \"a-b\";\n";
+    let c = codes(source);
+    assert!(
+        !c.contains(&2456),
+        "recursive template alias deferred behind a conditional must not be circular. got: {c:?}"
+    );
+}
