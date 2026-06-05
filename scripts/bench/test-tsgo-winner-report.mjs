@@ -281,6 +281,15 @@ withTempDir((dir) => {
         winner: "tsgo",
         factor: 1.06,
       },
+      {
+        name: "200 generic functions",
+        lines: 4200,
+        kb: 120,
+        tsz_ms: 396.48,
+        tsgo_ms: 404.57,
+        winner: "tsz",
+        factor: 1.02,
+      },
     ],
   });
 
@@ -294,18 +303,25 @@ withTempDir((dir) => {
     byName.get("200 classes").loss_closure.attribution_command,
     /TSZ_PERF_COUNTERS=1 .*<generated-200-classes>\.ts/,
   );
+  assert.match(
+    report.target_gaps
+      .find((row) => row.name === "200 generic functions")
+      .loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-200-generic-functions>\.ts/,
+  );
   assert.deepEqual(report.totals.missing_attribution_rows, [
     "200 classes",
     "BCT candidates=200",
   ]);
   assert.deepEqual(
     report.target_gaps.map((row) => row.name),
-    ["BCT candidates=200", "200 classes"],
+    ["BCT candidates=200", "200 classes", "200 generic functions"],
   );
-  assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_below_target, 3);
   assert.equal(report.two_x_target.rows_with_attribution, 0);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, [
     "200 classes",
+    "200 generic functions",
     "BCT candidates=200",
   ]);
 });

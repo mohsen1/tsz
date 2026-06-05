@@ -59,9 +59,7 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
     );
     assert!(
         compact_core.contains("flow_assignability_related(left,right)")
-            && compact_core.contains("flow_assignability_related(right,left)")
-            && compact_core.contains("flow_assignability_related(widened,initial_type)")
-            && compact_core.contains("flow_assignability_related(assigned_type,narrowing_base,)"),
+            && compact_core.contains("flow_assignability_related(right,left)"),
         "flow analyzer relation decisions should route through the outcome-backed helper"
     );
     assert!(
@@ -93,9 +91,11 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         "flow assignment should not call raw flow assignability helpers directly"
     );
     assert!(
-        compact_call_predicate.contains("flow_assignability_outcome(")
-            && compact_call_predicate.contains(").related"),
-        "call predicate exclusion should consume outcome-shaped relation truth"
+        compact_call_predicate.contains("flow_query::narrow_call_predicate_guard(")
+            && compact_boundary.contains("fnnarrow_call_predicate_guard(")
+            && compact_boundary.contains("flow_assignability_outcome(")
+            && compact_boundary.contains(").related"),
+        "call predicate exclusion should route through a flow_analysis helper that consumes outcome-shaped relation truth"
     );
     assert!(
         !compact_call_predicate

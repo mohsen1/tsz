@@ -238,7 +238,7 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/state/type_resolution/module.rs",
+            # (empty — all files are now under the 2000-line limit)
         },
     ),
     (
@@ -262,7 +262,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1924,
+        1901,
     ),
     (
         "Emitter transform boundary: class_es5_ir.rs must not grow",
@@ -734,7 +734,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_resolution"
         / "module.rs",
-        2596,
+        1953,
     ),
     (
         "Parser boundary: parser/state_statements_class_members.rs size ratchet",
@@ -1234,7 +1234,8 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # rather than direct `query_boundaries::common` access.
         #
         # Ratcheted down after arch-smoke caught current stacked-branch slack.
-        3211,
+        # Ratcheted 3211→3208 after guard tests caught slack in the live count.
+        3208,
     ),
 ]
 

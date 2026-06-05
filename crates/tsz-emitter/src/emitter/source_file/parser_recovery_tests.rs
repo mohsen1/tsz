@@ -86,3 +86,24 @@ var Formatting;
 ";
     assert_eq!(output, expected);
 }
+
+#[test]
+fn compound_assignment_after_block_emits_only_rhs() {
+    // When `{ ... } *= value` is at statement level, the parser treats
+    // `{ ... }` as a block statement and `*= value` as a broken expression
+    // (missing LHS). tsc emits only the RHS as a statement.
+    let source = "var value: any;\n{ a: 0 } *= value;\n{ a: 0 } += value;\n";
+    let output = emit_es2015(source);
+    assert!(
+        output.contains("value;\n"),
+        "Compound-assignment with block LHS should emit only the RHS.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("*= value"),
+        "Compound-assignment operator should not appear when LHS is a recovered block.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("+= value"),
+        "Compound-assignment operator should not appear when LHS is a recovered block.\nOutput: {output}"
+    );
+}

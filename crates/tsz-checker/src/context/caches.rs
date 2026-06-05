@@ -21,6 +21,14 @@ pub struct TypeReferenceValidationCaches {
     /// arena-local in project checks, so imported aliases from different files
     /// can share the same raw id while declaring different arities.
     pub ref_type_params: FxHashMap<(SymbolId, Option<usize>, String), Vec<TypeParamInfo>>,
+    /// Results for conditional-branch constraint proofs. These checks can be
+    /// reached repeatedly while extracting generic parameter lists from aliases
+    /// imported or re-exported through several files.
+    pub conditional_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    /// Results for indexed-object-map branch constraint proofs. This memo sits
+    /// underneath `conditional_branch_constraint` because different conditional
+    /// aliases can expose the same mapped-object branch/value constraint pair.
+    pub indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
