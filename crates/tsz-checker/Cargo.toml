@@ -129,6 +129,10 @@ path = "tests/ts2513_abstract_super_access_tests.rs"
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 [[test]]
+name = "generic_type_alias_lazy_body_tests"
+path = "tests/generic_type_alias_lazy_body_tests.rs"
+
+[[test]]
 name = "class_protected_widening_assignability_tests"
 path = "tests/class_protected_widening_assignability_tests.rs"
 [[test]]
@@ -843,6 +847,9 @@ path = "tests/ts2344_any_key_mapped_constraint_tests.rs"
 [[test]]
 name = "mapped_type_errors_conformance_tests"
 path = "tests/mapped_type_errors_conformance_tests.rs"
+[[test]]
+name = "mapped_type_missing_template_single_ts7039_tests"
+path = "tests/mapped_type_missing_template_single_ts7039_tests.rs"
 [[test]]
 name = "mapped_type_interface_tests"
 path = "tests/mapped_type_interface_tests.rs"
