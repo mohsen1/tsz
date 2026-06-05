@@ -131,6 +131,32 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn source_file_has_jsdoc_typedef_named_cached(
+        &self,
+        file_idx: usize,
+        source_file_idx: usize,
+        source_file: &SourceFileData,
+        name: &str,
+    ) -> bool {
+        let key = (file_idx as u32, source_file_idx as u32, name.to_string());
+        if let Some(result) = self
+            .ctx
+            .jsdoc_global_typedef_lookup_cache
+            .typedef_presence_by_file
+            .get(&key)
+            .map(|entry| *entry.value())
+        {
+            return result;
+        }
+
+        let result = Self::source_file_has_jsdoc_typedef_named(source_file, name);
+        self.ctx
+            .jsdoc_global_typedef_lookup_cache
+            .typedef_presence_by_file
+            .insert(key, result);
+        result
+    }
+
     pub(crate) fn source_file_has_jsdoc_typedef_namespace_root(
         source_file: &SourceFileData,
         name: &str,
@@ -339,8 +365,19 @@ impl<'a> CheckerState<'a> {
             .source_files
             .iter()
             .enumerate()
-            .filter(|(_, source_file)| {
-                !use_typedef_prescan || Self::source_file_has_jsdoc_typedef_named(source_file, name)
+            .filter(|(source_file_idx, source_file)| {
+                if !use_typedef_prescan {
+                    return true;
+                }
+                let file_idx = self
+                    .global_source_file_idx_for_name(&source_file.file_name)
+                    .unwrap_or(current_file_idx);
+                self.source_file_has_jsdoc_typedef_named_cached(
+                    file_idx,
+                    *source_file_idx,
+                    source_file,
+                    name,
+                )
             })
             .map(|(source_file_idx, source_file)| {
                 (
@@ -386,7 +423,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            for source_file in &arena.source_files {
+            for (source_file_idx, source_file) in arena.source_files.iter().enumerate() {
                 if Self::jsdoc_source_file_is_external_module(
                     &self.ctx,
                     file_idx,
@@ -397,7 +434,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if use_typedef_prescan
-                    && !Self::source_file_has_jsdoc_typedef_named(source_file, name)
+                    && !self.source_file_has_jsdoc_typedef_named_cached(
+                        file_idx,
+                        source_file_idx,
+                        source_file,
+                        name,
+                    )
                 {
                     continue;
                 }
@@ -1685,6 +1727,62 @@ new C().x;
         assert_eq!(
             direct.map(|ty| checker.format_type(ty)),
             Some("number".to_string())
+        );
+    }
+
+    #[test]
+    fn jsdoc_typedef_prescan_cache_keys_by_file_and_name() {
+        let source = r#"
+/** @typedef {{ value: number }} Payload */
+let value;
+"#;
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        let types = TypeInterner::new();
+        let checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.js".to_string(),
+            crate::context::CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                ..crate::context::CheckerOptions::default()
+            },
+        );
+        let source_file = parser
+            .get_arena()
+            .source_files
+            .first()
+            .expect("source file should be available after parse");
+
+        assert!(checker.source_file_has_jsdoc_typedef_named_cached(7, 0, source_file, "Payload"));
+        assert!(checker.source_file_has_jsdoc_typedef_named_cached(7, 0, source_file, "Payload"));
+        assert_eq!(
+            checker
+                .ctx
+                .jsdoc_global_typedef_lookup_cache
+                .typedef_presence_by_file
+                .len(),
+            1
+        );
+
+        assert!(!checker.source_file_has_jsdoc_typedef_named_cached(
+            7,
+            0,
+            source_file,
+            "MissingPayload"
+        ));
+        assert!(checker.source_file_has_jsdoc_typedef_named_cached(8, 0, source_file, "Payload"));
+        assert_eq!(
+            checker
+                .ctx
+                .jsdoc_global_typedef_lookup_cache
+                .typedef_presence_by_file
+                .len(),
+            3
         );
     }
 }
