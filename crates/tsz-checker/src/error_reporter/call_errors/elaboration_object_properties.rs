@@ -1295,12 +1295,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 continue;
             };
-            // For diagnostic display, prefer the un-evaluated array element type
-            // when the parameter is a plain array `(keyof T)[]`. Evaluating
-            // `keyof T` for a free type parameter collapses it to the constraint's
-            // keys union (e.g., `"a" | "b"`); tsc preserves the abstract `keyof T`
-            // form in TS2322 messages, so we anchor the diagnostic on the
-            // original element type whenever it differs from the evaluated form.
+            // For diagnostic display, use the unevaluated element type from
+            // `param_type` (the declared array type) rather than `target_element_type`
+            // (which comes from `effective_param_type` after `evaluate_type_with_env`
+            // has resolved `keyof T` to the constraint's keys union `"a" | "b"`).
+            // tsc preserves `keyof T` in TS2322 messages for free type parameters,
+            // so we anchor on the raw element type stored in the declared array type.
             let display_target_element_type = if tuple_target_elements.is_none() {
                 crate::query_boundaries::common::array_element_type(self.ctx.types, param_type)
                     .unwrap_or(target_element_type)

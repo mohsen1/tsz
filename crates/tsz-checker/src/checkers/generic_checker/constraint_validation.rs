@@ -1667,6 +1667,8 @@ impl<'a> CheckerState<'a> {
 
                 // Instantiate before resolving so dependent constraints like
                 // `Required<Options>` keep the earlier type-argument binding.
+                let written_keyof_constraint_display =
+                    self.written_keyof_constraint_display(constraint, type_params, type_args_list);
                 let constraint =
                     self.instantiate_constraint_with_type_args(constraint, type_params, &type_args);
                 let constraint = self.resolve_lazy_type(constraint);
@@ -1933,10 +1935,11 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     } else {
-                        self.error_type_constraint_not_satisfied(
+                        self.error_type_constraint_not_satisfied_with_constraint_display(
                             type_arg,
                             constraint_for_message,
                             arg_idx,
+                            written_keyof_constraint_display.clone(),
                         );
                     }
                 }
