@@ -572,6 +572,15 @@ impl<'a> CheckerState<'a> {
                 }
                 return None;
             }
+            // A `return <expr>` is checked against the enclosing function's
+            // declared return type. When that type is written as an
+            // intersection, the recovered-intersection display must fire here
+            // exactly as it does for an annotated variable/parameter/property —
+            // otherwise the value-position mismatch falls back to tsz's
+            // eagerly-merged single-object shape (a type the user never wrote).
+            if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                return self.enclosing_function_return_annotation_node(current);
+            }
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                 || node.kind == syntax_kind_ext::ARROW_FUNCTION
@@ -584,6 +593,33 @@ impl<'a> CheckerState<'a> {
             current = self.ctx.arena.get_extended(current).map(|ext| ext.parent)?;
         }
         None
+    }
+
+    /// Return-type annotation node of the function-like that directly encloses
+    /// `return_stmt_idx` (a `RETURN_STATEMENT`), or `None` when the enclosing
+    /// function has no written return type.
+    ///
+    /// A `return` always belongs to its innermost enclosing function, so the
+    /// nearest function-like ancestor (via the shared `find_enclosing_function`
+    /// walk) owns the contextual return type. Constructors/accessors carry no
+    /// `FunctionData`/`MethodDeclData` return annotation, so they fall through to
+    /// `None` (no recovery), matching the pre-existing behavior for those
+    /// positions. Used so the recovered-intersection diagnostic display fires
+    /// for `return` positions the same way it already does for annotated
+    /// bindings.
+    fn enclosing_function_return_annotation_node(
+        &self,
+        return_stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let function_idx = self.find_enclosing_function(return_stmt_idx)?;
+        let node = self.ctx.arena.get(function_idx)?;
+        let annotation = if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            self.ctx.arena.get_method_decl(node)?.type_annotation
+        } else {
+            self.ctx.arena.get_function(node)?.type_annotation
+        };
+        annotation.into_option()
     }
 
     /// Recursively decide whether a type-annotation node denotes an
