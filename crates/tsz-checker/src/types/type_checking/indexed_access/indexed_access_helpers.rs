@@ -491,8 +491,10 @@ impl<'a> CheckerState<'a> {
         element_index: usize,
     ) -> Option<TypeId> {
         let selector_type = self.ctx.type_parameter_scope.get(selector_name).copied()?;
-        let elements =
-            crate::query_boundaries::common::tuple_elements(self.ctx.types, selector_type)?;
+        let elements = crate::query_boundaries::type_computation::access::tuple_elements(
+            self.ctx.types,
+            selector_type,
+        )?;
         let element = elements.get(element_index)?;
         if element.rest {
             return None;
