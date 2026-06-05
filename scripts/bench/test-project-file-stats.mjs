@@ -561,10 +561,16 @@ sum_ts_stats '${srcDir.replace(/'/g, "'\\''")}'
 
 {
   const extract = awkExtractFunction("bench_project_file_stats_cache_dir");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-cache-dir-resolver-"));
+  const functionFile = path.join(dir, "bench-cache-dir.sh");
+  const extractResult = spawnSync("bash", ["-c", `${extract} > '${functionFile.replace(/'/g, "'\\''")}'`], {
+    encoding: "utf8",
+  });
+  assert.equal(extractResult.status, 0, extractResult.stderr);
 
   const runResolver = (envLine) => {
     const script = `set -euo pipefail
-source <(${extract})
+source '${functionFile.replace(/'/g, "'\\''")}'
 ${envLine}
 bench_project_file_stats_cache_dir
 `;
@@ -575,40 +581,44 @@ bench_project_file_stats_cache_dir
     return result.stdout.trim();
   };
 
-  // With a persistent BENCH_TARGET_DIR available, the default must live under
-  // it — NOT under the ephemeral per-run TEMP_DIR, even when TEMP_DIR is set.
-  const persistent = runResolver(
-    'BENCH_TARGET_DIR=/persist/.target-bench; TEMP_DIR=/tmp/run-XXXX; TMPDIR=/tmp; unset TSZ_PROJECT_FILE_STATS_CACHE_DIR',
-  );
-  assert.equal(
-    persistent,
-    "/persist/.target-bench/project-file-stats-cache",
-    "default cache dir is anchored to the run-surviving BENCH_TARGET_DIR",
-  );
-  assert.ok(
-    !persistent.includes("/run-XXXX"),
-    "default cache dir must not live under the per-run TEMP_DIR that is deleted on exit",
-  );
+  try {
+    // With a persistent BENCH_TARGET_DIR available, the default must live under
+    // it — NOT under the ephemeral per-run TEMP_DIR, even when TEMP_DIR is set.
+    const persistent = runResolver(
+      'BENCH_TARGET_DIR=/persist/.target-bench; TEMP_DIR=/tmp/run-XXXX; TMPDIR=/tmp; unset TSZ_PROJECT_FILE_STATS_CACHE_DIR',
+    );
+    assert.equal(
+      persistent,
+      "/persist/.target-bench/project-file-stats-cache",
+      "default cache dir is anchored to the run-surviving BENCH_TARGET_DIR",
+    );
+    assert.ok(
+      !persistent.includes("/run-XXXX"),
+      "default cache dir must not live under the per-run TEMP_DIR that is deleted on exit",
+    );
 
-  // An explicit override always wins over the computed default.
-  const overridden = runResolver(
-    'BENCH_TARGET_DIR=/persist/.target-bench; TSZ_PROJECT_FILE_STATS_CACHE_DIR=/custom/cache',
-  );
-  assert.equal(
-    overridden,
-    "/custom/cache",
-    "an explicit TSZ_PROJECT_FILE_STATS_CACHE_DIR overrides the default",
-  );
+    // An explicit override always wins over the computed default.
+    const overridden = runResolver(
+      'BENCH_TARGET_DIR=/persist/.target-bench; TSZ_PROJECT_FILE_STATS_CACHE_DIR=/custom/cache',
+    );
+    assert.equal(
+      overridden,
+      "/custom/cache",
+      "an explicit TSZ_PROJECT_FILE_STATS_CACHE_DIR overrides the default",
+    );
 
-  // With no persistent target known, fall back to TMPDIR rather than crashing.
-  const tmpFallback = runResolver(
-    'unset BENCH_TARGET_DIR; TMPDIR=/tmp/fallback; unset TSZ_PROJECT_FILE_STATS_CACHE_DIR',
-  );
-  assert.equal(
-    tmpFallback,
-    "/tmp/fallback/project-file-stats-cache",
-    "without BENCH_TARGET_DIR the resolver falls back to TMPDIR",
-  );
+    // With no persistent target known, fall back to TMPDIR rather than crashing.
+    const tmpFallback = runResolver(
+      'unset BENCH_TARGET_DIR; TMPDIR=/tmp/fallback; unset TSZ_PROJECT_FILE_STATS_CACHE_DIR',
+    );
+    assert.equal(
+      tmpFallback,
+      "/tmp/fallback/project-file-stats-cache",
+      "without BENCH_TARGET_DIR the resolver falls back to TMPDIR",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log("project-file-stats tests passed");

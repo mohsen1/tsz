@@ -149,6 +149,12 @@ assert.match(
   "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",
 );
 
+assert.match(
+  ciWorkflow,
+  /\\.github\/workflows\/\(ci\|bench\)\\.yml/,
+  "CI workflow changes must require compiler CI because they route native merge queue and Cloud Run jobs",
+);
+
 assert.doesNotMatch(
   ciWorkflow,
   /CI run superseded[\s\S]+?sys\.exit\(0\)/,
@@ -168,3 +174,21 @@ for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
     `${job} should run on hosted Ubuntu so cheap gates are not blocked by the self-hosted pool`,
   );
 }
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}unit:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?Submit required unit suite to Cloud Build pool[\s\S]+?gcloud builds submit[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-unit\.yaml/,
+  "unit should submit the heavy checker-linking unit suite to Cloud Build",
+);
+
+assert.doesNotMatch(
+  ciWorkflow,
+  /\n\s{2}unit:\n[\s\S]+?Run unit suite on Cloud Run runner/,
+  "unit should not run the checker-linking unit suite directly on 32 GiB Cloud Run workers",
+);
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}unit-cloudbuild:\n[\s\S]+?needs: \[gate, unit\][\s\S]+?UNIT_RESULT: \$\{\{ needs\.unit\.result \}\}[\s\S]+?Required Cloud Build unit job did not pass/,
+  "legacy unit-cloudbuild context should mirror the required Cloud Build unit job",
+);

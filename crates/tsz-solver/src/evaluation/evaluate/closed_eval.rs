@@ -67,9 +67,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             && self.query_db.is_some()
             && self.guard.depth() == 0;
         if !is_top_level
-            || self.silent_depth_bailed
-            || self.guard.is_exceeded()
-            || self.deep_recursion_seen
+            || self.recursion_limit_hit()
             || (self.interner.is_union_too_complex() && !union_too_complex_before)
         {
             return;
