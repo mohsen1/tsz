@@ -33,7 +33,6 @@ mod type_alias_body_validation;
 mod type_alias_checking;
 mod type_alias_depth_helpers;
 mod type_alias_missing_name_coverage;
-mod type_alias_query_flow;
 mod type_alias_recursion_patterns;
 mod type_alias_variance;
 mod unused;
