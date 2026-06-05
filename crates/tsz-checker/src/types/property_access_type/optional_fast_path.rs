@@ -1,12 +1,21 @@
 //! Optional-chain property access fast paths.
 
-use super::OptionalPropertyChainFastPathRequest;
-use crate::query_boundaries::common::PropertyAccessResult;
+use crate::query_boundaries::common::{OptionalPropertyChainKey, PropertyAccessResult};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
 use tsz_solver::narrowing::CachedPropertyType;
+
+pub(super) struct OptionalPropertyChainFastPathRequest<'a> {
+    pub(super) object_type: TypeId,
+    pub(super) original_object_type: TypeId,
+    pub(super) question_dot_token: bool,
+    pub(super) skip_flow_narrowing: bool,
+    pub(super) skip_result_flow_for_result: bool,
+    pub(super) write_presence_only: bool,
+    pub(super) optional_property_chain_cache_key: Option<&'a OptionalPropertyChainKey>,
+}
 
 impl<'a> CheckerState<'a> {
     pub(super) fn try_resolve_optional_property_chain_fast_path(

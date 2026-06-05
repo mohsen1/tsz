@@ -1,6 +1,5 @@
 //! Identifier-named property access resolution.
 
-use super::IdentifierPropertyAccessRequest;
 use crate::classes_domain::class_summary::ClassMemberKind;
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::query_boundaries::property_access as access_query;
@@ -10,6 +9,20 @@ use tsz_parser::parser::node::{AccessExprData, Node};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+pub(super) struct IdentifierPropertyAccessRequest {
+    pub(super) object_type: TypeId,
+    pub(super) original_object_type: TypeId,
+    pub(super) display_object_type: TypeId,
+    pub(super) skip_flow_narrowing: bool,
+    pub(super) skip_result_flow_for_result: bool,
+    pub(super) write_presence_only: bool,
+    pub(super) receiver_has_daa_error: bool,
+    pub(super) accessibility_error_emitted: bool,
+    pub(super) commonjs_named_props_disallowed: bool,
+    pub(super) is_this_access: bool,
+    pub(super) js_expando_before_assignment: bool,
+}
 
 impl<'a> CheckerState<'a> {
     pub(super) fn resolve_identifier_property_access(

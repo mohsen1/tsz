@@ -578,7 +578,7 @@ impl<'a> CheckerState<'a> {
             access.expression,
             access.name_or_argument,
             name_node,
-            super::OptionalPropertyChainFastPathRequest {
+            super::optional_fast_path::OptionalPropertyChainFastPathRequest {
                 object_type,
                 original_object_type,
                 question_dot_token: access.question_dot_token,
@@ -1017,7 +1017,7 @@ impl<'a> CheckerState<'a> {
             idx,
             access,
             name_node,
-            super::IdentifierPropertyAccessRequest {
+            super::identifier_resolution::IdentifierPropertyAccessRequest {
                 object_type,
                 original_object_type,
                 display_object_type,
