@@ -1260,8 +1260,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_SHA: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          CI_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           python3 - <<'PY'
@@ -1307,11 +1307,10 @@ jobs:
           def mirror_previous_required_summary():
               repository = os.environ["GITHUB_REPOSITORY"]
               current_run_id = int(os.environ["GITHUB_RUN_ID"])
-              head_sha = os.environ["GITHUB_SHA"]
+              head_sha = os.environ["CI_HEAD_SHA"]
               query = urllib.parse.urlencode({
                   "head_sha": head_sha,
                   "event": "pull_request",
-                  "status": "completed",
                   "per_page": "20",
               })
               runs = github_json(f"/repos/{repository}/actions/workflows/ci.yml/runs?{query}").get("workflow_runs", [])
