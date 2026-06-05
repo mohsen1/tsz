@@ -38,7 +38,7 @@ pub fn infer_type_arguments_from_param_args(
         return Vec::new();
     }
 
-    let mut ctx = InferenceContext::with_resolver(db.as_type_database(), db);
+    let mut ctx = InferenceContext::with_query_db(db);
     let mut vars = Vec::with_capacity(type_params.len());
     for tp in type_params {
         let var = ctx.fresh_type_param(tp.name, tp.is_const);
