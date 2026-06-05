@@ -460,11 +460,35 @@ impl ParserState {
             self.reserved_parameter_yielded_to_statement = false;
             self.recover_reserved_parameter_as_statement_tail_allowed =
                 previous_reserved_parameter_recovery;
-            if !reserved_parameter_yielded_to_statement {
+            if self.abort_function_signature_after_definite_assignment_tail_once {
+                self.parse_expected(SyntaxKind::CloseParenToken);
+            } else if !reserved_parameter_yielded_to_statement {
                 self.parse_expected(SyntaxKind::CloseParenToken);
             }
             params
         };
+
+        if self.abort_function_signature_after_definite_assignment_tail_once {
+            self.abort_function_signature_after_definite_assignment_tail_once = false;
+            self.context_flags = saved_flags;
+            let end_pos = self.token_full_start();
+            return self.arena.add_function(
+                syntax_kind_ext::FUNCTION_DECLARATION,
+                start_pos,
+                end_pos,
+                FunctionData {
+                    modifiers,
+                    is_async,
+                    asterisk_token,
+                    name,
+                    type_parameters,
+                    parameters,
+                    type_annotation: NodeIndex::NONE,
+                    body: NodeIndex::NONE,
+                    equals_greater_than_token: false,
+                },
+            );
+        }
 
         if reserved_parameter_yielded_to_statement {
             self.context_flags = saved_flags;

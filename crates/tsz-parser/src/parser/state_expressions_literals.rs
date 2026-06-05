@@ -1403,7 +1403,11 @@ impl ParserState {
         let saved_context_flags = self.context_flags;
         self.context_flags |= CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION;
         self.parse_expected(SyntaxKind::OpenParenToken);
-        let expression = self.parse_expression();
+        let expression = if self.is_recovered_const_for_of_header_start() {
+            self.create_missing_expression()
+        } else {
+            self.parse_expression()
+        };
         if expression.is_none() {
             // Emit TS1109 for empty parentheses or invalid expression: ([missing])
             self.error_expression_expected();
