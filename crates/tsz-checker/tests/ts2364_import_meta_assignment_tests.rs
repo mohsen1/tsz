@@ -10,6 +10,10 @@ fn has_error_with_code(source: &str, code: u32) -> bool {
     get_error_codes(source).contains(&code)
 }
 
+fn codes(source: &str) -> Vec<u32> {
+    get_error_codes(source)
+}
+
 #[test]
 fn test_import_meta_direct_assignment_is_invalid() {
     // `import.meta = foo` must emit TS2364 because import.meta itself
@@ -47,5 +51,45 @@ import.meta += 1;
     assert!(
         has_error_with_code(source, 2364),
         "Should emit TS2364 for compound assignment to import.meta"
+    );
+}
+
+#[test]
+fn test_super_compound_exponentiation_no_ts2364() {
+    // `super **= 5` — parser emits TS1034 (captured in parse diagnostics, not
+    // checker diagnostics). The checker must NOT emit TS2364: the parser creates
+    // a PropertyAccessExpression recovery node which is a valid assignment target.
+    let c = codes(
+        r#"
+class A { foo() {} }
+class B extends A {
+    bar() {
+        super **= 5;
+    }
+}
+"#,
+    );
+    assert!(
+        !c.contains(&2364),
+        "Must NOT have TS2364 for super **= (parse error suppresses semantic check): {c:?}",
+    );
+}
+
+#[test]
+fn test_super_compound_addition_no_ts2364() {
+    // `super += 5` — same invariant as the exponentiation case.
+    let c = codes(
+        r#"
+class A { foo() {} }
+class B extends A {
+    bar() {
+        super += 5;
+    }
+}
+"#,
+    );
+    assert!(
+        !c.contains(&2364),
+        "Must NOT have TS2364 for super += (parse error suppresses semantic check): {c:?}",
     );
 }
