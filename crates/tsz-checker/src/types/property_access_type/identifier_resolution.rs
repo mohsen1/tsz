@@ -1,5 +1,6 @@
 //! Identifier-named property access resolution.
 
+use super::IdentifierPropertyAccessRequest;
 use crate::classes_domain::class_summary::ClassMemberKind;
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::query_boundaries::property_access as access_query;
@@ -11,24 +12,26 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn resolve_identifier_property_access(
         &mut self,
         idx: NodeIndex,
         access: &AccessExprData,
         name_node: &Node,
-        object_type: TypeId,
-        original_object_type: TypeId,
-        mut display_object_type: TypeId,
-        skip_flow_narrowing: bool,
-        skip_result_flow_for_result: bool,
-        write_presence_only: bool,
-        receiver_has_daa_error: bool,
-        accessibility_error_emitted: bool,
-        commonjs_named_props_disallowed: bool,
-        is_this_access: bool,
-        js_expando_before_assignment: bool,
+        request: IdentifierPropertyAccessRequest,
     ) -> TypeId {
+        let IdentifierPropertyAccessRequest {
+            object_type,
+            original_object_type,
+            mut display_object_type,
+            skip_flow_narrowing,
+            skip_result_flow_for_result,
+            write_presence_only,
+            receiver_has_daa_error,
+            accessibility_error_emitted,
+            commonjs_named_props_disallowed,
+            is_this_access,
+            js_expando_before_assignment,
+        } = request;
         let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
             return TypeId::ANY;
         };

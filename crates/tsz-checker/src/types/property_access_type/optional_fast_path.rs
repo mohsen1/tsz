@@ -1,6 +1,7 @@
 //! Optional-chain property access fast paths.
 
-use crate::query_boundaries::common::{OptionalPropertyChainKey, PropertyAccessResult};
+use super::OptionalPropertyChainFastPathRequest;
+use crate::query_boundaries::common::PropertyAccessResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -8,21 +9,23 @@ use tsz_solver::computation::TypeResolver;
 use tsz_solver::narrowing::CachedPropertyType;
 
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn try_resolve_optional_property_chain_fast_path(
         &mut self,
         idx: NodeIndex,
         expression: NodeIndex,
         name_or_argument: NodeIndex,
         name_node: &tsz_parser::parser::node::Node,
-        object_type: TypeId,
-        original_object_type: TypeId,
-        question_dot_token: bool,
-        skip_flow_narrowing: bool,
-        skip_result_flow_for_result: bool,
-        write_presence_only: bool,
-        optional_property_chain_cache_key: Option<&OptionalPropertyChainKey>,
+        request: OptionalPropertyChainFastPathRequest<'_>,
     ) -> Option<TypeId> {
+        let OptionalPropertyChainFastPathRequest {
+            object_type,
+            original_object_type,
+            question_dot_token,
+            skip_flow_narrowing,
+            skip_result_flow_for_result,
+            write_presence_only,
+            optional_property_chain_cache_key,
+        } = request;
         // Fast path for optional chaining on non-class receivers when the
         // property resolves successfully without diagnostics.
         //
