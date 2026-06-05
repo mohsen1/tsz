@@ -70,13 +70,13 @@ TypeScript/tests/cases/conformance/types/tuple/variadicTuples2.ts
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
 # covariant TS2322 again. Removed from this ledger; covered by
 # nullable_union_callback_variance_tests.
-# infiniteExpansionThroughInstantiation.ts: RESOLVED. The TS2322 source type
-# `OwnerList<T>` was over-instantiated to `OwnerList<List<T>>` because the
-# eagerly-evaluated generic interface instance dropped its Application display
-# provenance whenever an argument carried a free type parameter
-# (store_parametric_structural_back_reference). Provenance is now recorded for
-# those instances, so display matches tsc. Covered by
-# recursive_generic_interface_application_display_tests.
+# infiniteExpansionThroughInstantiation.ts: RESOLVED (#10867). The TS2322 source
+# display for a generic interface reference written with free type-parameter
+# arguments (`OwnerList<T>`) no longer over-instantiates the argument from the
+# instantiated heritage/members (`OwnerList<List<T>>`); tsz now preserves the
+# as-written reference like tsc. Covered by
+# generic_interface_source_display_preserves_as_written_type_argument and
+# generic_interface_heritage_source_display_is_not_over_instantiated.
 
 # Current-main aggregate drift after PR branches first made the duplicate
 # type-query-flow module compileable again. Exact evidence:
