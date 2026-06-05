@@ -68,7 +68,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             if !source_subst.is_empty() {
                 infer_ctx.substitute_source_vars_in_targets(
-                    &type_param_vars,
+                    type_param_vars,
                     &source_subst,
                     self.interner,
                 );
@@ -377,7 +377,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let instantiated_constraint = instantiate_call_type(
                             self.interner,
                             constraint,
-                            &substitution,
+                            substitution,
                             actual_this_type,
                         );
                         let resolver = self
@@ -507,8 +507,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && is_bare_foreign_type_param(
                     self.interner.as_type_database(),
                     ty,
-                    &local_type_param_names,
-                    &type_param_placeholder_atoms,
+                    local_type_param_names,
+                    type_param_placeholder_atoms,
                 ) {
                 let concrete_lower_bounds = lower_bounds
                     .iter()
@@ -517,8 +517,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         is_substantive_inference_candidate(
                             self.interner.as_type_database(),
                             bound,
-                            &local_type_param_names,
-                            &type_param_placeholder_atoms,
+                            local_type_param_names,
+                            type_param_placeholder_atoms,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -545,8 +545,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let contextual_can_replace_foreign_source = is_bare_foreign_type_param(
                     self.interner.as_type_database(),
                     ty,
-                    &local_type_param_names,
-                    &type_param_placeholder_atoms,
+                    local_type_param_names,
+                    type_param_placeholder_atoms,
                 ) && infer_ctx
                     .all_candidates_are_return_type(var);
                 // When a type parameter had NO inference candidates at all
@@ -618,13 +618,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &mut infer_ctx,
                         var,
                         ty,
-                        &var_map,
+                        var_map,
                     );
                     let should_use = contextual_can_replace_foreign_source
                         || self.should_use_contextual_return_substitution(
                             ty,
                             contextual_ty,
-                            &var_map,
+                            var_map,
                         );
                     // When the variable was NOT inferred from a direct parameter match
                     // (i.e., it was inferred structurally from e.g. callback return types),
@@ -667,7 +667,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             for (name, ty) in final_subst.map().iter() {
                 let mut placeholder_visited = FxHashSet::default();
                 if structural_return_subst.get(*name) == Some(*ty)
-                    && !self.type_contains_placeholder(*ty, &var_map, &mut placeholder_visited)
+                    && !self.type_contains_placeholder(*ty, var_map, &mut placeholder_visited)
                 {
                     resolved_subst.insert(*name, *ty);
                     continue;
@@ -893,7 +893,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
             // Condition 4: the inferred type structurally contains a foreign TypeParameter.
-            if !self.type_contains_any_foreign_type_param(inferred_ty, &var_map) {
+            if !self.type_contains_any_foreign_type_param(inferred_ty, var_map) {
                 continue;
             }
             // Revert to the call-local placeholder so the argument check is
