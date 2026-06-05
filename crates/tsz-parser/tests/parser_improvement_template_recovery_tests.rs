@@ -211,3 +211,103 @@ fn test_ts1125_untagged_template_emits_errors() {
         ts1125_diagnostics
     );
 }
+
+/// Count the TS1125 (invalid escape) diagnostics for `source`, reusing the
+/// shared `diagnostic_codes` collector above.
+fn ts1125_count(source: &str) -> usize {
+    diagnostic_codes(source)
+        .into_iter()
+        .filter(|&code| code == 1125)
+        .count()
+}
+
+/// Structural rule: the invalid-escape suppression of a tagged template applies
+/// only to the literal head/middle/tail spans of *that* template, not to the
+/// `${...}` substitution expressions. A nested **untagged** template inside a
+/// tagged template's substitution is an ordinary untagged template and must
+/// still report TS1125 for its invalid escapes.
+///
+/// Witness for the `in_tagged_template` flag leaking into substitution
+/// expressions: before the fix the outer tag's flag stayed set while the
+/// substitution was parsed, so the inner untagged template's escape was wrongly
+/// suppressed (0 errors instead of 1).
+#[test]
+fn tagged_template_does_not_suppress_escapes_in_nested_untagged_substitution() {
+    // Outer is tagged: its head `\xZ1` and tail `\xZ3` are suppressed.
+    // The inner untagged template `\xZ2` in the substitution must report once.
+    assert_eq!(
+        ts1125_count(r#"const a = tag`\xZ1 ${ `\xZ2` } \xZ3`;"#),
+        1,
+        "an untagged template inside a tagged template's substitution must \
+         still report its invalid escape"
+    );
+}
+
+/// Structural rule: a tagged template nested inside another tagged template's
+/// substitution must restore — not clear — the enclosing template's tagged
+/// status when it finishes. Otherwise the outer template's middle/tail literals
+/// would spuriously report TS1125 after the nested tag.
+///
+/// Witness for the `in_tagged_template = false` reset clobbering the enclosing
+/// flag: before the fix the outer tag's tail `\xZ3` was wrongly reported (1
+/// error instead of 0).
+#[test]
+fn nested_tagged_template_does_not_clobber_enclosing_tagged_status() {
+    assert_eq!(
+        ts1125_count(r#"const b = tag`\xZ1 ${ inner`\xZ2` } \xZ3`;"#),
+        0,
+        "a tagged template nested in a tagged substitution must not make the \
+         enclosing template's tail report TS1125"
+    );
+}
+
+/// Control: with no tagging anywhere, every span reports. The outer untagged
+/// template head `\xZ1` and tail `\xZ3` plus the inner untagged template `\xZ2`
+/// each report — three errors total.
+#[test]
+fn untagged_template_with_nested_untagged_substitution_reports_all_escapes() {
+    assert_eq!(ts1125_count(r#"const c = `\xZ1 ${ `\xZ2` } \xZ3`;"#), 3,);
+}
+
+/// Control: an untagged outer template still reports its own head/tail escapes
+/// even when its substitution holds a *tagged* template (whose escapes are
+/// suppressed). Proves the fix suppresses only the immediately-tagged literal
+/// and does not over-suppress the surrounding untagged spans.
+#[test]
+fn untagged_template_reports_own_escapes_around_nested_tagged_substitution() {
+    assert_eq!(
+        ts1125_count(r#"const d = `\xZ1 ${ inner`\xZ2` } \xZ3`;"#),
+        2,
+    );
+}
+
+/// The rule is structural, not keyed on the `tag`/`inner` spellings or on the
+/// `\x` escape form: vary the tag binder names and use `\u` escapes, and the
+/// same head/tail-suppressed, nested-untagged-reported counts must hold.
+#[test]
+fn tagged_template_escape_suppression_is_structural() {
+    // Distinct tag names, `\u` escapes. Outer tagged: head/tail suppressed,
+    // nested untagged reports once.
+    assert_eq!(
+        ts1125_count(r#"const e = render`\uZ1 ${ `\uZ2` } \uZ3`;"#),
+        1,
+    );
+    // Distinct names again, nested tagged: zero.
+    assert_eq!(
+        ts1125_count(r#"const f = html`\uZ1 ${ styled`\uZ2` } \uZ3`;"#),
+        0,
+    );
+}
+
+/// Deep nesting: a tagged template whose substitution is an *untagged* template
+/// that itself contains a tagged template substitution. Only the untagged
+/// template's own head/tail escapes report; both tagged levels are suppressed.
+#[test]
+fn deeply_nested_template_tagging_tracks_each_level_independently() {
+    // outer tagged (suppressed) -> untagged span (head `\uZ2` + tail `\uZ4`
+    // report) -> tagged span (`\uZ3` suppressed). Outer tail `\uZ5` suppressed.
+    assert_eq!(
+        ts1125_count(r#"const g = outer`\uZ1 ${ `\uZ2 ${ mid`\uZ3` } \uZ4` } \uZ5`;"#),
+        2,
+    );
+}

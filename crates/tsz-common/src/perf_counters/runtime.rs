@@ -71,6 +71,19 @@ pub struct PerfCounters {
     pub source_file_symbol_arena_cache_eligibility_outcome:
         [AtomicU64; SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT],
 
+    // --- lib bootstrap ----------------------------------------------------
+    pub lib_snapshot_set_load_attempts: AtomicU64,
+    pub lib_snapshot_set_load_hits: AtomicU64,
+    pub lib_snapshot_set_load_misses: AtomicU64,
+    pub lib_snapshot_set_load_files_total: AtomicU64,
+    pub lib_snapshot_set_load_elapsed_ns_total: AtomicU64,
+    pub lib_snapshot_set_load_elapsed_ns_max: AtomicU64,
+    pub checker_lib_clone_calls: AtomicU64,
+    pub checker_lib_clone_parallel_calls: AtomicU64,
+    pub checker_lib_clone_files_total: AtomicU64,
+    pub checker_lib_clone_elapsed_ns_total: AtomicU64,
+    pub checker_lib_clone_elapsed_ns_max: AtomicU64,
+
     // ─── checker construction ────────────────────────────────────────────
     pub checker_state_constructed: AtomicU64,
     pub checker_state_with_parent_cache_constructed: AtomicU64,
@@ -212,6 +225,17 @@ impl PerfCounters {
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
                 SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT],
+            lib_snapshot_set_load_attempts: AtomicU64::new(0),
+            lib_snapshot_set_load_hits: AtomicU64::new(0),
+            lib_snapshot_set_load_misses: AtomicU64::new(0),
+            lib_snapshot_set_load_files_total: AtomicU64::new(0),
+            lib_snapshot_set_load_elapsed_ns_total: AtomicU64::new(0),
+            lib_snapshot_set_load_elapsed_ns_max: AtomicU64::new(0),
+            checker_lib_clone_calls: AtomicU64::new(0),
+            checker_lib_clone_parallel_calls: AtomicU64::new(0),
+            checker_lib_clone_files_total: AtomicU64::new(0),
+            checker_lib_clone_elapsed_ns_total: AtomicU64::new(0),
+            checker_lib_clone_elapsed_ns_max: AtomicU64::new(0),
             checker_state_constructed: AtomicU64::new(0),
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
@@ -325,6 +349,44 @@ pub fn record_max(counter: &AtomicU64, value: u64) {
             Err(observed) => current = observed,
         }
     }
+}
+
+pub fn record_lib_snapshot_set_load(file_count: u64, hit: bool, elapsed_ns: u64) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.lib_snapshot_set_load_attempts
+        .fetch_add(1, Ordering::Relaxed);
+    if hit {
+        c.lib_snapshot_set_load_hits
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        c.lib_snapshot_set_load_misses
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    c.lib_snapshot_set_load_files_total
+        .fetch_add(file_count, Ordering::Relaxed);
+    c.lib_snapshot_set_load_elapsed_ns_total
+        .fetch_add(elapsed_ns, Ordering::Relaxed);
+    record_max(&c.lib_snapshot_set_load_elapsed_ns_max, elapsed_ns);
+}
+
+pub fn record_checker_lib_clone(file_count: u64, parallel: bool, elapsed_ns: u64) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.checker_lib_clone_calls.fetch_add(1, Ordering::Relaxed);
+    if parallel {
+        c.checker_lib_clone_parallel_calls
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    c.checker_lib_clone_files_total
+        .fetch_add(file_count, Ordering::Relaxed);
+    c.checker_lib_clone_elapsed_ns_total
+        .fetch_add(elapsed_ns, Ordering::Relaxed);
+    record_max(&c.checker_lib_clone_elapsed_ns_max, elapsed_ns);
 }
 
 /// RAII guard that tracks recursion depth into
