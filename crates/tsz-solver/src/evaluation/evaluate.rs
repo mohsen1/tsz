@@ -484,6 +484,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.silent_depth_bailed
     }
 
+    /// Whether this run hit any recursion / depth / iteration limit.
+    ///
+    /// Single source of truth for the three flags that mark a result as a
+    /// *stack-context artifact* rather than a stable, key-determined answer:
+    ///
+    /// - `guard.is_exceeded()` — a genuine `MAX_DEF_DEPTH` / divergent-growth /
+    ///   mapped-key bail; while set, `evaluate` returns `ERROR` for every node.
+    /// - `silent_depth_bailed` — the structural stack-protection bail that
+    ///   `clear_exceeded`s the guard and leaves the type opaque (unexpanded).
+    /// - `deep_recursion_seen` — a cycle/iteration bail returned an opaque
+    ///   cycle-breaker, or a `DefId` crossed the real-instantiation threshold.
+    ///
+    /// A run in any of these states must not persist results to caches whose
+    /// key does not capture the ambient stack depth (`closed_eval_cache`,
+    /// `application_eval_cache`); see the respective limit gates.
+    #[inline]
+    const fn recursion_limit_hit(&self) -> bool {
+        self.guard.is_exceeded() || self.silent_depth_bailed || self.deep_recursion_seen
+    }
+
     /// Mark the guard as exceeded, causing subsequent evaluations to bail out.
     ///
     /// Used when an external condition (e.g. mapped key count or distribution
@@ -1353,7 +1373,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         })
     }
 
-    /// Insert into the application-eval cache iff `query_db` is connected.
+    /// Whether an application-eval result produced by this run may be persisted
+    /// to the cross-evaluator `application_eval_cache`.
+    ///
+    /// The cache key is `(DefId, expanded_args, no_unchecked)` — it is
+    /// *resolver-* and *substitution-independent*, but it is NOT independent of
+    /// the ambient stack depth at the use site. When a recursive alias bails
+    /// because the surrounding evaluation was already deep (see
+    /// [`recursion_limit_hit`](Self::recursion_limit_hit)), the result is a
+    /// stack-context artifact. Persisting it poisons every *other* use site of
+    /// the same alias application — the "alias fan-out regression": one deep use
+    /// contaminating all of its siblings, which would each converge on their own
+    /// shallower stack. Recomputing (a cache miss) always re-derives the
+    /// correct, stack-local answer, so skipping the write only ever costs work,
+    /// never correctness. Termination is owned by the recursion guards and fuel,
+    /// not by this cache, so a skipped write cannot reintroduce a hang. Mirrors
+    /// the limit gate the `closed_eval_cache` already enforces.
+    #[inline]
+    const fn application_eval_result_cacheable(&self) -> bool {
+        !self.recursion_limit_hit()
+    }
+
+    /// Insert into the application-eval cache iff `query_db` is connected and the
+    /// current run has not hit any recursion/depth limit.
+    ///
     /// Folds the two-line `if let Some(db) = self.query_db { … }` idiom
     /// repeated in every body-aware shortcut and finalize helper.
     ///
@@ -1361,7 +1404,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// context: a limited resolver could otherwise store an under-resolved
     /// result under the resolver-independent `(DefId, args)` key and poison
     /// sibling reads. Reads use the same explicit `query_db` gate for the same
-    /// reason.
+    /// reason. They are additionally gated on
+    /// [`application_eval_result_cacheable`](Self::application_eval_result_cacheable)
+    /// so a depth-bounded run never persists a stack-context artifact.
     fn insert_application_eval_cache_if_some(
         &self,
         def_id: DefId,
@@ -1369,6 +1414,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         no_unchecked_indexed_access: bool,
         evaluated: TypeId,
     ) {
+        if !self.application_eval_result_cacheable() {
+            return;
+        }
         if let Some(db) = self.query_db {
             db.insert_application_eval_cache(
                 def_id,
