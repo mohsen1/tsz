@@ -246,6 +246,7 @@ pub struct ParserState {
     /// the return-type tail so that ordinary statement recovery owns `>`,
     /// `):`, and the following body tokens.
     pub(crate) abort_function_signature_after_definite_assignment_tail_once: bool,
+    pub(crate) recovered_definite_assignment_empty_statement_close_brace_pos: Option<u32>,
     /// Class-member recovery has already treated a previously consumed `}` as the
     /// class close, so the enclosing class parser should not also emit `}` expected.
     pub(crate) suppress_next_missing_class_close_brace_error_once: bool,
@@ -407,6 +408,7 @@ impl ParserState {
             recovered_template_literal_property_in_object: false,
             suppress_next_missing_close_paren_error_once: false,
             abort_function_signature_after_definite_assignment_tail_once: false,
+            recovered_definite_assignment_empty_statement_close_brace_pos: None,
             suppress_next_missing_class_close_brace_error_once: false,
             non_block_close_brace_statement_errors_remaining: 0,
             suppress_missing_close_brace_at_eof_statement_depth: None,
