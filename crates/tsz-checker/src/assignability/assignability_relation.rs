@@ -510,7 +510,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         crate::query_boundaries::assignability::RelationOutcome {
-            related: self.is_assignable_to_no_erase_generics(source, target),
+            related: self.diagnostic_relation_boolean_guard_no_erase_generics(source, target),
             depth_exceeded: false,
             iteration_exceeded: false,
             failure: None,
@@ -590,16 +590,20 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to_bivariant(source, target)
     }
 
-    /// Strict-function-types boolean relation guard for diagnostic code paths.
-    ///
-    /// Use this only when the caller intentionally needs the legacy strict
-    /// function relation rather than the default assignability relation.
     pub(crate) fn diagnostic_relation_boolean_guard_strict(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
         self.is_assignable_to_strict(source, target)
+    }
+
+    pub(crate) fn diagnostic_relation_boolean_guard_no_erase_generics(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_no_erase_generics(source, target)
     }
 
     /// No-weak-checks boolean relation guard for diagnostic code paths.
