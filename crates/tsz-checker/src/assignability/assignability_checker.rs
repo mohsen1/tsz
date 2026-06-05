@@ -794,15 +794,55 @@ impl<'a> CheckerState<'a> {
                     evaluated_target_for_infer_suppression,
                 );
 
-        let callable_pair_genuinely_unrelated_opaque =
+        let callable_pair_has_opaque_return_mismatch =
             if crate::query_boundaries::assignability::callable_pair_contains_type_parameters(
                 self.ctx.types,
                 source,
                 target,
             ) {
-                !self
-                    .no_erase_generics_relation_outcome(source, target)
-                    .related
+                let callable_return_type = |type_id: TypeId| -> Option<TypeId> {
+                    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    ) {
+                        return Some(shape.return_type);
+                    }
+                    if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    ) {
+                        return shape.call_signatures.last().map(|sig| sig.return_type);
+                    }
+                    if let Some(app) =
+                        crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+                    {
+                        if let Some(shape) =
+                            crate::query_boundaries::common::function_shape_for_type(
+                                self.ctx.types,
+                                app.base,
+                            )
+                        {
+                            return Some(shape.return_type);
+                        }
+                        if let Some(shape) =
+                            crate::query_boundaries::common::callable_shape_for_type(
+                                self.ctx.types,
+                                app.base,
+                            )
+                        {
+                            return shape.call_signatures.last().map(|sig| sig.return_type);
+                        }
+                    }
+                    None
+                };
+                match (callable_return_type(source), callable_return_type(target)) {
+                    (Some(source_return), Some(target_return)) => {
+                        !self
+                            .no_erase_generics_relation_outcome(source_return, target_return)
+                            .related
+                    }
+                    _ => false,
+                }
             } else {
                 false
             };
@@ -1154,18 +1194,12 @@ impl<'a> CheckerState<'a> {
                 && is_callable_or_function(target)
                 && contains_type_parameters(source)
                 && !self.callable_types_have_disjoint_type_parameters(source, target)
-                // A genuine structural mismatch confirmed by the solver while holding
-                // the shared/outer type parameters opaque (no-erase-generics) must not
-                // be suppressed. `callable_types_have_disjoint_type_parameters` only
-                // recognises *bare* `T` parameter/return positions, so it misses
-                // mismatches where the type parameter is nested (e.g. `(x: T[]) => T`
-                // vs `(x: T[]) => number`) or where both signatures reference outer
-                // parameters that nonetheless do not relate (`(x: T) => U` vs
-                // `(x: U) => T`). The opaque relation is the same one the interface
-                // heritage (TS2430) path trusts, so deferring to it keeps real
-                // overrides/assignments reported while still suppressing the
-                // unresolved-inference shapes this branch was added for.
-                && !callable_pair_genuinely_unrelated_opaque
+                // A genuine return mismatch confirmed by the solver while holding
+                // shared/outer type parameters opaque (no-erase-generics) must not be
+                // suppressed. Keep this return-scoped: tsc still accepts generic rest
+                // parameter comparisons whose return types agree, even when an opaque
+                // whole-callable probe cannot relate the parameter tuples.
+                && !callable_pair_has_opaque_return_mismatch
                 && !(has_own_signature_type_params(source)
                     && has_own_signature_type_params(target))
                 && !(has_own_signature_type_params(source)

@@ -185,3 +185,14 @@ fn no_false_2322_function_array_identical_signatures() {
         "function f<T>(a: (x: T[]) => T[], b: (x: T[]) => T[]) { a = b; }",
     );
 }
+
+#[test]
+fn no_false_2322_generic_rest_tuple_parameter_with_matching_return() {
+    assert_no(
+        2322,
+        "function f<A extends unknown[]>(
+           a: (...args: [x: string, ...rest: A | [number]]) => void,
+           b: (x: string, ...rest: A | [number]) => void
+         ) { a = b; }",
+    );
+}
