@@ -850,7 +850,7 @@ pub fn module_specifier_error_candidates(specifier: &str) -> Vec<String> {
 #[derive(Default)]
 pub struct FileNameIndex {
     entries: FxHashMap<String, usize>,
-    specifier_resolution_cache: dashmap::DashMap<(String, String), Option<usize>>,
+    specifier_resolution_cache: dashmap::DashMap<(Option<usize>, String, String), Option<usize>>,
 }
 
 impl FileNameIndex {
@@ -978,7 +978,25 @@ pub fn resolve_specifier_via_file_index(
     specifier: &str,
     filename_idx: &FileNameIndex,
 ) -> Option<usize> {
-    let cache_key = (source_file_name.to_string(), specifier.to_string());
+    resolve_specifier_via_file_index_for_source(None, source_file_name, specifier, filename_idx)
+}
+
+/// Resolve a module specifier through [`FileNameIndex`] with a source-indexed
+/// cache key. Conformance and project batches can contain repeated file-name
+/// strings such as `test.ts`; the source index keeps those probes isolated so a
+/// cached file-index hit cannot bypass the caller's source-indexed legacy map
+/// fallback for a different arena with the same name.
+pub fn resolve_specifier_via_file_index_for_source(
+    source_file_idx: Option<usize>,
+    source_file_name: &str,
+    specifier: &str,
+    filename_idx: &FileNameIndex,
+) -> Option<usize> {
+    let cache_key = (
+        source_file_idx,
+        source_file_name.to_string(),
+        specifier.to_string(),
+    );
     if let Some(cached) = filename_idx.specifier_resolution_cache.get(&cache_key) {
         return *cached;
     }

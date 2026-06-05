@@ -1262,6 +1262,22 @@ fn test_file_name_index_memoizes_specifier_resolution_hits_and_misses() {
         None
     );
     assert_eq!(idx.specifier_resolution_cache_len(), 2);
+
+    assert_eq!(
+        resolve_specifier_via_file_index_for_source(Some(0), "/proj/a.ts", "./b", &idx),
+        Some(1)
+    );
+    assert_eq!(idx.specifier_resolution_cache_len(), 3);
+    assert_eq!(
+        resolve_specifier_via_file_index_for_source(Some(1), "/proj/a.ts", "./b", &idx),
+        Some(1)
+    );
+    assert_eq!(idx.specifier_resolution_cache_len(), 4);
+    assert_eq!(
+        resolve_specifier_via_file_index_for_source(Some(1), "/proj/a.ts", "./b", &idx),
+        Some(1)
+    );
+    assert_eq!(idx.specifier_resolution_cache_len(), 4);
 }
 
 // ---------------------------------------------------------------------------
