@@ -178,6 +178,10 @@ mod base_tests;
 mod trailing_comma_tests;
 
 #[cfg(test)]
+#[path = "../../tests/rest_param_trailing_comma_tests.rs"]
+mod rest_param_trailing_comma_tests;
+
+#[cfg(test)]
 #[path = "../../tests/spelling_integration_tests.rs"]
 mod spelling_integration_tests;
 

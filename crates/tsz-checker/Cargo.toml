@@ -33,6 +33,12 @@ stacker = "0.1.23"
 name = "assertion_source_literal_display_tests"
 path = "tests/assertion_source_literal_display_tests.rs"
 [[test]]
+name = "nested_mapped_optional_modifier_inline_application_tests"
+path = "tests/nested_mapped_optional_modifier_inline_application_tests.rs"
+[[test]]
+name = "recursive_generic_interface_application_display_tests"
+path = "tests/recursive_generic_interface_application_display_tests.rs"
+[[test]]
 name = "export_default_interface_type_import_tests"
 path = "tests/export_default_interface_type_import_tests.rs"
 [[test]]
@@ -77,6 +83,10 @@ path = "tests/union_protected_intersection_property_tests.rs"
 [[test]]
 name = "tuple_element_mismatch_tests"
 path = "tests/tuple_element_mismatch_tests.rs"
+[[test]]
+name = "tuple_argument_mismatch_elaboration_tests"
+path = "tests/tuple_argument_mismatch_elaboration_tests.rs"
+
 [[test]]
 name = "for_await_type_parameter_iterability_tests"
 path = "tests/for_await_type_parameter_iterability_tests.rs"
@@ -128,6 +138,10 @@ path = "tests/ts2513_abstract_super_access_tests.rs"
 [[test]]
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
+[[test]]
+name = "generic_type_alias_lazy_body_tests"
+path = "tests/generic_type_alias_lazy_body_tests.rs"
+
 [[test]]
 name = "class_protected_widening_assignability_tests"
 path = "tests/class_protected_widening_assignability_tests.rs"
@@ -270,6 +284,9 @@ path = "tests/ts1210_arguments_param_in_class_tests.rs"
 [[test]]
 name = "ts1100_destructuring_arguments_tests"
 path = "tests/ts1100_destructuring_arguments_tests.rs"
+[[test]]
+name = "use_strict_directive_raw_text_tests"
+path = "tests/use_strict_directive_raw_text_tests.rs"
 [[test]]
 name = "ts2307_per_site_dedup_tests"
 path = "tests/ts2307_per_site_dedup_tests.rs"
@@ -841,6 +858,9 @@ path = "tests/ts2344_any_key_mapped_constraint_tests.rs"
 name = "mapped_type_errors_conformance_tests"
 path = "tests/mapped_type_errors_conformance_tests.rs"
 [[test]]
+name = "mapped_type_missing_template_single_ts7039_tests"
+path = "tests/mapped_type_missing_template_single_ts7039_tests.rs"
+[[test]]
 name = "mapped_type_interface_tests"
 path = "tests/mapped_type_interface_tests.rs"
 [[test]]
@@ -1177,6 +1197,10 @@ path = "tests/indexed_access_callback_tests.rs"
 name = "ts2322_indexed_access_type_param_tests"
 path = "tests/ts2322_indexed_access_type_param_tests.rs"
 [[test]]
+name = "ts4105_this_type_indexed_access_tests"
+path = "tests/ts4105_this_type_indexed_access_tests.rs"
+
+[[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"
 path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
 [[test]]
@@ -1480,6 +1504,10 @@ path = "tests/operator_literal_annotation_widen_tests.rs"
 name = "flow_dp_memoization_tests"
 path = "tests/flow_dp_memoization_tests.rs"
 [[test]]
+name = "flow_captured_let_memoization_tests"
+path = "tests/flow_captured_let_memoization_tests.rs"
+
+[[test]]
 name = "public_package_unique_symbol_emit_tests"
 path = "tests/public_package_unique_symbol_emit_tests.rs"
 [[test]]
@@ -1545,6 +1573,14 @@ path = "tests/ts2379_exact_optional_argument_tests.rs"
 [[test]]
 name = "type_literal_method_overload_tests"
 path = "tests/type_literal_method_overload_tests.rs"
+[[test]]
+name = "type_literal_overload_optionality_tests"
+path = "tests/type_literal_overload_optionality_tests.rs"
+
+[[test]]
+name = "global_augmentation_const_enum_rebind_tests"
+path = "tests/global_augmentation_const_enum_rebind_tests.rs"
+
 [[test]]
 name = "type_alias_signature_body_validation_tests"
 path = "tests/type_alias_signature_body_validation_tests.rs"

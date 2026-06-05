@@ -580,7 +580,7 @@ fn compile_with_source_map_emits_map_outputs() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "sourceMap": true
           },
@@ -640,7 +640,7 @@ fn compile_with_inline_source_map_embeds_map_data_url() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "inlineSourceMap": true
           },
@@ -1648,6 +1648,61 @@ fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322()
     assert!(
         !jsx_ts2322.is_empty(),
         "Expected real react16 generic intrinsic JSX fixture to report TS2322, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+fn compile_related_index_react16_fixture_reports_only_distinct_key_ts2322() {
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts",
+    ) else {
+        return;
+    };
+    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    source = source.replace("\"/.lib/react16.d.ts\"", "\"./.lib/react16.d.ts\"");
+
+    write_file(&base.join("test.ts"), &source);
+    write_file(&base.join(".lib/react16.d.ts"), &react16);
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("test.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2322_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message
+                .contains("Type 'IntrinsicElements[T1]' is not assignable to type 'IntrinsicElements[T2]'.")),
+        "expected the distinct-key indexed-access TS2322; got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| !message.contains("Type '{}' is not assignable to type 'IntrinsicElements[T1]'.")),
+        "did not expect the false empty-object TS2322; got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
         result.diagnostics,
         result.files_read,
         result.file_infos

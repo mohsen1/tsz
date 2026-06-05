@@ -157,9 +157,14 @@ impl<'a> Printer<'a> {
                     // Skip TypeScript-only modifiers (abstract, declare, etc.)
                     // Also skip `async` — it's an error on class declarations but
                     // TSC still emits the class without the modifier.
+                    // `accessor` on class declarations is handled by
+                    // `emit_recovered_top_level_accessor_class_modifier` above,
+                    // so skip it here to avoid duplication (ESNext) or a stray
+                    // space (non-ESNext).
                     if mod_node.kind == SyntaxKind::AbstractKeyword as u16
                         || mod_node.kind == SyntaxKind::DeclareKeyword as u16
                         || mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                        || mod_node.kind == SyntaxKind::AccessorKeyword as u16
                         || (self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
@@ -179,10 +184,6 @@ impl<'a> Printer<'a> {
                         self.write("export");
                     } else if mod_node.kind == SyntaxKind::DefaultKeyword as u16 {
                         self.write("default");
-                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
-                        && self.ctx.options.target == ScriptTarget::ESNext
-                    {
-                        self.write("accessor");
                     } else {
                         self.emit(mod_idx);
                     }
@@ -1142,13 +1143,8 @@ impl<'a> Printer<'a> {
         );
         let has_static_block_comma_expr =
             self.class_has_static_block_comma_expr(class, target_needs_static_block_lowering);
-        // A computed-named *static method or accessor* is emitted inline in the
-        // class body, so it only requires the `(_tmp = class {...}, ..., _tmp)`
-        // comma wrapping when the binding *also* loses JS named evaluation --
-        // i.e. a `using`/`await using` declaration lowered to
-        // `__addDisposableResource`, which moves the class out of
-        // direct-assignment position. A plain `var X = class {...}` keeps named
-        // evaluation and needs no wrapping for inline computed method names.
+        // Inline computed static methods/accessors need comma wrapping only when
+        // the binding also loses JS named evaluation (for example lowered `using`).
         let has_static_computed_method_or_accessor = self
             .class_has_static_computed_method_or_accessor_comma_expr(
                 class,
@@ -1160,9 +1156,12 @@ impl<'a> Printer<'a> {
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
                 || has_static_computed_method_or_accessor);
+        let computed_name_needs_class_expr_temp_first =
+            self.class_computed_property_names_contain_static_context_reference(class);
         let preplanned_class_expr_temp = if needs_static_comma_expr
             && private_class_alias.is_none()
-            && self.file_level_class_temp_reservations.contains_key(&_idx)
+            && (self.file_level_class_temp_reservations.contains_key(&_idx)
+                || computed_name_needs_class_expr_temp_first)
         {
             Some(self.make_class_static_temp_name_hoisted(_idx))
         } else {

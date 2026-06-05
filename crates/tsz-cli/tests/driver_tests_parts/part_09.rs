@@ -7,7 +7,7 @@ fn compile_for_of_loop() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -57,7 +57,7 @@ fn compile_shorthand_methods() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -100,7 +100,7 @@ fn compile_incremental_creates_tsbuildinfo() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "incremental": true,
             "tsBuildInfoFile": "dist/project.tsbuildinfo"

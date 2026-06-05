@@ -171,7 +171,7 @@ impl<'a> CheckerContext<'a> {
         self.flow_switch_reference_cache.borrow_mut().clear();
         self.flow_numeric_atom_cache.borrow_mut().clear();
         self.flow_reference_match_cache.borrow_mut().clear();
-        self.symbol_last_assignment_pos.borrow_mut().clear();
+        self.symbol_flow_memo.clear();
         self.symbol_flow_confirmed.borrow_mut().clear();
         self.emitted_ts2454_errors.clear();
         // `CallPredicateMap` has no `.clear()`; replace with default.
@@ -273,6 +273,12 @@ impl<'a> CheckerContext<'a> {
             .clear();
         self.type_reference_validation_caches
             .ref_type_params
+            .clear();
+        self.type_reference_validation_caches
+            .conditional_branch_constraint
+            .clear();
+        self.type_reference_validation_caches
+            .indexed_object_map_branch_constraint
             .clear();
         self.in_conditional_extends_depth = 0;
         self.typeof_param_scope.clear();

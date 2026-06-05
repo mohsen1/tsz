@@ -596,7 +596,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         &self.ctx.flow_visited,
                         &self.ctx.flow_results,
                     )
-                    .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+                    .with_symbol_last_assignment_pos(&self.ctx.symbol_flow_memo.last_assignment_pos)
+                    .with_symbol_nested_closure_assignment(
+                        &self.ctx.symbol_flow_memo.nested_closure_assignment,
+                    )
+                    .with_symbol_first_identifier_ref(
+                        &self.ctx.symbol_flow_memo.first_identifier_ref,
+                    )
                     .with_destructured_bindings(&self.ctx.destructured_bindings);
 
                     let narrowed =
@@ -1303,9 +1309,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // This error occurs when the type expression after the colon is missing.
         // Example: type Foo = {[P in "bar"]};  // Missing ": T" after "bar"]
         if data.type_node == ParserNodeIndex::NONE {
-            let message = "Mapped object type implicitly has an 'any' template type.";
-            self.ctx
-                .error(node.pos, node.end - node.pos, message.to_string(), 7039);
+            self.ctx.report_mapped_type_missing_template(idx);
             return TypeId::ANY;
         }
 

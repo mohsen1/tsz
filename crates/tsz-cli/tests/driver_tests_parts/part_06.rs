@@ -1118,7 +1118,7 @@ fn compile_declaration_false_no_dts_files() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "declaration": false
           },
@@ -1154,7 +1154,7 @@ fn compile_declaration_absent_no_dts_files() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]

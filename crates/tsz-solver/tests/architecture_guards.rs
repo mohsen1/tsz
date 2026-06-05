@@ -200,6 +200,7 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     let request_rs = read_solver_source("evaluation/request.rs");
     let result_rs = read_solver_source("evaluation/result.rs");
     let evaluate_rs = read_solver_source("evaluation/evaluate.rs");
+    let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
 
     assert!(
@@ -221,7 +222,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     assert!(
         evaluate_rs.contains("use crate::evaluation::request::EvaluationRequest;")
             && evaluate_rs.contains("use crate::evaluation::result::EvaluationResult;")
-            && evaluate_rs.contains("pub fn evaluate_type_with_request")
+            && evaluate_rs.contains("evaluate_type_with_request")
+            && evaluate_api_rs.contains("pub fn evaluate_type_with_request")
             && evaluate_rs.contains(
                 "pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult"
             )

@@ -210,6 +210,15 @@ impl<'a> TypeFormatter<'a> {
                     return self.format(distributed);
                 }
 
+                // A variadic (spread) tuple alias instantiated with concrete
+                // arguments loses its alias symbol in tsc (spreading produces a
+                // fresh tuple), so render the flattened tuple form.
+                if let Some(flattened) =
+                    self.variadic_tuple_alias_application_display(app.base, &app.args)
+                {
+                    return self.format(flattened);
+                }
+
                 // Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
                 let base_str: Cow<'_, str> = if let Some(TypeData::Lazy(def_id)) = base_key {
@@ -804,11 +813,14 @@ impl<'a> TypeFormatter<'a> {
     /// type alias whose body resolves to a primitive `Intrinsic` or a `Literal`
     /// is rendered as the underlying type, not by the alias name.
     ///
-    /// Returns the resolved primitive/literal `TypeId` to format in place of the
-    /// alias name, or `None` when the alias should keep its name (generic alias,
-    /// or a body that is a union/intersection/object/array/tuple/function/…).
-    /// Alias chains are followed (`type A = B; type B = string` → `string`); a
-    /// bounded visited set guards against cyclic alias definitions.
+    /// Returns the resolved structural `TypeId` to format in place of the alias
+    /// name, or `None` when the alias should keep its name (generic alias, or a
+    /// constructive body that carries tsc's `aliasSymbol`). A body flagged as a
+    /// computed reducing result — including a bare object or mapped shape — is
+    /// rendered structurally; the def store's "direct wins" guard keeps the name
+    /// for a directly-written alias that shares the same interned shape. Alias
+    /// chains are followed (`type A = B; type B = string` → `string`); a bounded
+    /// visited set guards against cyclic alias definitions.
     fn type_alias_body_displayed_as_underlying(&self, def_id: crate::def::DefId) -> Option<TypeId> {
         use crate::def::DefKind;
 
@@ -838,14 +850,13 @@ impl<'a> TypeFormatter<'a> {
             // structural type — `[string, number]`, `number[]`, `() => void`, … —
             // rather than the alias name, matching the checker-side display.
             //
-            // Object-mentioning bodies (a bare object, or a union/intersection
-            // containing one) are excluded: re-formatting such a shared shape
-            // re-enters the reverse `find_def_for_type` lookup, which can repaint
-            // it with an unrelated alias name. Those keep the existing display
-            // path. This mirrors the checker's `computed body` marking gate.
-            if def_store.is_computed_body(body)
-                && !crate::type_queries::union_or_intersection_mentions_object(self.interner, body)
-            {
+            // Object-mentioning bodies are included: when such a shared shape is
+            // re-formatted, the reverse `find_def_by_shape` lookup consults the
+            // same `is_computed_body` flag and so does not repaint it with the
+            // computed alias's own name. A shape that is *also* the body of a
+            // directly-written alias is excluded from `is_computed_body` by the
+            // def store's "direct wins" guard, so that alias keeps its name.
+            if def_store.is_computed_body(body) {
                 return Some(body);
             }
             match self.interner.lookup(body) {

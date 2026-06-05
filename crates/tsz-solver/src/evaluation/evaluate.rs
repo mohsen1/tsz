@@ -49,6 +49,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 mod closed_eval;
+mod display_alias;
 mod support;
 
 /// Type evaluator for meta-types.
@@ -1677,7 +1678,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::Application(_))
             )
             && display_provenance::display_alias(self.interner, result).is_some();
-        if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
+        if self.should_record_application_alias(
+            result,
+            display_origin,
+            skip_type_alias_repaint,
+            keep_existing_conditional_branch_alias,
+        ) {
             let priority = if prefer_application_display_alias
                 || (self.expand_application_display_alias_args
                     && matches!(
@@ -1799,8 +1805,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 //    alias lets diagnostics show e.g. `Mapped2<K>` instead of the
                 //    expanded `{ [P in K as \`get${P}\`]: ... }` form, matching tsc.
                 if evaluated_is_fresh
-                    && (evaluated_is_mapped
-                        || self.is_recursive_type_alias_application(original_type_id))
+                    && self.should_store_structural_display_alias(
+                        evaluated,
+                        original_type_id,
+                        evaluated_is_mapped,
+                    )
                 {
                     self.interner
                         .store_display_alias_preferring_application(evaluated, original_type_id);
@@ -1831,59 +1840,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             },
             AliasApplicationPriority::PreferApplication,
         );
-    }
-
-    fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
-        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
-            return false;
-        };
-        let app = self.interner.type_application(app_id);
-        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
-            return false;
-        };
-        if self.resolver.get_def_kind(def_id) != Some(DefKind::TypeAlias) {
-            return false;
-        }
-        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
-            return false;
-        };
-        let mut visited = FxHashSet::default();
-        self.type_reaches_alias_def(body, def_id, &mut visited)
-    }
-
-    fn type_reaches_alias_def(
-        &self,
-        type_id: TypeId,
-        target_def_id: DefId,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        if type_id.is_intrinsic() || !visited.insert(type_id) {
-            return false;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Lazy(def_id))
-                if self.resolver.defs_are_equivalent(def_id, target_def_id) =>
-            {
-                return true;
-            }
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner.type_application(app_id);
-                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
-                    && self.resolver.defs_are_equivalent(def_id, target_def_id)
-                {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-
-        let mut found = false;
-        crate::visitor::for_each_child_by_id(self.interner, type_id, |child| {
-            if !found {
-                found = self.type_reaches_alias_def(child, target_def_id, visited);
-            }
-        });
-        found
     }
 
     /// Record a back-reference from an evaluated structural form to its
@@ -1943,17 +1899,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if app.args.contains(&evaluated) {
             return;
         }
-        // Fast path: all-intrinsic args trivially have no free type
-        // parameters; skip the recursive `contains_generic_type_parameters_db`
-        // traversal that fires on every parametric application evaluation.
-        let all_intrinsic = app.args.iter().all(|a| a.is_intrinsic());
-        if !all_intrinsic
-            && app.args.iter().any(|&arg| {
-                crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
-            })
-        {
-            return;
-        }
+        // Args that carry free type parameters (e.g. `OwnerList<T>` inside a
+        // generic function) must still record provenance: `tsc` displays the
+        // nominal reference `OwnerList<T>`, not a structurally-recovered form.
+        // The downstream `store_display_alias_preferring_application` already
+        // applies precise gates (alloc-order, self-reference, bare type
+        // parameter, intrinsic) that reject the genuinely unsafe cases, so a
+        // blunt skip here would only drop legitimate generic-instance aliases
+        // and force the fragile property-based recovery in the checker.
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }
