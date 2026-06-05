@@ -62,6 +62,21 @@ fn tuple_alias_body_missing_names_covered_by_validation() {
 }
 
 #[test]
+fn type_operator_alias_body_missing_names_covered_by_validation() {
+    let checker_source =
+        std::fs::read_to_string("src/types/type_checking/type_alias_missing_name_coverage.rs")
+            .expect("read type alias missing-name coverage");
+    assert!(
+        checker_source.contains("syntax_kind_ext::TYPE_OPERATOR")
+            && checker_source.contains("get_type_operator")
+            && checker_source.contains("SyntaxKind::UniqueKeyword")
+            && checker_source.contains("op.type_node"),
+        "`keyof` and `readonly` alias-body wrappers should be covered by the \
+         validation walk while `unique symbol` stays on the conservative path"
+    );
+}
+
+#[test]
 fn type_node_validation_cache_is_context_keyed() {
     let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
         .expect("read type alias checker");
@@ -89,6 +104,24 @@ type Combined<Item> = Known<Item> | Missing<Item>;
         1,
         "Reference/composite-only alias bodies should still report unresolved \
          type names through check_type_node; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn type_operator_alias_body_keeps_missing_name_diagnostics() {
+    let diags = check_source_diagnostics(
+        r#"
+type Keys<Value> = keyof Missing<Value>;
+type ReadonlyList<Item> = readonly MissingList<Item>[];
+"#,
+    );
+
+    let missing_names: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        missing_names.len(),
+        2,
+        "Type-operator alias bodies should still report unresolved type names \
+         through check_type_node; got: {diags:#?}"
     );
 }
 

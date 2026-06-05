@@ -80,6 +80,15 @@ impl<'a> CheckerState<'a> {
                 self.type_alias_body_missing_names_syntax_covered_inner(indexed.object_type)
                     && self.type_alias_body_missing_names_syntax_covered_inner(indexed.index_type)
             }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                let Some(op) = self.ctx.arena.get_type_operator(node) else {
+                    return false;
+                };
+                if op.operator == SyntaxKind::UniqueKeyword as u16 {
+                    return false;
+                }
+                self.type_alias_body_missing_names_syntax_covered_inner(op.type_node)
+            }
             k if Self::primitive_or_literal_type_kind_is_covered(k) => true,
             _ => false,
         }
