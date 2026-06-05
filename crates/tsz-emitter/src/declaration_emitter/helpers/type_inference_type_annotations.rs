@@ -246,7 +246,7 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|text| matches!(text.trim(), "null" | "undefined"))
     }
 
-    fn with_declared_type_annotation_for_symbol<T>(
+    pub(in crate::declaration_emitter) fn with_declared_type_annotation_for_symbol<T>(
         &self,
         sym_id: SymbolId,
         mut f: impl FnMut(&NodeArena, NodeIndex) -> Option<T>,
