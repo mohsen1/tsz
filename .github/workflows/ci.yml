@@ -72,13 +72,24 @@ jobs:
               # metadata without changing the PR head SHA. Refresh only the
               # metadata gates so stale failed PR-body checks can clear without
               # asking agents to push a no-op code commit. Keep this off the
-              # protected "CI Summary" context: it did not run heavy CI and
-              # must not satisfy branch protection for the head SHA.
+              # protected "CI Summary" context unless the exact PR head already
+              # has a successful protected summary; that keeps metadata edits
+              # from faking a green suite while preserving merge-queue readiness
+              # after a green head only needed PR-body cleanup.
               echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
               should_run=false
               full_run=false
-              required_summary=false
               compiler_checks_required=false
+              prior_required_summary_passed=$(gh api \
+                "repos/${{ github.repository }}/commits/${{ github.event.pull_request.head.sha }}/check-runs?check_name=CI%20Summary&status=completed&per_page=100" \
+                --jq '[.check_runs[] | select(.name == "CI Summary" and .conclusion == "success")] | length' \
+                2>/dev/null || echo "0")
+              if [[ "${prior_required_summary_passed}" -gt 0 ]]; then
+                echo "Exact PR head already has a successful CI Summary; keeping the protected summary context alive for metadata refresh."
+                required_summary=true
+              else
+                required_summary=false
+              fi
             fi
             # The `labeled` event triggers on every label add. We only care
             # about the `ci-approved` label (used to opt fork PRs into CI).
