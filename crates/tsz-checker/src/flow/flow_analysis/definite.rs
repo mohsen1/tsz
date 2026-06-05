@@ -238,9 +238,9 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_visited,
             &self.ctx.flow_results,
         )
-        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
-        .with_symbol_nested_closure_assignment(&self.ctx.symbol_nested_closure_assignment)
-        .with_symbol_first_identifier_ref(&self.ctx.symbol_first_identifier_ref)
+        .with_symbol_last_assignment_pos(&self.ctx.symbol_flow_memo.last_assignment_pos)
+        .with_symbol_nested_closure_assignment(&self.ctx.symbol_flow_memo.nested_closure_assignment)
+        .with_symbol_first_identifier_ref(&self.ctx.symbol_flow_memo.first_identifier_ref)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         // Strip `undefined` from the initial type for parameters with default values.
@@ -816,7 +816,7 @@ impl<'a> CheckerState<'a> {
             crate::control_flow::symbol_first_identifier_ref(
                 self.ctx.arena,
                 self.ctx.binder,
-                Some(&self.ctx.symbol_first_identifier_ref),
+                Some(&self.ctx.symbol_flow_memo.first_identifier_ref),
                 sym,
             )
         };
