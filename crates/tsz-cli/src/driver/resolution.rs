@@ -283,8 +283,17 @@ pub(crate) fn canonicalize_with_missing_tail(path: &Path) -> PathBuf {
     canonical
 }
 
+/// Canonicalize to a real on-disk path, falling back to the *lexically
+/// normalized* path when the file cannot be canonicalized (missing or
+/// transiently unreadable file, relative anchor).
+///
+/// The fallback is normalized rather than the raw input so callers that key
+/// identity on the result — program-file caches, dedup sets, redirect maps —
+/// stay deterministic: `./a/b.ts`, `a/b.ts`, and `a/b.ts/` collapse to one key
+/// instead of three. Display-only callers are unaffected, as a normalized path
+/// renders identically to (and more cleanly than) the raw input.
 pub(crate) fn canonicalize_or_owned(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    std::fs::canonicalize(path).unwrap_or_else(|_| normalize_path(path))
 }
 
 pub(crate) fn env_flag(name: &str) -> bool {
