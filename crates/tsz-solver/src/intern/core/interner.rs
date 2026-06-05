@@ -528,14 +528,23 @@ pub struct TypeInterner {
 /// predicate answers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TypePredicateCacheStatistics {
+    /// Number of memoized identity-comparability predicate results.
     pub identity_comparable_cache_entries: usize,
+    /// Number of memoized `ThisType` containment predicate results.
     pub contains_this_cache_entries: usize,
+    /// Number of memoized `infer` containment predicate results.
     pub contains_infer_cache_entries: usize,
+    /// Number of memoized `typeof` query containment predicate results.
     pub contains_type_query_cache_entries: usize,
+    /// Number of memoized type-parameter containment predicate results.
     pub contains_type_params_cache_entries: usize,
+    /// Number of memoized lazy-or-recursive containment predicate results.
     pub contains_lazy_or_recursive_cache_entries: usize,
+    /// Number of memoized unresolved-application containment predicate results.
     pub contains_unresolved_application_cache_entries: usize,
+    /// Number of memoized resolver-dependent containment predicate results.
     pub contains_resolver_dependent_cache_entries: usize,
+    /// Number of memoized conditional-type containment predicate results.
     pub contains_conditional_cache_entries: usize,
 }
 
