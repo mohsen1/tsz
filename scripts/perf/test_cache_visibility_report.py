@@ -397,7 +397,7 @@ class CacheVisibilityReportTests(unittest.TestCase):
         predicate_memos = {
             candidate.owner: candidate
             for candidate in candidates
-            if candidate.path == "crates/tsz-solver/src/visitors/visitor_predicates.rs"
+            if candidate.path.startswith("crates/tsz-solver/src/visitors/visitor_predicates")
             and candidate.name == "memo"
         }
 
