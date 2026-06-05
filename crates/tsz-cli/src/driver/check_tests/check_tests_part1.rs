@@ -685,6 +685,28 @@ const checked: boolean = Op.is(made);
         );
     }
 
+#[test]
+fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
+    let large_project = FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1;
+
+    assert!(
+        !should_use_sequential_fresh_checking(large_project, false, false),
+        "large fresh-checker batches should stay parallel-eligible even when session reuse is off"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(10, false, false),
+        "tiny batches stay sequential for deterministic cross-file behavior"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(large_project, true, false),
+        "large wildcard barrels stay on the deterministic sequential fallback"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(large_project, false, true),
+        "order-sensitive global libraries stay on the deterministic sequential fallback"
+    );
+}
+
     #[test]
     fn tiny_no_emit_reuse_path_covers_boxed_prime_checker() {
         assert!(

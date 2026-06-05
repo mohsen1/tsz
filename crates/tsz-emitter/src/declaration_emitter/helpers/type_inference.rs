@@ -777,7 +777,9 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(initializer)
                 .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
         {
-            if let Some(type_text) = self.preferred_expression_type_text(initializer) {
+            if !self.call_expression_declared_return_has_source_conditional_alias(initializer)
+                && let Some(type_text) = self.preferred_expression_type_text(initializer)
+            {
                 let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
                 let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
@@ -1001,6 +1003,8 @@ impl<'a> DeclarationEmitter<'a> {
         let call = self.arena.get_call_expr(expr_node)?;
         let binder = self.binder?;
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
+        let receiver_type_param_substitutions =
+            self.call_receiver_declared_type_param_substitutions(call.expression, binder);
         let Some((sym_id, imported_module)) =
             self.resolve_declared_call_callee_symbol(call.expression, binder)
         else {
@@ -1057,6 +1061,12 @@ impl<'a> DeclarationEmitter<'a> {
                 .trim_end_matches(';')
                 .trim_end()
                 .to_string();
+            if !receiver_type_param_substitutions.is_empty() {
+                type_text = Self::replace_whole_words_in_text(
+                    &type_text,
+                    &receiver_type_param_substitutions,
+                );
+            }
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
@@ -1089,9 +1099,17 @@ impl<'a> DeclarationEmitter<'a> {
                                     self.source_slice_from_arena(source_arena, param.constraint)
                                 })
                         {
+                            let constraint = Self::replace_whole_words_in_text(
+                                &constraint,
+                                &receiver_type_param_substitutions,
+                            );
                             type_param_constraints.push((name_text.clone(), constraint));
                         }
                         if let Some(fallback) = fallback {
+                            let fallback = Self::replace_whole_words_in_text(
+                                &fallback,
+                                &receiver_type_param_substitutions,
+                            );
                             type_param_fallbacks.push((name_text.clone(), fallback));
                         }
                         type_param_names.push(name_text);
@@ -1114,6 +1132,14 @@ impl<'a> DeclarationEmitter<'a> {
                             &type_param_constraints,
                         ),
                     );
+                    if !receiver_type_param_substitutions.is_empty() {
+                        for (_, arg_text) in &mut type_param_substitutions {
+                            *arg_text = Self::replace_whole_words_in_text(
+                                arg_text,
+                                &receiver_type_param_substitutions,
+                            );
+                        }
+                    }
                     self.clear_conflicting_literal_substitution(
                         source_arena,
                         decl_idx,

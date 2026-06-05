@@ -28,7 +28,11 @@ impl<'a> CheckerState<'a> {
                 let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
                     return false;
                 };
-                type_ref.type_arguments.is_none()
+                type_ref.type_arguments.as_ref().is_none_or(|args| {
+                    args.nodes.iter().copied().all(|arg_idx| {
+                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(arg_idx)
+                    })
+                })
             }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 let Some(composite) = self.ctx.arena.get_composite_type(node) else {
@@ -43,13 +47,60 @@ impl<'a> CheckerState<'a> {
                     self.type_alias_body_allows_lazy_generic_semantic_body_inner(array.element_type)
                 })
             }
-            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => self
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
+                    return false;
+                };
+                tuple.elements.nodes.iter().copied().all(|element_idx| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(element_idx)
+                })
+            }
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => self
                 .ctx
                 .arena
-                .get_wrapped_type(node)
-                .is_some_and(|wrapped| {
-                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(wrapped.type_node)
+                .get_named_tuple_member(node)
+                .is_some_and(|member| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(member.type_node)
                 }),
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                self.ctx
+                    .arena
+                    .get_wrapped_type(node)
+                    .is_some_and(|wrapped| {
+                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(
+                            wrapped.type_node,
+                        )
+                    })
+            }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                self.ctx.arena.get_type_operator(node).is_some_and(|op| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(op.type_node)
+                })
+            }
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                let Some(template) = self.ctx.arena.get_template_literal_type(node) else {
+                    return false;
+                };
+                template
+                    .template_spans
+                    .nodes
+                    .iter()
+                    .copied()
+                    .all(|span_idx| {
+                        let Some(span_node) = self.ctx.arena.get(span_idx) else {
+                            return false;
+                        };
+                        let Some(span) = self.ctx.arena.get_template_span(span_node) else {
+                            return false;
+                        };
+                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(
+                            span.expression,
+                        )
+                    })
+            }
             k if Self::primitive_or_literal_type_kind_is_covered(k) => true,
             _ => false,
         }

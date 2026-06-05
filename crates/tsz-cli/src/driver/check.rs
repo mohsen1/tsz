@@ -224,6 +224,16 @@ fn parallel_file_session_reuse_requested() -> bool {
     )
 }
 
+const fn should_use_sequential_fresh_checking(
+    work_item_count: usize,
+    has_large_wildcard_barrel: bool,
+    has_parallel_order_sensitive_global_lib: bool,
+) -> bool {
+    work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+        || has_large_wildcard_barrel
+        || has_parallel_order_sensitive_global_lib
+}
+
 const fn needs_separate_boxed_prime_checker(
     no_emit: bool,
     emit_declarations: bool,
@@ -1266,23 +1276,18 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             let parallel_reuse_requested = parallel_file_session_reuse_requested();
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);
-            let use_sequential_checking = work_items.len() <= 32
-                || has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
+            let has_large_wildcard_barrel =
+                has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
                     files: &program.files,
                     wildcard_reexports: &program.wildcard_reexports,
                     work_items: &work_items,
                     large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
-                })
-                // DOM-style global declarations are order-sensitive with
-                // multiple concurrent checker contexts. Keep those projects
-                // on the deterministic single-worker path until global
-                // lookup state is fully parallel-stable.
-                || has_parallel_order_sensitive_global_lib
-                // Fresh per-file checkers can observe project-level lib/global
-                // state in scheduler order when run concurrently. If the
-                // session-reuse path is explicitly disabled, keep the fallback
-                // deterministic by using fresh checkers sequentially.
-                || !reuse_requested;
+                });
+            let use_sequential_checking = should_use_sequential_fresh_checking(
+                work_items.len(),
+                has_large_wildcard_barrel,
+                has_parallel_order_sensitive_global_lib,
+            );
             // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): the sequential
             // no-emit path *can* construct one `CheckerState` and re-target
             // it across files via `CheckerContext::switch_to_file` instead
