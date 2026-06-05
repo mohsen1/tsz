@@ -530,7 +530,6 @@ impl<'a> CheckerState<'a> {
     /// without strict null checks all types implicitly include `undefined`.
     pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
         use tsz_solver::TypeId;
-        use tsz_solver::narrowing::type_contains_undefined;
 
         // tsc gates TS2454 on strictNullChecks. Without it, every type implicitly
         // includes undefined/null, so an uninitialized variable is always valid.
@@ -547,7 +546,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Skip if the type includes undefined or void (uninitialized variables are undefined)
-        type_contains_undefined(self.ctx.types, declared_type)
+        crate::query_boundaries::flow_analysis::type_contains_undefined(
+            self.ctx.types,
+            declared_type,
+        )
     }
 
     /// - Not in ambient contexts

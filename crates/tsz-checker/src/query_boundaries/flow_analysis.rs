@@ -16,7 +16,7 @@ pub(crate) use super::common::{
     contains_type_parameters, function_shape_for_type, is_keyof_type,
     is_literal_type_through_type_constraints, is_narrowing_literal, is_type_parameter_like,
     is_union_type, is_unit_type, is_unknown_narrowing_literal, object_shape_for_type,
-    stringify_literal_type, tuple_elements as tuple_elements_for_type,
+    stringify_literal_type, tuple_elements as tuple_elements_for_type, type_contains_undefined,
     union_members as union_members_for_type,
 };
 

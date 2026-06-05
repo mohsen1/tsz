@@ -1,4 +1,5 @@
 use super::*;
+use std::ffi::OsString;
 
 fn preprocess_strs(args: &[&str]) -> Vec<String> {
     preprocess_args(args.iter().map(OsString::from).collect())
