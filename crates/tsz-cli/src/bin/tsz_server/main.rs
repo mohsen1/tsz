@@ -46,6 +46,7 @@ mod handlers_completions_project;
 mod handlers_completions_snippets;
 mod handlers_diagnostics;
 mod handlers_editing;
+mod handlers_editing_comments;
 mod handlers_files;
 mod handlers_info;
 mod handlers_info_alias;
