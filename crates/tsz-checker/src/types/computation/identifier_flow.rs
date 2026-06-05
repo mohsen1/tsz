@@ -107,7 +107,8 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx
-                .symbol_last_assignment_pos
+                .symbol_flow_memo
+                .last_assignment_pos
                 .borrow_mut()
                 .insert(sym_id, last_pos);
             last_pos
@@ -477,7 +478,8 @@ impl<'a> CheckerState<'a> {
         // turning N references into an O(N · flow_nodes) cost.
         if let Some(&cached) = self
             .ctx
-            .symbol_has_non_initializer_assignment
+            .symbol_flow_memo
+            .has_non_initializer_assignment
             .borrow()
             .get(&sym_id)
         {
@@ -487,7 +489,8 @@ impl<'a> CheckerState<'a> {
         let result = self.compute_has_non_initializer_assignment_for_reference(idx, sym_id);
 
         self.ctx
-            .symbol_has_non_initializer_assignment
+            .symbol_flow_memo
+            .has_non_initializer_assignment
             .borrow_mut()
             .insert(sym_id, result);
 
