@@ -330,6 +330,7 @@ def scan(roots: Iterable[Path]) -> list[CacheCandidate]:
     paths = list(iter_rust_files(roots))
     text_by_path = {path: scrubbed_file_text(path) for path in paths}
     signal_text_by_dir: dict[Path, str] = {}
+    signal_text_by_module_dir: dict[Path, str] = {}
     for path in paths:
         if path.parent not in signal_text_by_dir:
             signal_text_by_dir[path.parent] = "\n".join(
@@ -337,7 +338,17 @@ def scan(roots: Iterable[Path]) -> list[CacheCandidate]:
                 for sibling, text in text_by_path.items()
                 if sibling.parent == path.parent
             )
-        candidates.extend(scan_file(path, signal_text=signal_text_by_dir[path.parent]))
+        signal_parts = [signal_text_by_dir[path.parent]]
+        module_dir = path.with_suffix("")
+        if module_dir.is_dir():
+            if module_dir not in signal_text_by_module_dir:
+                signal_text_by_module_dir[module_dir] = "\n".join(
+                    text
+                    for sibling, text in text_by_path.items()
+                    if sibling.parent == module_dir
+                )
+            signal_parts.append(signal_text_by_module_dir[module_dir])
+        candidates.extend(scan_file(path, signal_text="\n".join(signal_parts)))
     return sorted(candidates, key=lambda c: (c.path, c.line, c.name))
 
 

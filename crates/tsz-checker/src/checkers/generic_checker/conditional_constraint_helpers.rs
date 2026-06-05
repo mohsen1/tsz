@@ -107,6 +107,30 @@ impl<'a> CheckerState<'a> {
         branch: TypeId,
         constraint: TypeId,
     ) -> bool {
+        let cache_key = (branch, constraint);
+        if let Some(&cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .indexed_object_map_branch_constraint
+            .get(&cache_key)
+        {
+            return cached;
+        }
+
+        let result =
+            self.indexed_object_map_branch_satisfies_constraint_uncached(branch, constraint);
+        self.ctx
+            .type_reference_validation_caches
+            .indexed_object_map_branch_constraint
+            .insert(cache_key, result);
+        result
+    }
+
+    fn indexed_object_map_branch_satisfies_constraint_uncached(
+        &mut self,
+        branch: TypeId,
+        constraint: TypeId,
+    ) -> bool {
         let Some((object_type, _index_type)) =
             query::index_access_components(self.ctx.types.as_type_database(), branch)
         else {

@@ -10,7 +10,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
+    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleListId, TypeId,
+    Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -21,6 +22,33 @@ use crate::visitor::{
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Array element type, transparently peeling a single `readonly` array
+    /// wrapper (`readonly T[]` / `ReadonlyArray<T>`).
+    ///
+    /// tsc walks a readonly array element exactly like a mutable one when
+    /// elaborating an assignment failure, so the explanation must reach the
+    /// element regardless of the `readonly` modifier. Without this peel,
+    /// `readonly number[]` vs `readonly string[]` loses its nested
+    /// `Type 'number' is not assignable to type 'string'.` line (the modifier
+    /// itself is not the failure — the element relation is).
+    fn array_element_peeling_readonly(&self, ty: TypeId) -> Option<TypeId> {
+        array_element_type(self.interner, ty).or_else(|| {
+            readonly_inner_type(self.interner, ty)
+                .and_then(|inner| array_element_type(self.interner, inner))
+        })
+    }
+
+    /// Tuple element list, transparently peeling a single `readonly` tuple
+    /// wrapper (`readonly [..]`). Mirrors [`Self::array_element_peeling_readonly`]
+    /// so readonly tuple mismatches still elaborate the offending position
+    /// (`Type at position N in source is not compatible ...`).
+    fn tuple_list_peeling_readonly(&self, ty: TypeId) -> Option<TupleListId> {
+        tuple_list_id(self.interner, ty).or_else(|| {
+            readonly_inner_type(self.interner, ty)
+                .and_then(|inner| tuple_list_id(self.interner, inner))
+        })
+    }
+
     fn shape_or_type_requires_declared_index_signature(
         &self,
         shape: &ObjectShape,
@@ -703,8 +731,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_elem), Some(t_elem)) = (
-            array_element_type(self.interner, source),
-            array_element_type(self.interner, target),
+            self.array_element_peeling_readonly(source),
+            self.array_element_peeling_readonly(target),
         ) {
             if !self.check_subtype(s_elem, t_elem).is_true() {
                 // Recurse into the element failure so the rendered chain carries
@@ -760,8 +788,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_elems), Some(t_elems)) = (
-            tuple_list_id(self.interner, source),
-            tuple_list_id(self.interner, target),
+            self.tuple_list_peeling_readonly(source),
+            self.tuple_list_peeling_readonly(target),
         ) {
             let s_elems = self.interner.tuple_list(s_elems);
             let t_elems = self.interner.tuple_list(t_elems);

@@ -126,6 +126,9 @@ after
 
         self.assertEqual(report["state"], "stale")
         self.assertFalse(report["detailIsCurrent"])
+        self.assertFalse(report["detailAggregateMatchesPublic"])
+        self.assertFalse(report["rowFreshnessProven"])
+        self.assertEqual(report["rowFreshnessEvidence"], "stale")
         self.assertEqual(report["jsPassDelta"], 365)
         self.assertEqual(report["dtsPassDelta"], 38)
         self.assertEqual(report["detailSummary"]["jsPass"], 13094)
@@ -158,8 +161,26 @@ after
         parsed = json.loads(out.getvalue())
         self.assertEqual(parsed["state"], "stale")
         self.assertFalse(parsed["detailIsCurrent"])
+        self.assertFalse(parsed["detailAggregateMatchesPublic"])
+        self.assertFalse(parsed["rowFreshnessProven"])
         self.assertEqual(parsed["jsPassDelta"], 365)
         self.assertEqual(parsed["dtsPassDelta"], 38)
+
+    def test_freshness_report_marks_aggregate_match_as_aggregate_only(self):
+        summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+
+        report = self.mod.emit_freshness_report(summary, dict(summary))
+
+        self.assertEqual(report["state"], "aggregate-match")
+        self.assertTrue(report["detailIsCurrent"])
+        self.assertTrue(report["detailAggregateMatchesPublic"])
+        self.assertFalse(report["rowFreshnessProven"])
+        self.assertEqual(report["rowFreshnessEvidence"], "aggregate-only")
 
     def test_freshness_note_ignores_different_emit_domains(self):
         note = self.mod.emit_freshness_note(
@@ -462,6 +483,33 @@ after
         )
 
         self.assertEqual(heading, "Declaration: 25 failures/timeouts")
+
+    def test_aggregate_match_failure_families_warn_row_freshness_unproven(self):
+        summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        data = {
+            "summary": dict(summary),
+            "results": [
+                make_result("typeGuardsInFunction", js_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: dict(summary)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_failure_families(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("Emit detail freshness: aggregate-match", text)
+        self.assertIn("per-row freshness is not proven", text)
+        self.assertIn("JavaScript: 1 failures/timeouts", text)
 
     def test_stale_headline_summary_uses_public_aggregate(self):
         detail_summary = {

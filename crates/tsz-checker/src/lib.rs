@@ -228,6 +228,9 @@ mod heritage_constraint_structural_name_lookup_arch_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "tests/homomorphic_mapped_member_override_tests.rs"]
+mod homomorphic_mapped_member_override_tests;
+#[cfg(test)]
 #[path = "../tests/imported_generator_iterable_tests.rs"]
 mod imported_generator_iterable_tests;
 #[cfg(test)]
@@ -1166,6 +1169,9 @@ mod ts18048_unary_arithmetic_nullish_tests;
 #[cfg(test)]
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
+#[cfg(test)]
+#[path = "tests/ts2322_readonly_array_element_elaboration_tests.rs"]
+mod ts2322_readonly_array_element_elaboration_tests;
 #[cfg(test)]
 #[path = "tests/ts2322_same_generic_type_argument_elaboration_tests.rs"]
 mod ts2322_same_generic_type_argument_elaboration_tests;

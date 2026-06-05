@@ -1,6 +1,7 @@
 //! Diagnostic/result helpers for the CLI compilation driver.
 
 use super::*;
+use tsz::checker::diagnostics::diagnostic_messages;
 
 pub(super) const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
     matches!(
@@ -574,19 +575,23 @@ pub(super) fn compile_inner(
             ));
         }
     } else if !resolved.no_emit
-        && resolved.emit_declarations
-        && (out_dir.is_some() || declaration_dir.is_some())
+        && (out_dir.is_some() || declaration_dir.is_some() || resolved.out_file.is_some())
         && let Some(tsconfig) = tsconfig_path.as_deref()
     {
-        // TS5011: declaration emit with outDir/declarationDir set but no rootDir,
-        // and the inferred common source directory differs from the tsconfig
-        // directory. In that case declaration output would land in an unexpected
-        // layout, so tsc asks the user to pin rootDir explicitly.
+        // TS5011: an output location (`outDir`, `declarationDir`, or `outFile`)
+        // is configured without an explicit `rootDir`, and the inferred common
+        // source directory differs from the tsconfig directory. tsc 6.0 emits
+        // this for every emit — JavaScript, declaration, and `outFile` bundle —
+        // because the output would otherwise land in a layout that changes in
+        // TypeScript 7.0, so it asks the user to pin `rootDir` explicitly. It is
+        // suppressed under `noEmit` (nothing is written) and when `rootDir` is
+        // set (handled by the branch above), matching tsc.
         if let Some(common) = implicit_common_source_directory(&root_file_paths, &base_dir, &cwd) {
             let tsconfig_display = display_relative_to_dir(tsconfig, &cwd);
             let common_display = display_relative_to_dir(&common, &base_dir);
             let message = format!(
-                "The common source directory of '{tsconfig_display}' is '{common_display}'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout."
+                "The common source directory of '{tsconfig_display}' is '{common_display}'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout.\n  {url}",
+                url = diagnostic_messages::VISIT_HTTPS_AKA_MS_TS6_FOR_MIGRATION_INFORMATION
             );
             config_diagnostics.push(Diagnostic::error(
                 tsconfig.to_string_lossy().into_owned(),

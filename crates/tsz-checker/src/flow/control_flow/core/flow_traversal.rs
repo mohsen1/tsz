@@ -594,11 +594,10 @@ impl<'a> FlowAnalyzer<'a> {
                                     // the declared enum so cross-enum assignments still report
                                     // TS2322.
                                     if self.is_const_variable_declaration(flow.node)
-                                        && crate::query_boundaries::common::enum_components(
-                                            self.interner,
+                                        && query::has_enum_components(
+                                            self.interner.as_type_database(),
                                             narrowing_base,
                                         )
-                                        .is_some()
                                         && self.flow_assignability_related(
                                             assigned_type,
                                             narrowing_base,

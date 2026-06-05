@@ -666,8 +666,13 @@ fn ts5011_emitted_when_out_dir_without_root_dir_and_inferred_subdir() {
     );
 }
 
+// tsc 6.0 emits TS5011 for *every* emit, not only declaration emit. A plain
+// JavaScript build with `outDir` set, no `rootDir`, and an inferred common
+// source subdirectory triggers the same migration warning, because the JS
+// output layout changes in TypeScript 7.0 the same way the declaration layout
+// does. Verified against the `tsc@6.0.x` oracle.
 #[test]
-fn ts5011_not_emitted_for_js_emit_only_out_dir_without_root_dir() {
+fn ts5011_emitted_for_js_emit_only_out_dir_without_root_dir() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -686,8 +691,53 @@ fn ts5011_not_emitted_for_js_emit_only_out_dir_without_root_dir() {
     let result = compile(&args, base).expect("compilation should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&5011),
-        "Should NOT emit TS5011 for outDir-only JS emit, got: {codes:?}"
+        codes.contains(&5011),
+        "Should emit TS5011 for outDir JS emit without rootDir, got: {codes:?}"
+    );
+    let ts5011 = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5011)
+        .expect("TS5011 diagnostic");
+    assert!(
+        ts5011.message_text.contains("./src"),
+        "TS5011 message should reference the inferred common source dir, got: {}",
+        ts5011.message_text
+    );
+    assert!(
+        ts5011
+            .message_text
+            .contains("Visit https://aka.ms/ts6 for migration information."),
+        "TS5011 message should carry the TS6 migration URL, got: {}",
+        ts5011.message_text
+    );
+}
+
+// tsc 6.0 also emits TS5011 for `outFile` bundle emit (no `outDir`/`rootDir`)
+// when the inferred common source directory is a subdirectory.
+#[test]
+fn ts5011_emitted_for_out_file_without_root_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outFile": "bundle.js",
+            "module": "amd"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&5011),
+        "Should emit TS5011 for outFile emit without rootDir, got: {codes:?}"
     );
 }
 
