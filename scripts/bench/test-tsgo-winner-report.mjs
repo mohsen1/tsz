@@ -313,7 +313,7 @@ withTempDir((dir) => {
   ]);
   assert.deepEqual(
     report.target_gaps.map((row) => row.name),
-    ["200 generic functions", "BCT candidates=200", "200 classes"],
+    ["BCT candidates=200", "200 classes", "200 generic functions"],
   );
   assert.equal(report.two_x_target.rows_below_target, 3);
   assert.equal(report.two_x_target.rows_with_attribution, 0);
