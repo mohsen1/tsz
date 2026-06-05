@@ -508,6 +508,79 @@ fn delegate_cross_arena_source_option_bag_with_sibling_alias_lowers_directly_via
     );
 }
 
+#[test]
+fn delegate_cross_arena_source_option_bag_interface_type_uses_target_alias_with_requester_shadow() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "route.ts",
+        r#"
+                type ReturnType = "ok" | "redirect";
+                export interface RouteConfig {
+                    result: ReturnType;
+                    route: "/dashboard" | "/settings";
+                }
+            "#,
+    );
+    let (requester_arena, requester_binder, _) = parse_bound_source_with_name(
+        "app.ts",
+        r#"
+                type ReturnType = string;
+            "#,
+    );
+
+    let (mut state, route_sym) = setup_cross_file_index_state(
+        "RouteConfig",
+        &types,
+        &requester_arena,
+        &requester_binder,
+        &target_arena,
+        &target_binder,
+    );
+
+    enable_perf_counters_for_direct_lowering_test();
+    let success_before =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_before = with_parent_cache_constructed_count();
+    let ty = state
+        .delegate_cross_arena_interface_type(route_sym)
+        .expect("cross-file source-file option-bag interface type should lower directly");
+    let success_after =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_after = with_parent_cache_constructed_count();
+
+    assert_eq!(
+        success_after - success_before,
+        1,
+        "RouteConfig should hit direct cross-file interface lowering through delegate_cross_arena_interface_type"
+    );
+    assert_eq!(
+        child_checkers_after, child_checkers_before,
+        "direct interface-type lowering must not construct a delegated child checker"
+    );
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    let result = state.ctx.types.intern_string("result");
+    let result_type = crate::query_boundaries::common::raw_property_type(
+        state.ctx.types.as_type_database(),
+        ty,
+        result,
+    )
+    .expect("directly lowered RouteConfig should retain 'result' property");
+    let target_return_sym = target_binder
+        .file_locals
+        .get("ReturnType")
+        .expect("target ReturnType sibling symbol");
+    let target_return_def = state.ctx.get_or_create_def_id(target_return_sym);
+    assert_eq!(
+        crate::query_boundaries::common::lazy_def_id(
+            state.ctx.types.as_type_database(),
+            result_type,
+        ),
+        Some(target_return_def),
+        "the 'result' annotation should resolve to route.ts ReturnType, not the requester shadow",
+    );
+}
+
 /// Root cause #2: when the program has any module augmentation, the shared
 /// symbol-arena cache gate is disabled program-wide, so
 /// `symbol_type_cache_from_symbol_arena` is `false` even on the symbol-arena
