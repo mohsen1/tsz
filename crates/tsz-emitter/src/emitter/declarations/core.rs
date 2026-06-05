@@ -45,6 +45,9 @@ impl<'a> Printer<'a> {
         if self.emit_recovered_reserved_function_declaration_name(node, func) {
             return;
         }
+        if self.emit_recovered_this_parameter_initializer_function_declaration(node, func) {
+            return;
+        }
 
         let emit_invalid_namespace_static =
             self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
