@@ -361,7 +361,10 @@ impl<'a> CheckerState<'a> {
             if param.question_token
                 && type_id != TypeId::ANY
                 && type_id != TypeId::ERROR
-                && !tsz_solver::narrowing::type_contains_undefined(self.ctx.types, type_id)
+                && !crate::query_boundaries::type_predicates::type_contains_undefined(
+                    self.ctx.types,
+                    type_id,
+                )
             {
                 type_id = self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED);
             }

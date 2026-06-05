@@ -250,7 +250,9 @@ pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
-pub use diagnostics::format::{TypeFormatter, format_excess_property_name};
+pub use diagnostics::format::{
+    TypeFormatter, format_excess_property_name, type_alias_displayed_as_underlying,
+};
 pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,

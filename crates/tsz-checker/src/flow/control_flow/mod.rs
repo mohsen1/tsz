@@ -37,5 +37,7 @@ mod typeof_exclusions;
 pub(crate) mod var_utils;
 mod zod_literal_helpers;
 
-pub(crate) use self::core::{CallPredicateMap, PredicateSignature, PropertyKey};
+pub(crate) use self::core::{
+    CallPredicateMap, PredicateSignature, PropertyKey, symbol_first_identifier_ref,
+};
 pub use self::core::{FlowAnalyzer, FlowGraph};

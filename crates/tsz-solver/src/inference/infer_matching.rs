@@ -9,7 +9,9 @@
 //! lower/upper bound candidates for each inference variable.
 
 use crate::def::DefId;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_generic, instantiate_type};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_generic_cached, instantiate_type,
+};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
     CallSignature, CallableShapeId, FunctionShape, FunctionShapeId, InferencePriority,
@@ -928,7 +930,8 @@ impl<'a> InferenceContext<'a> {
         let body = resolver.resolve_lazy(def_id, self.interner)?;
 
         // Instantiate the body with the application's type arguments
-        let instantiated = instantiate_generic(self.interner, body, &type_params, &app.args);
+        let instantiated =
+            instantiate_generic_cached(self.interner, self.query_db, body, &type_params, &app.args);
 
         // Restore depth after expansion
         self.app_expansion_depth = depth;

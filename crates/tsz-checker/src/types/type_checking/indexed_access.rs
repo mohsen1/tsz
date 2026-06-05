@@ -520,6 +520,15 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if index_type != TypeId::ERROR
+            && self.nested_type_literal_index_access_allows_index(
+                data.object_type,
+                data.index_type,
+                index_type,
+            )
+        {
+            return;
+        }
 
         let object_type = self.get_type_from_type_node(data.object_type);
 

@@ -7,7 +7,7 @@ fn compile_for_of_loop() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -57,7 +57,7 @@ fn compile_shorthand_methods() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -100,7 +100,7 @@ fn compile_incremental_creates_tsbuildinfo() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "incremental": true,
             "tsBuildInfoFile": "dist/project.tsbuildinfo"
@@ -992,6 +992,108 @@ export const b = (null as any as import("pkg", { with: {"resolution-mode": "impo
 }
 
 #[test]
+fn triple_slash_reference_mode_global_function_return_stays_nameable_in_dts() {
+    for (case_dir, package_json, callee_name, result_name) in [
+        (
+            "cjs",
+            None,
+            "makeRequireBox",
+            "RequireBox",
+        ),
+        (
+            "esm",
+            Some(
+                r#"{
+          "private": true,
+          "type": "module"
+        }"#,
+            ),
+            "makeImportBox",
+            "ImportBox",
+        ),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let base = &tmp.path;
+
+        write_file(
+            &base.join("node_modules/pkg/package.json"),
+            r#"{
+          "name": "pkg",
+          "version": "0.0.1",
+          "exports": {
+            "import": "./import.js",
+            "require": "./require.js"
+          }
+        }"#,
+        );
+        write_file(
+            &base.join("node_modules/pkg/import.d.ts"),
+            r#"export {};
+declare global {
+    interface ImportBox {}
+    function makeImportBox(): ImportBox;
+}
+"#,
+        );
+        write_file(
+            &base.join("node_modules/pkg/require.d.ts"),
+            r#"export {};
+declare global {
+    interface RequireBox {}
+    function makeRequireBox(): RequireBox;
+}
+"#,
+        );
+        if let Some(package_json) = package_json {
+            write_file(&base.join("package.json"), package_json);
+        }
+        write_file(
+            &base.join("tsconfig.json"),
+            &format!(
+                r#"{{
+          "compilerOptions": {{
+            "target": "es2022",
+            "module": "node16",
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "rootDir": ".",
+            "outDir": "out"
+          }},
+          "files": ["{case_dir}/uses.ts"]
+        }}"#
+            ),
+        );
+        write_file(
+            &base.join(case_dir).join("uses.ts"),
+            &format!(
+                r#"/// <reference types="pkg" preserve="true" />
+export default {callee_name}();
+"#
+            ),
+        );
+
+        let args = default_args();
+        let result = compile(&args, base).expect("compile should succeed");
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected declaration emit without diagnostics for {case_dir}, got: {:?}",
+            result.diagnostics
+        );
+
+        let dts = std::fs::read_to_string(base.join("out").join(case_dir).join("uses.d.ts"))
+            .expect("read uses declaration output");
+        assert!(
+            dts.contains(&format!("declare const _default: {result_name};")),
+            "expected nameable global function return for {case_dir}, got:\n{dts}"
+        );
+        assert!(
+            dts.contains(r#"/// <reference types="pkg" preserve="true" />"#),
+            "expected preserved triple-slash directive for {case_dir}, got:\n{dts}"
+        );
+    }
+}
+
+#[test]
 fn export_type_resolution_mode_declaration_emit_does_not_emit_alias_ts2305() {
     for root_package_json in [
         None,
@@ -1791,4 +1893,3 @@ const c = "x";
         result.diagnostics
     );
 }
-

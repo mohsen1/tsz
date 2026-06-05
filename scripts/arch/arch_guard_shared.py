@@ -1234,8 +1234,22 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # rather than direct `query_boundaries::common` access.
         #
         # Ratcheted down after arch-smoke caught current stacked-branch slack.
-        # Ratcheted 3211→3208 after guard tests caught slack in the live count.
-        3208,
+        # Ratcheted 3211→3208 after guard tests caught slack in the live count,
+        # then bumped to 3209 for the `keyof T` TS2322 diagnostic-display fix
+        # (#12549). Owner: M1-A diagnostic hardcoding debt. Removal condition:
+        # ratchet this back down when `core_formatting.rs` gets a focused
+        # formatting/query-boundary helper for type-parameter `keyof` display,
+        # so `format_type_for_assignability_message` no longer needs a direct
+        # `type_param_info(keyof_inner)` quarantine read to short-circuit the
+        # anonymous-constraint evaluation path for free type parameters.
+        #
+        # Bumped by 4 for #10867 generic interface/class diagnostic source
+        # display: the display-only source formatter needs application base,
+        # lazy definition, and free-type-parameter checks before preserving the
+        # as-written nominal reference. Removal condition remains #8225
+        # narrowing these common-barrel calls behind a dedicated diagnostic
+        # source-display query.
+        3213,
     ),
 ]
 

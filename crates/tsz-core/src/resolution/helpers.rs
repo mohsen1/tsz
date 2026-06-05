@@ -277,18 +277,15 @@ pub(crate) fn match_imports_pattern(pattern: &str, specifier: &str) -> Option<St
     Some(specifier[start..end].to_string())
 }
 
-/// Split a `prefix*suffix` typesVersions pattern, mirroring tsc's
-/// `tryParsePattern`. Returns `None` for no-`*` patterns (which the caller must
-/// handle as exact-match strings) and for multi-`*` patterns (which tsc skips
-/// from pattern matching entirely).
-pub(crate) fn parse_types_versions_pattern(pattern: &str) -> Option<(&str, &str)> {
-    let star_pos = pattern.find('*')?;
-    let suffix_start = star_pos + 1;
-    if pattern[suffix_start..].contains('*') {
-        return None;
-    }
-    Some((&pattern[..star_pos], &pattern[suffix_start..]))
-}
+// The `typesVersions` / semver algorithm is owned by
+// `tsz_common::module_resolution::types_versions`. Re-export the primitives so
+// the tsz-core resolver and its callers keep their existing names while there
+// is a single implementation shared with the CLI driver and the checker
+// redirect.
+pub(crate) use tsz_common::module_resolution::types_versions::{
+    SemVer, parse_semver, range_matches as types_versions_range_matches,
+    select_paths as select_types_versions_paths,
+};
 
 pub(crate) fn types_versions_compiler_version(value: Option<&str>) -> SemVer {
     value
@@ -300,141 +297,9 @@ pub(crate) const fn default_types_versions_compiler_version() -> SemVer {
     TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
 }
 
-/// Pick the inner paths object for a `typesVersions` field, matching tsc's
-/// `getPackageJsonTypesVersionsPaths`:
-///
-/// > Iterate keys in JSON declaration order and return the **first** entry
-/// > whose semver range matches the active compiler version.
-///
-/// `serde_json` is built with the `preserve_order` feature, so the underlying
-/// `Map` preserves JSON insertion order — first-match here means
-/// first-in-source order, exactly like tsc's `for (const key in typesVersions)`
-/// loop. Earlier revisions of this function picked a "best" key by score
-/// (constraint count + min version), but that diverges from tsc whenever two
-/// keys both match the compiler version (e.g. `"*"` declared before `">=5.4"`,
-/// or `">=4.0"` declared before `">=4.4"`).
-pub(crate) fn select_types_versions_paths(
-    types_versions: &serde_json::Value,
-    compiler_version: SemVer,
-) -> Option<&serde_json::Map<String, serde_json::Value>> {
-    let map = types_versions.as_object()?;
-    for (key, value) in map {
-        let Some(value_map) = value.as_object() else {
-            continue;
-        };
-        if types_versions_range_matches(key, compiler_version) {
-            return Some(value_map);
-        }
-    }
-    None
-}
-
-/// Returns `true` when `range` is a valid semver range (per tsc's
-/// `VersionRange.tryParse`) that the supplied compiler version satisfies.
-pub(crate) fn types_versions_range_matches(range: &str, compiler_version: SemVer) -> bool {
-    let range = range.trim();
-    if range.is_empty() || range == "*" {
-        return true;
-    }
-    for segment in range.split("||") {
-        if types_versions_range_segment_matches(segment.trim(), compiler_version) {
-            return true;
-        }
-    }
-    false
-}
-
-fn types_versions_range_segment_matches(segment: &str, compiler_version: SemVer) -> bool {
-    // An empty segment comes from a malformed disjunction like `">=4 || "` —
-    // a vacuous empty-token loop would return `true`, so we reject explicitly.
-    // The lone `"*"` token is handled by the `continue` below; no early
-    // return needed.
-    if segment.is_empty() {
-        return false;
-    }
-    for token in segment.split_whitespace() {
-        if token.is_empty() || token == "*" {
-            continue;
-        }
-        let Some((op, version)) = parse_range_token(token) else {
-            return false;
-        };
-        if !compare_range(compiler_version, op, version) {
-            return false;
-        }
-    }
-    true
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RangeOp {
-    Gt,
-    Gte,
-    Lt,
-    Lte,
-    Eq,
-}
-
-pub(crate) fn parse_range_token(token: &str) -> Option<(RangeOp, SemVer)> {
-    let token = token.trim();
-    if token.is_empty() {
-        return None;
-    }
-    let (op, rest) = if let Some(rest) = token.strip_prefix(">=") {
-        (RangeOp::Gte, rest)
-    } else if let Some(rest) = token.strip_prefix("<=") {
-        (RangeOp::Lte, rest)
-    } else if let Some(rest) = token.strip_prefix('>') {
-        (RangeOp::Gt, rest)
-    } else if let Some(rest) = token.strip_prefix('<') {
-        (RangeOp::Lt, rest)
-    } else {
-        (RangeOp::Eq, token)
-    };
-
-    parse_semver(rest).map(|version| (op, version))
-}
-
-pub(crate) fn compare_range(version: SemVer, op: RangeOp, other: SemVer) -> bool {
-    match op {
-        RangeOp::Gt => version > other,
-        RangeOp::Gte => version >= other,
-        RangeOp::Lt => version < other,
-        RangeOp::Lte => version <= other,
-        RangeOp::Eq => version == other,
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) struct SemVer {
-    major: u32,
-    minor: u32,
-    patch: u32,
-}
-
 // NOTE: Keep this in sync with the TypeScript version this compiler targets.
-pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {
-    major: 6,
-    minor: 0,
-    patch: 3,
-};
-
-pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-    let value = value.split_once(['-', '+']).map_or(value, |(core, _)| core);
-    let mut parts = value.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next().unwrap_or("0").parse().ok()?;
-    let patch = parts.next().unwrap_or("0").parse().ok()?;
-    Some(SemVer {
-        major,
-        minor,
-        patch,
-    })
-}
+pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer =
+    tsz_common::module_resolution::types_versions::DEFAULT_COMPILER_VERSION;
 
 /// Apply wildcard substitution to a target path.
 ///
@@ -1016,107 +881,11 @@ mod tests {
         assert!(types_versions_range_matches(">=garbage || >=4", v));
     }
 
-    #[test]
-    fn parse_types_versions_pattern_rejects_multi_star_keys() {
-        // tsc's `tryParsePattern` returns undefined for multi-`*` keys, which
-        // causes them to be dropped from the wildcard candidate set and from
-        // the exact-match set. We mirror that by returning `None` here so
-        // callers skip the key entirely.
-        assert_eq!(parse_types_versions_pattern("lib/*"), Some(("lib/", "")));
-        assert_eq!(parse_types_versions_pattern("*.d.ts"), Some(("", ".d.ts")));
-        assert_eq!(parse_types_versions_pattern("a*b*c"), None);
-        assert_eq!(parse_types_versions_pattern("exact"), None);
-    }
-
-    #[test]
-    fn parse_range_token_and_compare_range_cover_all_operators() {
-        assert_eq!(
-            parse_range_token(">=5.2"),
-            Some((
-                RangeOp::Gte,
-                SemVer {
-                    major: 5,
-                    minor: 2,
-                    patch: 0,
-                },
-            ))
-        );
-        assert_eq!(
-            parse_range_token("<4.9.1"),
-            Some((
-                RangeOp::Lt,
-                SemVer {
-                    major: 4,
-                    minor: 9,
-                    patch: 1,
-                },
-            ))
-        );
-        assert_eq!(
-            parse_range_token("5.0"),
-            Some((
-                RangeOp::Eq,
-                SemVer {
-                    major: 5,
-                    minor: 0,
-                    patch: 0,
-                },
-            ))
-        );
-        assert_eq!(parse_range_token(""), None);
-        assert_eq!(parse_range_token(">bogus"), None);
-
-        let version = SemVer {
-            major: 5,
-            minor: 3,
-            patch: 0,
-        };
-        assert!(compare_range(
-            version,
-            RangeOp::Gt,
-            SemVer {
-                major: 5,
-                minor: 2,
-                patch: 9,
-            },
-        ));
-        assert!(compare_range(
-            version,
-            RangeOp::Gte,
-            SemVer {
-                major: 5,
-                minor: 3,
-                patch: 0,
-            },
-        ));
-        assert!(compare_range(
-            version,
-            RangeOp::Lt,
-            SemVer {
-                major: 5,
-                minor: 4,
-                patch: 0,
-            },
-        ));
-        assert!(compare_range(
-            version,
-            RangeOp::Lte,
-            SemVer {
-                major: 5,
-                minor: 3,
-                patch: 0,
-            },
-        ));
-        assert!(compare_range(
-            version,
-            RangeOp::Eq,
-            SemVer {
-                major: 5,
-                minor: 3,
-                patch: 0,
-            },
-        ));
-    }
+    // `parse_pattern` (multi-`*` rejection), `parse_range_token`,
+    // `compare_range`, and `RangeOp` are owned and unit-tested by
+    // `tsz_common::module_resolution::types_versions`; the re-exported
+    // `select_types_versions_paths` / `types_versions_range_matches` above
+    // exercise them end-to-end here.
 
     #[test]
     fn split_path_extension_prefers_longest_known_declaration_extension() {

@@ -153,6 +153,15 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // Preserve the as-written reference for a generic interface/class source
+        // (`O<T>`, `OwnerList<T>`) before the widening / structural-display
+        // fallbacks below collapse it and re-derive an over-instantiated type
+        // argument from the instantiated members. See
+        // `generic_nominal_application_source_display` for the full rationale.
+        if let Some(display) = self.generic_nominal_application_source_display(source) {
+            return display;
+        }
+
         let has_optional_callable_param =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
                 .is_some_and(|shape| shape.params.iter().any(|param| param.optional))

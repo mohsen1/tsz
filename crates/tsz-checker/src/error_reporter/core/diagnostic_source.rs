@@ -11,15 +11,16 @@ mod literal_widening_helpers;
 mod literal_widening_policy;
 mod object_literal_targets;
 mod recursive_alias_display;
+mod span_diagnostic_queries;
 mod static_schema;
 mod tuple_source_display;
 mod type_query_alias;
 mod wrapper_provenance;
 
-use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
+use span_diagnostic_queries::strip_module_specifier_extension;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -220,6 +221,21 @@ impl<'a> CheckerState<'a> {
         if parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
             && let Some(prop) = self.ctx.arena.get_shorthand_property(parent_node)
             && prop.name == expr_idx
+        {
+            return None;
+        }
+
+        // Shorthand method and accessor member names (`{ m(x) {} }`,
+        // `{ get x() {} }`, `{ set x(v) {} }`) are declaration names, not source
+        // expressions. The member's value is the declaration itself; resolving
+        // the name as a value reference would emit a false TS2304 "Cannot find name".
+        // This mirrors the property-assignment guard above.
+        if matches!(
+            parent_node.kind,
+            syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+        ) && self.get_declaration_name_node(parent_idx) == Some(expr_idx)
         {
             return None;
         }
@@ -1898,8 +1914,12 @@ impl<'a> CheckerState<'a> {
         if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        let widened_element =
-            self.normalize_assignability_display_type(self.widen_type_for_display(element_type));
+        let widened_element = self.normalize_assignability_display_type(
+            crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                self.ctx.types,
+                element_type,
+            ),
+        );
         let rebuilt = self.ctx.types.array(widened_element);
         // Preserve the readonly modifier: tsc displays `readonly number[]` not `number[]`
         // when the source type was a readonly array (ReadonlyType(Array(...))).
@@ -1954,32 +1974,4 @@ impl<'a> CheckerState<'a> {
 
         replaced_object_member.then(|| displays.join(" & "))
     }
-
-    pub(in crate::error_reporter) fn has_more_specific_diagnostic_at_span(
-        &self,
-        start: u32,
-        length: u32,
-    ) -> bool {
-        self.ctx.diagnostics.iter().any(|diag| {
-            diag.start == start
-                && diag.length == length
-                && diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag.code
-                    != diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV
-        })
-    }
-
-    pub(crate) fn has_diagnostic_code_within_span(&self, start: u32, end: u32, code: u32) -> bool {
-        self.ctx
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == code && diag.start >= start && diag.start < end)
-    }
-}
-
-/// Strip TS-family file extensions from module specifiers for display while
-/// preserving JS-family extensions in `typeof import("mod")` output.
-/// Element-access diagnostics can opt into raw namespace display earlier.
-pub(crate) fn strip_module_specifier_extension(module_name: &str) -> &str {
-    tsz_common::file_extensions::strip_ts_extension(module_name)
 }

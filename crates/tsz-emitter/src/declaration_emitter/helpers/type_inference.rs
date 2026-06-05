@@ -1000,10 +1000,18 @@ impl<'a> DeclarationEmitter<'a> {
 
         let call = self.arena.get_call_expr(expr_node)?;
         let binder = self.binder?;
-        let raw_sym_id = self.value_reference_symbol(call.expression)?;
-        let (sym_id, imported_module) =
-            self.resolve_call_expression_callee_symbol(call.expression, raw_sym_id, binder);
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
+        let Some((sym_id, imported_module)) =
+            self.resolve_declared_call_callee_symbol(call.expression, binder)
+        else {
+            return self.property_access_declared_type_member_return_type_text(
+                expr_idx,
+                call.expression,
+                call,
+                &explicit_type_args,
+                binder,
+            );
+        };
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
             let decl_node = source_arena.get(decl_idx)?;
             let callable = Self::callable_decl_parts_from_node(source_arena, decl_node)?;
@@ -1916,33 +1924,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         arg_count >= required_count && (has_rest || arg_count <= parameters.nodes.len())
-    }
-
-    pub(in crate::declaration_emitter) fn callable_decl_parts_from_node<'b>(
-        source_arena: &'b NodeArena,
-        decl_node: &'b Node,
-    ) -> Option<CallableDeclParts<'b>> {
-        if let Some(func) = source_arena.get_function(decl_node) {
-            return Some(CallableDeclParts {
-                modifiers: func.modifiers.as_ref(),
-                type_parameters: func.type_parameters.as_ref(),
-                parameters: &func.parameters,
-                type_annotation: func.type_annotation,
-                body: func.body,
-            });
-        }
-
-        if let Some(method) = source_arena.get_method_decl(decl_node) {
-            return Some(CallableDeclParts {
-                modifiers: method.modifiers.as_ref(),
-                type_parameters: method.type_parameters.as_ref(),
-                parameters: &method.parameters,
-                type_annotation: method.type_annotation,
-                body: method.body,
-            });
-        }
-
-        None
     }
 
     pub(in crate::declaration_emitter) fn skip_parenthesized_non_null_and_comma(

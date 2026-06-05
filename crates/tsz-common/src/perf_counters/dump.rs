@@ -144,6 +144,7 @@ impl PerfCounters {
             + &Self::dump_delegate_source_file_miss_residues(
                 &snap.delegate_source_file_miss_residues,
             )
+            + &Self::dump_lib_bootstrap(&snap)
             + &Self::dump_source_file_symbol_arena_cache_eligibility_outcomes()
             + &Self::dump_slow_check_timings(&snap)
             + &Self::dump_by_reason()
@@ -740,6 +741,37 @@ impl PerfCounters {
             if count > 0 {
                 out.push_str(&format!("  {name:<32} {count:>12}\n"));
             }
+        }
+        out
+    }
+
+    fn dump_lib_bootstrap(snap: &PerfCounterSnapshot) -> String {
+        let counters = snap.lib_bootstrap;
+        if counters.snapshot_set_load_attempts == 0 && counters.checker_lib_clone_calls == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nLib bootstrap attribution:\n");
+        if counters.snapshot_set_load_attempts > 0 {
+            out.push_str(&format!(
+                "  snapshot set load  attempts={} hits={} misses={} files={} total_ms={:.2} max_ms={:.2}\n",
+                counters.snapshot_set_load_attempts,
+                counters.snapshot_set_load_hits,
+                counters.snapshot_set_load_misses,
+                counters.snapshot_set_load_files_total,
+                counters.snapshot_set_load_elapsed_ms_total,
+                counters.snapshot_set_load_elapsed_ms_max,
+            ));
+        }
+        if counters.checker_lib_clone_calls > 0 {
+            out.push_str(&format!(
+                "  checker lib clone  calls={} parallel_calls={} files={} total_ms={:.2} max_ms={:.2}\n",
+                counters.checker_lib_clone_calls,
+                counters.checker_lib_clone_parallel_calls,
+                counters.checker_lib_clone_files_total,
+                counters.checker_lib_clone_elapsed_ms_total,
+                counters.checker_lib_clone_elapsed_ms_max,
+            ));
         }
         out
     }

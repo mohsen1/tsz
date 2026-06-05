@@ -1,6 +1,7 @@
 //! Type formatting for the solver.
 //! Centralizes logic for converting `TypeIds` and `TypeDatas` to human-readable strings.
 
+mod alias_underlying;
 mod array;
 mod compound;
 mod display_simplification;
@@ -22,6 +23,7 @@ pub mod test_tracing;
 mod tests;
 pub mod tracing_helpers;
 
+pub use alias_underlying::type_alias_displayed_as_underlying;
 pub use property_names::format_excess_property_name;
 pub(crate) use property_names::needs_property_name_quotes;
 

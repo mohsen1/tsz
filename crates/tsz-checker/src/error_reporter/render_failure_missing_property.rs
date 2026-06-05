@@ -518,7 +518,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
-        let widened_source = self.widen_type_for_display(source_type);
+        let widened_source =
+            crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                self.ctx.types,
+                source_type,
+            );
         let (mut src_str, mut tgt_str_qualified) = if depth == 0 {
             let src = if source_type == TypeId::OBJECT {
                 "{}".to_string()
@@ -1114,7 +1118,11 @@ impl<'a> CheckerState<'a> {
             if let Some((prop_name, owner_name, visibility)) =
                 self.private_or_protected_member_missing_display(source_type, target_type, None)
             {
-                let widened_source = self.widen_type_for_display(source_type);
+                let widened_source =
+                    crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                        self.ctx.types,
+                        source_type,
+                    );
                 let src_str = if source_type_is_object {
                     "{}".to_string()
                 } else {
@@ -1157,7 +1165,11 @@ impl<'a> CheckerState<'a> {
             } else if source_type_is_object {
                 "{}".to_string()
             } else {
-                let widened_source = self.widen_type_for_display(source_type);
+                let widened_source =
+                    crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                        self.ctx.types,
+                        source_type,
+                    );
                 self.format_type_diagnostic(widened_source)
             };
             let tgt_str = if depth == 0 {
@@ -1309,7 +1321,11 @@ impl<'a> CheckerState<'a> {
             } else if source_type_is_object {
                 "{}".to_string()
             } else {
-                let widened_source = self.widen_type_for_display(source_type);
+                let widened_source =
+                    crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                        self.ctx.types,
+                        source_type,
+                    );
                 self.format_type_diagnostic(widened_source)
             };
             let tgt_str = if depth == 0 {
@@ -1379,7 +1395,11 @@ impl<'a> CheckerState<'a> {
             // through the pair formatter (rather than the bare single-type
             // formatter) so fresh object-literal property types are widened
             // consistently with the `Property 'x' is missing …` rendering.
-            let widened_source = self.widen_type_for_display(display_source);
+            let widened_source =
+                crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                    self.ctx.types,
+                    display_source,
+                );
             let (src, _) = self.format_type_pair_diagnostic(widened_source, target_type);
             src
         };

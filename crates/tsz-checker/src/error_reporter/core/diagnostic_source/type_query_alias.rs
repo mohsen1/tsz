@@ -35,6 +35,35 @@ impl<'a> CheckerState<'a> {
         arena: &tsz_parser::NodeArena,
         annotation_idx: NodeIndex,
     ) -> Option<tsz_solver::def::DefId> {
+        // The delegate validates the reference resolves to a type alias and
+        // finds its definition; this caller only narrows to aliases whose
+        // declared body is a `typeof` query.
+        let def_id = self.annotation_type_reference_alias_def_id(arena, annotation_idx)?;
+        let type_ref = arena.get_type_ref(arena.get(annotation_idx)?)?;
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(arena, type_ref.type_name)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let has_type_query_body = symbol.declarations.iter().any(|&decl_idx| {
+            arena
+                .get(decl_idx)
+                .and_then(|decl_node| arena.get_type_alias(decl_node))
+                .and_then(|alias| arena.get(alias.type_node))
+                .is_some_and(|body| body.kind == syntax_kind_ext::TYPE_QUERY)
+        });
+        has_type_query_body.then_some(def_id)
+    }
+
+    /// Resolve a `TYPE_REFERENCE` annotation node that names a type alias to its
+    /// solver `DefId`, regardless of the alias body shape. Returns `None` for
+    /// non-`TYPE_REFERENCE` annotations, references that do not resolve to a type
+    /// alias, or aliases with no registered definition.
+    pub(in crate::error_reporter) fn annotation_type_reference_alias_def_id(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> Option<tsz_solver::def::DefId> {
         let annotation_node = arena.get(annotation_idx)?;
         if annotation_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;
@@ -48,21 +77,6 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
             return None;
         }
-        let has_type_query_body = symbol.declarations.iter().any(|&decl_idx| {
-            let Some(decl_node) = arena.get(decl_idx) else {
-                return false;
-            };
-            let Some(alias) = arena.get_type_alias(decl_node) else {
-                return false;
-            };
-            arena
-                .get(alias.type_node)
-                .is_some_and(|body| body.kind == syntax_kind_ext::TYPE_QUERY)
-        });
-        if !has_type_query_body {
-            return None;
-        }
-
         let name_atom = self.ctx.types.intern_string(&symbol.escaped_name);
         self.ctx
             .definition_store
@@ -74,6 +88,32 @@ impl<'a> CheckerState<'a> {
                         && (def.symbol_id == Some(sym_id.0) || def.name == name_atom)
                 })
             })
+    }
+
+    /// True when the source expression's declared annotation names a non-generic
+    /// type alias that tsc renders by its underlying type rather than its alias
+    /// name (a computed conditional / indexed-access / `keyof` / application /
+    /// template / string-intrinsic body that collapses to a shared singleton, or
+    /// a direct intrinsic/literal body). In that case the declared-alias source
+    /// rewrite must not repaint the resolved scalar display with the alias name —
+    /// tsc shows `string`, not `X1`, for `type X1 = true extends true ? string :
+    /// number`.
+    pub(in crate::error_reporter) fn declared_source_annotation_alias_displayed_as_underlying(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        self.declared_source_type_annotation_node(expr_idx)
+            .and_then(|annotation_idx| {
+                self.annotation_type_reference_alias_def_id(self.ctx.arena, annotation_idx)
+            })
+            .and_then(|def_id| {
+                crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying(
+                    self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
+                    def_id,
+                )
+            })
+            .is_some()
     }
 
     fn declared_source_type_annotation_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {

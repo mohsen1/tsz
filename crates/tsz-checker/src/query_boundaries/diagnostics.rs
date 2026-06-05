@@ -37,6 +37,11 @@ pub(crate) fn union_or_intersection_mentions_object(
     tsz_solver::type_queries::union_or_intersection_mentions_object(db, type_id)
 }
 
+pub(crate) fn union_or_intersection_with_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    union_or_intersection_mentions_object(db, type_id)
+        && !tsz_solver::type_queries::is_object_type(db, type_id)
+}
+
 /// Check whether an application's *declared* alias body is a mapped type
 /// (e.g. `Partial<X>`, `Readonly<X>`, or `type F<T> = { [K in keyof T]... }`),
 /// even when the concrete instantiation is fully resolved. Diagnostic
