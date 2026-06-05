@@ -5,7 +5,7 @@
 #   curl -fsSL https://tsz.dev/install | bash -s -- --version v0.1.9 --dir ~/bin
 set -euo pipefail
 
-REPO_OWNER="${TSZ_REPO_OWNER:-mohsen1}"
+REPO_OWNER="${TSZ_REPO_OWNER:-tsz-org}"
 REPO_NAME="${TSZ_REPO_NAME:-tsz}"
 VERSION="${TSZ_VERSION:-latest}"
 INSTALL_DIR="${TSZ_INSTALL_DIR:-}"
@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
 tsz installer
   --version <tag>   Release tag (default: latest)
   --dir <path>      Install directory (default: auto)
-  --owner <owner>   Repo owner (default: mohsen1)
+  --owner <owner>   Repo owner (default: tsz-org)
   --repo <name>     Repo name (default: tsz)
 EOF
             exit 0 ;;

@@ -274,6 +274,9 @@ impl<'a> CheckerContext<'a> {
         self.type_reference_validation_caches
             .ref_type_params
             .clear();
+        self.type_reference_validation_caches
+            .conditional_branch_constraint
+            .clear();
         self.in_conditional_extends_depth = 0;
         self.typeof_param_scope.clear();
         self.type_param_constraint_excluded_params.clear();

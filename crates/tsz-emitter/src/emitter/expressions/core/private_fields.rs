@@ -1089,6 +1089,24 @@ impl<'a> Printer<'a> {
         let supports_logical_assignment =
             (self.ctx.options.target as u8) >= (super::super::super::ScriptTarget::ES2021 as u8);
 
+        // Compound assignment (including `**=`) with a missing/recovered LHS:
+        // emit only the RHS. This must come before the exponentiation lowering so
+        // `{ block } **= value` does not route through `Math.pow(, value)`.
+        // Exception: when the RHS is an object literal `{...}`, keep the operator to
+        // prevent the emitted `{` from being parsed as a block statement at the
+        // statement level (e.g., `^= { return: 1 }` must keep `^=`).
+        // No flag state has been modified yet at this point, so no restore needed.
+        if self.is_compound_assignment(binary.operator_token)
+            && self.arena.is_missing_recovery_identifier(binary.left)
+            && self
+                .arena
+                .get(binary.right)
+                .is_none_or(|n| n.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        {
+            self.emit(binary.right);
+            return;
+        }
+
         if (is_exponentiation || is_exponentiation_assignment) && self.ctx.needs_es2016_lowering {
             self.emit_exponentiation_expression(binary);
             return;
