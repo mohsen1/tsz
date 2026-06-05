@@ -14,7 +14,6 @@ mod path_resolution;
 mod program_file_index;
 mod type_packages;
 
-// Public API re-exports for `crate::driver::resolution::<item>` callers.
 #[cfg(test)]
 pub(crate) use discovery::collect_module_specifiers;
 #[allow(unused_imports)]
@@ -41,8 +40,6 @@ pub(super) use type_packages::{
     implied_resolution_mode_for_file, implied_resolution_mode_for_file_with_cache,
 };
 
-// Internal sharing: sibling-submodule items reachable via `super::*` for the
-// in-file test module and via `super::<item>` for siblings.
 #[allow(unused_imports)]
 pub(super) use discovery::*;
 #[allow(unused_imports)]
@@ -55,7 +52,6 @@ pub(super) use path_resolution::*;
 pub(super) use type_packages::*;
 
 type CollectedModuleSpecifier = (String, NodeIndex, ImportKind, Option<ImportingModuleKind>);
-
 type SourceDiscoveryModuleRequest = (String, ImportKind, Option<ImportingModuleKind>, bool);
 
 #[derive(Clone, Copy)]
@@ -227,7 +223,10 @@ impl ModuleResolutionCache {
 
             visited.push(current.to_path_buf());
 
-            if let Some(package_json) = self.read_package_json(&current.join("package.json")) {
+            let package_json_path = current.join("package.json");
+            if self.file_exists(&package_json_path)
+                && let Some(package_json) = self.read_package_json(&package_json_path)
+            {
                 let value = package_type_from_json(Some(&package_json));
                 for path in visited {
                     self.package_type_by_dir.insert(path, value);
