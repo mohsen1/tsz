@@ -41,6 +41,26 @@ fn record_type_alias_phase_timing(
 }
 
 impl<'a> CheckerState<'a> {
+    fn conditional_branch_needs_direct_type_ref_validation(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return true;
+        }
+
+        if (node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            || node.kind == syntax_kind_ext::OPTIONAL_TYPE
+            || node.kind == syntax_kind_ext::REST_TYPE)
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.conditional_branch_needs_direct_type_ref_validation(wrapped.type_node);
+        }
+
+        false
+    }
+
     fn type_node_is_nested_in_type_literal(&self, node_idx: NodeIndex) -> bool {
         let mut current = self
             .ctx
@@ -1505,19 +1525,22 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(cond.true_type)
                         .is_some_and(|n| n.kind == syntax_kind_ext::MAPPED_TYPE);
-                    if true_is_mapped {
+                    let true_needs_direct_type_ref_validation =
+                        self.conditional_branch_needs_direct_type_ref_validation(cond.true_type);
+                    if true_is_mapped || true_needs_direct_type_ref_validation {
                         // Check if the check type resolves to a type parameter.
-                        // If so, the true branch benefits from narrowing and we
-                        // skip it. Use get_type_from_type_node which is safe here
-                        // because we only call it on the check type (not the
-                        // branches), and only when a mapped type is present.
+                        // If so, mapped true branches benefit from narrowing and
+                        // we skip them. Direct type-reference branches still need
+                        // their generic constraints checked under the conditional
+                        // `infer` bindings; that validation is definition-time
+                        // syntax/diagnostic work, not eager alias body lowering.
                         let check_type = self.get_type_from_type_node(cond.check_type);
                         let check_is_type_param =
                             crate::query_boundaries::common::is_type_parameter_like(
                                 self.ctx.types,
                                 check_type,
                             );
-                        if !check_is_type_param {
+                        if !check_is_type_param || true_needs_direct_type_ref_validation {
                             let infer_pushes =
                                 self.push_infer_bindings_from_extends(cond.extends_type);
                             check_child_type_node_in_current_scope!(self, cond.true_type);
