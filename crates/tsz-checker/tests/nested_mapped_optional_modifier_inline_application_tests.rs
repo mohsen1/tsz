@@ -13,9 +13,9 @@
 //! the omitted-but-optional nested property.
 //!
 //! Root cause: the resolver-less contextual-type extraction, when handed an
-//! inline generic application target (`O<{a:0}>`, a `TypeData::Application`),
-//! fell back to reading the property directly off the first type argument —
-//! treating *every* application as the identity homomorphic map
+//! inline generic application target (`O<{a:0}>`), fell back to reading the
+//! property directly off the first type argument — treating *every*
+//! application as the identity homomorphic map
 //! `{ [K in keyof T]: T[K] }` and discarding the real template and its
 //! modifiers. The fix gates that `arg0[name]` shortcut to genuinely
 //! identity-homomorphic aliases.
