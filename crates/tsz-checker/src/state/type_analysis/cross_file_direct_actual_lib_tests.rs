@@ -89,18 +89,18 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .get(&heritage_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("AddEventListenerOptions should have a delegate arena");
-    assert!(
-        state
-            .direct_cross_file_interface_lowering(
-                heritage_sym_id,
-                state.ctx.binder,
-                heritage_arena,
-                false,
-                false,
-            )
-            .is_none(),
-        "generic direct interface lowering still rejects heritage",
-    );
+    let (heritage_direct_ty, heritage_direct_params) = state
+        .direct_cross_file_interface_lowering(
+            heritage_sym_id,
+            state.ctx.binder,
+            heritage_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interface with same-lib non-generic heritage should lower directly");
+    assert_ne!(heritage_direct_ty, TypeId::UNKNOWN);
+    assert_ne!(heritage_direct_ty, TypeId::ERROR);
+    assert!(heritage_direct_params.is_empty());
     let (heritage_ty, heritage_params) = state
         .direct_actual_lib_symbol_type(
             heritage_sym_id,
@@ -131,6 +131,59 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         )
         .is_some(),
         "direct lowering should merge inherited EventListenerOptions members",
+    );
+
+    let value_heritage_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("HTMLInputElement")
+        .expect("HTMLInputElement should resolve to a value-merged dom lib symbol");
+    let value_heritage_symbol = state
+        .ctx
+        .binder
+        .get_symbol(value_heritage_sym_id)
+        .expect("HTMLInputElement symbol should exist");
+    assert!(
+        value_heritage_symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::VALUE),
+        "HTMLInputElement should be both an interface and constructor value",
+    );
+    let value_heritage_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&value_heritage_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("HTMLInputElement should have a delegate arena");
+    let (value_heritage_ty, value_heritage_params) = state
+        .direct_cross_file_interface_lowering(
+            value_heritage_sym_id,
+            state.ctx.binder,
+            value_heritage_arena,
+            false,
+            false,
+        )
+        .expect("value-merged dom interface with same-lib heritage should lower directly");
+    assert!(value_heritage_params.is_empty());
+    let accept = state.ctx.types.intern_string("accept");
+    let dir = state.ctx.types.intern_string("dir");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            value_heritage_ty,
+            accept,
+        )
+        .is_some(),
+        "direct lowering should keep own value/interface members",
+    );
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            value_heritage_ty,
+            dir,
+        )
+        .is_some(),
+        "direct lowering should merge inherited HTMLElement members",
     );
 
     let value_merged_sym_id = state

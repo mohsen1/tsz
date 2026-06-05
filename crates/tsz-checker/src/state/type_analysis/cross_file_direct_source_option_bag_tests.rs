@@ -14,8 +14,9 @@
 //! disabled program-wide.
 //!
 //! The structural option-bag guard inside `direct_cross_file_interface_lowering`
-//! remains the safety gate, so heritage/computed/complex shapes still fall back
-//! to the child-checker path.
+//! remains the safety gate, so only same-file, non-generic option-bag heritage
+//! is admitted; computed/complex shapes still fall back to the child-checker
+//! path.
 
 use crate::context::{CheckerContext, CheckerOptions};
 use crate::query_boundaries::common::TypeInterner;
@@ -364,27 +365,24 @@ fn delegate_cross_arena_source_option_bag_resolves_in_program_with_module_augmen
     );
 }
 
-/// Safety gate: a source-file interface with heritage is not an option-bag
-/// shape, so the structural guard rejects it and it still falls back to the
-/// child-checker path. Decoupling must not broaden the admitted shape.
 #[test]
-fn delegate_cross_arena_source_interface_with_heritage_still_falls_back() {
+fn delegate_cross_arena_source_interface_with_simple_heritage_lowers_directly() {
     let (target_arena, target_binder, types) = parse_bound_source_with_name(
-        "complex.ts",
+        "options.ts",
         r#"
                 export interface BaseOptions {
                     enabled: boolean;
                 }
-                export interface ComplexOptions extends BaseOptions {
+                export interface BuildOptions extends BaseOptions {
                     timeout: number;
                 }
             "#,
     );
     let (requester_arena, requester_binder, _) =
-        parse_bound_source_with_name("consumer.ts", "// imports ComplexOptions from complex");
+        parse_bound_source_with_name("consumer.ts", "// imports BuildOptions from options");
 
-    let (mut state, complex_sym) = setup_cross_file_index_state(
-        "ComplexOptions",
+    let (mut state, build_sym) = setup_cross_file_index_state(
+        "BuildOptions",
         &types,
         &requester_arena,
         &requester_binder,
@@ -400,8 +398,143 @@ fn delegate_cross_arena_source_interface_with_heritage_still_falls_back() {
     );
     let child_checkers_before = with_parent_cache_constructed_count();
     let (ty, params) = state
-        .delegate_cross_arena_symbol_resolution(complex_sym)
-        .expect("complex source-file interface should still delegate through fallback");
+        .delegate_cross_arena_symbol_resolution(build_sym)
+        .expect("simple source-file heritage should lower directly");
+    let success_after =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let complex_after = direct_interface_lowering_count(
+        DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration,
+    );
+    let child_checkers_after = with_parent_cache_constructed_count();
+
+    assert_eq!(
+        success_after - success_before,
+        1,
+        "same-file option-bag heritage should be admitted to direct lowering"
+    );
+    assert_eq!(
+        complex_after, complex_before,
+        "simple option-bag heritage should not be recorded as complex"
+    );
+    assert_eq!(
+        child_checkers_after, child_checkers_before,
+        "simple source-file heritage should avoid delegated child-checker resolution"
+    );
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(params.is_empty(), "BuildOptions should be non-generic");
+    let timeout = state.ctx.types.intern_string("timeout");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            timeout,
+        )
+        .is_some(),
+        "direct-lowered BuildOptions should retain its own property",
+    );
+    let enabled = state.ctx.types.intern_string("enabled");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            enabled,
+        )
+        .is_some(),
+        "direct-lowered BuildOptions should retain inherited properties",
+    );
+}
+
+#[test]
+fn delegate_cross_arena_source_interface_with_renamed_simple_heritage_lowers_directly() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "shapes.ts",
+        r#"
+                export interface SeedState {
+                    ready: boolean;
+                }
+                export interface RenderPlan extends SeedState {
+                    label: string;
+                }
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source_with_name("consumer.ts", "// imports RenderPlan from shapes");
+
+    let (mut state, render_sym) = setup_cross_file_index_state(
+        "RenderPlan",
+        &types,
+        &requester_arena,
+        &requester_binder,
+        &target_arena,
+        &target_binder,
+    );
+
+    let (ty, params) = state
+        .delegate_cross_arena_symbol_resolution(render_sym)
+        .expect("renamed same-file option-bag heritage should lower directly");
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(params.is_empty(), "RenderPlan should be non-generic");
+    let ready = state.ctx.types.intern_string("ready");
+    let label = state.ctx.types.intern_string("label");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            ready,
+        )
+        .is_some(),
+        "inherited property should survive direct lowering",
+    );
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            label,
+        )
+        .is_some(),
+        "own property should survive direct lowering",
+    );
+}
+
+#[test]
+fn delegate_cross_arena_source_interface_with_generic_heritage_still_falls_back() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "generic.ts",
+        r#"
+                export interface Box<T> {
+                    value: T;
+                }
+                export interface WrappedOptions extends Box<string> {
+                    label: string;
+                }
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source_with_name("consumer.ts", "// imports WrappedOptions from generic");
+
+    let (mut state, wrapped_sym) = setup_cross_file_index_state(
+        "WrappedOptions",
+        &types,
+        &requester_arena,
+        &requester_binder,
+        &target_arena,
+        &target_binder,
+    );
+
+    enable_perf_counters_for_direct_lowering_test();
+    let success_before =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let complex_before = direct_interface_lowering_count(
+        DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration,
+    );
+    let child_checkers_before = with_parent_cache_constructed_count();
+    let (ty, params) = state
+        .delegate_cross_arena_symbol_resolution(wrapped_sym)
+        .expect("generic source-file heritage should still delegate through fallback");
     let success_after =
         direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
     let complex_after = direct_interface_lowering_count(
@@ -411,30 +544,30 @@ fn delegate_cross_arena_source_interface_with_heritage_still_falls_back() {
 
     assert_eq!(
         success_after, success_before,
-        "heritage-bearing source-file interfaces must not be admitted to direct lowering"
+        "generic source-file heritage must not be admitted to direct lowering"
     );
     assert_eq!(
         complex_after - complex_before,
         1,
-        "heritage-bearing source-file interfaces should be rejected by the structural direct-lowering guard"
+        "generic heritage should be rejected by the structural direct-lowering guard"
     );
     assert_eq!(
         child_checkers_after - child_checkers_before,
         1,
-        "complex source-file interfaces should fall back to delegated child-checker resolution"
+        "generic source-file heritage should fall back to delegated child-checker resolution"
     );
 
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);
-    assert!(params.is_empty(), "ComplexOptions should be non-generic");
-    let timeout = state.ctx.types.intern_string("timeout");
+    assert!(params.is_empty(), "WrappedOptions should be non-generic");
+    let value = state.ctx.types.intern_string("value");
     assert!(
         crate::query_boundaries::common::raw_property_type(
             state.ctx.types.as_type_database(),
             ty,
-            timeout,
+            value,
         )
         .is_some(),
-        "fallback-lowered ComplexOptions should retain its own property",
+        "fallback-lowered WrappedOptions should retain inherited generic properties",
     );
 }

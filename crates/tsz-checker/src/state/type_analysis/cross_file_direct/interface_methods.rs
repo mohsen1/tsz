@@ -62,7 +62,7 @@ impl<'a> CheckerState<'a> {
             record_complex_reason(reason);
         };
         if direct_source_file_arena {
-            if has_heritage || has_computed_names {
+            if has_computed_names {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 heritage_or_computed_reason();
                 return None;
@@ -77,9 +77,17 @@ impl<'a> CheckerState<'a> {
             }
         } else if !allow_complex_declarations {
             if has_heritage {
-                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
-                heritage_or_computed_reason();
-                return None;
+                if !is_builtin_lib_declaration_arena(symbol_arena)
+                    || Self::builtin_lib_interface_declarations_with_direct_bases(
+                        &declarations,
+                        delegate_binder,
+                    )
+                    .is_none()
+                {
+                    record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                    heritage_or_computed_reason();
+                    return None;
+                }
             }
             if has_computed_names
                 && !Self::interface_declarations_have_only_admitted_builtin_computed_names(
@@ -126,8 +134,31 @@ impl<'a> CheckerState<'a> {
         .with_preferred_self_reference(symbol.escaped_name.clone(), def_id)
         .prefer_name_def_id_resolution();
 
+        let lowering_declarations;
+        let declarations_for_lowering = if direct_source_file_arena && has_heritage {
+            lowering_declarations = Self::source_file_interface_declarations_with_direct_bases(
+                &declarations,
+                delegate_binder,
+            )?;
+            lowering_declarations.as_slice()
+        } else if !direct_source_file_arena
+            && has_heritage
+            && is_builtin_lib_declaration_arena(symbol_arena)
+        {
+            lowering_declarations =
+                Self::builtin_lib_interface_declarations_with_direct_bases(
+                    &declarations,
+                    delegate_binder,
+                )?;
+            lowering_declarations.as_slice()
+        } else {
+            declarations.as_slice()
+        };
         let (interface_type, params) =
-            lowering.lower_merged_interface_declarations_with_symbol(&declarations, Some(sym_id));
+            lowering.lower_merged_interface_declarations_with_symbol(
+                declarations_for_lowering,
+                Some(sym_id),
+            );
         if interface_type == TypeId::UNKNOWN || interface_type == TypeId::ERROR {
             record(DirectCrossFileInterfaceLoweringOutcome::UnknownOrError);
             return None;

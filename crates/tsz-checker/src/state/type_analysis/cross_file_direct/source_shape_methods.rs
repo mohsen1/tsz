@@ -496,6 +496,296 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn source_file_heritage_target_name<'b>(
+        arena: &'b NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<&'b str> {
+        let type_node = arena.get(type_idx)?;
+        let (target_idx, type_arguments) = if let Some(expr_type_args) =
+            arena.get_expr_type_args(type_node)
+        {
+            (
+                expr_type_args.expression,
+                expr_type_args.type_arguments.as_ref(),
+            )
+        } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = arena.get_type_ref(type_node)?;
+            (type_ref.type_name, type_ref.type_arguments.as_ref())
+        } else {
+            (type_idx, None)
+        };
+        if type_arguments.is_some_and(|args| !args.nodes.is_empty()) {
+            return None;
+        }
+        arena
+            .get(target_idx)
+            .and_then(|target| arena.get_identifier(target))
+            .map(|ident| ident.escaped_text.as_str())
+    }
+
+    fn source_file_interface_heritage_is_direct_lowerable<'b>(
+        arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        interface: &tsz_parser::parser::node::InterfaceData,
+        seen_type_names: &mut Vec<&'b str>,
+    ) -> bool {
+        let Some(clauses) = interface.heritage_clauses.as_ref() else {
+            return true;
+        };
+
+        clauses.nodes.iter().copied().all(|clause_idx| {
+            let Some(clause_node) = arena.get(clause_idx) else {
+                return false;
+            };
+            let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                return false;
+            };
+            if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                return true;
+            }
+            heritage.types.nodes.iter().copied().all(|type_idx| {
+                let Some(name) = Self::source_file_heritage_target_name(arena, type_idx) else {
+                    return false;
+                };
+                Self::source_file_type_reference_targets_option_bag_lowerable_declaration(
+                    arena,
+                    delegate_binder,
+                    name,
+                    seen_type_names,
+                )
+            })
+        })
+    }
+
+    fn source_file_direct_base_interface_declarations<'b>(
+        declarations: &[(NodeIndex, &'b NodeArena)],
+        delegate_binder: &BinderState,
+        seen_type_names: &mut Vec<&'b str>,
+        result: &mut Vec<(NodeIndex, &'b NodeArena)>,
+    ) -> bool {
+        declarations.iter().all(|(decl_idx, arena)| {
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            let Some(clauses) = interface.heritage_clauses.as_ref() else {
+                return true;
+            };
+
+            clauses.nodes.iter().copied().all(|clause_idx| {
+                let Some(clause_node) = arena.get(clause_idx) else {
+                    return false;
+                };
+                let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                    return false;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    return true;
+                }
+
+                heritage.types.nodes.iter().copied().all(|type_idx| {
+                    let Some(name) = Self::source_file_heritage_target_name(arena, type_idx) else {
+                        return false;
+                    };
+                    if seen_type_names.contains(&name) {
+                        return false;
+                    }
+                    let Some(sym_id) = delegate_binder.file_locals.get(name) else {
+                        return false;
+                    };
+                    let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+                        return false;
+                    };
+                    if symbol.flags & symbol_flags::INTERFACE == 0
+                        || symbol.declarations.len() != 1
+                    {
+                        return false;
+                    }
+                    let base_decl = symbol.declarations[0];
+                    if !Self::lib_declaration_name_matches(arena, base_decl, name) {
+                        return false;
+                    }
+
+                    let base_declarations = [(base_decl, *arena)];
+                    seen_type_names.push(name);
+                    let bases_ok = Self::source_file_direct_base_interface_declarations(
+                        &base_declarations,
+                        delegate_binder,
+                        seen_type_names,
+                        result,
+                    );
+                    seen_type_names.pop();
+                    let shape_ok =
+                        Self::source_file_interface_declarations_are_direct_lowerable_with_seen(
+                        &base_declarations,
+                        delegate_binder,
+                        seen_type_names,
+                    );
+                    let ok = bases_ok && shape_ok;
+                    if !ok {
+                        return false;
+                    }
+                    if !result
+                        .iter()
+                        .any(|(existing_idx, existing_arena)| {
+                            *existing_idx == base_decl
+                                && std::ptr::eq(*existing_arena as *const NodeArena, *arena)
+                        })
+                    {
+                        result.push((base_decl, *arena));
+                    }
+                    true
+                })
+            })
+        })
+    }
+
+    fn source_file_interface_declarations_with_direct_bases<'b>(
+        declarations: &[(NodeIndex, &'b NodeArena)],
+        delegate_binder: &BinderState,
+    ) -> Option<Vec<(NodeIndex, &'b NodeArena)>> {
+        let mut result = Vec::new();
+        let mut seen_type_names = Vec::new();
+        if !Self::source_file_direct_base_interface_declarations(
+            declarations,
+            delegate_binder,
+            &mut seen_type_names,
+            &mut result,
+        ) {
+            return None;
+        }
+        result.extend_from_slice(declarations);
+        Some(result)
+    }
+
+    fn builtin_lib_direct_base_interface_declarations<'b>(
+        declarations: &[(NodeIndex, &'b NodeArena)],
+        delegate_binder: &BinderState,
+        seen_type_names: &mut Vec<&'b str>,
+        result: &mut Vec<(NodeIndex, &'b NodeArena)>,
+    ) -> bool {
+        declarations.iter().all(|(decl_idx, arena)| {
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            let Some(clauses) = interface.heritage_clauses.as_ref() else {
+                return true;
+            };
+
+            clauses.nodes.iter().copied().all(|clause_idx| {
+                let Some(clause_node) = arena.get(clause_idx) else {
+                    return false;
+                };
+                let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                    return false;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    return true;
+                }
+
+                heritage.types.nodes.iter().copied().all(|type_idx| {
+                    let Some(name) = Self::source_file_heritage_target_name(arena, type_idx) else {
+                        return false;
+                    };
+                    if seen_type_names.contains(&name) {
+                        return false;
+                    }
+                    let Some(sym_id) = delegate_binder.file_locals.get(name) else {
+                        return false;
+                    };
+                    let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+                        return false;
+                    };
+                    let disallowed_flags = symbol_flags::CLASS
+                        | symbol_flags::TYPE_ALIAS
+                        | symbol_flags::VALUE_MODULE
+                        | symbol_flags::NAMESPACE_MODULE;
+                    if symbol.flags & symbol_flags::INTERFACE == 0
+                        || symbol.flags & disallowed_flags != 0
+                    {
+                        return false;
+                    }
+
+                    let base_interface_declarations = symbol
+                        .declarations
+                        .iter()
+                        .copied()
+                        .filter(|&decl_idx| {
+                            Self::lib_declaration_name_matches(arena, decl_idx, name)
+                                && arena
+                                    .get(decl_idx)
+                                    .and_then(|node| arena.get_interface(node))
+                                    .is_some()
+                        })
+                        .collect::<Vec<_>>();
+                    if base_interface_declarations.len() != 1 {
+                        return false;
+                    }
+                    let base_decl = base_interface_declarations[0];
+                    let Some(base_node) = arena.get(base_decl) else {
+                        return false;
+                    };
+                    let Some(base_interface) = arena.get_interface(base_node) else {
+                        return false;
+                    };
+                    if base_interface
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| !params.nodes.is_empty())
+                    {
+                        return false;
+                    }
+
+                    let base_declarations = [(base_decl, *arena)];
+                    seen_type_names.push(name);
+                    let ok = Self::builtin_lib_direct_base_interface_declarations(
+                        &base_declarations,
+                        delegate_binder,
+                        seen_type_names,
+                        result,
+                    );
+                    seen_type_names.pop();
+                    if !ok {
+                        return false;
+                    }
+                    if !result
+                        .iter()
+                        .any(|(existing_idx, existing_arena)| {
+                            *existing_idx == base_decl
+                                && std::ptr::eq(*existing_arena as *const NodeArena, *arena)
+                        })
+                    {
+                        result.push((base_decl, *arena));
+                    }
+                    true
+                })
+            })
+        })
+    }
+
+    fn builtin_lib_interface_declarations_with_direct_bases<'b>(
+        declarations: &[(NodeIndex, &'b NodeArena)],
+        delegate_binder: &BinderState,
+    ) -> Option<Vec<(NodeIndex, &'b NodeArena)>> {
+        let mut result = Vec::new();
+        let mut seen_type_names = Vec::new();
+        if !Self::builtin_lib_direct_base_interface_declarations(
+            declarations,
+            delegate_binder,
+            &mut seen_type_names,
+            &mut result,
+        ) {
+            return None;
+        }
+        result.extend_from_slice(declarations);
+        Some(result)
+    }
+
     pub(super) fn source_file_local_name_def_id_for_lowering(
         &self,
         delegate_binder: &BinderState,
@@ -950,6 +1240,14 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .is_some_and(|params| !params.nodes.is_empty())
             {
+                return false;
+            }
+            if !Self::source_file_interface_heritage_is_direct_lowerable(
+                arena,
+                delegate_binder,
+                interface,
+                seen_type_names,
+            ) {
                 return false;
             }
 
