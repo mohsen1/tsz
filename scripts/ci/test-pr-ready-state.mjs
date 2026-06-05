@@ -139,8 +139,8 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
-  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?compiler_checks_required=false[\s\S]+?check_name=CI%20Summary[\s\S]+?prior_required_summary_passed[\s\S]+?required_summary=true[\s\S]+?required_summary=false/,
-  "edited PR events should publish protected CI Summary only after the exact head already passed it",
+  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?required_summary=false[\s\S]+?compiler_checks_required=false/,
+  "edited PR events should refresh body/ready-state gates without publishing protected CI Summary",
 );
 
 assert.doesNotMatch(
