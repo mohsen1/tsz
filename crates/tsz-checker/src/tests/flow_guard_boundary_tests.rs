@@ -227,3 +227,33 @@ fn condition_false_branch_falsy_narrowing_uses_flow_query_boundary() {
         "condition narrowing should not call solver falsy narrowing directly"
     );
 }
+
+#[test]
+fn condition_typeof_narrowing_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_by_typeof_result("),
+        "flow analysis boundary should expose solver-owned typeof result narrowing"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_by_typeof_result("),
+        "condition typeof narrowing should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_by_typeof(")
+            && !compact_condition.contains(".narrow_by_typeof_negation("),
+        "condition narrowing should not call solver typeof narrowing directly"
+    );
+}
