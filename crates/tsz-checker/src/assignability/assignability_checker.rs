@@ -794,34 +794,18 @@ impl<'a> CheckerState<'a> {
                     evaluated_target_for_infer_suppression,
                 );
 
-        // Whether `source`/`target` are both callable and, with their shared/outer
-        // type parameters held opaque, are genuinely *not* related. This is computed
-        // here (before the immutable-borrowing closures below) so the callable
-        // type-parameter suppression can defer to the solver rather than hide a real
-        // mismatch. Guarded by cheap structural checks so the relation probe only runs
-        // for callable-vs-callable pairs that actually mention type parameters.
-        let callable_pair_genuinely_unrelated_opaque = {
-            let is_callable_shape = |type_id: TypeId| {
-                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-                    .is_some()
-                    || crate::query_boundaries::common::function_shape_for_type(
-                        self.ctx.types,
-                        type_id,
-                    )
-                    .is_some()
-            };
-            if is_callable_shape(source)
-                && is_callable_shape(target)
-                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source)
-                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
-            {
+        let callable_pair_genuinely_unrelated_opaque =
+            if crate::query_boundaries::assignability::callable_pair_contains_type_parameters(
+                self.ctx.types,
+                source,
+                target,
+            ) {
                 !self
                     .no_erase_generics_relation_outcome(source, target)
                     .related
             } else {
                 false
-            }
-        };
+            };
 
         // Suppress TS2322 for callable types with generic type parameters from outer
         // context. Skip the suppression when both sides have their own signature-level
