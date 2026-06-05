@@ -304,6 +304,27 @@ impl<'a> CheckerState<'a> {
                     return self.format_type_for_assignability_message(evaluated);
                 }
             }
+            // tsc drops the alias symbol for a non-generic alias whose body is a
+            // *computed* operator that resolves away — a conditional, indexed
+            // access, `keyof`, template literal, string-mapping intrinsic, or a
+            // utility application bottoming out at a shared singleton. The
+            // `is_computed_body` / `evaluate_type_with_env` checks above only
+            // catch bodies the checker explicitly marked computed or that the
+            // environment evaluator fully reduces to an intrinsic; a body like
+            // `true extends true ? string : number` is neither, so the alias
+            // name would otherwise leak (`X1` instead of `string`). Consult the
+            // shared solver display policy, which evaluates the computed body the
+            // same way the `TypeFormatter` does, so the two diagnostic pipelines
+            // agree.
+            if let Some(underlying) =
+                crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying(
+                    self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
+                    def_id,
+                )
+            {
+                return self.format_type_diagnostic_for_assignability_display(underlying);
+            }
             let name = self.ctx.types.resolve_atom_ref(def.name);
             return name.to_string();
         }

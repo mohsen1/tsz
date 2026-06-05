@@ -200,6 +200,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     let request_rs = read_solver_source("evaluation/request.rs");
     let result_rs = read_solver_source("evaluation/result.rs");
     let evaluate_rs = read_solver_source("evaluation/evaluate.rs");
+    // The public staged entry points live in the `evaluate/api.rs` submodule
+    // after the engine split; the module boundary is still owned by `evaluate`.
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
 

@@ -344,7 +344,30 @@ impl ParserState {
             );
             params.push(param);
 
-            if !self.parse_optional(SyntaxKind::CommaToken) {
+            let comma_pos = self.token_pos();
+            let has_comma = self.parse_optional(SyntaxKind::CommaToken);
+
+            // TS1013: A rest parameter or binding pattern may not have a trailing comma.
+            // Function/constructor type signatures (`(...a,) => T`, `new (...a,) => T`)
+            // share `tsc`'s rule: the trailing comma after a rest element is an error in
+            // non-ambient code but tolerated in an ambient declaration. See the mirroring
+            // check in `parse_parameter_list`.
+            if dot_dot_dot
+                && has_comma
+                && (self.is_token(SyntaxKind::CloseParenToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken))
+                && !self.in_ambient_declaration()
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    comma_pos,
+                    1,
+                    "A rest parameter or binding pattern may not have a trailing comma.",
+                    diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+                );
+            }
+
+            if !has_comma {
                 break;
             }
         }
