@@ -505,12 +505,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
                 }
 
-                // `readonly [a, b]`: map each element and preserve readonly
-                // unless the modifier strips it (`-readonly`).
+                // `readonly` tuple/array source, delegated (`None` => object path).
                 Some(TypeData::ReadonlyType(inner)) => {
-                    if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
-                        return self
-                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, true);
+                    if let Some(result) =
+                        self.evaluate_mapped_over_readonly_source(mapped, source, inner)
+                    {
+                        return result;
                     }
                 }
 
