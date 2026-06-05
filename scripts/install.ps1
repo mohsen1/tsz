@@ -6,7 +6,7 @@
 param(
     [string]$Version = $(if ($env:TSZ_VERSION) { $env:TSZ_VERSION } else { "latest" }),
     [string]$InstallDir = $(if ($env:TSZ_INSTALL_DIR) { $env:TSZ_INSTALL_DIR } else { "$HOME\.local\bin" }),
-    [string]$Owner = $(if ($env:TSZ_REPO_OWNER) { $env:TSZ_REPO_OWNER } else { "mohsen1" }),
+    [string]$Owner = $(if ($env:TSZ_REPO_OWNER) { $env:TSZ_REPO_OWNER } else { "tsz-org" }),
     [string]$Repo = $(if ($env:TSZ_REPO_NAME) { $env:TSZ_REPO_NAME } else { "tsz" })
 )
 
