@@ -49,7 +49,9 @@ TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/strictModeReservedWord.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
+TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
+TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
