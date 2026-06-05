@@ -1470,30 +1470,36 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(type_arguments) = &type_ref.type_arguments
-                {
-                    for &arg_idx in &type_arguments.nodes {
-                        check_child_type_node!(self, arg_idx);
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                    let is_bare_scoped_type_parameter = self
+                        .type_ref_is_bare_scoped_type_parameter(
+                            type_ref.type_name,
+                            type_ref.type_arguments.as_ref(),
+                        );
+                    if !is_bare_scoped_type_parameter {
+                        if let Some(type_arguments) = &type_ref.type_arguments {
+                            for &arg_idx in &type_arguments.nodes {
+                                check_child_type_node!(self, arg_idx);
+                            }
+                        }
+                        if let Some(sym_id) = self
+                            .resolve_type_symbol_for_lowering(type_ref.type_name)
+                            .map(tsz_binder::SymbolId)
+                            && (self.ctx.symbol_resolution_set.contains(&sym_id)
+                                || self.type_alias_reaches_resolving_alias(sym_id))
+                        {
+                            return;
+                        }
+                        if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
+                            let _ = if nested_in_type_literal {
+                                self.get_type_from_type_node_in_type_literal(node_idx)
+                            } else {
+                                self.get_type_from_type_node(node_idx)
+                            };
+                        }
+                        self.check_styled_component_inner_component_constraint(node_idx);
                     }
                 }
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(sym_id) = self
-                        .resolve_type_symbol_for_lowering(type_ref.type_name)
-                        .map(tsz_binder::SymbolId)
-                    && (self.ctx.symbol_resolution_set.contains(&sym_id)
-                        || self.type_alias_reaches_resolving_alias(sym_id))
-                {
-                    return;
-                }
-                if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
-                    let _ = if nested_in_type_literal {
-                        self.get_type_from_type_node_in_type_literal(node_idx)
-                    } else {
-                        self.get_type_from_type_node(node_idx)
-                    };
-                }
-                self.check_styled_component_inner_component_constraint(node_idx);
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
