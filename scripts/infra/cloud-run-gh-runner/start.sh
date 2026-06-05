@@ -24,9 +24,24 @@ remove_runner() {
   ./config.sh remove --pat "${GITHUB_TOKEN}" || true
 }
 
+clear_local_runner_state() {
+  # Cloud Run may reuse an instance filesystem across process restarts. GitHub
+  # deletes ephemeral runner registrations after disconnects, so stale local
+  # credentials must not survive into the next registration attempt.
+  rm -f \
+    .credentials \
+    .credentials_migrated \
+    .credentials_rsaparams \
+    .env \
+    .path \
+    .runner \
+    .runner_migrated
+}
+
 cleanup() {
   echo "Removing GitHub runner ${RUNNER_NAME}"
   remove_runner
+  clear_local_runner_state
 }
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
@@ -34,6 +49,7 @@ trap 'cleanup; exit 143' TERM
 if [[ -f .runner ]]; then
   remove_runner
 fi
+clear_local_runner_state
 
 if [[ "${RUNNER_STARTUP_JITTER_SECONDS}" =~ ^[0-9]+$ ]] && (( RUNNER_STARTUP_JITTER_SECONDS > 0 )); then
   jitter=$((RANDOM % (RUNNER_STARTUP_JITTER_SECONDS + 1)))
