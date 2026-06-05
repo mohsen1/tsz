@@ -269,6 +269,7 @@ impl ParserState {
             diagnostic_messages::EXPRESSION_EXPECTED,
             diagnostic_codes::EXPRESSION_EXPECTED,
         );
+        self.recovered_definite_assignment_empty_statement_close_brace_pos = last_close_brace_pos;
 
         self.scanner.restore_state(snapshot);
         self.current_token = saved_token;
