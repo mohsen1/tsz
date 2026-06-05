@@ -794,6 +794,35 @@ impl<'a> CheckerState<'a> {
                     evaluated_target_for_infer_suppression,
                 );
 
+        // Whether `source`/`target` are both callable and, with their shared/outer
+        // type parameters held opaque, are genuinely *not* related. This is computed
+        // here (before the immutable-borrowing closures below) so the callable
+        // type-parameter suppression can defer to the solver rather than hide a real
+        // mismatch. Guarded by cheap structural checks so the relation probe only runs
+        // for callable-vs-callable pairs that actually mention type parameters.
+        let callable_pair_genuinely_unrelated_opaque = {
+            let is_callable_shape = |type_id: TypeId| {
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+                    .is_some()
+                    || crate::query_boundaries::common::function_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    )
+                    .is_some()
+            };
+            if is_callable_shape(source)
+                && is_callable_shape(target)
+                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source)
+                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
+            {
+                !self
+                    .no_erase_generics_relation_outcome(source, target)
+                    .related
+            } else {
+                false
+            }
+        };
+
         // Suppress TS2322 for callable types with generic type parameters from outer
         // context. Skip the suppression when both sides have their own signature-level
         // type params — the solver handles generic-to-generic comparison correctly.
@@ -1141,6 +1170,18 @@ impl<'a> CheckerState<'a> {
                 && is_callable_or_function(target)
                 && contains_type_parameters(source)
                 && !self.callable_types_have_disjoint_type_parameters(source, target)
+                // A genuine structural mismatch confirmed by the solver while holding
+                // the shared/outer type parameters opaque (no-erase-generics) must not
+                // be suppressed. `callable_types_have_disjoint_type_parameters` only
+                // recognises *bare* `T` parameter/return positions, so it misses
+                // mismatches where the type parameter is nested (e.g. `(x: T[]) => T`
+                // vs `(x: T[]) => number`) or where both signatures reference outer
+                // parameters that nonetheless do not relate (`(x: T) => U` vs
+                // `(x: U) => T`). The opaque relation is the same one the interface
+                // heritage (TS2430) path trusts, so deferring to it keeps real
+                // overrides/assignments reported while still suppressing the
+                // unresolved-inference shapes this branch was added for.
+                && !callable_pair_genuinely_unrelated_opaque
                 && !(has_own_signature_type_params(source)
                     && has_own_signature_type_params(target))
                 && !(has_own_signature_type_params(source)
