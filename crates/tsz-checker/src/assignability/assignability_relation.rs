@@ -610,7 +610,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         crate::query_boundaries::assignability::RelationOutcome {
-            related: self.is_assignable_to_no_weak_checks(source, target),
+            related: self.diagnostic_relation_boolean_guard_no_weak_checks(source, target),
             depth_exceeded: false,
             iteration_exceeded: false,
             failure: None,
