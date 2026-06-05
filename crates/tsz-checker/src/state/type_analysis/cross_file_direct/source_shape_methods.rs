@@ -496,10 +496,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_heritage_target_name<'b>(
-        arena: &'b NodeArena,
-        type_idx: NodeIndex,
-    ) -> Option<&'b str> {
+    fn source_file_heritage_target_name(arena: &NodeArena, type_idx: NodeIndex) -> Option<&str> {
         let type_node = arena.get(type_idx)?;
         let (target_idx, type_arguments) = if let Some(expr_type_args) =
             arena.get_expr_type_args(type_node)

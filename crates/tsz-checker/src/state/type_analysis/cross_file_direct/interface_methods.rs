@@ -77,20 +77,21 @@ impl<'a> CheckerState<'a> {
             }
         } else if !allow_complex_declarations {
             if has_heritage {
-                if !is_builtin_lib_declaration_arena(symbol_arena)
-                    && !(is_direct_lowering_declaration_arena(symbol_arena)
+                let builtin_lib_arena = is_builtin_lib_declaration_arena(symbol_arena);
+                let external_package_with_builtin_bases =
+                    is_direct_lowering_declaration_arena(symbol_arena)
                         && self
                             .external_package_interface_declarations_with_builtin_bases(
                                 &declarations,
                             )
-                            .is_some())
-                    || is_builtin_lib_declaration_arena(symbol_arena)
-                        && Self::builtin_lib_interface_declarations_with_direct_bases(
-                            &declarations,
-                            delegate_binder,
-                        )
-                        .is_none()
-                {
+                            .is_some();
+                let builtin_lib_with_direct_bases = builtin_lib_arena
+                    && Self::builtin_lib_interface_declarations_with_direct_bases(
+                        &declarations,
+                        delegate_binder,
+                    )
+                    .is_some();
+                if !(builtin_lib_with_direct_bases || external_package_with_builtin_bases) {
                     record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                     heritage_or_computed_reason();
                     return None;
