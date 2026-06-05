@@ -1060,7 +1060,9 @@ impl<'a> DeclarationEmitter<'a> {
                             .unwrap_or(type_text)
                     })
                     .filter(|type_text| !type_text.is_empty() && type_text != "any");
-                reused_type_text.or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                reused_type_text
+                    .or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                    .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
             }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 self.tagged_template_declared_return_type_text(expr_idx)

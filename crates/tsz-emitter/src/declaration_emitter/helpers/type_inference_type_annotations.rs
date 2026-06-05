@@ -92,6 +92,15 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn declared_type_symbol_for_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<SymbolId> {
+        self.with_declared_type_annotation_for_symbol(sym_id, |source_arena, type_annotation| {
+            self.declaration_type_symbol_from_type_node(source_arena, type_annotation)
+        })
+    }
+
     pub(in crate::declaration_emitter) fn reference_declared_source_type_annotation_text(
         &self,
         expr_idx: NodeIndex,
@@ -430,24 +439,27 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_ref = arena.get_type_ref(type_node)?;
                 if std::ptr::eq(arena, self.arena)
                     && let Some(name) = self.get_identifier_text(type_ref.type_name)
-                    && let Some(sym_id) = self.resolve_identifier_symbol(type_ref.type_name, &name)
                 {
-                    Some(sym_id)
+                    self.resolve_identifier_symbol(type_ref.type_name, &name)
+                        .or_else(|| binder.get_node_symbol(type_ref.type_name))
+                        .or_else(|| binder.symbols.find_by_name(&name))
                 } else {
-                    binder.get_node_symbol(type_ref.type_name)
+                    self.node_symbol_from_arena(binder, arena, type_ref.type_name)
                 }
             }
             k if k == SyntaxKind::Identifier as u16 || k == syntax_kind_ext::QUALIFIED_NAME => {
                 if std::ptr::eq(arena, self.arena)
                     && let Some(name) = self.get_identifier_text(type_idx)
-                    && let Some(sym_id) = self.resolve_identifier_symbol(type_idx, &name)
                 {
-                    Some(sym_id)
+                    self.resolve_identifier_symbol(type_idx, &name)
+                        .or_else(|| binder.get_node_symbol(type_idx))
+                        .or_else(|| binder.symbols.find_by_name(&name))
                 } else {
-                    binder.get_node_symbol(type_idx).or_else(|| {
-                        self.identifier_text_from_arena(arena, type_idx)
-                            .and_then(|name| binder.symbols.find_by_name(&name))
-                    })
+                    self.node_symbol_from_arena(binder, arena, type_idx)
+                        .or_else(|| {
+                            self.identifier_text_from_arena(arena, type_idx)
+                                .and_then(|name| binder.symbols.find_by_name(&name))
+                        })
                 }
             }
             _ => None,

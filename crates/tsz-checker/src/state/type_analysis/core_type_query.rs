@@ -1509,7 +1509,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let prop_type =
-                    self.namespace_import_export_property_type(module_name, export_sym_id);
+                    self.namespace_import_export_property_type(module_name, export_sym_id, name);
                 let declaration_order = if name == "default" {
                     1
                 } else {

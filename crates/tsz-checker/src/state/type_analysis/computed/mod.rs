@@ -288,6 +288,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_name: &str,
         export_sym_id: SymbolId,
+        export_name: &str,
     ) -> TypeId {
         let symbol_flags_opt = self
             .get_cross_file_symbol(export_sym_id)
@@ -304,6 +305,10 @@ impl<'a> CheckerState<'a> {
                 self.imported_namespace_display_module_name(module_name),
             );
             return prop_type;
+        }
+
+        if let Some(value_type) = self.get_validated_member_type(export_sym_id, export_name) {
+            return value_type;
         }
 
         let should_delegate = self
@@ -511,11 +516,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let mut prop_type = self
-                .namespace_default_reexport_property_type(module_name, Some(from_file_idx), name)
-                .unwrap_or_else(|| {
-                    self.namespace_import_export_property_type(module_name, export_sym_id)
-                });
+            let should_try_default_reexport = self
+                .get_cross_file_symbol(export_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(export_sym_id))
+                .is_some_and(|symbol| symbol.import_module.is_some());
+            let default_reexport_type = if should_try_default_reexport {
+                self.namespace_default_reexport_property_type(
+                    module_name,
+                    Some(from_file_idx),
+                    name,
+                )
+            } else {
+                None
+            };
+            let mut prop_type = default_reexport_type.unwrap_or_else(|| {
+                self.namespace_import_export_property_type(module_name, export_sym_id, name)
+            });
             prop_type = self.apply_module_augmentations(module_name, name, prop_type);
             props.push(PropertyInfo {
                 name: self.ctx.types.intern_string(name),
@@ -689,7 +705,7 @@ impl<'a> CheckerState<'a> {
 
             self.record_cross_file_symbol_if_needed(export_sym_id, name, module_name);
             let mut prop_type =
-                self.namespace_import_export_property_type(module_name, export_sym_id);
+                self.namespace_import_export_property_type(module_name, export_sym_id, name);
             prop_type = self.apply_module_augmentations(module_name, name, prop_type);
             let declaration_order = if name == "default" {
                 1
