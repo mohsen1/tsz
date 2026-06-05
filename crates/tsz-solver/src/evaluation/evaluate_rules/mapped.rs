@@ -9,7 +9,7 @@ mod keyof_constraint;
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type_cached, instantiate_type_preserving,
-    instantiate_type_preserving_with_declared,
+    instantiate_type_preserving_cached, instantiate_type_preserving_with_declared,
 };
 use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
@@ -655,7 +655,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         declared_type,
                     )
                 } else {
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst)
+                    instantiate_type_preserving_cached(
+                        self.interner(),
+                        self.query_db(),
+                        mapped.template,
+                        &subst,
+                    )
                 };
                 let evaluated = self.evaluate(instantiated_template);
 
@@ -777,7 +782,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         declared_type,
                     )
                 } else {
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst)
+                    instantiate_type_preserving_cached(
+                        self.interner(),
+                        self.query_db(),
+                        mapped.template,
+                        &subst,
+                    )
                 };
                 let evaluated = self.evaluate(instantiated);
                 if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
