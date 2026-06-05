@@ -242,6 +242,132 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
 }
 
 #[test]
+fn direct_external_package_interface_lowering_accepts_builtin_heritage() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new(
+        "/repo/node_modules/pkg/client.d.ts".to_string(),
+        r#"
+            declare interface PackagePreloadFailure extends Event {
+                payload: Error;
+            }
+        "#
+        .to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "/repo/node_modules/pkg/client.d.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let sym_id = binder
+        .file_locals
+        .get("PackagePreloadFailure")
+        .expect("external package interface symbol");
+    let (ty, params) = state
+        .direct_cross_file_interface_lowering(sym_id, binder.as_ref(), arena.as_ref(), false, false)
+        .expect("external package interface with builtin heritage should lower directly");
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(params.is_empty());
+
+    let payload = state.ctx.types.intern_string("payload");
+    let event_type = state.ctx.types.intern_string("type");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            payload,
+        )
+        .is_some(),
+        "direct lowering should keep own package members",
+    );
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            event_type,
+        )
+        .is_some(),
+        "direct lowering should include builtin base interface members",
+    );
+}
+
+#[test]
+fn direct_external_package_interface_lowering_rejects_same_package_heritage() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new(
+        "/repo/node_modules/pkg/client.d.ts".to_string(),
+        r#"
+            declare interface PackageBase {
+                base: string;
+            }
+            declare interface PackageWrapper extends PackageBase {
+                own: string;
+            }
+        "#
+        .to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "/repo/node_modules/pkg/client.d.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let sym_id = binder
+        .file_locals
+        .get("PackageWrapper")
+        .expect("external package interface symbol");
+    assert!(
+        state
+            .direct_cross_file_interface_lowering(
+                sym_id,
+                binder.as_ref(),
+                arena.as_ref(),
+                false,
+                false,
+            )
+            .is_none(),
+        "same-package heritage still needs the merged checker path",
+    );
+}
+
+#[test]
 fn direct_actual_lib_symbol_type_keeps_dom_alias_bodies_on_fallback() {
     let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());

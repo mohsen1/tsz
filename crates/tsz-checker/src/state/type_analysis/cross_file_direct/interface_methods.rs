@@ -78,11 +78,18 @@ impl<'a> CheckerState<'a> {
         } else if !allow_complex_declarations {
             if has_heritage {
                 if !is_builtin_lib_declaration_arena(symbol_arena)
-                    || Self::builtin_lib_interface_declarations_with_direct_bases(
-                        &declarations,
-                        delegate_binder,
-                    )
-                    .is_none()
+                    && !(is_direct_lowering_declaration_arena(symbol_arena)
+                        && self
+                            .external_package_interface_declarations_with_builtin_bases(
+                                &declarations,
+                            )
+                            .is_some())
+                    || is_builtin_lib_declaration_arena(symbol_arena)
+                        && Self::builtin_lib_interface_declarations_with_direct_bases(
+                            &declarations,
+                            delegate_binder,
+                        )
+                        .is_none()
                 {
                     record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                     heritage_or_computed_reason();
@@ -150,6 +157,13 @@ impl<'a> CheckerState<'a> {
                     &declarations,
                     delegate_binder,
                 )?;
+            lowering_declarations.as_slice()
+        } else if !direct_source_file_arena
+            && has_heritage
+            && is_direct_lowering_declaration_arena(symbol_arena)
+        {
+            lowering_declarations =
+                self.external_package_interface_declarations_with_builtin_bases(&declarations)?;
             lowering_declarations.as_slice()
         } else {
             declarations.as_slice()

@@ -786,6 +786,169 @@ impl<'a> CheckerState<'a> {
         Some(result)
     }
 
+    fn external_package_direct_builtin_base_declarations<'b>(
+        &'b self,
+        declarations: &[(NodeIndex, &'b NodeArena)],
+        seen_type_names: &mut Vec<&'b str>,
+        result: &mut Vec<(NodeIndex, &'b NodeArena)>,
+    ) -> bool {
+        declarations.iter().all(|(decl_idx, arena)| {
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            let Some(clauses) = interface.heritage_clauses.as_ref() else {
+                return true;
+            };
+
+            clauses.nodes.iter().copied().all(|clause_idx| {
+                let Some(clause_node) = arena.get(clause_idx) else {
+                    return false;
+                };
+                let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                    return false;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    return true;
+                }
+
+                heritage.types.nodes.iter().copied().all(|type_idx| {
+                    let Some(name) = Self::source_file_heritage_target_name(arena, type_idx) else {
+                        return false;
+                    };
+                    if seen_type_names.contains(&name)
+                        || self.ctx.file_local_type_shadow_for_lib_name(name)
+                    {
+                        return false;
+                    }
+                    let Some((base_decl, base_arena, base_binder)) =
+                        self.direct_builtin_lib_interface_declaration_for_name(name)
+                    else {
+                        return false;
+                    };
+                    let Some(base_node) = base_arena.get(base_decl) else {
+                        return false;
+                    };
+                    let Some(base_interface) = base_arena.get_interface(base_node) else {
+                        return false;
+                    };
+                    if base_interface
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| !params.nodes.is_empty())
+                    {
+                        return false;
+                    }
+
+                    let base_declarations = [(base_decl, base_arena)];
+                    seen_type_names.push(name);
+                    let ok = Self::builtin_lib_direct_base_interface_declarations(
+                        &base_declarations,
+                        base_binder,
+                        seen_type_names,
+                        result,
+                    );
+                    seen_type_names.pop();
+                    if !ok {
+                        return false;
+                    }
+                    if !result
+                        .iter()
+                        .any(|(existing_idx, existing_arena)| {
+                            *existing_idx == base_decl
+                                && std::ptr::eq(*existing_arena as *const NodeArena, base_arena)
+                        })
+                    {
+                        result.push((base_decl, base_arena));
+                    }
+                    true
+                })
+            })
+        })
+    }
+
+    fn external_package_interface_declarations_with_builtin_bases<'b>(
+        &'b self,
+        declarations: &[(NodeIndex, &'b NodeArena)],
+    ) -> Option<Vec<(NodeIndex, &'b NodeArena)>> {
+        let mut result = Vec::new();
+        let mut seen_type_names = Vec::new();
+        if !self.external_package_direct_builtin_base_declarations(
+            declarations,
+            &mut seen_type_names,
+            &mut result,
+        ) {
+            return None;
+        }
+        result.extend_from_slice(declarations);
+        Some(result)
+    }
+
+    fn direct_builtin_lib_interface_declaration_for_name<'b>(
+        &'b self,
+        name: &str,
+    ) -> Option<(NodeIndex, &'b NodeArena, &'b BinderState)> {
+        for lib_ctx in self.ctx.lib_contexts.iter().take(self.ctx.actual_lib_file_count) {
+            if !is_builtin_lib_declaration_arena(lib_ctx.arena.as_ref()) {
+                continue;
+            }
+            let Some(sym_id) = lib_ctx.binder.file_locals.get(name) else {
+                continue;
+            };
+            let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            let disallowed_flags = symbol_flags::CLASS
+                | symbol_flags::TYPE_ALIAS
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE;
+            if symbol.flags & symbol_flags::INTERFACE == 0
+                || symbol.flags & disallowed_flags != 0
+            {
+                continue;
+            }
+
+            let declarations = symbol
+                .declarations
+                .iter()
+                .copied()
+                .filter_map(|decl_idx| {
+                    if let Some(arenas) = lib_ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                    {
+                        for arena in arenas.iter().map(AsRef::as_ref) {
+                            if is_builtin_lib_declaration_arena(arena)
+                                && Self::lib_declaration_name_matches(arena, decl_idx, name)
+                                && arena
+                                    .get(decl_idx)
+                                    .and_then(|node| arena.get_interface(node))
+                                    .is_some()
+                            {
+                                return Some((decl_idx, arena));
+                            }
+                        }
+                    }
+                    if Self::lib_declaration_name_matches(lib_ctx.arena.as_ref(), decl_idx, name)
+                        && lib_ctx
+                            .arena
+                            .get(decl_idx)
+                            .and_then(|node| lib_ctx.arena.get_interface(node))
+                            .is_some()
+                    {
+                        return Some((decl_idx, lib_ctx.arena.as_ref()));
+                    }
+                    None
+                })
+                .collect::<Vec<_>>();
+            if declarations.len() == 1 {
+                let (decl_idx, arena) = declarations[0];
+                return Some((decl_idx, arena, lib_ctx.binder.as_ref()));
+            }
+        }
+        None
+    }
+
     pub(super) fn source_file_local_name_def_id_for_lowering(
         &self,
         delegate_binder: &BinderState,
