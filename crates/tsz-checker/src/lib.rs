@@ -228,6 +228,9 @@ mod heritage_constraint_structural_name_lookup_arch_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "tests/higher_order_regeneralization_tests.rs"]
+mod higher_order_regeneralization_tests;
+#[cfg(test)]
 #[path = "tests/homomorphic_mapped_member_override_tests.rs"]
 mod homomorphic_mapped_member_override_tests;
 #[cfg(test)]

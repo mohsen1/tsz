@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 6;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 7;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -26,6 +26,7 @@ pub struct PerfCounterSnapshot {
     pub delegate: DelegateCounters,
     pub checker: CheckerCounters,
     pub identity: IdentityCounters,
+    pub lib_bootstrap: LibBootstrapCounters,
     pub overlay: OverlayCounters,
     pub resolver: ResolverCounters,
     pub interner: InternerCounters,
@@ -330,6 +331,25 @@ pub struct IdentityCounters {
     pub type_environment_raw_symbol_lazy_fallbacks: u64,
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct LibBootstrapCounters {
+    pub snapshot_set_load_attempts: u64,
+    pub snapshot_set_load_hits: u64,
+    pub snapshot_set_load_misses: u64,
+    pub snapshot_set_load_files_total: u64,
+    pub snapshot_set_load_elapsed_ms_total: f64,
+    pub snapshot_set_load_elapsed_ms_max: f64,
+    pub checker_lib_clone_calls: u64,
+    pub checker_lib_clone_parallel_calls: u64,
+    pub checker_lib_clone_files_total: u64,
+    pub checker_lib_clone_elapsed_ms_total: f64,
+    pub checker_lib_clone_elapsed_ms_max: f64,
+}
+
+fn ns_to_ms(ns: u64) -> f64 {
+    ns as f64 / 1_000_000.0
+}
+
 /// One `(name, count)` row in a named-counter JSON array.
 ///
 /// Used for the `alias_shortcut_outcomes`,
@@ -514,6 +534,27 @@ impl PerfCounters {
                 type_environment_raw_symbol_lazy_fallbacks: load(
                     &c.type_environment_raw_symbol_lazy_fallbacks,
                 ),
+            },
+            lib_bootstrap: LibBootstrapCounters {
+                snapshot_set_load_attempts: load(&c.lib_snapshot_set_load_attempts),
+                snapshot_set_load_hits: load(&c.lib_snapshot_set_load_hits),
+                snapshot_set_load_misses: load(&c.lib_snapshot_set_load_misses),
+                snapshot_set_load_files_total: load(&c.lib_snapshot_set_load_files_total),
+                snapshot_set_load_elapsed_ms_total: ns_to_ms(load(
+                    &c.lib_snapshot_set_load_elapsed_ns_total,
+                )),
+                snapshot_set_load_elapsed_ms_max: ns_to_ms(load(
+                    &c.lib_snapshot_set_load_elapsed_ns_max,
+                )),
+                checker_lib_clone_calls: load(&c.checker_lib_clone_calls),
+                checker_lib_clone_parallel_calls: load(&c.checker_lib_clone_parallel_calls),
+                checker_lib_clone_files_total: load(&c.checker_lib_clone_files_total),
+                checker_lib_clone_elapsed_ms_total: ns_to_ms(load(
+                    &c.checker_lib_clone_elapsed_ns_total,
+                )),
+                checker_lib_clone_elapsed_ms_max: ns_to_ms(load(
+                    &c.checker_lib_clone_elapsed_ns_max,
+                )),
             },
             overlay: OverlayCounters {
                 copy_calls: load(&c.copy_symbol_file_targets_calls),

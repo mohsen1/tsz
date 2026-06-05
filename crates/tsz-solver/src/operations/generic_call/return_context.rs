@@ -2,9 +2,9 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::inference::infer::InferenceVar;
-use crate::instantiation::instantiate::TypeSubstitution;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
-use crate::types::{FunctionShape, TupleElement, TypeData, TypeId, TypeParamInfo};
+use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo};
 
 use super::{GenericCallRequest, GenericCallResult};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -87,6 +87,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.function(shape)
     }
 
+    /// Re-generalize a higher-order inference result.
+    ///
+    /// When a generic function argument's free type parameters survive into the
+    /// call result as `__infer_src_*` placeholders (TypeScript 3.4 higher-order
+    /// function type inference), turn them back into proper type parameters of
+    /// the resulting function signature. Each surviving placeholder is renamed
+    /// to its original source type-parameter name (recorded in the placeholder
+    /// atom), so the result displays as tsc's `<T>(a: T) => { value: T[] }`
+    /// rather than leaking the internal `__infer_src_*` name. Collisions are
+    /// disambiguated with a numeric suffix.
     pub(super) fn hoist_source_placeholders_into_return_type(&self, return_type: TypeId) -> TypeId {
         let Some(TypeData::Function(shape_id)) = self.interner.lookup(return_type) else {
             return return_type;
@@ -97,7 +107,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return return_type;
         }
 
-        let mut hoisted = Vec::new();
+        let mut placeholders: Vec<TypeParamInfo> = Vec::new();
         let mut seen = FxHashSet::default();
         for referenced in
             crate::visitor::collect_all_types(self.interner.as_type_database(), return_type)
@@ -107,22 +117,63 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
             if !self
                 .interner
-                .resolve_atom(info.name)
-                .as_str()
+                .resolve_atom_ref(info.name)
                 .starts_with("__infer_src_")
             {
                 continue;
             }
             if seen.insert(info.name) {
-                hoisted.push(info);
+                placeholders.push(info);
             }
         }
-        sort_type_params_by_name(&mut hoisted);
 
-        if hoisted.is_empty() {
+        if placeholders.is_empty() {
             return return_type;
         }
+        // Deterministic ordering: placeholder atoms are allocated in source
+        // order, so sorting by name keeps the re-generalized parameter list
+        // stable across runs.
+        sort_type_params_by_name(&mut placeholders);
 
+        let mut rename = TypeSubstitution::new();
+        let mut hoisted = Vec::with_capacity(placeholders.len());
+        let mut used_names: FxHashSet<tsz_common::Atom> = FxHashSet::default();
+        for info in &placeholders {
+            let raw = self.interner.resolve_atom_ref(info.name);
+            let origin = super::decode_src_placeholder_origin(&raw).unwrap_or("T");
+            let mut display_atom = self.interner.intern_string(origin);
+            let mut suffix = 1u32;
+            while !used_names.insert(display_atom) {
+                let candidate = format!("{origin}_{suffix}");
+                display_atom = self.interner.intern_string(&candidate);
+                suffix += 1;
+            }
+            let renamed = TypeParamInfo {
+                name: display_atom,
+                ..*info
+            };
+            let renamed_id = self.interner.type_param(renamed);
+            rename.insert(info.name, renamed_id);
+            hoisted.push(renamed);
+        }
+
+        // Rewrite the body so the placeholders read as their renamed
+        // parameters. The signature itself was non-generic until now, so there
+        // are no bound parameters that could shadow the rename.
+        shape.params = shape
+            .params
+            .iter()
+            .map(|param| ParamInfo {
+                name: param.name,
+                type_id: instantiate_type(self.interner, param.type_id, &rename),
+                optional: param.optional,
+                rest: param.rest,
+            })
+            .collect();
+        shape.return_type = instantiate_type(self.interner, shape.return_type, &rename);
+        shape.this_type = shape
+            .this_type
+            .map(|this_type| instantiate_type(self.interner, this_type, &rename));
         shape.type_params = hoisted;
         self.interner.function(shape)
     }

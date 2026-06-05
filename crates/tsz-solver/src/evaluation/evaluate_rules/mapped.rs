@@ -8,7 +8,7 @@ mod keyof_constraint;
 
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
-    TypeSubstitution, instantiate_type, instantiate_type_preserving,
+    TypeSubstitution, instantiate_type_cached, instantiate_type_preserving,
     instantiate_type_preserving_with_declared,
 };
 use crate::objects::PropertyCollectionResult;
@@ -505,12 +505,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
                 }
 
-                // `readonly [a, b]`: map each element and preserve readonly
-                // unless the modifier strips it (`-readonly`).
+                // `readonly` tuple/array source, delegated (`None` => object path).
                 Some(TypeData::ReadonlyType(inner)) => {
-                    if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
-                        return self
-                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, true);
+                    if let Some(result) =
+                        self.evaluate_mapped_over_readonly_source(mapped, source, inner)
+                    {
+                        return result;
                     }
                 }
 
@@ -907,7 +907,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_object: Option<TypeId>,
     ) -> IndexSignature {
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
-        let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+        let instantiated =
+            instantiate_type_cached(self.interner(), self.query_db(), mapped.template, &subst);
         let mut value_type = self.evaluate(instantiated);
         let (idx_optional, idx_readonly) =
             self.get_mapped_modifiers(&mapped, inherits_modifiers, source_object, key_type);
