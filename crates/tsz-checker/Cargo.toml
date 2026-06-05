@@ -35,7 +35,9 @@ path = "tests/assertion_source_literal_display_tests.rs"
 [[test]]
 name = "nested_mapped_optional_modifier_inline_application_tests"
 path = "tests/nested_mapped_optional_modifier_inline_application_tests.rs"
-
+[[test]]
+name = "recursive_generic_interface_application_display_tests"
+path = "tests/recursive_generic_interface_application_display_tests.rs"
 [[test]]
 name = "export_default_interface_type_import_tests"
 path = "tests/export_default_interface_type_import_tests.rs"
