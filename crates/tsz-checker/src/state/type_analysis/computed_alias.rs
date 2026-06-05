@@ -95,6 +95,7 @@ impl<'a> CheckerState<'a> {
             .get_binder_for_arena(decl_arena)
             .unwrap_or(self.ctx.binder);
         let namespace_prefix = self.type_alias_namespace_prefix(decl_arena, decl_idx);
+        let decl_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
         let resolve_symbol_in_decl_binder = |name: &str| -> Option<SymbolId> {
             let mut segments = name.split('.');
             let root_name = segments.next()?;
@@ -122,6 +123,19 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|members| members.get(segment))
                     })?;
+            }
+
+            // `file_locals.get(name)` returns ALIAS sym_ids for imported names;
+            // ALIAS is not part of `symbol_flags::TYPE`, so downstream resolvers
+            // would reject it. Follow the alias chain to the declaring sym_id.
+            if let Some(file_idx) = decl_file_idx {
+                if let Some(alias_target) = self.source_file_import_alias_target_for_lowering(
+                    file_idx,
+                    decl_binder,
+                    current_sym,
+                ) {
+                    current_sym = alias_target.sym_id;
+                }
             }
 
             Some(current_sym)
