@@ -62,6 +62,32 @@ fn tuple_alias_body_missing_names_covered_by_validation() {
 }
 
 #[test]
+fn type_node_validation_cache_is_context_keyed() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    assert!(
+        checker_source.contains("active_resolving_alias_set_key")
+            && checker_source.contains("type_reference_arg_validation_scope_key")
+            && checker_source.contains("type_node_validation"),
+        "type-node validation success caching must be keyed by lexical scope \
+         and active alias-resolution context"
+    );
+}
+
+#[test]
+fn type_node_validation_cache_only_records_clean_walks() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    assert!(
+        checker_source.contains("let diagnostics_before = self.ctx.diagnostics.len();")
+            && checker_source.contains("if self.ctx.diagnostics.len() == diagnostics_before")
+            && checker_source.contains(".type_node_validation")
+            && checker_source.contains(".insert(validation_cache_key)"),
+        "type-node validation success caching must not record diagnostic-bearing walks"
+    );
+}
+
+#[test]
 fn renamed_tuple_dispatch_alias_still_validates_annotations() {
     let diags = check_source_diagnostics(
         r#"

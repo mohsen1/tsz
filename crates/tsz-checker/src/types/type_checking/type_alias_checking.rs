@@ -12,6 +12,7 @@
 
 use super::alias_defid_visited_pool::with_alias_defid_visited;
 use crate::state::CheckerState;
+use std::hash::{Hash, Hasher};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -1347,6 +1348,30 @@ impl<'a> CheckerState<'a> {
         self.check_type_node_with_literal_context(node_idx, nested_in_type_literal);
     }
 
+    fn active_resolving_alias_set_key(&self) -> u64 {
+        if self.ctx.symbol_resolution_set.is_empty() {
+            return 0;
+        }
+
+        let mut entries = self
+            .ctx
+            .symbol_resolution_set
+            .iter()
+            .map(|&sym_id| {
+                self.ctx
+                    .get_existing_def_id(sym_id)
+                    .map_or(u64::from(sym_id.0), |def_id| {
+                        (1_u64 << 32) | u64::from(def_id.0)
+                    })
+            })
+            .collect::<Vec<_>>();
+        entries.sort_unstable();
+
+        let mut hasher = rustc_hash::FxHasher::default();
+        entries.hash(&mut hasher);
+        hasher.finish()
+    }
+
     fn check_type_node_with_literal_context(
         &mut self,
         node_idx: NodeIndex,
@@ -1358,6 +1383,21 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return;
         };
+        let validation_cache_key = (
+            node_idx.0,
+            nested_in_type_literal,
+            self.type_reference_arg_validation_scope_key(),
+            self.active_resolving_alias_set_key(),
+        );
+        if self
+            .ctx
+            .type_reference_validation_caches
+            .type_node_validation
+            .contains(&validation_cache_key)
+        {
+            return;
+        }
+        let diagnostics_before = self.ctx.diagnostics.len();
         let child_nested_in_type_literal =
             nested_in_type_literal || node.kind == syntax_kind_ext::TYPE_LITERAL;
         macro_rules! check_child_type_node {
@@ -1701,6 +1741,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => {}
+        }
+
+        if self.ctx.diagnostics.len() == diagnostics_before {
+            self.ctx
+                .type_reference_validation_caches
+                .type_node_validation
+                .insert(validation_cache_key);
         }
     }
 
