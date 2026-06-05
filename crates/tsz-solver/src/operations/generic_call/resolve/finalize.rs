@@ -1,4 +1,4 @@
-use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
+use crate::inference::infer::{InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::generic_call::inference_helpers::{
     is_bare_foreign_type_param, is_substantive_inference_candidate,
@@ -10,30 +10,35 @@ use crate::operations::generic_call::{
 };
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypePredicate};
+use crate::types::{ParamInfo, TypeData, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
+use super::FinishGenericCallResolutionArgs;
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn finish_generic_call_resolution(
         &mut self,
-        func: &FunctionShape,
-        arg_types: &[TypeId],
-        actual_this_type: Option<TypeId>,
-        mut infer_ctx: InferenceContext,
-        substitution: &TypeSubstitution,
-        type_param_vars: &[InferenceVar],
-        type_param_placeholder_atoms: &[tsz_common::Atom],
-        local_type_param_names: &FxHashSet<tsz_common::Atom>,
-        var_map: &FxHashMap<TypeId, InferenceVar>,
-        direct_param_vars: &FxHashSet<InferenceVar>,
-        noinfer_param_vars: &FxHashSet<InferenceVar>,
-        rest_tuple_target_type: Option<TypeId>,
-        structural_return_subst: &TypeSubstitution,
-        first_direct_primitive_mismatch: Option<(usize, TypeId, TypeId)>,
-        saw_deferred_arg: bool,
+        args: FinishGenericCallResolutionArgs<'_>,
     ) -> CallResult {
+        let FinishGenericCallResolutionArgs {
+            func,
+            arg_types,
+            actual_this_type,
+            infer_ctx,
+            substitution,
+            type_param_vars,
+            type_param_placeholder_atoms,
+            local_type_param_names,
+            var_map,
+            direct_param_vars,
+            noinfer_param_vars,
+            rest_tuple_target_type,
+            structural_return_subst,
+            first_direct_primitive_mismatch,
+            saw_deferred_arg,
+        } = args;
+        let mut infer_ctx = infer_ctx;
         // 4. Resolve inference variables
         // CRITICAL: Strengthen inter-parameter constraints before resolution
         // This ensures SCC-based cycle unification happens (commit c3ede45a9)
