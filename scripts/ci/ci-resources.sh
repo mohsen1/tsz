@@ -75,11 +75,11 @@ default_cargo_build_jobs() {
       ;;
     dist-binaries)
       # sccache is disabled for dist-binaries (TSZ_CI_DISABLE_SCCACHE=1 in
-      # GitHub CI) so every codegen unit compiles from scratch. The observed
-      # peak RSS per cargo job is slightly higher than the sccache-assisted
-      # path; budget 8192 MiB/job instead of the default 7168 to keep total
-      # cargo RSS below ~87% of RAM before OS overhead.
-      mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-8192}"
+      # GitHub CI) so every codegen unit compiles from scratch. Keep the
+      # default 7168 MiB/job budget so the 8 vCPU x 32 GiB Cloud Run runner can
+      # build at -j4; -j3 has repeatedly finished cargo just after the runner's
+      # external cancellation window and before artifact upload.
+      mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-7168}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"

@@ -159,6 +159,7 @@ impl BinderState {
             resolved_export_cache: Default::default(),
             resolved_export_type_only_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
+            find_enclosing_scope_cache: Default::default(),
             shorthand_ambient_modules: Arc::new(FxHashSet::default()),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
@@ -397,6 +398,7 @@ impl BinderState {
             resolved_export_cache: Default::default(),
             resolved_export_type_only_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
+            find_enclosing_scope_cache: Default::default(),
             shorthand_ambient_modules: Arc::new(FxHashSet::default()),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
@@ -521,6 +523,7 @@ impl BinderState {
             resolved_export_cache: Default::default(),
             resolved_export_type_only_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
+            find_enclosing_scope_cache: Default::default(),
             shorthand_ambient_modules,
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
@@ -951,7 +954,10 @@ impl BinderState {
             };
             if expr.kind == SyntaxKind::StringLiteral as u16 {
                 if let Some(lit) = arena.get_literal(expr)
-                    && lit.text == "use strict"
+                    && tsz_common::directives::is_use_strict_directive(
+                        lit.raw_text.as_deref(),
+                        &lit.text,
+                    )
                 {
                     return true;
                 }

@@ -383,3 +383,132 @@ x = { y: { a: 0 } };
          (`{{ a: 0; }}`, not the widened `{{ a: number; }}`); got {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Return / value positions. The same recovered-intersection elaboration must
+// fire when the assignment target is a function's declared *return type* that
+// is written as an intersection. Before this, a `return <obj>` checked against
+// an intersection return type fell back to tsz's eagerly-merged single-object
+// shape — `required in type '{ d: number; a: number; }'`, a type the user never
+// wrote — instead of naming the specific intersection member.
+// ---------------------------------------------------------------------------
+
+/// `function g(): A & B { return ... }` — a return value missing a required
+/// member property keeps the top-level TS2322 against the written intersection
+/// and names the specific member, exactly as the variable-annotation path does.
+#[test]
+fn missing_property_in_function_return_type_intersection_emits_member_elaboration() {
+    let diags = diagnostics(
+        r#"
+type A = { a: number };
+type B = { d: number };
+function g(): A & B {
+    return { d: 1 };
+}
+"#,
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "a"),
+        "return against `A & B` must elaborate the missing member property `a`; got {diags:?}"
+    );
+    // The member, not tsz's eagerly-merged `{ d: number; a: number; }`, owns the
+    // requirement: the nested line must name a single-property member shape.
+    let names_merged_shape = diags.iter().any(|d| {
+        d.related_information
+            .iter()
+            .any(|info| info.message_text.contains("{ d: number; a: number; }"))
+    });
+    assert!(
+        !names_merged_shape,
+        "the elaboration must not attribute the requirement to a synthesized merged \
+         object the user never wrote; got {diags:?}"
+    );
+}
+
+/// The rule is not keyed to a function *declaration*: an arrow with an
+/// intersection return type behaves identically (renamed binders too).
+#[test]
+fn missing_property_in_arrow_return_type_intersection_emits_member_elaboration() {
+    let diags = diagnostics(
+        r#"
+type Left = { first: number };
+type Right = { second: number };
+const make = (): Left & Right => {
+    return { second: 2 };
+};
+"#,
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "first"),
+        "arrow return against `Left & Right` must elaborate the missing member \
+         property `first`; got {diags:?}"
+    );
+}
+
+/// Method declarations with an intersection return type take the same path.
+#[test]
+fn missing_property_in_method_return_type_intersection_emits_member_elaboration() {
+    let diags = diagnostics(
+        r#"
+type P = { p: number };
+type Q = { q: number };
+class C {
+    m(): P & Q {
+        return { q: 0 };
+    }
+}
+"#,
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "p"),
+        "method return against `P & Q` must elaborate the missing member property `p`; \
+         got {diags:?}"
+    );
+}
+
+/// An inline intersection return type echoes the written `&` form at the top
+/// level and names the inline member shape, matching tsc.
+#[test]
+fn inline_intersection_return_type_keeps_written_form_and_member() {
+    let diags = diagnostics(
+        r#"
+function g(): { a: number } & { d: number } {
+    return { d: 1 };
+}
+"#,
+    );
+    let matched = diags.iter().any(|d| {
+        d.code == 2322
+            && d.message_text.contains("'{ a: number; } & { d: number; }'")
+            && d.related_information.iter().any(|info| {
+                info.message_text.contains("Property 'a' is missing")
+                    && info
+                        .message_text
+                        .contains("but required in type '{ a: number; }'")
+            })
+    });
+    assert!(
+        matched,
+        "inline intersection return type must keep the written `&` form and name the \
+         `{{ a: number; }}` member; got {diags:?}"
+    );
+}
+
+/// Negative guard: a non-intersection return type is unaffected — a plain
+/// object return type keeps the ordinary direct TS2741 missing-property surface.
+#[test]
+fn non_intersection_return_type_keeps_plain_missing_property_surface() {
+    let diags = diagnostics(
+        r#"
+function g(): { a: number } {
+    return {};
+}
+"#,
+    );
+    let only_2741 = !diags.is_empty() && diags.iter().all(|d| d.code == 2741);
+    assert!(
+        only_2741,
+        "a plain (non-intersection) return type must keep the direct TS2741 surface; \
+         got {diags:?}"
+    );
+}

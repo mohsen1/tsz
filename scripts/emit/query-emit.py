@@ -252,11 +252,15 @@ def emit_freshness_status(detail_summary, public_summary):
 
 def emit_freshness_report(detail_summary, public_summary):
     status = emit_freshness_status(detail_summary, public_summary)
+    aggregate_matches_public = status["state"] == "aggregate-match"
     return {
         "state": status["state"],
         "detailSummary": detail_summary,
         "publicSummary": public_summary,
         "detailIsCurrent": emit_detail_is_current(status),
+        "detailAggregateMatchesPublic": aggregate_matches_public,
+        "rowFreshnessProven": False,
+        "rowFreshnessEvidence": "aggregate-only" if aggregate_matches_public else status["state"],
         "jsPassDelta": status.get("jsPassDelta"),
         "dtsPassDelta": status.get("dtsPassDelta"),
         "jsTotalDelta": status.get("jsTotalDelta"),
@@ -630,7 +634,12 @@ def show_failure_families(data, top=20, include_stale_detail=False):
         print_stale_failure_family_guard(detail_summary, public_summary)
         return
 
-    print_emit_freshness_note(data)
+    if freshness_status["state"] == "aggregate-match":
+        print(emit_freshness_status_line_from_status(freshness_status))
+        print()
+    else:
+        print_emit_freshness_note(data)
+
     for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
         families = collect_failures_by_family(data, surface)
         rows = sorted(

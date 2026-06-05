@@ -304,3 +304,42 @@ fn generator_method_overloads_preserve_asterisk() {
         "Generator method implementation should retain * after overload erasure.\nOutput: {output}"
     );
 }
+
+#[test]
+fn static_constructor_preserves_static_modifier() {
+    // `static constructor()` is a parse error but tsc preserves `static`
+    // in emit for error-recovery fidelity.
+    let source = "class C {\n    static constructor() { }\n}";
+    let output = emit_ts(source);
+    assert!(
+        output.contains("static constructor()"),
+        "Invalid `static` modifier on constructor should be preserved in emit.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn export_constructor_preserves_export_modifier() {
+    // `export constructor()` is a parse error but tsc preserves `export`
+    // in emit for error-recovery fidelity.
+    let source = "class C {\n    export constructor() { }\n}";
+    let output = emit_ts(source);
+    assert!(
+        output.contains("export constructor()"),
+        "Invalid `export` modifier on constructor should be preserved in emit.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn normal_constructor_emits_without_spurious_modifiers() {
+    // A regular constructor without modifiers should emit only `constructor`.
+    let source = "class C {\n    constructor(x: number) { this.x = x; }\n}";
+    let output = emit_ts(source);
+    assert!(
+        output.contains("constructor(x)"),
+        "Normal constructor should emit without extra modifiers.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("static constructor"),
+        "Normal constructor should not gain a `static` modifier.\nOutput: {output}"
+    );
+}
