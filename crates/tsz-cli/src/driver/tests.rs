@@ -1,5 +1,6 @@
 use super::CompilationCache;
 use super::FileReadResult;
+use super::build_info_to_compilation_cache;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
 use super::compilation_cache_to_build_info;
@@ -109,6 +110,50 @@ fn compilation_cache_build_info_uses_source_hash_for_file_version() {
         compute_file_version(&source_path).unwrap()
     );
     assert_eq!(file_info.signature.as_deref(), Some("0000000000001234"));
+}
+
+#[test]
+fn build_info_round_trip_preserves_dependency_order() {
+    // `.tsbuildinfo` persistence and restore must preserve per-file dependency
+    // order. Discovery order (seeded from these lists on a cached rebuild)
+    // determines global `SymbolId` assignment, so a hashed round-trip would let
+    // an unchanged project row reconstruct different `SymbolId`s after a
+    // build-info reload.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let base = dir.path();
+    let main = base.join("src/main.ts");
+    // Deliberately non-alphabetical so a hashed set would reorder the entries.
+    let deps_in_order = vec![
+        base.join("src/zeta.ts"),
+        base.join("src/alpha.ts"),
+        base.join("src/mid.ts"),
+        base.join("src/beta.ts"),
+        base.join("src/gamma.ts"),
+    ];
+    fs::create_dir_all(main.parent().unwrap()).expect("create source dir");
+    fs::write(&main, "export const main = 1;").expect("write source");
+
+    let mut cache = CompilationCache::default();
+    cache.export_hashes.insert(main.clone(), 0xABCD);
+    cache
+        .dependencies
+        .insert(main.clone(), deps_in_order.clone());
+
+    let build_info = compilation_cache_to_build_info(
+        &cache,
+        std::slice::from_ref(&main),
+        base,
+        &ResolvedCompilerOptions::default(),
+    );
+    let restored = build_info_to_compilation_cache(&build_info, base);
+    let restored_deps = restored
+        .dependencies
+        .get(&main)
+        .expect("dependencies restored from build info");
+    assert_eq!(
+        restored_deps, &deps_in_order,
+        "build_info round-trip must preserve source-import dependency order"
+    );
 }
 
 #[test]
