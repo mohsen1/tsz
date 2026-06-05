@@ -621,6 +621,9 @@ mod class_static_side_relation_routing_arch_tests;
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
 #[cfg(test)]
+#[path = "tests/computed_alias_source_display_tests.rs"]
+mod computed_alias_source_display_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
