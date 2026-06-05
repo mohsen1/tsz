@@ -415,16 +415,89 @@ impl<'a> CheckerState<'a> {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 return false;
             };
-            let Some(signature) = self.ctx.arena.get_signature(member_node) else {
-                return false;
-            };
-            crate::types_domain::queries::core::get_literal_property_name(
-                self.ctx.arena,
-                signature.name,
-            )
-            .as_deref()
+            self.ctx
+                .arena
+                .get_signature(member_node)
+                .map(|signature| signature.name)
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .map(|property| property.name)
+                })
+                .and_then(|name| {
+                    crate::types_domain::queries::core::get_literal_property_name(
+                        self.ctx.arena,
+                        name,
+                    )
+                })
+                .as_deref()
                 == Some(property_name)
         })
+    }
+
+    fn type_literal_member_name_and_type(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        if let Some(signature) = self.ctx.arena.get_signature(member_node) {
+            return Some((signature.name, signature.type_annotation));
+        }
+        self.ctx
+            .arena
+            .get_property_decl(member_node)
+            .map(|property| (property.name, property.type_annotation))
+    }
+
+    fn indexed_access_tuple_selector_part(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Option<(String, usize)> {
+        let node = self.ctx.arena.get(node_idx)?;
+        let indexed = self.ctx.arena.get_indexed_access_type(node)?;
+        let selector_name = self
+            .ctx
+            .arena
+            .get(indexed.object_type)
+            .and_then(|object_node| self.ctx.arena.get_type_ref(object_node))
+            .and_then(|type_ref| self.ctx.arena.get(type_ref.type_name))
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())?
+            .to_owned();
+        let element_index = self.type_index_numeric_literal(indexed.index_type)?;
+        Some((selector_name, element_index))
+    }
+
+    fn type_index_numeric_literal(&self, node_idx: NodeIndex) -> Option<usize> {
+        let node = self.ctx.arena.get(node_idx)?;
+        let literal_node = if let Some(literal_type) = self.ctx.arena.get_literal_type(node) {
+            self.ctx.arena.get(literal_type.literal)?
+        } else {
+            node
+        };
+        let literal = self.ctx.arena.get_literal(literal_node)?;
+        let value = literal
+            .value
+            .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&literal.text))?;
+        if value.fract() != 0.0 || value < 0.0 {
+            return None;
+        }
+        Some(value as usize)
+    }
+
+    fn tuple_selector_element_type(
+        &mut self,
+        selector_name: &str,
+        element_index: usize,
+    ) -> Option<TypeId> {
+        let selector_type = self.ctx.type_parameter_scope.get(selector_name).copied()?;
+        let elements =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, selector_type)?;
+        let element = elements.get(element_index)?;
+        if element.rest {
+            return None;
+        }
+        Some(element.type_id)
     }
 
     pub(super) fn type_literal_keyof_from_node(
@@ -444,13 +517,14 @@ impl<'a> CheckerState<'a> {
             if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
                 return None;
             }
-            if let Some(sig) = self.ctx.arena.get_signature(member_node)
-                && let Some(name) = self.get_property_name(sig.name)
+            if let Some((name_idx, _type_annotation)) =
+                self.type_literal_member_name_and_type(member_node)
+                && let Some(name) = self.get_property_name(name_idx)
             {
                 let key_type = self
                     .ctx
                     .arena
-                    .get(sig.name)
+                    .get(name_idx)
                     .filter(|name_node| name_node.kind == SyntaxKind::NumericLiteral as u16)
                     .and_then(|name_node| self.ctx.arena.get_literal(name_node))
                     .and_then(|lit| {
@@ -529,13 +603,15 @@ impl<'a> CheckerState<'a> {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
-            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+            let Some((_name_idx, type_annotation)) =
+                self.type_literal_member_name_and_type(member_node)
+            else {
                 continue;
             };
-            if sig.type_annotation == NodeIndex::NONE {
+            if type_annotation == NodeIndex::NONE {
                 return false;
             }
-            let Some(value_keyof) = self.type_literal_keyof_from_node(sig.type_annotation) else {
+            let Some(value_keyof) = self.type_literal_keyof_from_node(type_annotation) else {
                 return false;
             };
             if !self
@@ -566,6 +642,30 @@ impl<'a> CheckerState<'a> {
         let Some(nested) = self.ctx.arena.get_indexed_access_type(object_node) else {
             return false;
         };
+
+        if let (
+            Some((nested_selector, nested_element_index)),
+            Some((outer_selector, outer_element_index)),
+        ) = (
+            self.indexed_access_tuple_selector_part(nested.index_type),
+            self.indexed_access_tuple_selector_part(outer_index_node_idx),
+        ) && nested_selector == outer_selector
+            && let (Some(nested_element_type), Some(outer_element_type)) = (
+                self.tuple_selector_element_type(&nested_selector, nested_element_index),
+                self.tuple_selector_element_type(&outer_selector, outer_element_index),
+            )
+            && let Some(nested_base_keyof) = self.type_literal_keyof_from_node(nested.object_type)
+            && self
+                .indexed_access_key_space_relation_outcome(nested_element_type, nested_base_keyof)
+                .related
+            && self.type_literal_member_values_accept_index(
+                nested.object_type,
+                outer_element_type,
+                None,
+            )
+        {
+            return true;
+        }
 
         let nested_index_type = self.get_type_from_type_node(nested.index_type);
         let mut nested_index_constraint =
