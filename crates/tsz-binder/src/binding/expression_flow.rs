@@ -1,0 +1,803 @@
+//! Binder expression flow graph construction.
+
+use crate::state::BinderState;
+use crate::{SymbolId, flow_flags, symbol_flags};
+use std::sync::Arc;
+use tsz_parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+
+impl BinderState {
+    /// Bind a short-circuit binary expression (&&, ||, ??) with intermediate
+    /// flow condition nodes.
+    ///
+    /// For `a && b`: the right operand `b` is only evaluated when `a` is truthy,
+    /// so we create a `TRUE_CONDITION` node for `a` before binding `b`. This allows
+    /// references in `b` to see type narrowing from `a`.
+    ///
+    /// For `a || b` and `a ?? b`: the right operand `b` is only evaluated when `a`
+    /// is falsy/nullish, so we create a `FALSE_CONDITION` node for `a` before binding `b`.
+    pub(crate) fn bind_short_circuit_expression(
+        &mut self,
+        arena: &NodeArena,
+        idx: NodeIndex,
+        left: NodeIndex,
+        right: NodeIndex,
+        operator: u16,
+    ) {
+        self.record_flow(idx);
+
+        // Bind the left operand
+        self.bind_expression(arena, left);
+        let after_left_flow = self.current_flow;
+
+        let is_assignment = operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || operator == SyntaxKind::BarBarEqualsToken as u16
+            || operator == SyntaxKind::QuestionQuestionEqualsToken as u16;
+
+        if operator == SyntaxKind::AmpersandAmpersandToken as u16
+            || operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+        {
+            // For && and &&=: right side is only evaluated when left is truthy
+            let true_condition =
+                self.create_flow_condition(flow_flags::TRUE_CONDITION, after_left_flow, left);
+            self.current_flow = true_condition;
+            self.bind_expression(arena, right);
+            if is_assignment && !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                self.current_flow = self.create_flow_assignment(idx);
+            }
+            let after_right_flow = self.current_flow;
+
+            // Short-circuit path: left is falsy, right is not evaluated
+            let false_condition =
+                self.create_flow_condition(flow_flags::FALSE_CONDITION, after_left_flow, left);
+
+            // Merge both paths
+            let merge = self.create_branch_label();
+            self.add_antecedent(merge, after_right_flow);
+            self.add_antecedent(merge, false_condition);
+            self.current_flow = merge;
+        } else {
+            // For ||, ??, ||=, ??=: right side is only evaluated when left is falsy/nullish
+            let false_condition =
+                self.create_flow_condition(flow_flags::FALSE_CONDITION, after_left_flow, left);
+            self.current_flow = false_condition;
+            self.bind_expression(arena, right);
+            if is_assignment && !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                self.current_flow = self.create_flow_assignment(idx);
+            }
+            let after_right_flow = self.current_flow;
+
+            // Short-circuit path: left is truthy, right is not evaluated
+            let true_condition =
+                self.create_flow_condition(flow_flags::TRUE_CONDITION, after_left_flow, left);
+
+            // Merge both paths
+            let merge = self.create_branch_label();
+            self.add_antecedent(merge, after_right_flow);
+            self.add_antecedent(merge, true_condition);
+            self.current_flow = merge;
+        }
+    }
+
+    pub(crate) fn bind_binary_expression_flow_iterative(
+        &mut self,
+        arena: &NodeArena,
+        root: NodeIndex,
+    ) {
+        enum WorkItem {
+            Visit(NodeIndex),
+            PostAssign(NodeIndex),
+        }
+
+        let mut stack = vec![WorkItem::Visit(root)];
+        while let Some(item) = stack.pop() {
+            match item {
+                WorkItem::Visit(idx) => {
+                    let Some(node) = arena.get(idx) else {
+                        continue;
+                    };
+
+                    if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                        self.record_flow(idx);
+                        let Some(bin) = arena.get_binary_expr(node) else {
+                            continue;
+                        };
+                        if bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                            || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+                            || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+                        {
+                            self.bind_short_circuit_expression(
+                                arena,
+                                idx,
+                                bin.left,
+                                bin.right,
+                                bin.operator_token,
+                            );
+                            continue;
+                        }
+
+                        if Self::is_assignment_operator(bin.operator_token) {
+                            // For destructuring defaults (LHS is a pattern),
+                            // bind RHS before LHS to match runtime eval order.
+                            let lhs_is_destructuring = bin.operator_token
+                                == SyntaxKind::EqualsToken as u16
+                                && arena.get(bin.left).is_some_and(|left_node| {
+                                    left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                        || left_node.kind
+                                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        || left_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                        || left_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                });
+                            stack.push(WorkItem::PostAssign(idx));
+                            if lhs_is_destructuring {
+                                // Stack is LIFO: push LHS last so it runs after RHS
+                                if bin.left.is_some() {
+                                    stack.push(WorkItem::Visit(bin.left));
+                                }
+                                if bin.right.is_some() {
+                                    stack.push(WorkItem::Visit(bin.right));
+                                }
+                            } else {
+                                if bin.right.is_some() {
+                                    stack.push(WorkItem::Visit(bin.right));
+                                }
+                                if bin.left.is_some() {
+                                    stack.push(WorkItem::Visit(bin.left));
+                                }
+                            }
+                            continue;
+                        }
+                        // Delegate short-circuit operators to proper flow handling
+                        if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                            || bin.operator_token == SyntaxKind::BarBarToken as u16
+                            || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                        {
+                            self.bind_short_circuit_expression(
+                                arena,
+                                idx,
+                                bin.left,
+                                bin.right,
+                                bin.operator_token,
+                            );
+                            continue;
+                        }
+                        if bin.right.is_some() {
+                            stack.push(WorkItem::Visit(bin.right));
+                        }
+                        if bin.left.is_some() {
+                            stack.push(WorkItem::Visit(bin.left));
+                        }
+                        continue;
+                    }
+
+                    self.bind_expression(arena, idx);
+                }
+                WorkItem::PostAssign(idx) => {
+                    if !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                        let flow = self.create_flow_assignment(idx);
+                        self.current_flow = flow;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bind an expression and record flow positions for identifiers.
+    /// This is used for condition expressions in if/while/for statements.
+    pub(crate) fn bind_expression(&mut self, arena: &NodeArena, idx: NodeIndex) {
+        if idx.is_none() {
+            return;
+        }
+
+        let Some(node) = arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = arena.get_binary_expr(node) {
+                if bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                    || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+                    || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+                {
+                    self.bind_short_circuit_expression(
+                        arena,
+                        idx,
+                        bin.left,
+                        bin.right,
+                        bin.operator_token,
+                    );
+                    return;
+                }
+
+                if Self::is_assignment_operator(bin.operator_token) {
+                    self.record_flow(idx);
+                    // For destructuring assignments (LHS is array/object literal),
+                    // bind the RHS (source/default) before the LHS (pattern).
+                    // This matches tsc's bindDestructuringTargetFlow: at runtime,
+                    // the source/default is evaluated before the pattern is applied,
+                    // so flow-sensitive reads in the default must see pre-assignment
+                    // values. E.g., `[{ [(a = 1)]: b } = [9, a] as const] = []`
+                    // must evaluate `[9, a]` (reading `a = 0`) before `(a = 1)`.
+                    let lhs_is_destructuring = bin.operator_token == SyntaxKind::EqualsToken as u16
+                        && arena.get(bin.left).is_some_and(|left_node| {
+                            left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || left_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || left_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        });
+                    if lhs_is_destructuring {
+                        self.bind_expression(arena, bin.right);
+                        self.bind_expression(arena, bin.left);
+                    } else {
+                        self.bind_expression(arena, bin.left);
+                        self.bind_expression(arena, bin.right);
+                    }
+                    if !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                        let flow = self.create_flow_assignment(idx);
+                        self.current_flow = flow;
+                    }
+                    // Detect expando property assignments (X.prop = value)
+                    if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                        self.detect_expando_assignment(arena, bin.left, bin.right);
+                    }
+                    return;
+                }
+
+                // Handle short-circuit operators (&&, ||, ??) with intermediate
+                // flow condition nodes so that the right operand sees narrowing
+                // from the left operand.
+                if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                    || bin.operator_token == SyntaxKind::BarBarToken as u16
+                    || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                {
+                    self.bind_short_circuit_expression(
+                        arena,
+                        idx,
+                        bin.left,
+                        bin.right,
+                        bin.operator_token,
+                    );
+                    return;
+                }
+            }
+            self.bind_binary_expression_flow_iterative(arena, idx);
+            return;
+        }
+
+        // Record flow position for this node
+        self.record_flow(idx);
+
+        match node.kind {
+            // Identifiers - record flow position for type narrowing
+            k if k == SyntaxKind::Identifier as u16 => {
+                // Already recorded above
+                return;
+            }
+
+            // Prefix unary (e.g., typeof x, !x)
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = arena.get_unary_expr(node) {
+                    self.bind_expression(arena, unary.operand);
+                    if (unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                        && !Self::is_inside_class_member_computed_property_name(arena, idx)
+                    {
+                        let flow = self.create_flow_assignment(idx);
+                        self.current_flow = flow;
+                    }
+                }
+                return;
+            }
+
+            // Property access (e.g., x.foo)
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = arena.get_access_expr(node) {
+                    self.bind_expression(arena, access.expression);
+                }
+                return;
+            }
+
+            // Element access (e.g., x[0], x?.[expr])
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = arena.get_access_expr(node) {
+                    self.bind_expression(arena, access.expression);
+
+                    // Optional chaining short-circuits RHS evaluation.
+                    // For `obj?.[expr]`, `expr` is evaluated only when `obj` is present.
+                    if Self::is_optional_chain_access(arena, idx) {
+                        let after_base = if self.continues_optional_chain(arena, idx)
+                            || Self::is_optional_chain_access(arena, access.expression)
+                        {
+                            self.optional_chain_branch_base()
+                        } else {
+                            self.current_flow
+                        };
+
+                        let true_flow = self.create_flow_condition(
+                            flow_flags::TRUE_CONDITION,
+                            after_base,
+                            access.expression,
+                        );
+                        self.current_flow = true_flow;
+                        self.bind_expression(arena, access.name_or_argument);
+                        if !self.continues_optional_chain(arena, idx) {
+                            let after_element = self.current_flow;
+
+                            let false_flow = self.create_flow_condition(
+                                flow_flags::FALSE_CONDITION,
+                                after_base,
+                                access.expression,
+                            );
+
+                            let merge = self.create_branch_label();
+                            self.add_antecedent(merge, after_element);
+                            self.add_antecedent(merge, false_flow);
+                            self.current_flow = merge;
+                        }
+                    } else {
+                        self.bind_expression(arena, access.name_or_argument);
+                    }
+                }
+                return;
+            }
+
+            // Call expression (e.g., isString(x))
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = arena.get_call_expr(node) {
+                    self.bind_expression(arena, call.expression);
+
+                    let is_optional_call = node.is_optional_chain();
+                    if is_optional_call {
+                        let after_callee = if self.continues_optional_chain(arena, idx)
+                            || Self::is_optional_chain_access(arena, call.expression)
+                        {
+                            self.optional_chain_branch_base()
+                        } else {
+                            self.current_flow
+                        };
+
+                        // Optional calls short-circuit argument evaluation when callee is absent.
+                        let true_flow = self.create_flow_condition(
+                            flow_flags::TRUE_CONDITION,
+                            after_callee,
+                            call.expression,
+                        );
+                        self.current_flow = true_flow;
+                        if let Some(args) = &call.arguments {
+                            for &arg in &args.nodes {
+                                self.bind_expression(arena, arg);
+                            }
+                        }
+                        let flow = self.create_flow_call(idx);
+                        self.current_flow = flow;
+                        if Self::is_array_mutation_call(arena, idx) {
+                            let flow = self.create_flow_array_mutation(idx);
+                            self.current_flow = flow;
+                        }
+                        if !self.continues_optional_chain(arena, idx) {
+                            let after_call = self.current_flow;
+
+                            let false_flow = self.create_flow_condition(
+                                flow_flags::FALSE_CONDITION,
+                                after_callee,
+                                call.expression,
+                            );
+
+                            let merge = self.create_branch_label();
+                            self.add_antecedent(merge, after_call);
+                            self.add_antecedent(merge, false_flow);
+                            self.current_flow = merge;
+                        }
+                    } else {
+                        if let Some(args) = &call.arguments {
+                            for &arg in &args.nodes {
+                                self.bind_expression(arena, arg);
+                            }
+                        }
+                        // Create CALL flow node for all call expressions
+                        let flow = self.create_flow_call(idx);
+                        self.current_flow = flow;
+                        // Also create ARRAY_MUTATION flow node if it's an array mutation
+                        if Self::is_array_mutation_call(arena, idx) {
+                            let flow = self.create_flow_array_mutation(idx);
+                            self.current_flow = flow;
+                        }
+                    }
+                }
+                return;
+            }
+
+            // Parenthesized expression
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = arena.get_parenthesized(node) {
+                    self.bind_expression(arena, paren.expression);
+                }
+                return;
+            }
+
+            // Type assertion (e.g., x as string, <T>x, x satisfies T)
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = arena.get_type_assertion(node) {
+                    self.bind_expression(arena, assertion.expression);
+                }
+                return;
+            }
+
+            // Conditional expression (ternary) - build flow graph for type narrowing
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = arena.get_conditional_expr(node) {
+                    // Bind the condition expression
+                    self.bind_expression(arena, cond.condition);
+
+                    // Save pre-condition flow
+                    let pre_condition_flow = self.current_flow;
+
+                    // Create TRUE_CONDITION flow for when_true branch
+                    let true_flow = self.create_flow_condition(
+                        flow_flags::TRUE_CONDITION,
+                        pre_condition_flow,
+                        cond.condition,
+                    );
+                    self.current_flow = true_flow;
+                    self.bind_expression(arena, cond.when_true);
+                    let after_true_flow = self.current_flow;
+
+                    // Create FALSE_CONDITION flow for when_false branch
+                    let false_flow = self.create_flow_condition(
+                        flow_flags::FALSE_CONDITION,
+                        pre_condition_flow,
+                        cond.condition,
+                    );
+                    self.current_flow = false_flow;
+                    self.bind_expression(arena, cond.when_false);
+                    let after_false_flow = self.current_flow;
+
+                    // Create merge point for both branches
+                    let merge_label = self.create_branch_label();
+                    self.add_antecedent(merge_label, after_true_flow);
+                    self.add_antecedent(merge_label, after_false_flow);
+                    self.current_flow = merge_label;
+                }
+                return;
+            }
+
+            _ => {}
+        }
+
+        self.bind_node(arena, idx);
+    }
+
+    /// Detect expando property assignments of the form `X.prop = value`.
+    /// Tracks both simple identifiers (`X.prop`) and dotted receiver chains
+    /// (`A.B.prop`) so function members on namespaces can collect expandos.
+    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex, rhs: NodeIndex) {
+        fn symbol_call(arena: &NodeArena, idx: NodeIndex) -> bool {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return false;
+            }
+            let Some(call) = arena.get_call_expr(node) else {
+                return false;
+            };
+            let Some(callee) = arena.get(call.expression) else {
+                return false;
+            };
+            callee.kind == SyntaxKind::Identifier as u16
+                && arena
+                    .get_identifier(callee)
+                    .is_some_and(|ident| ident.escaped_text == "Symbol")
+        }
+
+        fn is_undefined_like_rhs(arena: &NodeArena, idx: NodeIndex) -> bool {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena
+                    .get_identifier(node)
+                    .is_some_and(|ident| ident.escaped_text == "undefined");
+            }
+
+            if node.kind != syntax_kind_ext::VOID_EXPRESSION
+                && node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            {
+                return false;
+            }
+
+            let Some(unary) = arena.get_unary_expr(node) else {
+                return false;
+            };
+            if unary.operator != SyntaxKind::VoidKeyword as u16 {
+                return false;
+            }
+            let Some(expr) = arena.get(unary.operand) else {
+                return false;
+            };
+            matches!(expr.kind, k if k == SyntaxKind::NumericLiteral as u16)
+                && arena.get_literal(expr).is_some_and(|lit| lit.text == "0")
+        }
+
+        if is_undefined_like_rhs(arena, rhs) {
+            return;
+        }
+
+        fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+            if let Some(text) = arena.identifier_text_owned(idx) {
+                return Some(text);
+            }
+            let node = arena.get(idx)?;
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let left = property_access_chain(arena, access.expression)?;
+                let right = arena.identifier_text_owned(access.name_or_argument)?;
+                return Some(format!("{left}.{right}"));
+            }
+            None
+        }
+
+        fn root_identifier_index(arena: &NodeArena, idx: NodeIndex) -> Option<NodeIndex> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return Some(idx);
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                return root_identifier_index(arena, access.expression);
+            }
+            None
+        }
+
+        fn resolved_const_expando_key(
+            binder: &BinderState,
+            arena: &NodeArena,
+            sym_id: SymbolId,
+            depth: u8,
+        ) -> Option<String> {
+            if depth > 8 {
+                return None;
+            }
+
+            let symbol = binder.symbols.get(sym_id)?;
+            let decl_idx = if symbol.value_declaration.is_some() {
+                symbol.value_declaration
+            } else {
+                symbol
+                    .declarations
+                    .iter()
+                    .copied()
+                    .find(|decl| decl.is_some())?
+            };
+            if !arena.is_const_variable_declaration(decl_idx) {
+                return None;
+            }
+
+            let decl_node = arena.get(decl_idx)?;
+            let var_decl = arena.get_variable_declaration(decl_node)?;
+            let init_idx = var_decl.initializer;
+            if init_idx.is_none() {
+                return None;
+            }
+            let init_node = arena.get(init_idx)?;
+
+            match init_node.kind {
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                {
+                    arena.get_literal(init_node).map(|lit| lit.text.clone())
+                }
+                k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                    let unary = arena.get_unary_expr(init_node)?;
+                    let operand = arena.get(unary.operand)?;
+                    if operand.kind != SyntaxKind::NumericLiteral as u16 {
+                        return None;
+                    }
+                    let lit = arena.get_literal(operand)?;
+                    match unary.operator {
+                        k if k == SyntaxKind::MinusToken as u16 => Some(format!("-{}", lit.text)),
+                        k if k == SyntaxKind::PlusToken as u16 => Some(lit.text.clone()),
+                        _ => None,
+                    }
+                }
+                k if k == SyntaxKind::Identifier as u16 => {
+                    let name = arena.identifier_text_owned(init_idx)?;
+                    let next_sym = binder.file_locals.get(&name)?;
+                    resolved_const_expando_key(binder, arena, next_sym, depth + 1)
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    symbol_call(arena, init_idx).then(|| format!("__unique_{}", sym_id.0))
+                }
+                k if k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION =>
+                {
+                    let assertion = arena.get_type_assertion(init_node)?;
+                    let inner = arena.get(assertion.expression)?;
+                    match inner.kind {
+                        k if k == SyntaxKind::StringLiteral as u16
+                            || k == SyntaxKind::NumericLiteral as u16
+                            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                        {
+                            arena.get_literal(inner).map(|lit| lit.text.clone())
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+
+        fn expando_member_key(
+            binder: &BinderState,
+            arena: &NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            match node.kind {
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let access = arena.get_access_expr(node)?;
+                    let name_node = arena.get(access.name_or_argument)?;
+                    arena
+                        .get_identifier(name_node)
+                        .map(|ident| ident.escaped_text.clone())
+                }
+                syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                    let access = arena.get_access_expr(node)?;
+                    let key_node = arena.get(access.name_or_argument)?;
+                    match key_node.kind {
+                        k if k == SyntaxKind::Identifier as u16 => {
+                            let ident = arena.get_identifier(key_node)?;
+                            binder
+                                .file_locals
+                                .get(&ident.escaped_text)
+                                .and_then(|sym_id| {
+                                    resolved_const_expando_key(binder, arena, sym_id, 0)
+                                })
+                                .or_else(|| Some(ident.escaped_text.clone()))
+                        }
+                        k if k == SyntaxKind::StringLiteral as u16
+                            || k == SyntaxKind::NumericLiteral as u16
+                            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                        {
+                            arena.get_literal(key_node).map(|lit| lit.text.clone())
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+
+        let Some(lhs_node) = arena.get(lhs) else {
+            return;
+        };
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return;
+        }
+        let Some(access) = arena.get_access_expr(lhs_node) else {
+            return;
+        };
+        let Some(prop_name) = expando_member_key(self, arena, lhs) else {
+            return;
+        };
+
+        let Some(obj_key) = property_access_chain(arena, access.expression) else {
+            return;
+        };
+        let root_name = obj_key.split('.').next().unwrap_or_default();
+        if root_name.is_empty() {
+            return;
+        }
+
+        // CommonJS export chains like `module.exports.foo = ...` and
+        // `module.exports.foo.bar = ...` don't resolve through `file_locals`
+        // because `module` is not a user-declared symbol. Track them directly
+        // so the checker can reuse one expando summary path for property reads
+        // and forward-reference TS2565 checks.
+        if obj_key == "module.exports"
+            || obj_key.starts_with("module.exports.")
+            || obj_key == "exports"
+            || obj_key.starts_with("exports.")
+        {
+            Arc::make_mut(&mut self.expando_properties)
+                .entry(obj_key)
+                .or_default()
+                .insert(prop_name);
+            return;
+        }
+
+        // Resolve the root identifier through the enclosing scope chain so nested
+        // function/value roots share the same expando summary path as top-level ones.
+        let Some(root_ident) = root_identifier_index(arena, access.expression) else {
+            return;
+        };
+        let Some(sym_id) = self.resolve_identifier(arena, root_ident) else {
+            return;
+        };
+        let Some(symbol) = self.symbols.get(sym_id) else {
+            return;
+        };
+
+        let is_js_like_source = arena.source_files.first().is_some_and(|source_file| {
+            let file_name = source_file.file_name.to_ascii_lowercase();
+            !source_file.is_declaration_file
+                && (file_name.ends_with(".js")
+                    || file_name.ends_with(".jsx")
+                    || file_name.ends_with(".mjs")
+                    || file_name.ends_with(".cjs"))
+        });
+
+        // Track for functions and namespace-like roots. Class roots are only
+        // expando-capable in JS files; TS files must keep `class C {} C.x = 1`
+        // as a TS2339 error.
+        //
+        // Don't track prototype element-access expandos (e.g.
+        // `F.prototype[sym] = val`). TSC's late-bound assignment
+        // declarations are unsupported for prototype chains, so we
+        // should emit TS7053 rather than suppress it.
+        let is_prototype_element_access = obj_key.split('.').any(|segment| segment == "prototype")
+            && lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+        let is_function_or_namespace_root = (symbol.flags
+            & (symbol_flags::FUNCTION
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE))
+            != 0;
+        let is_js_class_root = is_js_like_source && (symbol.flags & symbol_flags::CLASS) != 0;
+        if ((is_function_or_namespace_root && (symbol.flags & symbol_flags::CLASS) == 0)
+            || is_js_class_root)
+            && !is_prototype_element_access
+        {
+            Arc::make_mut(&mut self.expando_properties)
+                .entry(obj_key.clone())
+                .or_default()
+                .insert(prop_name);
+            return;
+        }
+
+        // Also track for variables initialized with function/class/object-literal expressions
+        // (e.g. `var X = function(){}; X.prop = 1` or `var X = {}; X.prop = 1`)
+        // For typed variables, only track function/arrow inits (expando function pattern).
+        if (symbol.flags & symbol_flags::VARIABLE) != 0 {
+            let decl_idx = symbol.value_declaration;
+            if decl_idx.is_none() {
+                return;
+            }
+            let Some(decl_node) = arena.get(decl_idx) else {
+                return;
+            };
+            let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+                return;
+            };
+            if var_decl.initializer.is_none() {
+                return;
+            }
+            let Some(init_node) = arena.get(var_decl.initializer) else {
+                return;
+            };
+            let has_type_annotation = var_decl.type_annotation.is_some();
+            let is_function_like = init_node.is_function_expression_or_arrow();
+            let is_property_access_lhs =
+                lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+            let is_expando_init = is_function_like
+                || (is_property_access_lhs
+                    && !has_type_annotation
+                    && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                        || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION));
+            if is_expando_init {
+                Arc::make_mut(&mut self.expando_properties)
+                    .entry(obj_key)
+                    .or_default()
+                    .insert(prop_name);
+            }
+        }
+    }
+}

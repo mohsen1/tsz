@@ -10,12 +10,13 @@
 //! - `check_type_node` — recursive type node validation (mapped types, conditionals, etc.)
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
+mod type_query_flow;
+
 use super::alias_defid_visited_pool::with_alias_defid_visited;
 use crate::state::CheckerState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 #[inline]
@@ -621,120 +622,6 @@ impl<'a> CheckerState<'a> {
         }
 
         None
-    }
-
-    fn check_variance_annotations_supported_for_type_alias(
-        &mut self,
-        alias: &tsz_parser::parser::node::TypeAliasData,
-    ) -> bool {
-        let Some(type_params) = &alias.type_parameters else {
-            return true;
-        };
-
-        let variance_supported = self.type_alias_body_supports_variance_annotations(alias);
-        if variance_supported {
-            return true;
-        }
-
-        let mut emitted_unsupported_variance_diagnostic = false;
-        for param_idx in type_params.nodes.iter().copied() {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
-                continue;
-            };
-            if self.node_contains_any_parse_error(param.name)
-                || self.type_parameter_name_is_variance_keyword(param.name)
-            {
-                continue;
-            }
-            let Some(modifiers) = param.modifiers.as_ref() else {
-                continue;
-            };
-            let Some(variance_modifier_idx) =
-                modifiers.nodes.iter().copied().find(|&modifier_idx| {
-                    self.ctx
-                        .arena
-                        .get(modifier_idx)
-                        .is_some_and(|modifier_node| {
-                            matches!(
-                                modifier_node.kind,
-                                k if k == SyntaxKind::InKeyword as u16
-                                    || k == SyntaxKind::OutKeyword as u16
-                            )
-                        })
-                })
-            else {
-                continue;
-            };
-
-            self.error_at_node(
-                variance_modifier_idx,
-                crate::diagnostics::diagnostic_messages::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
-                crate::diagnostics::diagnostic_codes::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
-            );
-            emitted_unsupported_variance_diagnostic = true;
-        }
-
-        !emitted_unsupported_variance_diagnostic
-    }
-
-    fn type_alias_has_variance_annotation_to_check(
-        &self,
-        type_parameters: Option<&tsz_parser::parser::base::NodeList>,
-    ) -> bool {
-        let Some(type_params) = type_parameters else {
-            return false;
-        };
-
-        type_params.nodes.iter().copied().any(|param_idx| {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                return false;
-            };
-            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
-                return false;
-            };
-            let Some(modifiers) = &param.modifiers else {
-                return false;
-            };
-
-            let mut declared_in = false;
-            let mut declared_out = false;
-            for modifier_idx in modifiers.nodes.iter().copied() {
-                let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
-                    continue;
-                };
-                declared_in |= modifier_node.kind == SyntaxKind::InKeyword as u16;
-                declared_out |= modifier_node.kind == SyntaxKind::OutKeyword as u16;
-            }
-
-            declared_in != declared_out
-        })
-    }
-
-    fn type_alias_body_supports_variance_annotations(
-        &self,
-        alias: &tsz_parser::parser::node::TypeAliasData,
-    ) -> bool {
-        self.ctx.arena.kind_at(alias.type_node).is_some_and(|kind| {
-            kind == syntax_kind_ext::TYPE_LITERAL
-                || kind == syntax_kind_ext::FUNCTION_TYPE
-                || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                || kind == syntax_kind_ext::MAPPED_TYPE
-        })
-    }
-
-    fn type_parameter_name_is_variance_keyword(&self, name_idx: NodeIndex) -> bool {
-        if matches!(
-            self.get_identifier_text_from_idx(name_idx).as_deref(),
-            Some("in" | "out")
-        ) {
-            return true;
-        }
-        self.ctx.arena.get(name_idx).is_some_and(|node| {
-            node.kind == SyntaxKind::InKeyword as u16 || node.kind == SyntaxKind::OutKeyword as u16
-        })
     }
 
     /// Walk the alias body AST and return the AST node of the last
@@ -1344,13 +1231,22 @@ impl<'a> CheckerState<'a> {
     /// - Mapped types (check constraint is valid key type via TS2322, recurse into template)
     pub(crate) fn check_type_node(&mut self, node_idx: NodeIndex) {
         let nested_in_type_literal = self.type_node_is_nested_in_type_literal(node_idx);
-        self.check_type_node_with_literal_context(node_idx, nested_in_type_literal);
+        let scope_key = self.type_reference_arg_validation_scope_key();
+        let active_alias_key = self.active_resolving_alias_set_key();
+        self.check_type_node_with_literal_context(
+            node_idx,
+            nested_in_type_literal,
+            scope_key,
+            active_alias_key,
+        );
     }
 
     fn check_type_node_with_literal_context(
         &mut self,
         node_idx: NodeIndex,
         nested_in_type_literal: bool,
+        scope_key: u64,
+        active_alias_key: u64,
     ) {
         if node_idx == NodeIndex::NONE {
             return;
@@ -1358,11 +1254,41 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return;
         };
+        let validation_cache_key = (
+            node_idx.0,
+            nested_in_type_literal,
+            scope_key,
+            active_alias_key,
+        );
+        if self
+            .ctx
+            .type_reference_validation_caches
+            .type_node_validation
+            .contains(&validation_cache_key)
+        {
+            return;
+        }
+        let diagnostics_before = self.ctx.diagnostics.len();
         let child_nested_in_type_literal =
             nested_in_type_literal || node.kind == syntax_kind_ext::TYPE_LITERAL;
         macro_rules! check_child_type_node {
             ($checker:expr, $child:expr) => {
-                $checker.check_type_node_with_literal_context($child, child_nested_in_type_literal)
+                $checker.check_type_node_with_literal_context(
+                    $child,
+                    child_nested_in_type_literal,
+                    scope_key,
+                    active_alias_key,
+                )
+            };
+        }
+        macro_rules! check_child_type_node_in_current_scope {
+            ($checker:expr, $child:expr) => {
+                $checker.check_type_node_with_literal_context(
+                    $child,
+                    child_nested_in_type_literal,
+                    $checker.type_reference_arg_validation_scope_key(),
+                    $checker.active_resolving_alias_set_key(),
+                )
             };
         }
 
@@ -1395,30 +1321,36 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(type_arguments) = &type_ref.type_arguments
-                {
-                    for &arg_idx in &type_arguments.nodes {
-                        check_child_type_node!(self, arg_idx);
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                    let is_bare_scoped_type_parameter = self
+                        .type_ref_is_bare_scoped_type_parameter(
+                            type_ref.type_name,
+                            type_ref.type_arguments.as_ref(),
+                        );
+                    if !is_bare_scoped_type_parameter {
+                        if let Some(type_arguments) = &type_ref.type_arguments {
+                            for &arg_idx in &type_arguments.nodes {
+                                check_child_type_node!(self, arg_idx);
+                            }
+                        }
+                        if let Some(sym_id) = self
+                            .resolve_type_symbol_for_lowering(type_ref.type_name)
+                            .map(tsz_binder::SymbolId)
+                            && (self.ctx.symbol_resolution_set.contains(&sym_id)
+                                || self.type_alias_reaches_resolving_alias(sym_id))
+                        {
+                            return;
+                        }
+                        if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
+                            let _ = if nested_in_type_literal {
+                                self.get_type_from_type_node_in_type_literal(node_idx)
+                            } else {
+                                self.get_type_from_type_node(node_idx)
+                            };
+                        }
+                        self.check_styled_component_inner_component_constraint(node_idx);
                     }
                 }
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(sym_id) = self
-                        .resolve_type_symbol_for_lowering(type_ref.type_name)
-                        .map(tsz_binder::SymbolId)
-                    && (self.ctx.symbol_resolution_set.contains(&sym_id)
-                        || self.type_alias_reaches_resolving_alias(sym_id))
-                {
-                    return;
-                }
-                if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
-                    let _ = if nested_in_type_literal {
-                        self.get_type_from_type_node_in_type_literal(node_idx)
-                    } else {
-                        self.get_type_from_type_node(node_idx)
-                    };
-                }
-                self.check_styled_component_inner_component_constraint(node_idx);
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
@@ -1440,12 +1372,15 @@ impl<'a> CheckerState<'a> {
                                             self.ctx.arena.get_parameter(param_node)
                                         && param.type_annotation != NodeIndex::NONE
                                     {
-                                        check_child_type_node!(self, param.type_annotation);
+                                        check_child_type_node_in_current_scope!(
+                                            self,
+                                            param.type_annotation
+                                        );
                                     }
                                 }
                             }
                             if sig.type_annotation != NodeIndex::NONE {
-                                check_child_type_node!(self, sig.type_annotation);
+                                check_child_type_node_in_current_scope!(self, sig.type_annotation);
                             }
                             self.pop_type_parameters(type_param_updates);
                             continue;
@@ -1546,7 +1481,7 @@ impl<'a> CheckerState<'a> {
                         if !check_is_type_param {
                             let infer_pushes =
                                 self.push_infer_bindings_from_extends(cond.extends_type);
-                            check_child_type_node!(self, cond.true_type);
+                            check_child_type_node_in_current_scope!(self, cond.true_type);
                             self.pop_infer_bindings(infer_pushes);
                         }
                     }
@@ -1602,12 +1537,12 @@ impl<'a> CheckerState<'a> {
                         pushed_name = Some((name, previous));
                     }
                     if mapped.type_node != NodeIndex::NONE {
-                        check_child_type_node!(self, mapped.type_node);
+                        check_child_type_node_in_current_scope!(self, mapped.type_node);
                     }
                     // Also recurse into the name_type (the `as` clause) which may
                     // reference the mapped type parameter.
                     if mapped.name_type != NodeIndex::NONE {
-                        check_child_type_node!(self, mapped.name_type);
+                        check_child_type_node_in_current_scope!(self, mapped.name_type);
                     }
                     if let Some((name, previous)) = pushed_name {
                         if let Some(prev_type) = previous {
@@ -1661,11 +1596,11 @@ impl<'a> CheckerState<'a> {
                                 .then_some(param.type_annotation)
                         })();
                         if let Some(param_type_annotation) = param_type_annotation {
-                            check_child_type_node!(self, param_type_annotation);
+                            check_child_type_node_in_current_scope!(self, param_type_annotation);
                         }
                     }
                     if type_annotation.is_some() {
-                        check_child_type_node!(self, type_annotation);
+                        check_child_type_node_in_current_scope!(self, type_annotation);
                     }
                     self.check_rest_parameter_types(&parameters);
                     self.pop_type_parameters(tp_updates);
@@ -1701,6 +1636,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => {}
+        }
+
+        if self.ctx.diagnostics.len() == diagnostics_before {
+            self.ctx
+                .type_reference_validation_caches
+                .type_node_validation
+                .insert(validation_cache_key);
         }
     }
 
@@ -1875,118 +1817,5 @@ impl<'a> CheckerState<'a> {
                 )
             })
             .collect()
-    }
-
-    /// Walk a type node AST subtree to find `TYPE_QUERY` nodes (`typeof expr`)
-    /// and pre-compute the flow-narrowed type of each expression.
-    ///
-    /// This is called during `check_type_alias_declaration` so that when the
-    /// type alias body is later lowered by `ensure_type_alias_resolved`, the
-    /// `TypeLowering` can use these pre-computed types instead of creating
-    /// deferred `TypeQuery` types that would lose flow narrowing information.
-    fn precompute_type_query_flow_types(&mut self, node_idx: NodeIndex) {
-        if node_idx == NodeIndex::NONE {
-            return;
-        }
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return;
-        };
-
-        if node.kind == syntax_kind_ext::TYPE_QUERY {
-            // Found a `typeof expr` in type position — compute the flow-narrowed
-            // type of the expression and store it in node_types.
-            if let Some(type_query) = self.ctx.arena.get_type_query(node) {
-                let expr_name = type_query.expr_name;
-                if expr_name != NodeIndex::NONE && !self.ctx.node_types.contains_key(&expr_name.0) {
-                    let narrowed = self.get_type_of_identifier(expr_name);
-                    if narrowed != TypeId::ERROR {
-                        self.ctx.node_types.insert(expr_name.0, narrowed);
-                    }
-                }
-            }
-            return;
-        }
-
-        // Recurse into child type nodes to find nested TYPE_QUERY nodes
-        match node.kind {
-            k if k == syntax_kind_ext::TYPE_LITERAL => {
-                if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
-                    for &member_idx in &type_lit.members.nodes {
-                        let Some(member) = self.ctx.arena.get(member_idx) else {
-                            continue;
-                        };
-                        if let Some(sig) = self.ctx.arena.get_signature(member) {
-                            if let Some(params) = &sig.parameters {
-                                for &p in &params.nodes {
-                                    if let Some(pn) = self.ctx.arena.get(p)
-                                        && let Some(pd) = self.ctx.arena.get_parameter(pn)
-                                    {
-                                        self.precompute_type_query_flow_types(pd.type_annotation);
-                                    }
-                                }
-                            }
-                            self.precompute_type_query_flow_types(sig.type_annotation);
-                        } else if let Some(prop) = self.ctx.arena.get_property_decl(member) {
-                            self.precompute_type_query_flow_types(prop.type_annotation);
-                        } else if let Some(idx_sig) = self.ctx.arena.get_index_signature(member) {
-                            self.precompute_type_query_flow_types(idx_sig.type_annotation);
-                        }
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
-                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-                    for &child in &composite.types.nodes {
-                        self.precompute_type_query_flow_types(child);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::ARRAY_TYPE => {
-                if let Some(arr) = self.ctx.arena.get_array_type(node) {
-                    self.precompute_type_query_flow_types(arr.element_type);
-                }
-            }
-            k if k == syntax_kind_ext::TUPLE_TYPE => {
-                if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
-                    for &elem in &tuple.elements.nodes {
-                        self.precompute_type_query_flow_types(elem);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
-                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                    self.precompute_type_query_flow_types(wrapped.type_node);
-                }
-            }
-            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-                if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
-                    self.precompute_type_query_flow_types(indexed.object_type);
-                    self.precompute_type_query_flow_types(indexed.index_type);
-                }
-            }
-            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
-                if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
-                    self.precompute_type_query_flow_types(cond.check_type);
-                    self.precompute_type_query_flow_types(cond.extends_type);
-                    self.precompute_type_query_flow_types(cond.true_type);
-                    self.precompute_type_query_flow_types(cond.false_type);
-                }
-            }
-            k if k == syntax_kind_ext::MAPPED_TYPE => {
-                if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
-                    self.precompute_type_query_flow_types(mapped.type_node);
-                }
-            }
-            k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(args) = &type_ref.type_arguments
-                {
-                    for &arg in &args.nodes {
-                        self.precompute_type_query_flow_types(arg);
-                    }
-                }
-            }
-            _ => {}
-        }
     }
 }
