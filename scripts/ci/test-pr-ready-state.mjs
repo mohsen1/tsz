@@ -143,6 +143,12 @@ assert.match(
   "edited PR events should refresh body/ready-state gates without publishing protected CI Summary",
 );
 
+assert.match(
+  ciWorkflow,
+  /scripts\/ci\/\(ci-resources\|gcp-full-ci\|github-suite\|gcp-cache\|suite-metadata\|build-dist\|dist\|wasm\)/,
+  "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",
+);
+
 assert.doesNotMatch(
   ciWorkflow,
   /CI run superseded[\s\S]+?sys\.exit\(0\)/,

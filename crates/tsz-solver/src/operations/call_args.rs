@@ -565,16 +565,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if !self.rest_type_needs_aggregate_argument_check(rest_type) {
             return None;
         }
+        let rest_args = &arg_types[rest_start..];
+        let has_spread_marker_arg = rest_args.iter().any(|&arg| {
+            self.spread_argument_marker_inner(arg).is_some()
+                || self.generic_spread_argument_marker_inner(arg).is_some()
+        });
         if matches!(self.interner.lookup(rest_type), Some(TypeData::Tuple(_)))
             && crate::type_queries::contains_type_parameters_db(self.interner, rest_type)
-        {
-            return None;
-        }
-
-        let rest_args = &arg_types[rest_start..];
-        if rest_args
-            .iter()
-            .any(|&arg| self.generic_spread_argument_marker_inner(arg).is_some())
+            && !has_spread_marker_arg
+            && !self.rest_type_has_unresolved_variadic_middle_with_tail(rest_type)
         {
             return None;
         }
@@ -636,7 +635,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             self.checker.is_assignable_to(actual, aggregate_expected)
         };
-        if assignable {
+        if assignable
+            || self.aggregate_args_match_unresolved_variadic_middle(
+                rest_args,
+                aggregate_expected,
+                strict,
+            )
+        {
             return Some(None);
         }
 
@@ -646,6 +651,67 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             actual,
             fallback_return: TypeId::ERROR,
         }))
+    }
+
+    fn rest_type_has_unresolved_variadic_middle_with_tail(&self, rest_type: TypeId) -> bool {
+        let expansion = self.expand_tuple_rest(rest_type);
+        expansion.tail.iter().any(|element| !element.rest)
+            && expansion.variadic.is_some_and(|variadic| {
+                crate::type_queries::contains_type_parameters_db(self.interner, variadic)
+            })
+    }
+
+    fn aggregate_args_match_unresolved_variadic_middle(
+        &mut self,
+        rest_args: &[TypeId],
+        expected: TypeId,
+        strict: bool,
+    ) -> bool {
+        let expansion = self.expand_tuple_rest(expected);
+        let Some(variadic) = expansion.variadic else {
+            return false;
+        };
+        if expansion.tail.is_empty() {
+            return false;
+        }
+        if !crate::type_queries::contains_type_parameters_db(self.interner, variadic) {
+            return false;
+        }
+
+        let fixed_len = expansion.fixed.len();
+        let tail_len = expansion.tail.len();
+        if rest_args.len() < fixed_len + tail_len {
+            return false;
+        }
+
+        for (actual, expected) in rest_args.iter().zip(expansion.fixed.iter()) {
+            if !self.argument_assignable_to_tuple_element(*actual, expected, strict) {
+                return false;
+            }
+        }
+
+        let tail_start = rest_args.len() - tail_len;
+        for (actual, expected) in rest_args[tail_start..].iter().zip(expansion.tail.iter()) {
+            if !self.argument_assignable_to_tuple_element(*actual, expected, strict) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn argument_assignable_to_tuple_element(
+        &mut self,
+        actual: TypeId,
+        expected: &TupleElement,
+        strict: bool,
+    ) -> bool {
+        let expected = self.tuple_arg_element_type(expected);
+        if strict {
+            self.checker.is_assignable_to_strict(actual, expected)
+        } else {
+            self.checker.is_assignable_to(actual, expected)
+        }
     }
 
     pub(crate) fn arg_targets_aggregate_rest_param(
@@ -726,6 +792,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if let Some(inner) = self.spread_argument_marker_inner(arg) {
                     TupleElement {
                         type_id: self.normalize_spread_actual_type(inner),
+                        name: None,
+                        optional: false,
+                        rest: true,
+                    }
+                } else if let Some(inner) = self.generic_spread_argument_marker_inner(arg) {
+                    TupleElement {
+                        type_id: inner,
                         name: None,
                         optional: false,
                         rest: true,

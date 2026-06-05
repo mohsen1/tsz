@@ -609,17 +609,6 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
-                    // TS7039: Mapped object type implicitly has an 'any' template type.
-                    if self.ctx.no_implicit_any() && mapped.type_node.is_none() {
-                        let pos = node.pos;
-                        let len = node.end.saturating_sub(node.pos);
-                        self.ctx.error(
-                            pos,
-                            len,
-                            "Mapped object type implicitly has an 'any' template type.".to_string(),
-                            7039,
-                        );
-                    }
                     let param_binding =
                         self.push_mapped_type_param_provisional(mapped.type_parameter);
                     let is_direct_self_constraint = param_binding
@@ -656,13 +645,7 @@ impl<'a> CheckerState<'a> {
                     if mapped.type_node.is_some() {
                         self.check_type_for_missing_names(mapped.type_node);
                     } else if self.ctx.no_implicit_any() {
-                        // TS7039: Mapped object type implicitly has an 'any' template type
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.error_at_node(
-                            type_idx,
-                            diagnostic_messages::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
-                            diagnostic_codes::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
-                        );
+                        self.ctx.report_mapped_type_missing_template(type_idx);
                     }
                     if let Some(ref members) = mapped.members {
                         for &member_idx in &members.nodes {

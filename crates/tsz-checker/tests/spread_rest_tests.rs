@@ -1246,6 +1246,50 @@ f10(42, "hello", true, ...t4, false);
     );
 }
 
+#[test]
+fn generic_variadic_spread_with_fixed_suffix_uses_aggregate_rest_check() {
+    let source = r#"
+declare function pack<T extends unknown[]>(x: number, ...args: [...T, number]): T;
+function outer<U extends unknown[]>(items: U) {
+    pack(1, ...items, "middle", 2);
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
+    assert_eq!(
+        ts2345_count,
+        0,
+        "generic variadic spread with fixed suffix should not check the middle argument against the suffix slot: {:?}",
+        diagnostic_messages_with_code(&diagnostics, 2345)
+    );
+}
+
+#[test]
+fn variadic_rest_callback_spread_middle_uses_aggregate_rest_check() {
+    let source = r#"
+function pipe<T extends readonly unknown[]>(...args: [...T, (...values: T) => void]) {}
+declare const values: string[];
+
+pipe("foo", 123, true, (...x) => {
+    x;
+});
+pipe(...values, (...x) => {
+    x;
+});
+pipe(1, ...values, 2, (...x) => {
+    x;
+});
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
+    assert_eq!(
+        ts2345_count,
+        0,
+        "variadic rest callback calls should validate fixed suffixes and let the variadic middle absorb positional values: {:?}",
+        diagnostic_messages_with_code(&diagnostics, 2345)
+    );
+}
+
 fn assert_no_ts2345_for_generic_rest_call(source: &str) {
     let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostic_count(&diagnostics, 2345);

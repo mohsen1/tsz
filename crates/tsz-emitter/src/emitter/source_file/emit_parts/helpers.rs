@@ -279,10 +279,10 @@ impl<'a> Printer<'a> {
             }
             // Check the literal text
             let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
-                lit.text == "use strict"
+                tsz_common::directives::is_use_strict_directive(lit.raw_text.as_deref(), &lit.text)
             } else if let Some(text) = self.source_text {
                 crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
-                    .is_ok_and(|s| s == "\"use strict\"" || s == "'use strict'")
+                    .is_ok_and(tsz_common::directives::is_use_strict_directive_raw_text)
             } else {
                 false
             };
@@ -377,10 +377,9 @@ impl<'a> Printer<'a> {
             if !expr_node.is_string_literal() {
                 return None;
             }
-            let is_use_strict = self
-                .arena
-                .get_literal(expr_node)
-                .is_some_and(|lit| lit.text == "use strict");
+            let is_use_strict = self.arena.get_literal(expr_node).is_some_and(|lit| {
+                tsz_common::directives::is_use_strict_directive(lit.raw_text.as_deref(), &lit.text)
+            });
             if !is_use_strict {
                 return None;
             }
