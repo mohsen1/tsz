@@ -620,6 +620,15 @@ impl ParserState {
                 );
                 self.next_token();
             }
+        } else if started_with_binary_operator
+            && self.is_token(SyntaxKind::CloseParenToken)
+            && self.speculate(|parser| {
+                parser.next_token();
+                parser.is_token(SyntaxKind::ColonToken)
+            })
+        {
+            self.next_token();
+            self.next_token();
         } else if !self.can_parse_semicolon() {
             let jsx_head_needs_semicolon = self.arena.get(expression).is_some_and(|node| {
                 matches!(
