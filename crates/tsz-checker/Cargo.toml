@@ -1471,6 +1471,9 @@ path = "tests/union_tuple_source_display_tests.rs"
 name = "distributive_conditional_default_tests"
 path = "tests/distributive_conditional_default_tests.rs"
 [[test]]
+name = "distributive_conditional_literal_display_tests"
+path = "tests/distributive_conditional_literal_display_tests.rs"
+[[test]]
 name = "distributive_alias_wrapped_conditional_tests"
 path = "tests/distributive_alias_wrapped_conditional_tests.rs"
 [[test]]
