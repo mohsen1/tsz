@@ -285,3 +285,108 @@ fn evaluate_application_reads_cache_only_with_query_db() {
         }
     }
 }
+
+/// Phase 5 — application-eval cache WRITE happens for a converging alias.
+///
+/// A normal, terminating alias application (`Box<T> = { value: T }`) must
+/// populate the per-file `application_eval_cache` so repeat use sites reuse the
+/// memoized expansion. This is the positive control for the limit-gated write
+/// below: the gate must not suppress healthy memoization.
+#[test]
+fn evaluate_application_caches_converging_alias_result() {
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+
+    // Vary the def id and the type-parameter spelling so the rule is pinned to
+    // the structural `(DefId, args)` identity, not a name.
+    for (def_raw, param_name) in [(611u32, "T"), (733u32, "Element")] {
+        let interner = TypeInterner::new();
+        let def_id = DefId(def_raw);
+        let t_param = unconstrained_param(&interner, param_name);
+        let t_type = interner.intern(TypeData::TypeParameter(t_param));
+        let value_name = interner.intern_string("value");
+        let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
+
+        let mut env = TypeEnvironment::new();
+        let app = alias_application(
+            &interner,
+            &mut env,
+            def_id,
+            DefKind::TypeAlias,
+            body,
+            vec![t_param],
+            vec![TypeId::STRING],
+        );
+
+        let qc = QueryCache::new(&interner);
+        let mut evaluator = TypeEvaluator::with_resolver(&interner, &env).with_query_db(&qc);
+        let result = evaluator.evaluate(app);
+
+        let expected = interner.object(vec![PropertyInfo::new(value_name, TypeId::STRING)]);
+        assert_eq!(
+            result, expected,
+            "Box<string> must expand to {{ value: string }}"
+        );
+        assert_eq!(
+            qc.lookup_application_eval_cache(def_id, &[TypeId::STRING], false),
+            Some(expected),
+            "a converging alias application must populate the application-eval cache"
+        );
+    }
+}
+
+/// Phase 5 — a depth-bounded (divergent) alias application must NOT poison the
+/// per-file `application_eval_cache`.
+///
+/// `Rec<T> = Rec<T[]>` grows its argument on every step and never terminates,
+/// so evaluation bails out (TS2589-class depth/divergence) and leaves the
+/// recursion guard exceeded. The bail result is a function of the *ambient
+/// stack depth* at this use site, not of `(DefId, args)`. Persisting it would
+/// poison every other use of the alias — the "alias fan-out regression" the
+/// fix targets: a sibling `Rec<string>` evaluated on its own shallower stack
+/// would converge differently and must never read back a stale bail artifact.
+///
+/// Structural axis (CLAUDE.md §25/§26): the rule is keyed on recursion state,
+/// not a spelling, so the def id and the type-parameter name both vary.
+#[test]
+fn evaluate_application_divergent_alias_does_not_poison_cache() {
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+
+    for (def_raw, param_name, arg) in [
+        (821u32, "T", TypeId::STRING),
+        (947u32, "Item", TypeId::NUMBER),
+    ] {
+        let interner = TypeInterner::new();
+        let def_id = DefId(def_raw);
+        let t_param = unconstrained_param(&interner, param_name);
+        let t_type = interner.intern(TypeData::TypeParameter(t_param));
+        // Body: `Rec<T[]>` — the alias re-applies itself to an ever-growing
+        // argument, so the recursion diverges and must bail.
+        let grown_arg = interner.array(t_type);
+        let body = interner.application(interner.lazy(def_id), vec![grown_arg]);
+
+        let mut env = TypeEnvironment::new();
+        let app = alias_application(
+            &interner,
+            &mut env,
+            def_id,
+            DefKind::TypeAlias,
+            body,
+            vec![t_param],
+            vec![arg],
+        );
+
+        let qc = QueryCache::new(&interner);
+        let mut evaluator = TypeEvaluator::with_resolver(&interner, &env).with_query_db(&qc);
+        // Evaluation must terminate (the guards bound it) rather than hang.
+        let _ = evaluator.evaluate(app);
+
+        assert_eq!(
+            qc.lookup_application_eval_cache(def_id, &[arg], false),
+            None,
+            "a depth-bounded alias bail must not be persisted under (DefId, args); \
+             caching it would poison every sibling use of the alias"
+        );
+    }
+}

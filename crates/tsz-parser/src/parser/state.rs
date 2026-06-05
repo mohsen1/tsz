@@ -1085,6 +1085,18 @@ impl ParserState {
         (self.context_flags & CONTEXT_FLAG_AMBIENT) != 0
     }
 
+    /// Check whether the code currently being parsed is ambient — i.e. nodes
+    /// produced here would carry `tsc`'s `NodeFlags.Ambient`. This is true inside
+    /// a `declare` declaration (tracked by [`CONTEXT_FLAG_AMBIENT`]) or anywhere
+    /// in a declaration file (the whole `.d.ts` is parsed as ambient). Grammar
+    /// checks that `tsc` skips in ambient contexts (e.g. the trailing comma after
+    /// a rest parameter, TS1013) should consult this. The cheap context-flag check
+    /// is ordered first so the file-name test is only reached when needed.
+    #[inline]
+    pub(crate) fn in_ambient_declaration(&self) -> bool {
+        self.in_ambient_context() || self.is_declaration_file()
+    }
+
     /// Check if we're currently parsing inside a parenthesized expression.
     #[inline]
     pub(crate) const fn in_parenthesized_expression_context(&self) -> bool {
