@@ -4,6 +4,7 @@
 pub(crate) mod class_navigation_helpers;
 pub(crate) mod const_enum_eval;
 pub(crate) mod contextual_calls;
+pub(crate) mod contextual_parameters;
 pub(crate) mod core;
 pub(crate) mod cycle_guard;
 pub(crate) mod enum_utils;

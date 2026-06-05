@@ -19,6 +19,7 @@
 //! exports.default = myFunc;
 //! ```
 
+use super::module_commonjs_bindings::collect_declaration_names;
 use crate::transforms::emit_utils::{
     identifier_text as get_identifier_text, is_valid_identifier_name, specifier_name_text,
 };
@@ -1893,124 +1894,6 @@ pub fn emit_reexport_property(export_name: &str, module_var: &str, import_name: 
     )
 }
 
-/// Collect exported names from a variable declaration (identifier or binding pattern).
-fn collect_declaration_names(arena: &NodeArena, decl_idx: NodeIndex, exports: &mut Vec<String>) {
-    let Some(decl_node) = arena.get(decl_idx) else {
-        return;
-    };
-
-    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-        if let Some(decl_list) = arena.get_variable(decl_node) {
-            for &inner_decl_idx in &decl_list.declarations.nodes {
-                collect_declaration_names(arena, inner_decl_idx, exports);
-            }
-        }
-        return;
-    }
-
-    if let Some(decl) = arena.get_variable_declaration(decl_node) {
-        collect_binding_names(arena, decl.name, exports);
-    }
-}
-
-fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, exports: &mut Vec<String>) {
-    if name_idx.is_none() {
-        return;
-    }
-
-    let Some(node) = arena.get(name_idx) else {
-        return;
-    };
-
-    if node.kind == SyntaxKind::Identifier as u16 {
-        if let Some(id) = arena.get_identifier(node) {
-            exports.push(id.escaped_text.clone());
-        }
-        return;
-    }
-
-    match node.kind {
-        k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
-            || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
-        {
-            if let Some(pattern) = arena.get_binding_pattern(node) {
-                for &elem_idx in &pattern.elements.nodes {
-                    collect_binding_names_from_element(arena, elem_idx, exports);
-                }
-            }
-        }
-        k if k == syntax_kind_ext::BINDING_ELEMENT => {
-            if let Some(elem) = arena.get_binding_element(node) {
-                collect_binding_names(arena, elem.name, exports);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_binding_names_from_element(
-    arena: &NodeArena,
-    elem_idx: NodeIndex,
-    exports: &mut Vec<String>,
-) {
-    if elem_idx.is_none() {
-        return;
-    }
-
-    let Some(elem_node) = arena.get(elem_idx) else {
-        return;
-    };
-
-    if let Some(elem) = arena.get_binding_element(elem_node) {
-        collect_binding_names(arena, elem.name, exports);
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::collect_export_names;
-    use tsz_parser::ParserState;
-
-    /// When a module has two `export namespace N {}` blocks (merged declarations),
-    /// `collect_export_names` must return `N` only once, matching tsc's behavior
-    /// for the `exports.N = void 0` initialization line.
-    #[test]
-    fn collect_export_names_deduplicates_merged_namespaces() {
-        let source = "export namespace N { export const a = 1; }\nexport namespace N { export const b = 2; }\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let sf_node = parser.arena.get(root).unwrap();
-        let stmts = parser.arena.get_source_file(sf_node).unwrap();
-        let names = collect_export_names(&parser.arena, &stmts.statements.nodes);
-
-        let n_count = names.iter().filter(|n| n.as_str() == "N").count();
-        assert_eq!(
-            n_count, 1,
-            "Merged namespace declarations should produce exactly one export name, got: {names:?}"
-        );
-    }
-
-    /// When exports are unique, deduplication should not remove anything.
-    #[test]
-    fn collect_export_names_preserves_unique_names() {
-        let source = "export const a = 1;\nexport const b = 2;\nexport function c() {}\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let sf_node = parser.arena.get(root).unwrap();
-        let stmts = parser.arena.get_source_file(sf_node).unwrap();
-        let names = collect_export_names(&parser.arena, &stmts.statements.nodes);
-
-        assert_eq!(
-            names.len(),
-            3,
-            "All unique names should be preserved: {names:?}"
-        );
-        assert!(names.contains(&"a".to_string()));
-        assert!(names.contains(&"b".to_string()));
-        assert!(names.contains(&"c".to_string()));
-    }
-}
+#[path = "module_commonjs/tests.rs"]
+mod tests;

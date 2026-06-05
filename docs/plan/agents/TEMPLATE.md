@@ -43,7 +43,7 @@ scripts/agents/list-owned-work.sh <AgentName>
 
 ## Non-Overlap Rules
 
-- Move live lane PRs to `merge-queue`, ready, refreshed draft/WIP with a signed
+- Move live lane PRs to the native merge queue, ready, refreshed draft/WIP with a signed
   blocker, evidence-linked closure, or signed handoff before new issue work.
 - Keep at most two unstacked draft PRs unless extras are intentional stack
   children or carry fresh signed blocker comments.

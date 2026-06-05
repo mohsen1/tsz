@@ -273,6 +273,59 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Negative-result fast path. A name that resolves to no global JSDoc
+        // `@typedef` anywhere in the project stays unresolved for the whole run,
+        // so re-scanning every source file's text for it on each unresolved type
+        // reference is pure repeated work (quadratic on dense `.d.ts` graphs such
+        // as `pino` + `@types/node`).
+        if self
+            .ctx
+            .jsdoc_global_typedef_lookup_cache
+            .miss_cache
+            .borrow()
+            .contains(name)
+        {
+            return None;
+        }
+
+        // Re-entrancy guard. A recursive typedef whose body references itself
+        // (`@typedef T ... T ...`) re-enters this lookup; the inner call returns
+        // `None` only as a *cycle break*, while the outermost call still resolves
+        // `T` to its type. Caching that provisional inner `None` would poison
+        // every later resolution of `T`. So only the outermost (non-re-entrant)
+        // lookup — where `None` genuinely means "no such typedef in any file" —
+        // records a miss.
+        let is_outermost = self
+            .ctx
+            .jsdoc_global_typedef_lookup_cache
+            .in_progress
+            .borrow_mut()
+            .insert(name.to_string());
+
+        let result = self.resolve_global_jsdoc_typedef_info_uncached(name);
+
+        if is_outermost {
+            self.ctx
+                .jsdoc_global_typedef_lookup_cache
+                .in_progress
+                .borrow_mut()
+                .remove(name);
+            if result.is_none() {
+                self.ctx
+                    .jsdoc_global_typedef_lookup_cache
+                    .miss_cache
+                    .borrow_mut()
+                    .insert(name.to_string());
+            }
+        }
+
+        result
+    }
+
+    fn resolve_global_jsdoc_typedef_info_uncached(
+        &mut self,
+        name: &str,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let current_file_name = self.ctx.file_name.clone();
         let current_file_idx = self.ctx.current_file_idx;
         let use_typedef_prescan = self

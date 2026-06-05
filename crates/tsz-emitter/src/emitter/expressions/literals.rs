@@ -1176,7 +1176,7 @@ impl<'a> Printer<'a> {
         }
         if is_computed {
             self.emit(prop.name);
-        } else {
+        } else if !self.emit_recovered_root_js_object_private_property_name(node, prop) {
             self.emit_property_key_name(prop.name);
         }
         self.write(": ");
@@ -1204,6 +1204,63 @@ impl<'a> Printer<'a> {
             return;
         }
         self.emit_expression(prop.initializer);
+    }
+
+    fn emit_recovered_root_js_object_private_property_name(
+        &mut self,
+        node: &Node,
+        prop: &tsz_parser::parser::node::PropertyAssignmentData,
+    ) -> bool {
+        if prop.name.is_some() || !self.should_emit_recovered_root_js_declaration_modifiers() {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(init_node) = self.arena.get(prop.initializer) else {
+            return false;
+        };
+        let Some(header) =
+            self.recovered_root_js_object_property_header_before_initializer(text, node, init_node)
+        else {
+            return false;
+        };
+        let Some((name, _)) = header.split_once(':') else {
+            return false;
+        };
+        let name = name.trim();
+        if !name.starts_with('#') {
+            return false;
+        }
+        self.write(name);
+        true
+    }
+
+    fn recovered_root_js_object_property_header_before_initializer<'b>(
+        &self,
+        text: &'b str,
+        node: &Node,
+        init_node: &Node,
+    ) -> Option<&'b str> {
+        if init_node.pos > node.pos
+            && let Ok(header) =
+                crate::safe_slice::slice(text, node.pos as usize, init_node.pos as usize)
+            && header
+                .split_once(':')
+                .is_some_and(|(name, _)| name.trim().starts_with('#'))
+        {
+            return Some(header);
+        }
+
+        let init_pos = std::cmp::min(init_node.pos as usize, text.len());
+        let start = text[..init_pos]
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| {
+                matches!(ch, '\n' | '\r' | ',' | '{').then_some(idx + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        crate::safe_slice::slice(text, start, init_pos).ok()
     }
 
     pub(in crate::emitter) fn emit_shorthand_property(&mut self, node: &Node) {

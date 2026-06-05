@@ -372,7 +372,7 @@ fn test_function_rest_infer_satisfies_array_constraint_no_ts2344() {
     // (`...args: infer A`), `A` is implicitly constrained to `unknown[]`.
     // Using `A` as a type argument to a generic that requires `T extends unknown[]`
     // must NOT produce TS2344 — TSC defers the check to conditional type evaluation.
-    // Regression test for https://github.com/mohsen1/tsz/issues/5796.
+    // Regression test for https://github.com/tsz-org/tsz/issues/5796.
     let diagnostics = compile_and_get_diagnostics(
         r#"
 interface Array<T> { length: number; [n: number]: T; }

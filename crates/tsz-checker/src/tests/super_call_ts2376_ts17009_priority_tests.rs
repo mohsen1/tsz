@@ -4,7 +4,7 @@
 //! the `this` site. It still emits TS2376 for declaration initializers and
 //! multiple pre-super `this` references in position-sensitive constructors.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/9678>
+//! Issue: <https://github.com/tsz-org/tsz/issues/9678>
 
 use crate::test_utils::check_source_diagnostics;
 

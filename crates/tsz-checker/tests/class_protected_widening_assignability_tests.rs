@@ -2,7 +2,7 @@
 //! not strictly nominal like `private`.
 //!
 //! Tracks the `binder-11-20` "augmentation drops private/protected mirror
-//! visibility" family (mohsen1/tsz#11631).
+//! visibility" family (tsz-org/tsz#11631).
 //!
 //! Structural rule under test:
 //!

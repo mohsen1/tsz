@@ -4,7 +4,7 @@
 # Usage: scripts/ci/cleanup-stale-runners.sh [--dry-run]
 set -euo pipefail
 
-REPO="${GITHUB_REPO:-mohsen1/tsz}"
+REPO="${GITHUB_REPO:-tsz-org/tsz}"
 DRY_RUN=false
 
 for arg in "$@"; do

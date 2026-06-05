@@ -7,7 +7,7 @@
 //! would trivially pass (`S[I] <: S[I]`), so the original param TypeId must
 //! be used for the assignability check instead.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/6630>
+//! Issue: <https://github.com/tsz-org/tsz/issues/6630>
 
 use tsz_checker::context::CheckerOptions;
 

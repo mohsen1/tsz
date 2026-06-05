@@ -51,6 +51,7 @@ impl<'a> Printer<'a> {
         if emit_invalid_namespace_static {
             self.write("static ");
         }
+        self.emit_recovered_root_js_declaration_modifiers(&func.modifiers, true);
 
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if func.name.is_some() {

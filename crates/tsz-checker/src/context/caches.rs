@@ -9,6 +9,10 @@ pub struct TypeReferenceValidationCaches {
     /// Type-reference argument validations that completed without diagnostics
     /// in the current lexical type-parameter scope.
     pub arg_validation: FxHashSet<(u32, u32, u64)>,
+    /// Type-node validations that completed without diagnostics in the
+    /// current lexical type-parameter scope and active alias-resolution
+    /// context.
+    pub type_node_validation: FxHashSet<(u32, bool, u64, u64)>,
     /// Syntax-guided type-reference argument instantiations in the current
     /// lexical type-parameter scope, including misses.
     pub syntax_instantiation: FxHashMap<(usize, u32, TypeId, u64), Option<TypeId>>,

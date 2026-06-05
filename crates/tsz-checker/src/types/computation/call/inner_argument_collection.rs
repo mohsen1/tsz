@@ -1318,25 +1318,11 @@
                             }
                             let refreshed_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                                 .map(|i| {
-                                    let param =
-                                        shape.params.get(i).map(|p| (p.type_id, p.rest)).or_else(
-                                            || {
-                                                let last = shape.params.last()?;
-                                                last.rest.then_some((last.type_id, true))
-                                            },
-                                        )?;
-                                    let instantiated =
-                                        crate::query_boundaries::common::instantiate_type(
-                                            self.ctx.types,
-                                            param.0,
-                                            &return_context_substitution,
-                                        );
-                                    let param_type = if param.1 {
-                                        self.rest_argument_element_type_with_env(instantiated)
-                                    } else {
-                                        instantiated
-                                    };
-                                    Some(self.normalize_contextual_call_param_type(param_type))
+                                    self.instantiated_contextual_param_type_at(
+                                        &shape.params,
+                                        i,
+                                        &return_context_substitution,
+                                    )
                                 })
                                 .collect();
                             let mut refreshed_args = self.collect_call_argument_types_with_context(

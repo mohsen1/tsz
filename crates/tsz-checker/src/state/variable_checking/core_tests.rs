@@ -1113,6 +1113,43 @@ type CreateTypeOptions<
     }
 
     #[test]
+    fn mapped_options_result_satisfies_required_options_constraint() {
+        let source = r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type | Options;
+type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+        "#;
+
+        let ts2344 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2344)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2344.len(),
+            0,
+            "Expected no TS2344 when mapped option result satisfies Required<PathsOptions>: {ts2344:?}"
+        );
+    }
+
+    #[test]
     fn mapped_type_concrete_object_constraint_reports_ts2322() {
         let source = r#"
 interface DateLike {

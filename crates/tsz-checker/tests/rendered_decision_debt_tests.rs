@@ -357,6 +357,33 @@ fn index_access_type_parameter_ts2719_uses_declared_param_names() {
 }
 
 #[test]
+fn iterator_result_return_mismatch_uses_structural_return_surface() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/assignability/assignability_diagnostics.rs"
+    ))
+    .expect("assignability diagnostics source should be readable");
+    let start = source
+        .find("fn iterator_result_return_display_mismatch")
+        .expect("iterator-result return mismatch helper should exist");
+    let body = &source[start..];
+    let end = body
+        .find("\n}\n\nfn parse_simple_type_application_display")
+        .expect("iterator-result return mismatch helper block should end before display parser");
+    let helper_body = &body[..end];
+
+    assert!(
+        !helper_body.contains("format_type(") && !helper_body.contains("function_return_display("),
+        "IteratorResult return mismatch should inspect callable return/object shape, not rendered type text"
+    );
+    assert!(
+        helper_body.contains("iterator_result_application_args")
+            && helper_body.contains("iterator_result_return_source_has_broad_done"),
+        "IteratorResult return mismatch should route through structural IteratorResult and source-return helpers"
+    );
+}
+
+#[test]
 fn missing_property_nominal_requalification_avoids_bare_rendered_name_comparison() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -416,5 +443,44 @@ fn mapped_declared_source_display_uses_finite_property_surface() {
     assert!(
         diagnostics.contains("pub(crate) fn finite_mapped_property_surface"),
         "finite mapped display classification should live in the diagnostic query boundary"
+    );
+}
+
+#[test]
+fn generic_constraint_lib_resolution_uses_structural_names() {
+    let sources = [
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/checkers/generic_checker/mod.rs"
+        ))
+        .expect("generic checker source should be readable"),
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/checkers/generic_checker/constraint_validation.rs"
+        ))
+        .expect("generic constraint validation source should be readable"),
+    ];
+
+    for source in sources {
+        assert!(
+            !source.contains("let constraint_name = self.format_type_diagnostic(constraint);"),
+            "generic constraint lib fallback must not derive a semantic decision from rendered constraint text"
+        );
+        assert!(
+            !source.contains("is_well_known_lib_type_name(&constraint_name)"),
+            "generic constraint lib fallback should prove lib identity structurally"
+        );
+    }
+
+    let generic_checker = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/generic_checker/mod.rs"
+    ))
+    .expect("generic checker source should be readable");
+    assert!(
+        generic_checker.contains("resolve_well_known_lib_constraint_type")
+            && generic_checker.contains("query_common::lazy_def_id")
+            && generic_checker.contains("query_common::get_application_lazy_def_id"),
+        "generic constraint lib fallback should inspect Lazy/Application DefIds"
     );
 }

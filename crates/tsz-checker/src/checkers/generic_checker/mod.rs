@@ -20,7 +20,61 @@ pub(crate) struct CallTypeArgumentValidation {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    fn type_reference_arg_validation_scope_key(&self) -> u64 {
+    fn resolve_well_known_lib_constraint_type(&mut self, constraint: TypeId) -> Option<TypeId> {
+        let generic_app = query_common::get_application_lazy_def_id(self.ctx.types, constraint)
+            .is_some()
+            || self
+                .ctx
+                .types
+                .get_display_alias(constraint)
+                .is_some_and(|alias| {
+                    query_common::get_application_lazy_def_id(self.ctx.types, alias).is_some()
+                });
+        if generic_app {
+            return None;
+        }
+        let name = self.well_known_lib_constraint_type_name(constraint)?;
+        self.resolve_lib_type_by_name(&name)
+    }
+
+    fn is_nominal_lib_object_constraint_type(&self, constraint: TypeId) -> bool {
+        self.well_known_lib_constraint_type_name(constraint)
+            .is_some_and(|name| self.is_nominal_lib_object_type_name(&name))
+    }
+
+    fn well_known_lib_constraint_type_name(&self, type_id: TypeId) -> Option<String> {
+        if query_common::type_application(self.ctx.types, type_id).is_some() {
+            return None;
+        }
+
+        if let Some(def_id) = query_common::lazy_def_id(self.ctx.types, type_id)
+            && let Some(name) = self.well_known_lib_constraint_def_name(def_id)
+        {
+            return Some(name);
+        }
+
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(type_id)
+            && let Some(name) = self.well_known_lib_constraint_def_name(def_id)
+        {
+            return Some(name);
+        }
+
+        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && alias != type_id
+        {
+            return self.well_known_lib_constraint_type_name(alias);
+        }
+
+        None
+    }
+
+    fn well_known_lib_constraint_def_name(&self, def_id: tsz_solver::DefId) -> Option<String> {
+        let name = self.ctx.definition_store.get_name(def_id)?;
+        let name = self.ctx.types.resolve_atom_ref(name).to_string();
+        self.is_well_known_lib_type_name(&name).then_some(name)
+    }
+
+    pub(crate) fn type_reference_arg_validation_scope_key(&self) -> u64 {
         let mut entries = self
             .ctx
             .type_parameter_scope
@@ -1082,11 +1136,8 @@ impl<'a> CheckerState<'a> {
             // like `WeakKeyTypes[keyof WeakKeyTypes]` (indexed access types) need
             // to be reduced to their concrete form (e.g., `object | symbol`) for
             // the assignability check to work correctly.
-            let constraint_name = self.format_type_diagnostic(constraint);
             let resolved_constraint = self
-                .is_well_known_lib_type_name(&constraint_name)
-                .then(|| self.resolve_lib_type_by_name(&constraint_name))
-                .flatten()
+                .resolve_well_known_lib_constraint_type(constraint)
                 .unwrap_or(constraint);
             let evaluated_constraint = self.evaluate_type_for_assignability(resolved_constraint);
             let constraint_for_check =
