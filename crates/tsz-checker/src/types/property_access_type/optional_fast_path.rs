@@ -102,7 +102,6 @@ impl<'a> CheckerState<'a> {
         };
         let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
         let cache_key = |base, name| (base, resolver_generation, name);
-        let factory = self.ctx.types.factory();
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
                 if write_presence_only {
@@ -129,13 +128,11 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 entry.type_id,
             );
-            if base_nullish.is_some()
-                && !crate::query_boundaries::common::type_contains_undefined(
+            if base_nullish.is_some() {
+                result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                     self.ctx.types,
                     result_type,
-                )
-            {
-                result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                );
             }
             if skip_result_flow_for_result {
                 self.ctx
@@ -208,13 +205,11 @@ impl<'a> CheckerState<'a> {
                     )),
                 );
                 let mut result_type = effective_write_result(refined_type_id, write_type);
-                if base_nullish.is_some()
-                    && !crate::query_boundaries::common::type_contains_undefined(
+                if base_nullish.is_some() {
+                    result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                         self.ctx.types,
                         result_type,
-                    )
-                {
-                    result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                    );
                 }
                 if skip_result_flow_for_result {
                     self.ctx
@@ -243,13 +238,11 @@ impl<'a> CheckerState<'a> {
                     property_type.map(CachedPropertyType::explicit),
                 );
                 let mut result_type = property_type.unwrap_or(TypeId::ERROR);
-                if base_nullish.is_some()
-                    && !crate::query_boundaries::common::type_contains_undefined(
+                if base_nullish.is_some() {
+                    result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                         self.ctx.types,
                         result_type,
-                    )
-                {
-                    result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                    );
                 }
                 Some(self.finalize_property_access_result(
                     idx,

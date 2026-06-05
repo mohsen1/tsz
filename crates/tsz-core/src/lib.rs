@@ -179,7 +179,7 @@ pub use tsz_emitter::declaration_emitter;
 pub use tsz_emitter::transforms;
 
 // Query-based Structural Solver (Phase 7.5)
-pub use tsz_solver;
+pub use tsz_solver::{self, self as solver_cache};
 
 // LSP (Language Server Protocol) support - re-exported from tsz-lsp workspace crate
 pub use tsz_lsp as lsp;
