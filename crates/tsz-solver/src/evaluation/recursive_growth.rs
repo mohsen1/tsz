@@ -28,12 +28,24 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     const MAX_RECURSIVE_GROWTH_STEP: u64 = 100_000;
 
     /// New maximum argument weights an alias may reach during the TS2589
-    /// detection pass before its self-recursion is treated as divergent. The
-    /// detection pass is depth-bounded (`MAX_DEF_DEPTH`) and runs in a single
-    /// evaluator, so this only needs to be below that ceiling to fire promptly;
-    /// it never sees a *terminating* recursion, which defers under free type
-    /// parameters instead of recursing.
-    const MAX_DETECTION_GROWTH_STEPS: u32 = 25;
+    /// detection pass before its self-recursion is treated as divergent.
+    ///
+    /// The detection pass is normally driven with *free* type parameters, where
+    /// a terminating alias defers under its condition and never reaches this
+    /// tracker. But the use-site TS2589 probe (`state/type_resolution`) also runs
+    /// this pass for *concrete*-argument applications of accumulator aliases that
+    /// omit a defaulted counter (e.g. `BuildTuple<40>` for
+    /// `type BuildTuple<L extends number, T extends any[] = []> =
+    ///   T['length'] extends L ? T : BuildTuple<L, [...T, any]>`). Such an alias
+    /// legitimately grows its accumulator by one element per step and *does*
+    /// terminate, reaching a new maximum weight on every step. The ceiling must
+    /// therefore match the tail-recursion iteration limit the conditional
+    /// evaluator already honours (`conditional::MAX_TAIL_RECURSION_DEPTH` =
+    /// 1000, itself tsc's tail-recursion / `instantiationCount` bound). At 1000
+    /// the detector flags genuinely unbounded linear growth at the same boundary
+    /// `tsc` reports TS2589, while exponential growth is still caught far sooner
+    /// by the per-step `MAX_RECURSIVE_GROWTH_STEP` weight ceiling.
+    const MAX_DETECTION_GROWTH_STEPS: u32 = 1000;
 
     /// Cheap structural-weight estimate for the divergent-growth detector.
     ///
