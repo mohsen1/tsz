@@ -1,4 +1,4 @@
-use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
+use crate::inference::infer::{InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::generic_call::inference_helpers::{
     is_bare_foreign_type_param, is_substantive_inference_candidate,
@@ -10,30 +10,35 @@ use crate::operations::generic_call::{
 };
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypePredicate};
+use crate::types::{ParamInfo, TypeData, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
+use super::FinishGenericCallResolutionArgs;
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn finish_generic_call_resolution(
         &mut self,
-        func: &FunctionShape,
-        arg_types: &[TypeId],
-        actual_this_type: Option<TypeId>,
-        mut infer_ctx: InferenceContext,
-        substitution: &TypeSubstitution,
-        type_param_vars: &[InferenceVar],
-        type_param_placeholder_atoms: &[tsz_common::Atom],
-        local_type_param_names: &FxHashSet<tsz_common::Atom>,
-        var_map: &FxHashMap<TypeId, InferenceVar>,
-        direct_param_vars: &FxHashSet<InferenceVar>,
-        noinfer_param_vars: &FxHashSet<InferenceVar>,
-        rest_tuple_target_type: Option<TypeId>,
-        structural_return_subst: &TypeSubstitution,
-        first_direct_primitive_mismatch: Option<(usize, TypeId, TypeId)>,
-        saw_deferred_arg: bool,
+        args: FinishGenericCallResolutionArgs<'_>,
     ) -> CallResult {
+        let FinishGenericCallResolutionArgs {
+            func,
+            arg_types,
+            actual_this_type,
+            infer_ctx,
+            substitution,
+            type_param_vars,
+            type_param_placeholder_atoms,
+            local_type_param_names,
+            var_map,
+            direct_param_vars,
+            noinfer_param_vars,
+            rest_tuple_target_type,
+            structural_return_subst,
+            first_direct_primitive_mismatch,
+            saw_deferred_arg,
+        } = args;
+        let mut infer_ctx = infer_ctx;
         // 4. Resolve inference variables
         // CRITICAL: Strengthen inter-parameter constraints before resolution
         // This ensures SCC-based cycle unification happens (commit c3ede45a9)
@@ -68,7 +73,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             if !source_subst.is_empty() {
                 infer_ctx.substitute_source_vars_in_targets(
-                    &type_param_vars,
+                    type_param_vars,
                     &source_subst,
                     self.interner,
                 );
@@ -377,7 +382,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let instantiated_constraint = instantiate_call_type(
                             self.interner,
                             constraint,
-                            &substitution,
+                            substitution,
                             actual_this_type,
                         );
                         let resolver = self
@@ -507,8 +512,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && is_bare_foreign_type_param(
                     self.interner.as_type_database(),
                     ty,
-                    &local_type_param_names,
-                    &type_param_placeholder_atoms,
+                    local_type_param_names,
+                    type_param_placeholder_atoms,
                 ) {
                 let concrete_lower_bounds = lower_bounds
                     .iter()
@@ -517,8 +522,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         is_substantive_inference_candidate(
                             self.interner.as_type_database(),
                             bound,
-                            &local_type_param_names,
-                            &type_param_placeholder_atoms,
+                            local_type_param_names,
+                            type_param_placeholder_atoms,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -545,8 +550,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let contextual_can_replace_foreign_source = is_bare_foreign_type_param(
                     self.interner.as_type_database(),
                     ty,
-                    &local_type_param_names,
-                    &type_param_placeholder_atoms,
+                    local_type_param_names,
+                    type_param_placeholder_atoms,
                 ) && infer_ctx
                     .all_candidates_are_return_type(var);
                 // When a type parameter had NO inference candidates at all
@@ -618,13 +623,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &mut infer_ctx,
                         var,
                         ty,
-                        &var_map,
+                        var_map,
                     );
                     let should_use = contextual_can_replace_foreign_source
                         || self.should_use_contextual_return_substitution(
                             ty,
                             contextual_ty,
-                            &var_map,
+                            var_map,
                         );
                     // When the variable was NOT inferred from a direct parameter match
                     // (i.e., it was inferred structurally from e.g. callback return types),
@@ -667,7 +672,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             for (name, ty) in final_subst.map().iter() {
                 let mut placeholder_visited = FxHashSet::default();
                 if structural_return_subst.get(*name) == Some(*ty)
-                    && !self.type_contains_placeholder(*ty, &var_map, &mut placeholder_visited)
+                    && !self.type_contains_placeholder(*ty, var_map, &mut placeholder_visited)
                 {
                     resolved_subst.insert(*name, *ty);
                     continue;
@@ -893,7 +898,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
             // Condition 4: the inferred type structurally contains a foreign TypeParameter.
-            if !self.type_contains_any_foreign_type_param(inferred_ty, &var_map) {
+            if !self.type_contains_any_foreign_type_param(inferred_ty, var_map) {
                 continue;
             }
             // Revert to the call-local placeholder so the argument check is

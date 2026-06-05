@@ -628,6 +628,54 @@ pub(crate) fn has_node_modules_component(path: &Path) -> bool {
     })
 }
 
+/// Directory from which a `node_modules` walk-up should begin for resolutions
+/// originating in `from_file`.
+///
+/// `tsc` performs module resolution relative to the *real* on-disk location of
+/// a file (`preserveSymlinks: false`, the default). When a package is installed
+/// through a symlink — pnpm hoists `node_modules/<pkg>` to a symlink whose
+/// target lives in an isolated `.pnpm/<pkg>@<version>/node_modules` sandbox —
+/// that sandbox holds the package's private (transitive) dependencies. Walking
+/// up from the *symlink* path only reaches the top-level `node_modules`, so
+/// transitive `@types/*` siblings referenced via `/// <reference types="..." />`
+/// or bare `import`/`require` from inside the package are missed, producing
+/// spurious `TS2688`/`TS2307`.
+///
+/// Resolving the real path of the containing directory restores parity: the
+/// walk-up then traverses the sandbox and finds the siblings. The file's
+/// program identity (its symlink-relative display path) is untouched — only the
+/// lookup anchor changes, mirroring how `tsc` separates module identity from
+/// the realpath used for resolution.
+///
+/// The probe is gated so ordinary project files never pay a `realpath` syscall:
+/// `preserveSymlinks` disables it (matching `tsc`), and the `realpath` is only
+/// taken when the file actually lives inside a symlinked `node_modules` package.
+///
+/// Use this only for *cross-package* walk-ups — resolving a different package
+/// (a bare specifier or a `/// <reference types>` sibling). Walk-ups that stay
+/// *inside* the containing package (package.json `imports`, self-reference,
+/// nearest-`package.json` mode detection) must keep the symlink-relative anchor
+/// so intra-package files retain their symlink identity (see
+/// `normalize_resolved_path`); those paths are fully reachable through the
+/// symlink and have no sandbox blind spot.
+pub(crate) fn node_modules_walkup_dir(
+    from_file: &Path,
+    base_dir: &Path,
+    options: &ResolvedCompilerOptions,
+) -> PathBuf {
+    let dir = from_file.parent().unwrap_or(base_dir);
+    // The cheap `node_modules` path scan short-circuits the per-ancestor
+    // symlink probe for ordinary project files.
+    let needs_realpath = !options.preserve_symlinks
+        && has_node_modules_component(from_file)
+        && path_has_symlinked_package_ancestor(from_file);
+    if needs_realpath {
+        canonicalize_or_owned(dir)
+    } else {
+        dir.to_path_buf()
+    }
+}
+
 pub(crate) fn is_root_alias_symlink(dir: &Path) -> bool {
     if !dir.is_absolute() {
         return false;

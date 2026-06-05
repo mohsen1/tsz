@@ -238,11 +238,7 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
-            "crates/tsz-checker/src/types/class_type/constructor.rs",
-            "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-            "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
         },
     ),
     (
@@ -592,7 +588,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "property_access_type"
         / "resolve.rs",
-        3164,
+        1035,
     ),
     (
         "Checker boundary: types/type_checking/duplicate_identifiers_helpers.rs size ratchet",
@@ -656,7 +652,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "type_checking"
         / "duplicate_identifiers.rs",
-        2914,
+        1992,
     ),
     (
         "Checker boundary: flow/control_flow/core.rs size ratchet",
@@ -667,7 +663,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "flow"
         / "control_flow"
         / "core.rs",
-        2886,
+        1823,
     ),
     (
         "Solver boundary: type_queries/flow.rs size ratchet",
@@ -706,7 +702,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "class_type"
         / "constructor.rs",
-        2690,
+        1981,
     ),
     (
         "Solver boundary: diagnostics/format/compound.rs size ratchet",
@@ -1238,7 +1234,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # rather than direct `query_boundaries::common` access.
         #
         # Ratcheted down after arch-smoke caught current stacked-branch slack.
-        3212,
+        3211,
     ),
 ]
 
