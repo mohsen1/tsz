@@ -1309,9 +1309,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // This error occurs when the type expression after the colon is missing.
         // Example: type Foo = {[P in "bar"]};  // Missing ": T" after "bar"]
         if data.type_node == ParserNodeIndex::NONE {
-            let message = "Mapped object type implicitly has an 'any' template type.";
-            self.ctx
-                .error(node.pos, node.end - node.pos, message.to_string(), 7039);
+            self.ctx.report_mapped_type_missing_template(idx);
             return TypeId::ANY;
         }
 

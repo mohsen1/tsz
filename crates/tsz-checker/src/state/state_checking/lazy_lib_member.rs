@@ -130,7 +130,10 @@ impl CheckerState<'_> {
     ///    not perform.
     /// 5. The interface name is not compiler-managed and not shadowed by a
     ///    file-local type declaration.
-    /// 6. The interface is not globally augmented (`declare global { interface
+    /// 6. The program has no global augmentations. Augmentation-aware programs
+    ///    use full materialization so global interface merge state remains
+    ///    authoritative across chained lib-interface reads.
+    /// 7. The interface is not globally augmented (`declare global { interface
     ///    X { ... } }`), which could add the accessed member out of band.
     pub(crate) fn lazy_lib_member_receiver_def_id(
         &self,
@@ -167,6 +170,9 @@ impl CheckerState<'_> {
         if self.ctx.file_local_type_shadow_for_lib_name(&name) {
             return None;
         }
+        if self.program_has_global_augmentations() {
+            return None;
+        }
         // The symbol must come from the actual/cloned lib — user interfaces (even
         // sharing a lib name) take the normal path so augmentation/merging stays
         // correct.
@@ -193,6 +199,15 @@ impl CheckerState<'_> {
             .global_augmentations
             .get(name)
             .is_some_and(|decls| !decls.is_empty())
+    }
+
+    fn program_has_global_augmentations(&self) -> bool {
+        !self.ctx.binder.global_augmentations.is_empty()
+            || self
+                .ctx
+                .global_augmentation_targets_index
+                .as_ref()
+                .is_some_and(|index| !index.is_empty())
     }
 
     /// Try to resolve `prop_name` on an eligible simple lib-interface receiver by

@@ -62,6 +62,15 @@ type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
 /// resolution caches are invalidated.
 type ExportTypeOnlyCache = FxHashMap<(String, String), Option<(SymbolId, bool)>>;
 type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
+/// Cache for [`BinderState::find_enclosing_scope`], keyed by
+/// `(arena_pointer, node_index)` -> the resolved enclosing [`ScopeId`].
+///
+/// The enclosing scope of a node is a pure positional function of its ancestor
+/// chain, so it is safe to memoize for the binder's lifetime. The walk records
+/// every node it passes through (path compression), which turns the otherwise
+/// O(nesting-depth) per-node walk — and the O(depth^2) cost of resolving every
+/// identifier in a deeply nested type like `A<A<A<...>>>` — into linear time.
+type EnclosingScopeCache = FxHashMap<(usize, u32), ScopeId>;
 /// Wrapper around `RwLock` that implements `Clone` by cloning the inner data.
 /// Used for caches that need thread-safety in parallel compilation but also
 /// need to support `BinderState::clone()` for the checker lib context optimization.
@@ -86,6 +95,7 @@ impl<T> std::ops::Deref for CloneableRwLock<T> {
 type ExportCacheStorage = CloneableRwLock<ExportCache>;
 type ExportTypeOnlyCacheStorage = CloneableRwLock<ExportTypeOnlyCache>;
 type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
+type EnclosingScopeCacheStorage = CloneableRwLock<EnclosingScopeCache>;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BinderResolutionCacheStatistics {
@@ -586,6 +596,17 @@ pub struct BinderState {
     #[serde(skip)]
     pub(crate) resolved_identifier_cache: IdentifierCacheStorage,
 
+    /// Cache for [`Self::find_enclosing_scope`] (the AST parent-pointer walk
+    /// that locates a node's nearest enclosing scope). Without it, resolving
+    /// every type reference in a deeply nested type expression re-walks the
+    /// shared ancestor chain, making resolution O(depth^2); the memo restores
+    /// linear time via path compression.
+    ///
+    /// `#[serde(skip)]`: see `resolved_export_cache`. Same lazy-rebuild
+    /// rationale — cleared in `clear_resolution_caches`.
+    #[serde(skip)]
+    pub(crate) find_enclosing_scope_cache: EnclosingScopeCacheStorage,
+
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
@@ -1005,6 +1026,10 @@ impl BinderState {
             .expect("not poisoned")
             .clear();
         self.resolved_identifier_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
+        self.find_enclosing_scope_cache
             .write()
             .expect("not poisoned")
             .clear();
