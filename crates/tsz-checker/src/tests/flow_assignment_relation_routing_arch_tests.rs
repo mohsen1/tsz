@@ -59,7 +59,9 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
     );
     assert!(
         compact_core.contains("flow_assignability_related(left,right)")
-            && compact_core.contains("flow_assignability_related(right,left)"),
+            && compact_core.contains("flow_assignability_related(right,left)")
+            && compact_core.contains("flow_assignability_related(widened,initial_type)")
+            && compact_core.contains("flow_assignability_related(assigned_type,narrowing_base,)"),
         "flow analyzer relation decisions should route through the outcome-backed helper"
     );
     assert!(

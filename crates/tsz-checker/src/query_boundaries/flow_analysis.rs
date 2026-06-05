@@ -1,7 +1,6 @@
-use smallvec::SmallVec;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
+use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
 use super::{
     assignability::{RelationFlags, RelationOutcome},
@@ -220,71 +219,6 @@ pub(crate) fn narrow_with_guard(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
-}
-
-/// Apply a type predicate discovered from a call-expression condition.
-///
-/// The checker owns matching the callee, call target, optional-chain shape, and
-/// branch. This boundary owns the solver narrowing operation plus the
-/// tsc-compatible false-branch exclusion fallback: first try the solver's
-/// predicate guard directly, then exclude the positive result or assignable
-/// union members when the direct negative guard cannot reduce the input.
-pub(crate) fn narrow_call_predicate_guard(
-    db: &dyn QueryDatabase,
-    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
-    concrete_this_type: Option<TypeId>,
-    narrowing: &NarrowingContext<'_>,
-    type_id: TypeId,
-    guard: &TypeGuard,
-    is_true_branch: bool,
-) -> TypeId {
-    let guard_sense = match guard {
-        TypeGuard::Predicate { asserts: true, .. } => GuardSense::Positive,
-        _ => GuardSense::from(is_true_branch),
-    };
-    let result = narrowing.narrow_type(type_id, guard, guard_sense);
-
-    if !is_true_branch
-        && result == type_id
-        && let TypeGuard::Predicate {
-            type_id: Some(predicate_type),
-            ..
-        } = *guard
-    {
-        let positive = narrowing.narrow_type(type_id, guard, GuardSense::Positive);
-        if positive != type_id && positive != TypeId::NEVER {
-            let excluded = narrowing.narrow_excluding_type(type_id, positive);
-            if excluded != type_id {
-                return excluded;
-            }
-        }
-
-        let members = union_members_for_type(db.as_type_database(), type_id)
-            .unwrap_or_else(|| vec![type_id].into());
-        let excluded_members: SmallVec<[TypeId; 4]> = members
-            .iter()
-            .copied()
-            .filter(|member| {
-                flow_assignability_outcome(
-                    db,
-                    env,
-                    concrete_this_type,
-                    *member,
-                    predicate_type,
-                    false,
-                )
-                .related
-            })
-            .collect();
-        if !excluded_members.is_empty() {
-            let excluded = narrowing.narrow_excluding_types(type_id, &excluded_members);
-            if excluded != type_id {
-                return excluded;
-            }
-        }
-    }
-
-    result
 }
 
 /// Apply `prop in value` flow narrowing through the solver-owned guard path.
