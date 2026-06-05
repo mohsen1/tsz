@@ -1242,7 +1242,14 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # so `format_type_for_assignability_message` no longer needs a direct
         # `type_param_info(keyof_inner)` quarantine read to short-circuit the
         # anonymous-constraint evaluation path for free type parameters.
-        3209,
+        #
+        # Bumped by 4 for #10867 generic interface/class diagnostic source
+        # display: the display-only source formatter needs application base,
+        # lazy definition, and free-type-parameter checks before preserving the
+        # as-written nominal reference. Removal condition remains #8225
+        # narrowing these common-barrel calls behind a dedicated diagnostic
+        # source-display query.
+        3213,
     ),
 ]
 
