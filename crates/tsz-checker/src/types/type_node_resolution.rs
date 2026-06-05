@@ -95,6 +95,68 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         Some(target_sym_id)
     }
 
+    /// Like [`resolve_import_alias_type_target_symbol`] but looks up the symbol
+    /// from `decl_binder` rather than `self.ctx.binder`, and derives the source
+    /// file index from `decl_arena` rather than falling back to
+    /// `self.ctx.current_file_idx`.
+    ///
+    /// Used when lowering cross-file type alias bodies: the `name_resolver` and
+    /// `def_id_resolver` closures inside `ensure_type_alias_resolved_inner`
+    /// receive raw `SymbolId`s from `decl_binder` (the declaring file). Without
+    /// this, import aliases in a cross-file declaring binder are invisible to
+    /// `resolve_import_alias_type_target_symbol` (which only checks
+    /// `self.ctx.binder`), so the alias's `DefId` never gets a body registered
+    /// and `resolve_lazy` falls back to the raw-number index — potentially
+    /// resolving to a same-named type from an unrelated file.
+    fn resolve_import_alias_in_decl_binder(
+        &self,
+        decl_binder: &tsz_binder::BinderState,
+        decl_arena: &NodeArena,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let symbol = decl_binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+            return None;
+        }
+        if !symbol.is_type_only {
+            return None;
+        }
+        let module_name = symbol.import_module.as_ref()?;
+        let import_name = symbol.import_name.as_deref()?;
+        if import_name == "*" {
+            return None;
+        }
+
+        let source_file_idx = self
+            .ctx
+            .get_file_idx_for_arena(decl_arena)
+            .unwrap_or(self.ctx.current_file_idx);
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_name)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.as_str();
+
+        let target_sym_id = self
+            .ctx
+            .module_exports_for_module(target_binder, target_file_name)
+            .and_then(|exports| exports.get(import_name))
+            .or_else(|| {
+                self.ctx
+                    .module_exports_for_module(target_binder, module_name)
+                    .and_then(|exports| exports.get(import_name))
+            })
+            .or_else(|| target_binder.file_locals.get(import_name))?;
+        let target_symbol = target_binder.get_symbol(target_sym_id)?;
+        if !target_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE) {
+            return None;
+        }
+        self.ctx
+            .register_symbol_file_target(target_sym_id, target_file_idx);
+        Some(target_sym_id)
+    }
+
     pub(super) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
         entity_name_text_in_arena(self.ctx.arena, idx)
     }
@@ -282,12 +344,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ) -> Option<(NodeIndex, &NodeArena)> {
         use tsz_parser::parser::syntax_kind_ext;
 
+        // When `sym_id` is a cross-file symbol (authoritative file ≠ current file),
+        // resolve the binder for that file so its declaration_arenas are searched first.
+        // Without this, `self.ctx.binder` (the current file's binder) never holds
+        // declarations for types defined in other files, and the arena falls back to
+        // `self.ctx.arena` which produces NodeIndex collisions.
+        let auth_binder: Option<&tsz_binder::BinderState> = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .filter(|&f| f != self.ctx.current_file_idx)
+            .and_then(|f| self.ctx.get_binder_for_file(f));
+
         for decl_idx in symbol.all_declarations() {
             if decl_idx.is_none() {
                 continue;
             }
 
             let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
+            // Prefer the authoritative (cross-file) binder's arenas to avoid
+            // NodeIndex collisions with the current file's binder.
+            if let Some(auth) = auth_binder {
+                if let Some(arenas) = auth.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+                }
+                if let Some(symbol_arena) = auth.symbol_arenas.get(&sym_id) {
+                    candidate_arenas.push(symbol_arena.as_ref());
+                }
+            }
             if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                 candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
             }
@@ -706,13 +789,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> Option<&tsz_binder::Symbol> {
+        // Raw `SymbolId` values are per-binder-local: different binders in the
+        // same compilation can assign the same `u32` to unrelated symbols.
+        // When `resolve_symbol_file_index` has recorded an authoritative file for
+        // `sym_id` that differs from the current checker file, return THAT file's
+        // symbol rather than the current binder's colliding symbol.
+        //
+        // Without this, cross-file type aliases passed to `ensure_type_alias_resolved`
+        // or `ensure_declared_type_params_cached` could receive the wrong symbol
+        // from the current binder (e.g. a type-parameter instead of the
+        // target interface), causing the TYPE_ALIAS / INTERFACE flag check to
+        // fail silently and leaving DefId bodies unregistered.
+        let auth_file = self.ctx.resolve_symbol_file_index(sym_id);
+        if let Some(file_idx) = auth_file
+            && file_idx != self.ctx.current_file_idx
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(sym) = binder.get_symbol(sym_id)
+        {
+            return Some(sym);
+        }
+
         self.ctx
             .binder
             .get_symbol(sym_id)
             .or_else(|| {
-                // O(1) fast-path via resolve_symbol_file_index
-                let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
-                if let Some(file_idx) = file_idx
+                // O(1) fast-path via resolve_symbol_file_index (same-file case handled above)
+                if let Some(file_idx) = auth_file
                     && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
                     && let Some(sym) = binder.get_symbol(sym_id)
                 {
@@ -770,9 +872,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         }
 
+        // When `sym_id` belongs to a different file (cross-file symbol), use that
+        // file's binder to look up declaration arenas. The current binder only has
+        // arenas for symbols declared in its own file.
+        let auth_binder: &tsz_binder::BinderState = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .filter(|&f| f != self.ctx.current_file_idx)
+            .and_then(|f| self.ctx.get_binder_for_file(f))
+            .unwrap_or(self.ctx.binder);
         let mut decls_with_arenas = Vec::new();
         for &decl_idx in &symbol.declarations {
-            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+            if let Some(arenas) = auth_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                decls_with_arenas.extend(arenas.iter().map(|arena| (decl_idx, arena.as_ref())));
+            } else if let Some(arena) = auth_binder.symbol_arenas.get(&sym_id) {
+                decls_with_arenas.push((decl_idx, arena.as_ref()));
+            } else if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+            {
+                // Fallback: also check the current binder for merged declarations.
                 decls_with_arenas.extend(arenas.iter().map(|arena| (decl_idx, arena.as_ref())));
             } else if let Some(arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
                 decls_with_arenas.push((decl_idx, arena.as_ref()));
@@ -999,6 +1116,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         self.ctx.get_or_create_def_id(referenced_sym_id)
                     }
                 };
+            // When `decl_binder` differs from the current-file binder (cross-file
+            // type-alias body lowering), symbol IDs returned by `resolve_text_symbol`
+            // belong to the declaring binder and may be import-alias symbols. Those
+            // aliases must be followed to their target so the correct `DefId` (and
+            // thus the correct type body) is obtained.  Without this step, the raw
+            // import-alias `SymbolId` is used as the key into `DefinitionStore`, and
+            // `TypeEnvironment::resolve_lazy` falls back to the file-agnostic
+            // `find_def_by_symbol` path, which returns the first-registered `DefId`
+            // for that raw numeric value — potentially a colliding symbol from an
+            // unrelated file.
+            let follow_decl_binder_alias =
+                |alias_sym_id: tsz_binder::SymbolId| -> Option<tsz_binder::SymbolId> {
+                    // The same-arena path uses `resolve_type_symbol` which already
+                    // resolves aliases; only apply this to cross-file arenas.
+                    if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        return None;
+                    }
+                    self.resolve_import_alias_in_decl_binder(decl_binder, decl_arena, alias_sym_id)
+                };
             let def_id_resolver = |n: NodeIndex| -> Option<tsz_solver::def::DefId> {
                 let (referenced_sym_id, referenced_name) =
                     if std::ptr::eq(decl_arena, self.ctx.arena) {
@@ -1011,7 +1147,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         if is_compiler_managed_type(ident_name) {
                             return None;
                         }
-                        (resolve_text_symbol(ident_name)?, ident_name.to_string())
+                        let raw_sym_id = resolve_text_symbol(ident_name)?;
+                        let effective_sym_id =
+                            follow_decl_binder_alias(raw_sym_id).unwrap_or(raw_sym_id);
+                        (effective_sym_id, ident_name.to_string())
                     };
                 let resolved_def_id = def_id_for_symbol(referenced_sym_id, &referenced_name);
                 self.ensure_declared_type_params_cached(referenced_sym_id, resolved_def_id);
@@ -1054,7 +1193,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     scoped.push_str(prefix);
                     scoped.push('.');
                     scoped.push_str(name);
-                    if let Some(referenced_sym_id) = resolve_text_symbol(&scoped) {
+                    if let Some(raw_sym_id) = resolve_text_symbol(&scoped) {
+                        let referenced_sym_id =
+                            follow_decl_binder_alias(raw_sym_id).unwrap_or(raw_sym_id);
                         let resolved = def_id_for_symbol(referenced_sym_id, &scoped);
                         self.ensure_declared_type_params_cached(referenced_sym_id, resolved);
                         if referenced_sym_id != sym_id && resolved != def_id {
@@ -1063,7 +1204,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return Some(resolved);
                     }
                 }
-                let referenced_sym_id = resolve_text_symbol(name)?;
+                let raw_sym_id = resolve_text_symbol(name)?;
+                let referenced_sym_id = follow_decl_binder_alias(raw_sym_id).unwrap_or(raw_sym_id);
                 let resolved = def_id_for_symbol(referenced_sym_id, name);
                 self.ensure_declared_type_params_cached(referenced_sym_id, resolved);
                 if referenced_sym_id != sym_id && resolved != def_id {
