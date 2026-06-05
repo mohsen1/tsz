@@ -368,7 +368,7 @@ fn compile_basic_namespace_export() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -410,7 +410,7 @@ fn compile_nested_namespace_export() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -458,7 +458,7 @@ fn compile_namespace_with_class() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -601,7 +601,7 @@ fn compile_const_enum() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -647,7 +647,7 @@ fn compile_enum_with_computed_values() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -790,7 +790,7 @@ fn compile_arrow_function_with_rest_params() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -834,7 +834,7 @@ fn compile_arrow_function_with_default_params() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -880,7 +880,7 @@ fn compile_arrow_function_in_class() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -935,7 +935,7 @@ fn compile_array_spread() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -976,7 +976,7 @@ fn compile_es5_downlevel_iteration_single_call_spread_uses_read() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "target": "es5",
             "module": "commonjs",
             "outDir": "dist",
@@ -1026,7 +1026,7 @@ fn compile_es5_array_spread_packs_sparse_spread_segments() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "target": "es5",
             "module": "commonjs",
             "outDir": "dist",
@@ -1075,7 +1075,7 @@ fn compile_object_spread() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1122,7 +1122,7 @@ fn compile_function_call_spread() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1168,7 +1168,7 @@ fn compile_basic_template_literal() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1210,7 +1210,7 @@ fn compile_multiline_template_literal() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1249,7 +1249,7 @@ fn compile_nested_template_literal() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1291,7 +1291,7 @@ fn compile_object_destructuring() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1335,7 +1335,7 @@ fn compile_array_destructuring() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1378,7 +1378,7 @@ fn compile_es5_downlevel_iteration_array_rest_reads_full_iterator() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "target": "es5",
             "module": "commonjs",
             "lib": ["es2015", "dom"],
@@ -1432,7 +1432,7 @@ fn compile_destructuring_with_defaults() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1476,7 +1476,7 @@ fn compile_optional_chaining() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1525,7 +1525,7 @@ fn compile_nullish_coalescing() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1567,7 +1567,7 @@ fn compile_optional_chaining_with_call() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1609,7 +1609,7 @@ fn compile_class_inheritance() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1659,7 +1659,7 @@ fn compile_class_static_members() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1706,7 +1706,7 @@ fn compile_class_accessors() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -1757,7 +1757,7 @@ fn compile_computed_property_names() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".", 
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
