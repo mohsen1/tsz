@@ -40,7 +40,7 @@ fn property_only_type_literal_alias_body_missing_names_covered_by_validation() {
     assert!(
         checker_source.contains("syntax_kind_ext::TYPE_LITERAL")
             && checker_source.contains("get_property_decl")
-            && checker_source.contains("prop.type_annotation.is_none()"),
+            && checker_source.contains("prop.type_annotation.is_some()"),
         "property-only type literal alias bodies should be covered by the \
          validation walk without broadening to signatures or unannotated members"
     );
