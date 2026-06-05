@@ -904,6 +904,19 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
         return interner.union(widened);
     }
 
+    // If every object candidate has a required primitive field name that no
+    // sibling has, no candidate can be a supertype of all siblings: every other
+    // sibling is missing that required field. The fallback subtype-reduction
+    // pass would keep the same list, so skip both the tournament and the
+    // fallback pairwise walk for wide disjoint object candidate sets.
+    if bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(interner, &widened) {
+        if resolver.is_some() {
+            let reduced = remove_subtypes_for_bct(interner, query_db, &widened, resolver);
+            return interner.union(reduced.to_vec());
+        }
+        return interner.union(widened);
+    }
+
     // Step 2: Find the best common type from the candidate types
     // TypeScript rule: The best common type must be one of the input types
     // For example: [Dog, Cat] -> Dog | Cat (NOT Animal, even if both extend Animal)
@@ -1025,7 +1038,7 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         return hit;
     }
 
-    if subtype_reduction_proven_noop_by_unique_required_fields(interner, types) {
+    if bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(interner, types) {
         let result: Arc<[TypeId]> = Arc::from(types.to_vec());
         if let (Some(db), Some(key)) = (query_db, cache_key) {
             db.insert_subtype_reduction_cache(key, result.clone());
@@ -1092,7 +1105,7 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
     result
 }
 
-fn subtype_reduction_proven_noop_by_unique_required_fields(
+fn bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
     interner: &dyn TypeDatabase,
     types: &[TypeId],
 ) -> bool {

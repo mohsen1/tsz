@@ -598,7 +598,10 @@ fn test_bct_unique_required_fields_prove_subtype_reduction_noop() {
     });
 
     assert!(
-        subtype_reduction_proven_noop_by_unique_required_fields(&interner, &[a, b, c]),
+        bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
+            &interner,
+            &[a, b, c]
+        ),
         "unique required public fields should prove that no object candidate is a subtype"
     );
 
@@ -622,7 +625,7 @@ fn test_bct_unique_required_fields_noop_proof_rejects_optional_and_indexed_shape
     let optional_a = interner.object(vec![PropertyInfo::opt(name_a, TypeId::NUMBER)]);
     let required_b = interner.object(vec![PropertyInfo::new(name_b, TypeId::NUMBER)]);
     assert!(
-        !subtype_reduction_proven_noop_by_unique_required_fields(
+        !bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
             &interner,
             &[optional_a, required_b]
         ),
@@ -640,7 +643,7 @@ fn test_bct_unique_required_fields_noop_proof_rejects_optional_and_indexed_shape
         ..ObjectShape::default()
     });
     assert!(
-        !subtype_reduction_proven_noop_by_unique_required_fields(
+        !bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
             &interner,
             &[indexed_a, required_b]
         ),
@@ -876,6 +879,55 @@ fn test_bct_cache_no_query_db_disables_cache() {
         stats1.subtype_reduction_cache_entries, stats0.subtype_reduction_cache_entries,
         "calls with query_db=None must NOT populate the cache"
     );
+}
+
+#[test]
+fn test_bct_unique_required_fields_skip_subtype_reduction_cache_probe() {
+    // Wide object candidate lists whose members each have a distinct required
+    // primitive field are pairwise incomparable: no sibling can be a subtype of
+    // another sibling that requires a field it does not have. BCT may therefore
+    // go straight to the fallback union without probing the subtype-reduction
+    // cache.
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let prop_alpha = interner.intern_string("alpha");
+    let prop_beta = interner.intern_string("beta");
+    let prop_gamma = interner.intern_string("gamma");
+
+    let alpha = interner.object(vec![PropertyInfo::new(prop_alpha, TypeId::NUMBER)]);
+    let beta = interner.object(vec![PropertyInfo::new(prop_beta, TypeId::STRING)]);
+    let gamma = interner.object(vec![PropertyInfo::new(prop_gamma, TypeId::BOOLEAN)]);
+
+    let stats0 = db.statistics();
+    let result = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[alpha, beta, gamma],
+        None,
+    );
+    let stats1 = db.statistics();
+
+    assert_eq!(
+        stats1.subtype_reduction_cache_entries, stats0.subtype_reduction_cache_entries,
+        "unique required-field proof should skip subtype-reduction cache population"
+    );
+    assert_eq!(
+        stats1.subtype_reduction_cache_misses, stats0.subtype_reduction_cache_misses,
+        "unique required-field proof should skip subtype-reduction cache lookup"
+    );
+
+    let Some(crate::types::TypeData::Union(list_id)) = interner.lookup(result) else {
+        panic!("expected BCT fallback to produce a union");
+    };
+    let members = interner.type_list(list_id);
+    assert_eq!(members.len(), 3);
+    assert!(members.contains(&alpha));
+    assert!(members.contains(&beta));
+    assert!(members.contains(&gamma));
 }
 
 #[test]
