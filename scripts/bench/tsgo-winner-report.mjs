@@ -98,6 +98,20 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       url: "https://github.com/tsz-org/tsz/issues/8858",
     },
   ],
+  [
+    "200 generic functions",
+    {
+      owner: "Track 10 generic function scaling guard",
+      operation:
+        "generic async function checking with recursive DeepPartial option types and Promise<Result<T>> return construction",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^200 generic functions$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-200-generic-functions>.ts",
+      issue: 12271,
+      url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
 ]);
 
 function lossClosureForRow(row) {
