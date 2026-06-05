@@ -10,24 +10,41 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+pub(super) struct IdentifierPropertyAccessRequest {
+    pub(super) object_type: TypeId,
+    pub(super) original_object_type: TypeId,
+    pub(super) display_object_type: TypeId,
+    pub(super) skip_flow_narrowing: bool,
+    pub(super) skip_result_flow_for_result: bool,
+    pub(super) write_presence_only: bool,
+    pub(super) receiver_has_daa_error: bool,
+    pub(super) accessibility_error_emitted: bool,
+    pub(super) commonjs_named_props_disallowed: bool,
+    pub(super) is_this_access: bool,
+    pub(super) js_expando_before_assignment: bool,
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn resolve_identifier_property_access(
         &mut self,
         idx: NodeIndex,
         access: &AccessExprData,
         name_node: &Node,
-        object_type: TypeId,
-        original_object_type: TypeId,
-        mut display_object_type: TypeId,
-        skip_flow_narrowing: bool,
-        skip_result_flow_for_result: bool,
-        write_presence_only: bool,
-        receiver_has_daa_error: bool,
-        accessibility_error_emitted: bool,
-        commonjs_named_props_disallowed: bool,
-        is_this_access: bool,
-        js_expando_before_assignment: bool,
+        request: IdentifierPropertyAccessRequest,
     ) -> TypeId {
+        let IdentifierPropertyAccessRequest {
+            object_type,
+            original_object_type,
+            mut display_object_type,
+            skip_flow_narrowing,
+            skip_result_flow_for_result,
+            write_presence_only,
+            receiver_has_daa_error,
+            accessibility_error_emitted,
+            commonjs_named_props_disallowed,
+            is_this_access,
+            js_expando_before_assignment,
+        } = request;
         let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
             return TypeId::ANY;
         };
@@ -636,7 +653,7 @@ impl<'a> CheckerState<'a> {
                     let summary = self.summarize_class_chain(class_idx);
                     if summary.member_kind(property_name, false, true)
                         == Some(ClassMemberKind::MethodLike)
-                        && let Some(member_info) = summary.lookup(property_name, false, true)
+                        && let Some(member_info) = summary.member_info(property_name, false, true)
                     {
                         prop_type = member_info.type_id;
                         used_class_chain_method_type = true;
@@ -948,7 +965,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
                 {
                     let summary = self.summarize_class_chain(class_idx);
-                    if let Some(member_info) = summary.lookup(property_name, true, true) {
+                    if let Some(member_info) = summary.member_info(property_name, true, true) {
                         return self.finalize_property_access_result(
                             idx,
                             effective_write_result(member_info.type_id, Some(member_info.type_id)),
@@ -956,7 +973,7 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    if summary.lookup(property_name, false, true).is_some() {
+                    if summary.member_info(property_name, false, true).is_some() {
                         self.error_property_not_exist_at(
                             property_name,
                             object_type_for_access,
@@ -1323,7 +1340,7 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(member_info) = class_chain_summary
                         .as_ref()
-                        .and_then(|summary| summary.lookup(property_name, true, true))
+                        .and_then(|summary| summary.member_info(property_name, true, true))
                     {
                         return self.finalize_property_access_result(
                             idx,
