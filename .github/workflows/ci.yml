@@ -73,10 +73,13 @@ jobs:
               # Body/title edits can repair AgentName, project-corpus, or WIP
               # metadata without changing the PR head SHA. Refresh only the
               # metadata gates so stale failed PR-body checks can clear without
-              # asking agents to push a no-op code commit.
+              # asking agents to push a no-op code commit. Keep this off the
+              # protected "CI Summary" context: it did not run heavy CI and
+              # must not satisfy branch protection for the head SHA.
               echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
               should_run=false
               full_run=false
+              required_summary=false
               compiler_checks_required=false
             fi
             # The `labeled` event triggers on every label add. We only care
@@ -146,7 +149,7 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
@@ -398,7 +401,7 @@ jobs:
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
                     compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
-                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                       || true)
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \
@@ -594,7 +597,7 @@ jobs:
     name: lint
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
@@ -609,7 +612,7 @@ jobs:
     name: cargo-shear
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       CARGO_SHEAR_VERSION: "1.12.0"
@@ -650,7 +653,7 @@ jobs:
     name: cargo-deny
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       CARGO_DENY_VERSION: "0.19.6"
@@ -1267,21 +1270,6 @@ jobs:
 
           gate_result = gate.get("result")
           if gate_result != "success":
-              non_success = {
-                  name: data.get("result")
-                  for name, data in needs.items()
-                  if name != "gate" and data.get("result") not in ("success", "skipped")
-              }
-              if gate_result == "cancelled" and all(
-                  result == "cancelled" for result in non_success.values()
-              ):
-                  print(
-                      "CI run superseded by a newer push before gate completed: "
-                      f"gate cancelled and {len(non_success)} downstream job(s) "
-                      "cancelled, none failed. Treating as neutral — the "
-                      "superseding run provides the final status."
-                  )
-                  sys.exit(0)
               print(f"gate did not pass: {gate_result}")
               sys.exit(1)
 
@@ -1337,28 +1325,14 @@ jobs:
               })
 
           failures = []
-          cancelled_required = []
           for name, data in needs.items():
               if name == "gate" or name not in required:
                   continue
               result = data.get("result")
               if result != "success":
                   failures.append(f"{name}: {result}")
-                  if result == "cancelled":
-                      cancelled_required.append(name)
 
           if failures:
-              # If every required-job non-success is "cancelled" and there are no
-              # actual failures or timeouts, this run was superseded by a newer push
-              # (concurrency cancel-in-progress). Exit 0 so the superseding run can
-              # provide the authoritative result without this stale run blocking merge.
-              if len(cancelled_required) == len(failures):
-                  print(
-                      f"CI run superseded by a newer push: "
-                      f"{len(cancelled_required)} required job(s) cancelled, none failed. "
-                      "Treating as neutral — the superseding run provides the final status."
-                  )
-                  sys.exit(0)
               print("Required CI jobs did not pass:")
               for failure in failures:
                   print(f"  - {failure}")
