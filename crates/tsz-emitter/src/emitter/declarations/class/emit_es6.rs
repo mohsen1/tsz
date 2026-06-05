@@ -157,9 +157,14 @@ impl<'a> Printer<'a> {
                     // Skip TypeScript-only modifiers (abstract, declare, etc.)
                     // Also skip `async` — it's an error on class declarations but
                     // TSC still emits the class without the modifier.
+                    // `accessor` on class declarations is handled by
+                    // `emit_recovered_top_level_accessor_class_modifier` above,
+                    // so skip it here to avoid duplication (ESNext) or a stray
+                    // space (non-ESNext).
                     if mod_node.kind == SyntaxKind::AbstractKeyword as u16
                         || mod_node.kind == SyntaxKind::DeclareKeyword as u16
                         || mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                        || mod_node.kind == SyntaxKind::AccessorKeyword as u16
                         || (self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
@@ -179,10 +184,6 @@ impl<'a> Printer<'a> {
                         self.write("export");
                     } else if mod_node.kind == SyntaxKind::DefaultKeyword as u16 {
                         self.write("default");
-                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
-                        && self.ctx.options.target == ScriptTarget::ESNext
-                    {
-                        self.write("accessor");
                     } else {
                         self.emit(mod_idx);
                     }
