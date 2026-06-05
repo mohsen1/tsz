@@ -35,7 +35,7 @@ pub mod source_map;
 pub mod comments;
 
 // ECMAScript directive-prologue (e.g. `"use strict"`) recognition.
-pub mod directives;
+pub use common::directives;
 
 // Diagnostic codes and message templates (shared by parser and checker)
 pub mod diagnostics;

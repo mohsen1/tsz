@@ -7,10 +7,10 @@
 //!
 //! Per the ECMAScript specification, a Use Strict Directive "may not contain an
 //! `EscapeSequence` or `LineContinuation`". In other words, recognition is
-//! performed against the *verbatim source text* of the string literal — not its
+//! performed against the *verbatim source text* of the string literal - not its
 //! cooked value. So a literal that spells the space (or any character) with an
-//! escape sequence is **not** a Use Strict Directive even though its cooked value
-//! is `use strict`. TypeScript follows the same rule: its
+//! escape sequence is not a Use Strict Directive even though its cooked value is
+//! `use strict`. TypeScript follows the same rule: its
 //! `isUseStrictPrologueDirective` compares the verbatim node text against
 //! `"use strict"` / `'use strict'` rather than the unescaped string value.
 //!
@@ -29,8 +29,8 @@ const USE_STRICT_SINGLE_QUOTED: &str = "'use strict'";
 ///
 /// `raw_text` must be the string literal's source text *including* its
 /// surrounding quote characters, e.g. the 12-byte slice `"use strict"`. Forms
-/// that share the cooked value `use strict` but differ in source text — escape
-/// sequences in place of a character, alternate spacing, or trailing content —
+/// that share the cooked value `use strict` but differ in source text - escape
+/// sequences in place of a character, alternate spacing, or trailing content -
 /// are intentionally rejected to match the ECMAScript directive grammar and `tsc`.
 #[must_use]
 pub fn is_use_strict_directive_raw_text(raw_text: &str) -> bool {
