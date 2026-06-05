@@ -113,6 +113,38 @@ const narrowed: 0 = r; // TS2322 — number not assignable to 0
     );
 }
 
+/// Repeated calls in one checker run must start independent inference
+/// transactions. The first call widens a numeric literal through its callback;
+/// the second call must recompute from the string seed/callback instead of
+/// reusing the earlier numeric candidate or contextual substitution.
+#[test]
+fn repeated_contextual_calls_do_not_leak_inference_state() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function f<U>(fn: (acc: U) => U, init: U): U;
+
+const numeric = f((acc) => acc + 1, 0);
+const textual = f((acc) => acc + "!", "");
+
+const numericOk: number = numeric;
+const textualOk: string = textual;
+const numericTooNarrow: 0 = numeric;   // TS2322
+const textualTooNarrow: "" = textual; // TS2322
+"#,
+    );
+
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected independent number/string repeated-call inference, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Control: the callback return does not depend on `U` (`() => 5`), but the
 /// callback-return candidate (`5`) still combines with `init`'s `0` and widens
 /// to `number`.

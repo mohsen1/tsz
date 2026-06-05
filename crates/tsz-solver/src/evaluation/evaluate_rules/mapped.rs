@@ -1244,7 +1244,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Shared loop body for union/intersection distribution.
     ///
     /// For each member, substitutes `source` → `member` in the template (and
-    /// `name_type` if present), builds a per-member mapped type, and evaluates it.
+    /// `name_type`), interns the per-member mapped type, and routes it through
+    /// the cached `evaluate`. Identical instantiations share a `TypeId`, so the
+    /// memo collapses repeats — curbing the over-instantiation that exhausts fuel
+    /// on recursive utilities over wide intersections — and the recursion guard's
+    /// cycle detection defers a self-referential member instead of diverging.
     fn distribute_mapped_over_members(
         &mut self,
         mapped: &MappedType,
@@ -1261,15 +1265,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut memo = FxHashMap::default();
                 self.substitute_exact_type(name_type, source, member, &mut memo)
             });
-            let member_mapped = MappedType {
+            let member_id = self.interner().mapped(MappedType {
                 type_param: mapped.type_param,
                 constraint: member_keyof,
                 name_type: member_name_type,
                 template: member_template,
                 readonly_modifier: mapped.readonly_modifier,
                 optional_modifier: mapped.optional_modifier,
-            };
-            results.push(self.evaluate_mapped(&member_mapped));
+            });
+            results.push(self.evaluate(member_id));
         }
         results
     }

@@ -210,6 +210,15 @@ impl<'a> TypeFormatter<'a> {
                     return self.format(distributed);
                 }
 
+                // A variadic (spread) tuple alias instantiated with concrete
+                // arguments loses its alias symbol in tsc (spreading produces a
+                // fresh tuple), so render the flattened tuple form.
+                if let Some(flattened) =
+                    self.variadic_tuple_alias_application_display(app.base, &app.args)
+                {
+                    return self.format(flattened);
+                }
+
                 // Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
                 let base_str: Cow<'_, str> = if let Some(TypeData::Lazy(def_id)) = base_key {
