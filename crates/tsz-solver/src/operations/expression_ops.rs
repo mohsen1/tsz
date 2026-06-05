@@ -910,6 +910,10 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     // pass would keep the same list, so skip both the tournament and the
     // fallback pairwise walk for wide disjoint object candidate sets.
     if bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(interner, &widened) {
+        if resolver.is_some() {
+            let reduced = remove_subtypes_for_bct(interner, query_db, &widened, resolver);
+            return interner.union(reduced.to_vec());
+        }
         return interner.union(widened);
     }
 
