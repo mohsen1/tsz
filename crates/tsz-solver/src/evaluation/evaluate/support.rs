@@ -16,6 +16,15 @@ const MAX_LAZY_CHAIN_DEPTH: usize = 32;
 /// structurally subsumed member can be dropped.
 type MemberModifierMap = Option<FxHashMap<u32, (bool, bool)>>;
 
+/// Controls which subtype direction makes a member redundant when simplifying
+/// a union or intersection.
+enum SubtypeDirection {
+    /// member[i] <: member[j] -> member[i] is redundant (union semantics).
+    SourceSubsumedByOther,
+    /// member[j] <: member[i] -> member[i] is redundant (intersection semantics).
+    OtherSubsumedBySource,
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(super) fn cached_generic_instantiation(
