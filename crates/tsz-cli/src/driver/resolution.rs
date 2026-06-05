@@ -69,8 +69,7 @@ pub(crate) enum AmbientModuleDeclarationSpecifierPolicy {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Counting filesystem probes (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up)
-//
+// Counting filesystem probes (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up).
 // The plan calls for `resolver.is_file/is_dir/read_dir` counters so the
 // 2026-05-10 attribution decision matrix can prove (or refute) that the
 // resolver is on the hot path. Rather than sprinkle inline `inc()` calls
@@ -79,13 +78,11 @@ pub(crate) enum AmbientModuleDeclarationSpecifierPolicy {
 // in this file now use `count_is_file(p)` instead of `p.is_file()`, which
 // keeps the diff one token per call and makes future swaps to a real
 // `CountingFs` trait (the eventual T2.0 wrapper) a one-place change.
-//
 // The counter bumps themselves now live in `tsz_common::perf_counters`
 // as `record_resolver_*` helpers (sibling to the cross-arena / interner
 // helpers consolidated in #5097 / #5103 / #5112 / #5115 / #5118). Each
 // wrapper here keeps its file-local identity because it bundles the
-// counter with the underlying syscall — that's intentional grouping —
-// while the gate-and-deref pattern lives in one place.
+// counter with the underlying syscall; the gate-and-deref pattern lives in one place.
 #[inline]
 pub(super) fn count_is_file(path: &Path) -> bool {
     tsz_common::perf_counters::record_resolver_is_file();
