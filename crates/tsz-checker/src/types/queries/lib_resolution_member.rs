@@ -365,6 +365,18 @@ impl CheckerState<'_> {
         if methods.is_empty() || !type_param_symbols.is_empty() {
             return None;
         }
+        for &method_idx in methods {
+            let signature = member_arena
+                .get(method_idx)
+                .and_then(|node| member_arena.get_signature(node))?;
+            if signature
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| !params.nodes.is_empty())
+            {
+                return None;
+            }
+        }
 
         let resolver = |node_idx: NodeIndex| -> Option<u32> {
             resolve_lib_node_in_arenas(selected_binder, node_idx, decls_with_arenas, fallback_arena)

@@ -420,8 +420,13 @@ impl<'a> CheckerState<'a> {
         // already-eligible bare `Lazy` receiver so the lazy single-member fast path
         // stays engaged for `document.title` etc. See `global_value_type_override`.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
-            && let Some(value_type) =
-                self.global_value_type_override(&ident.escaped_text, object_type, access.expression)
+            && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+            && let Some(value_type) = self.global_value_type_override_for_property(
+                &ident.escaped_text,
+                object_type,
+                access.expression,
+                &prop_ident.escaped_text,
+            )
         {
             object_type = value_type;
         }

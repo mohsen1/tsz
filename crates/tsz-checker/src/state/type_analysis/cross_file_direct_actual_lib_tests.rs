@@ -727,11 +727,12 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
         crate::query_boundaries::common::lazy_def_id(state.ctx.types, document_type).is_some(),
         "Document should return a type-position Lazy ref",
     );
-    let query_selector = state
-        .resolve_simple_lib_interface_own_property("Document", "querySelector")
-        .expect("single-member DOM resolver should lower inherited method groups");
-    assert_ne!(query_selector, TypeId::ERROR);
-    assert_ne!(query_selector, TypeId::UNKNOWN);
+    assert!(
+        state
+            .resolve_simple_lib_interface_own_property("Document", "querySelector")
+            .is_none(),
+        "generic DOM method groups should fall back to full materialization",
+    );
 
     let document_value_sym_id = state
         .ctx

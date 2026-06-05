@@ -116,6 +116,32 @@ impl CheckerState<'_> {
         (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR).then_some(value_type)
     }
 
+    pub(crate) fn global_value_type_override_for_property(
+        &mut self,
+        ident_text: &str,
+        current_type: TypeId,
+        expr: NodeIndex,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        if !self.is_known_global_value_name(ident_text)
+            || self.known_global_value_has_local_shadow(expr, ident_text)
+        {
+            return None;
+        }
+        if !global_lazy_receiver_preserve_disabled()
+            && let Some(def_id) = self.lazy_lib_member_receiver_def_id(current_type)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && self
+                .resolve_simple_lib_interface_own_property(&symbol.escaped_name.clone(), prop_name)
+                .is_some()
+        {
+            return None;
+        }
+        let value_type = self.type_of_value_symbol_by_name(ident_text);
+        (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR).then_some(value_type)
+    }
+
     /// Return the `DefId` of an eligible simple lib-interface receiver when
     /// `object_type` is a bare `Lazy(DefId)` reference to one, or `None`
     /// otherwise.

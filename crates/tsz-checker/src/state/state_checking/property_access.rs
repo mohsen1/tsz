@@ -254,6 +254,11 @@ impl<'a> CheckerState<'a> {
         if let Some(result) = self.try_lazy_lib_member_property_access(object_type, prop_name) {
             return result;
         }
+        let object_type = if self.lazy_lib_member_receiver_def_id(object_type).is_some() {
+            self.resolve_property_access_base_materialized(object_type)
+        } else {
+            object_type
+        };
 
         // Ensure preconditions are ready in the environment for non-trivial
         // property-access inputs. Already-resolved/function-like inputs don't
