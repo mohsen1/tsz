@@ -198,3 +198,32 @@ fn direct_source_file_optional_param_undefined_check_uses_query_boundary() {
         "direct source-file lowering should not call the solver narrowing predicate directly"
     );
 }
+
+#[test]
+fn condition_false_branch_falsy_narrowing_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_to_falsy("),
+        "flow analysis boundary should expose solver-owned falsy narrowing"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_to_falsy("),
+        "condition false-branch truthiness narrowing should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_to_falsy(type_id)"),
+        "condition narrowing should not call solver falsy narrowing directly"
+    );
+}
