@@ -641,6 +641,10 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
         .find("await v);")
         .expect("source contains call semicolon") as u32
         + "await v)".len() as u32;
+    let call_argument = source
+        .find("await v")
+        .expect("source contains recovered call argument") as u32
+        + "await ".len() as u32;
     let final_close_brace = source
         .rfind('}')
         .expect("source contains final close brace") as u32;
@@ -694,6 +698,14 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
     ] {
         expect_diag(expected.0, expected.1, expected.2);
     }
+    assert!(
+        !has_diag(diagnostic_codes::EXPECTED, call_argument, "',' expected."),
+        "recovered dot-call tail should not report a method-parameter comma at `v`; got {diags:?}"
+    );
+    assert!(
+        !has_diag(diagnostic_codes::EXPECTED, call_semicolon, "'{' expected."),
+        "recovered dot-call tail should not require an object-method body at `;`; got {diags:?}"
+    );
 }
 
 #[test]

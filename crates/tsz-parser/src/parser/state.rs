@@ -238,6 +238,11 @@ pub struct ParserState {
     /// following `:` as a missing comma between declarators rather than a type
     /// annotation.
     pub(crate) recovered_template_literal_property_in_object: bool,
+    /// Object-literal recovery just consumed a stray `.` as a missing separator.
+    /// If the following `name(...)` is parsed as an object method only because
+    /// of that recovery, keep `tsc`'s call-tail diagnostics instead of reporting
+    /// method-parameter errors.
+    pub(crate) recovered_object_literal_dot_tail_once: bool,
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
     pub(crate) suppress_next_missing_close_paren_error_once: bool,
@@ -406,6 +411,7 @@ impl ParserState {
             suppress_object_literal_comma_once: false,
             abort_object_literal_recovery_once: false,
             recovered_template_literal_property_in_object: false,
+            recovered_object_literal_dot_tail_once: false,
             suppress_next_missing_close_paren_error_once: false,
             abort_function_signature_after_definite_assignment_tail_once: false,
             recovered_definite_assignment_empty_statement_close_brace_pos: None,
@@ -1231,9 +1237,7 @@ impl ParserState {
         }
     }
 
-    /// Parse expected token, report error if not found
-    /// Suppresses error if we already emitted an error at the current position
-    /// (to prevent cascading errors from sequential `parse_expected` calls)
+    /// Parse expected token, reporting a diagnostic if it is absent.
     pub fn parse_expected(&mut self, kind: SyntaxKind) -> bool {
         if kind == SyntaxKind::CloseParenToken && self.suppress_next_missing_close_paren_error_once
         {
@@ -1258,6 +1262,9 @@ impl ParserState {
                 self.suppress_missing_close_brace_at_eof_statement_depth = None;
                 return false;
             }
+        }
+        if kind == SyntaxKind::OpenBraceToken && self.is_token(SyntaxKind::SemicolonToken) {
+            return false;
         }
 
         if self.is_token(kind) {
@@ -1430,29 +1437,28 @@ impl ParserState {
     }
 
     pub(crate) fn parse_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        // Don't report another error if it would just be at the same position as the last error.
-        // This matches tsc's parseErrorAtPosition deduplication behavior where parser errors
-        // at the same position are suppressed (only the first one survives).
+        if code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+            && self.is_token(SyntaxKind::CloseParenToken)
+            && start == self.token_pos()
+            && self.speculate(|parser| {
+                parser.next_token();
+                parser.is_token(SyntaxKind::SemicolonToken)
+            })
+        {
+            return;
+        }
+        if code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+            && self.get_source_text().as_bytes().get(start as usize) == Some(&b')')
+            && self.get_source_text().as_bytes().get(start as usize + 1) == Some(&b';')
+        {
+            return;
+        }
         if let Some(last) = self.parse_diagnostics.last()
             && last.start == start
         {
             self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
             return;
         }
-        // tsc routes scanner errors through the same `parseErrorAtPosition`
-        // path via `scanError`, so they share the same `lastError` slot. We
-        // mirror that here: any scanner diagnostics emitted *after* our most
-        // recent parser push are the effective "lastError" tail. If the very
-        // last such scanner diagnostic shares this start, dedup applies.
-        //
-        // Crucially, scanner-side dedup does NOT advance the high-water mark
-        // — multiple parser errors at the same scanner-claimed position
-        // (e.g. malformed `0b21010;` triggers both a `,'` expected and a `;'`
-        // expected at the bad-digit position) all dedup against the same
-        // scanner diag. Advancing the mark here would consume the slot and
-        // leak the second parser error. We only advance the mark when
-        // actually pushing a parser diagnostic (below), at which point the
-        // scanner diag has been "absorbed" into our lastError tail.
         let scanner_diags = self.scanner.get_scanner_diagnostics();
         if scanner_diags.len() > self.scanner_diagnostics_high_water_mark
             && let Some(last_scanner) = scanner_diags.last()
@@ -1694,11 +1700,6 @@ impl ParserState {
                 diagnostic_codes::EXPECTED,
             );
         }
-    }
-
-    /// Error: Comma expected (TS1005) - specifically for missing commas between parameters/arguments
-    pub(crate) fn error_comma_expected(&mut self) {
-        self.error_token_expected(",");
     }
 
     pub(crate) fn current_token_has_scanner_diagnostic(&self, code: u32) -> bool {
