@@ -5,6 +5,8 @@ use crate::state::CheckerState;
 use tsz_common::Atom;
 use tsz_solver::TypeId;
 
+use super::display_recursion_guard::DisplayRecursionGuard;
+
 impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter::core) fn is_generic_excess_union_member(
         &self,
@@ -288,6 +290,11 @@ impl<'a> CheckerState<'a> {
         &self,
         ty: TypeId,
     ) -> Option<TypeId> {
+        // Bound the recursion (shared with `normalize_excess_display_type`,
+        // which this mutually recurses with) so deeply self-expanding generic
+        // types cannot overflow the stack while displaying an excess-property
+        // diagnostic (issue #12455).
+        let _display_guard = DisplayRecursionGuard::enter(ty)?;
         let shape = crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)?;
         let mut normalized = shape.as_ref().clone();
         let mut changed = false;
@@ -508,6 +515,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn strip_readonly_deep_for_excess_display(&self, ty: TypeId) -> TypeId {
+        // Bound the recursion so deeply self-expanding generic types cannot
+        // overflow the stack while stripping `readonly` for display (issue
+        // #12455).
+        let Some(_display_guard) = DisplayRecursionGuard::enter(ty) else {
+            return ty;
+        };
         let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
         else {
@@ -549,6 +562,10 @@ impl<'a> CheckerState<'a> {
         prop_name: Atom,
         ty: TypeId,
     ) -> Option<TypeId> {
+        // Bound the recursion so deeply self-expanding generic types cannot
+        // overflow the stack while narrowing an excess-property function
+        // parameter for display (issue #12455).
+        let _display_guard = DisplayRecursionGuard::enter(ty)?;
         let key_type = self.ctx.types.literal_string_atom(prop_name);
         if let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, ty) {
             let mut changed = false;

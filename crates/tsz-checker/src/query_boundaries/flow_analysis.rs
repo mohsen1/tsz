@@ -221,6 +221,27 @@ pub(crate) fn narrow_with_guard(
     narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
 }
 
+/// Apply `prop in value` flow narrowing through the solver-owned guard path.
+///
+/// The checker owns recognizing the `in` expression and extracting the property
+/// atom. This boundary owns the reusable semantic narrowing, including generic
+/// and apparent-member behavior.
+pub(crate) fn narrow_in_property(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    property_name: tsz_common::interner::Atom,
+    is_true_branch: bool,
+) -> TypeId {
+    narrow_with_guard(
+        db,
+        env,
+        type_id,
+        &TypeGuard::InProperty(property_name),
+        is_true_branch,
+    )
+}
+
 /// Keep only the falsy constituents of a flow type.
 ///
 /// This is the false-branch counterpart to truthiness guard narrowing. The

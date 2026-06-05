@@ -187,7 +187,6 @@ impl<'a> CheckerState<'a> {
             current = parent_idx;
         }
     }
-
     fn excess_property_target_display_for_site(
         &mut self,
         target: TypeId,
@@ -196,6 +195,9 @@ impl<'a> CheckerState<'a> {
         let inferred_display = self
             .format_pick_over_all_keys_as_keyof(target)
             .unwrap_or_else(|| self.format_excess_property_target_type(target));
+        if let Some(display) = self.reduced_alias_app_display(target) {
+            return display;
+        }
         if let Some((annotation_text, annotation_from_nested_container, annotation_type_node)) =
             self.excess_property_target_annotation_for_site(idx)
         {
@@ -262,7 +264,6 @@ impl<'a> CheckerState<'a> {
         }
         inferred_display
     }
-
     fn same_simple_alias_array_union_display(left: &str, right: &str) -> bool {
         fn normalized(display: &str) -> Option<(&str, &str)> {
             let mut parts = display.split(" | ");
@@ -289,7 +290,6 @@ impl<'a> CheckerState<'a> {
             _ => false,
         }
     }
-
     fn is_plain_type_alias_display(display: &str) -> bool {
         let mut chars = display.chars();
         let Some(first) = chars.next() else {

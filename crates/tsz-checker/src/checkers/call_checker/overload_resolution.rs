@@ -584,35 +584,11 @@ impl<'a> CheckerState<'a> {
                             );
                             let mut progressive_args = Vec::with_capacity(args.len());
                             for (i, &arg_idx) in args.iter().enumerate() {
-                                let contextual_params = sig
-                                    .params
-                                    .iter()
-                                    .map(|param| {
-                                        let mut instantiated_param = *param;
-                                        instantiated_param.type_id =
-                                            crate::query_boundaries::common::instantiate_type(
-                                                self.ctx.types,
-                                                param.type_id,
-                                                &progressive_sub,
-                                            );
-                                        instantiated_param
-                                    })
-                                    .collect::<Vec<_>>();
-                                let contextual_type = contextual_params
-                                    .get(i)
-                                    .map(|p| (p.type_id, p.rest))
-                                    .or_else(|| {
-                                        let last = contextual_params.last()?;
-                                        last.rest.then_some((last.type_id, true))
-                                    })
-                                    .map(|(param_type, rest)| {
-                                        let param_type = if rest {
-                                            self.rest_argument_element_type_with_env(param_type)
-                                        } else {
-                                            param_type
-                                        };
-                                        self.normalize_contextual_call_param_type(param_type)
-                                    });
+                                let contextual_type = self.instantiated_contextual_param_type_at(
+                                    &sig.params,
+                                    i,
+                                    &progressive_sub,
+                                );
                                 let arg_type = self.compute_single_call_argument_type(
                                     arg_idx,
                                     contextual_type,
@@ -1144,35 +1120,12 @@ impl<'a> CheckerState<'a> {
                         };
                         let mut progressive_args = Vec::with_capacity(args.len());
                         for (i, &arg_idx) in args.iter().enumerate() {
-                            let contextual_params = sig
-                                .params
-                                .iter()
-                                .map(|param| {
-                                    let mut instantiated_param = *param;
-                                    instantiated_param.type_id =
-                                        crate::query_boundaries::common::instantiate_type(
-                                            self.ctx.types,
-                                            param.type_id,
-                                            &progressive_sub,
-                                        );
-                                    instantiated_param
-                                })
-                                .collect::<Vec<_>>();
-                            let contextual_type = contextual_params
-                                .get(i)
-                                .map(|p| (p.type_id, p.rest))
-                                .or_else(|| {
-                                    let last = contextual_params.last()?;
-                                    last.rest.then_some((last.type_id, true))
-                                })
-                                .map(|(param_type, rest)| {
-                                    let param_type = if rest {
-                                        self.rest_argument_element_type_with_env(param_type)
-                                    } else {
-                                        param_type
-                                    };
-                                    self.normalize_contextual_call_param_type(param_type)
-                                })
+                            let contextual_type = self
+                                .instantiated_contextual_param_type_at(
+                                    &sig.params,
+                                    i,
+                                    &progressive_sub,
+                                )
                                 .or_else(|| candidate_param_types.get(i).copied().flatten());
                             let arg_type = self.compute_single_call_argument_type(
                                 arg_idx,

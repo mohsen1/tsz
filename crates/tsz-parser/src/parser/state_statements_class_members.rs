@@ -895,7 +895,7 @@ impl ParserState {
 
     /// Emit TS1031 "'declare' modifier cannot appear on class elements of this kind."
     /// at the position of the `declare` modifier in the given modifier list.
-    fn emit_declare_on_non_property_error(&mut self, modifiers: &Option<NodeList>) {
+    pub(super) fn emit_declare_on_non_property_error(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
                 if let Some(node) = self.arena.get(idx)
@@ -1491,8 +1491,8 @@ impl ParserState {
 
     /// Construct a class member after modifiers have been scanned and classified.
     ///
-    /// Dispatches to constructor, get/set accessor, index signature, mapped-type
-    /// member, and ordinary method/property declaration paths.
+    /// Dispatches to constructor, get/set accessor, index signature, and
+    /// ordinary method/property declaration paths.
     fn construct_class_member(
         &mut self,
         start_pos: u32,
@@ -1590,11 +1590,6 @@ impl ParserState {
             let sig = self.parse_index_signature_with_modifiers(mods.modifiers, start_pos);
             self.parse_semicolon();
             return sig;
-        }
-
-        // Handle mapped type member in class body: [P in K]: T (TS 4.1+)
-        if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_mapped_type_start() {
-            return self.parse_mapped_type_member();
         }
 
         // `function foo() {}` inside a class body is handled by
@@ -1909,130 +1904,5 @@ impl ParserState {
                 method_saved_flags,
             )
         }
-    }
-
-    /// Construct the body of a method class member: parse type params, parameter
-    /// list, return-type annotation, and method body.
-    fn construct_class_member_method(
-        &mut self,
-        start_pos: u32,
-        mods: ClassMemberModifierSet,
-        asterisk_token: bool,
-        name: NodeIndex,
-        question_token: bool,
-        method_saved_flags: u32,
-    ) -> NodeIndex {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        // TS1031: 'declare' modifier cannot appear on class elements of this kind
-        // (methods cannot be declared, only properties can)
-        if mods.has_declare {
-            self.emit_declare_on_non_property_error(&mods.modifiers);
-        }
-        // TS1275: 'accessor' modifier can only appear on a property declaration.
-        if mods.has_accessor {
-            self.emit_accessor_modifier_only_on_property_error(&mods.modifiers);
-        }
-
-        // Parse optional type parameters: foo<T, U>()
-        let type_parameters = self
-            .is_token(SyntaxKind::LessThanToken)
-            .then(|| self.parse_type_parameters());
-
-        let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
-        let mut body_already_consumed_by_recovery = false;
-        let parameters = if has_open_paren {
-            let saved_flags = self.context_flags;
-            if self.class_member_name_is_if_keyword(name) {
-                self.context_flags |=
-                    crate::parser::state::CONTEXT_FLAG_RECOVERED_IF_CLASS_MEMBER_PARAMETERS;
-            }
-            let parameters = self.parse_parameter_list();
-            self.context_flags = saved_flags;
-            self.parse_expected(SyntaxKind::CloseParenToken);
-            parameters
-        } else if asterisk_token {
-            // `async *` members must be methods. Missing `(` here should emit one
-            // TS1005 and recover without producing a declaration node, so we avoid
-            // downstream errors like TS2391 on malformed members.
-            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-            self.recover_from_missing_method_open_paren();
-            self.context_flags = method_saved_flags;
-            return NodeIndex::NONE;
-        } else {
-            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-            body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
-            self.make_node_list(vec![])
-        };
-
-        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_return_type()
-        } else {
-            NodeIndex::NONE
-        };
-        let recovered_if_comparison_tail =
-            self.class_member_name_is_if_keyword(name) && self.current_token_is_comparison_tail();
-
-        self.push_label_scope();
-        let body = if body_already_consumed_by_recovery {
-            NodeIndex::NONE
-        } else if recovered_if_comparison_tail {
-            self.arena.add_block(
-                syntax_kind_ext::BLOCK,
-                self.token_pos(),
-                self.token_pos(),
-                crate::parser::node::BlockData {
-                    statements: self.make_node_list(Vec::new()),
-                    multi_line: false,
-                },
-            )
-        } else if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
-        } else {
-            // Consume the semicolon if present (method signature).
-            // Use can_parse_semicolon() which handles ASI: a preceding line break
-            // acts as an implicit semicolon (matching tsc's parseFunctionBlockOrSemicolon).
-            if self.can_parse_semicolon() {
-                self.parse_semicolon();
-            } else {
-                // TS1144: '{' or ';' expected — unexpected token after method signature
-                self.parse_error_at_current_token(
-                    "'{' or ';' expected.",
-                    tsz_common::diagnostics::diagnostic_codes::OR_EXPECTED,
-                );
-            }
-            NodeIndex::NONE
-        };
-        self.pop_label_scope();
-
-        self.context_flags = method_saved_flags;
-
-        let end_pos = self.token_end();
-        self.arena.add_method_decl(
-            syntax_kind_ext::METHOD_DECLARATION,
-            start_pos,
-            end_pos,
-            crate::parser::node::MethodDeclData {
-                modifiers: mods.modifiers,
-                asterisk_token,
-                name,
-                question_token,
-                type_parameters,
-                parameters,
-                type_annotation,
-                body,
-            },
-        )
-    }
-
-    fn class_member_name_is_if_keyword(&self, name: NodeIndex) -> bool {
-        let Some(name_node) = self.arena.get(name) else {
-            return false;
-        };
-        name_node.kind == SyntaxKind::IfKeyword as u16
-            || self
-                .arena
-                .get_identifier(name_node)
-                .is_some_and(|ident| ident.escaped_text == "if")
     }
 }

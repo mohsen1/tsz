@@ -67,7 +67,12 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
         .and_then(|(package_name, subpath)| subpath.map(|subpath| (package_name, subpath)));
     let conditions = export_conditions(options);
 
-    let mut current = from_file.parent().unwrap_or(base_dir);
+    // Anchor the walk-up at the containing file's real path so triple-slash
+    // references from inside a symlinked package (pnpm's `.pnpm` sandbox) can
+    // reach the package's private/transitive `@types/*` siblings. See
+    // `node_modules_walkup_dir`.
+    let start_dir = node_modules_walkup_dir(from_file, base_dir, options);
+    let mut current = start_dir.as_path();
 
     loop {
         let node_modules = current.join("node_modules");

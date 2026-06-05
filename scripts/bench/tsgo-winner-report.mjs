@@ -30,7 +30,7 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       command:
         "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
       issue: 8356,
-      url: "https://github.com/mohsen1/tsz/issues/8356",
+      url: "https://github.com/tsz-org/tsz/issues/8356",
     },
   ],
   [
@@ -40,8 +40,10 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       operation: "generated app setup, lib/module identity, child-checker/project skeleton residency",
       command:
         "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^vite-vanilla-ts-app$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.vite-vanilla-ts-app.perf.json --noEmit -p .target-bench/external/vite-vanilla-ts-live/tsconfig.json",
       issue: 7378,
-      url: "https://github.com/mohsen1/tsz/issues/7378",
+      url: "https://github.com/tsz-org/tsz/issues/7378",
     },
   ],
   [
@@ -51,8 +53,10 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       operation: "utility-type mapped/conditional/key-space workload with recursive JSON-like shapes",
       command:
         "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^ts-essentials-project$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-essentials-project.perf.json --noEmit -p .target-bench/external/ts-essentials/tsconfig.flat.json",
       issue: 7378,
-      url: "https://github.com/mohsen1/tsz/issues/7378",
+      url: "https://github.com/tsz-org/tsz/issues/7378",
     },
   ],
   [
@@ -62,8 +66,10 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       operation: "generated app dependency/config setup and module/lib graph pressure",
       command:
         "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^nextjs-fresh-app$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.nextjs-fresh-app.perf.json --noEmit -p .target-bench/external/next-app-live/tsconfig.json",
       issue: 7378,
-      url: "https://github.com/mohsen1/tsz/issues/7378",
+      url: "https://github.com/tsz-org/tsz/issues/7378",
     },
   ],
   [
@@ -76,7 +82,7 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       attribution_command:
         "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-bct-candidates-200>.ts",
       issue: 8857,
-      url: "https://github.com/mohsen1/tsz/issues/8857",
+      url: "https://github.com/tsz-org/tsz/issues/8857",
     },
   ],
   [
@@ -89,7 +95,7 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       attribution_command:
         "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-200-classes>.ts",
       issue: 8858,
-      url: "https://github.com/mohsen1/tsz/issues/8858",
+      url: "https://github.com/tsz-org/tsz/issues/8858",
     },
   ],
 ]);

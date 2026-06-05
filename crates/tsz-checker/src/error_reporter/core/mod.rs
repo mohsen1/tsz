@@ -6,6 +6,7 @@
 
 mod annotation_literal_display;
 mod annotation_text;
+mod assignment_expressions;
 mod declared_intersection_display;
 mod diagnostic_source;
 mod display_recursion_guard;

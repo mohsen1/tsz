@@ -109,10 +109,10 @@ withTempDir((dir) => {
       mergeStateStatus: "BLOCKED",
       mergeable: "MERGEABLE",
       autoMergeRequest: null,
+      isInMergeQueue: true,
       labels: ["agent:epsilon"],
       statusCheckRollup: [
         { name: "CI Summary", status: "COMPLETED", conclusion: "SUCCESS" },
-        { name: "GitGuardian Security Checks", status: "COMPLETED", conclusion: "SUCCESS" },
       ],
       body: "AgentName: epsilon\n",
     },
@@ -155,15 +155,16 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Open PR Ownership Report/);
   assert.match(result.stdout, /AgentName\/label mismatches: 1/);
-  assert.match(result.stdout, /queue candidates: 1/);
+  assert.match(result.stdout, /queue candidates: 0/);
   assert.match(
     result.stdout,
     /Owner Summary[\s\S]*\| agent:delta \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| agent:zeta \| 2 \| 1 \| 1 \| 0 \| 0 \| 0 \| 1 \| 1 \| 0 \|[\s\S]*\| unowned \| 2 \| 0 \| 2 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \|[\s\S]*\| delta \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \|/,
   );
   assert.match(
     result.stdout,
-    /Queue Admission[\s\S]*#17 \| agent:epsilon \| yes \| BLOCKED\/MERGEABLE \| CI Summary=pass, GitGuardian Security Checks=pass[\s\S]*#18 \| agent:zeta \| no \| DIRTY\/CONFLICTING \| CI Summary=missing, GitGuardian Security Checks=missing/,
+    /Queue Admission[\s\S]*#18 \| agent:zeta \| no \| DIRTY\/CONFLICTING \| CI Summary=missing/,
   );
+  assert.doesNotMatch(result.stdout, /Queue Admission[\s\S]*#17 \| agent:epsilon/);
   assert.match(
     result.stdout,
     /Draft Parking Risks[\s\S]*agent:delta: drafts 2; unstacked 2; stale 1; within budget; oldest updated 2026-05-22 \(4d 3h\)[\s\S]*#19: agent:delta; updated 2026-05-22; age 99h; fix\(checker\): conflicting draft branch/,
@@ -209,9 +210,9 @@ withTempDir((dir) => {
     stacked: 2,
     missingAgentName: 2,
     agentLabelMismatches: 1,
-    mergeQueued: 0,
-    readyMissingQueueLabel: 2,
-    queueCandidates: 1,
+    nativeQueued: 1,
+    readyNotQueued: 1,
+    queueCandidates: 0,
     draftParkingOwners: 1,
     staleDraftPrs: 1,
   });
@@ -339,22 +340,7 @@ withTempDir((dir) => {
       title: "fix(checker): conflicting draft branch",
     },
   ]);
-  assert.deepEqual(report.readyMainMissingQueueLabelPrs, [
-    {
-      number: 17,
-      agentName: "epsilon",
-      agentLabel: "agent:epsilon",
-      updatedAt: "2026-05-23T09:15:00Z",
-      mergeStateStatus: "BLOCKED",
-      mergeable: "MERGEABLE",
-      checks: [
-        { name: "CI Summary", bucket: "pass" },
-        { name: "GitGuardian Security Checks", bucket: "pass" },
-      ],
-      checkSummary: "CI Summary=pass, GitGuardian Security Checks=pass",
-      queueCandidate: true,
-      title: "fix(checker): ready but blocked",
-    },
+  assert.deepEqual(report.readyMainNotQueuedPrs, [
     {
       number: 18,
       agentName: "zeta",
@@ -364,9 +350,8 @@ withTempDir((dir) => {
       mergeable: "CONFLICTING",
       checks: [
         { name: "CI Summary", bucket: "missing" },
-        { name: "GitGuardian Security Checks", bucket: "missing" },
       ],
-      checkSummary: "CI Summary=missing, GitGuardian Security Checks=missing",
+      checkSummary: "CI Summary=missing",
       queueCandidate: false,
       title: "fix(solver): conflicting ready branch",
     },

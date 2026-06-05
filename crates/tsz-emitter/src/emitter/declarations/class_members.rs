@@ -274,6 +274,9 @@ impl<'a> Printer<'a> {
                 self.write("static ");
             }
         } else {
+            if self.recovered_object_method_header_has_static(node, method.name) {
+                self.write("static ");
+            }
             // Emit modifiers (static, async only for JavaScript)
             self.emit_method_modifiers_js(&method.modifiers);
         }
@@ -559,6 +562,28 @@ impl<'a> Printer<'a> {
                 .arena
                 .get_literal(name_node)
                 .is_some_and(|lit| lit.text == "constructor")
+    }
+
+    fn recovered_object_method_header_has_static(&self, node: &Node, name: NodeIndex) -> bool {
+        if self.class_member_emit_depth > 0
+            || !self.should_emit_recovered_root_js_declaration_modifiers()
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(name) else {
+            return false;
+        };
+        if name_node.pos <= node.pos {
+            return false;
+        }
+        let Ok(header) = crate::safe_slice::slice(text, node.pos as usize, name_node.pos as usize)
+        else {
+            return false;
+        };
+        header.trim() == "static"
     }
 
     /// Emit method modifiers for JavaScript (static, async, and ES decorators)
@@ -862,6 +887,10 @@ impl<'a> Printer<'a> {
                         && emit_accessor_keyword
                     {
                         self.write("accessor ");
+                    } else if mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                        && self.should_emit_recovered_root_js_declaration_modifiers()
+                    {
+                        self.write("async ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
                         // `export` on a class member is a parse error, but tsc
                         // preserves it in emit for error-recovery fidelity.
@@ -903,20 +932,6 @@ impl<'a> Printer<'a> {
         let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
         let field_inits = std::mem::take(&mut self.pending_class_field_inits);
 
-        // Preserve invalid modifiers on constructors for error recovery (tsc behavior).
-        // e.g., `static constructor() {}` or `export constructor() {}` are errors
-        // but tsc preserves the keywords in the JS output.
-        if let Some(ref mods) = ctor.modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    match mod_node.kind {
-                        k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
-                        k if k == SyntaxKind::ExportKeyword as u16 => self.write("export "),
-                        _ => {}
-                    }
-                }
-            }
-        }
         self.write("constructor");
         // Emit type parameters for error recovery (e.g., `constructor<T>() {}`)
         if let Some(ref type_params) = ctor.type_parameters

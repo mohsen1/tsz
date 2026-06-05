@@ -1,5 +1,7 @@
 //! Focused coverage for flow guard narrowing routed through query boundaries.
 
+use std::fs;
+
 use crate::test_utils::check_source_strict_codes as check_strict;
 
 #[test]
@@ -97,5 +99,57 @@ function use(value: Box | string) {
     assert!(
         !codes.contains(&2339),
         "expected instanceof narrowing in both branches, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn in_condition_narrows_true_and_false_branches() {
+    let codes = check_strict(
+        r#"
+function read(value: { present: string } | { absent: number }) {
+    if ("present" in value) {
+        const present: string = value.present;
+        present.toUpperCase();
+    } else {
+        const absent: number = value.absent;
+        absent.toFixed();
+    }
+}
+"#,
+    );
+
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2339),
+        "expected `in` narrowing in both branches, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn in_condition_narrowing_routes_through_flow_query_boundary() {
+    let narrowing_source = fs::read_to_string("src/flow/control_flow/narrowing.rs")
+        .expect("failed to read flow narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_narrowing: String = narrowing_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_in_property(")
+            && compact_boundary.contains("&TypeGuard::InProperty(property_name)"),
+        "`in` property flow narrowing should expose a dedicated query-boundary helper"
+    );
+    assert!(
+        compact_narrowing.contains("flow_query::narrow_in_property("),
+        "checker `in` narrowing should route semantic guard application through the flow query boundary"
+    );
+    assert!(
+        !compact_narrowing.contains("narrowing.narrow_type(type_id,&TypeGuard::InProperty("),
+        "checker `in` narrowing should not construct and apply `InProperty` guards locally"
     );
 }

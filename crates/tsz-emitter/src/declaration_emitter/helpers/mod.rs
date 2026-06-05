@@ -278,6 +278,7 @@ mod portability_check;
 pub(in crate::declaration_emitter) use portability_check::PortabilityVisitState;
 mod portability_export_paths;
 mod portability_resolve;
+mod portability_symbols;
 mod returned_function_initializer;
 mod returned_function_initializer_return;
 mod synthetic_dependencies;

@@ -108,218 +108,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    fn is_assignable_via_contextual_signatures_strict(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        let normalize = |shape: crate::types::FunctionShape| {
-            use crate::type_queries::unpack_tuple_rest_parameter;
-
-            let mut normalized = shape.clone();
-            normalized.params = shape
-                .params
-                .iter()
-                .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
-                .collect();
-            normalized
-        };
-        let source = self.instantiate_generic_function_argument_against_target(source, target);
-        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source) else {
-            return false;
-        };
-        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target) else {
-            return false;
-        };
-        let source_fn = normalize(source_fn);
-        let target_fn = normalize(target_fn);
-
-        self.checker.is_assignable_to_strict(
-            self.interner.function(source_fn),
-            self.interner.function(target_fn),
-        )
-    }
-
-    /// Check if a callback argument has more required parameters than the target
-    /// callback can accept. This is a pre-check that runs before bivariant callback
-    /// assignability, because bivariance only relaxes parameter TYPE checking, not
-    /// parameter COUNT checking.
-    ///
-    /// In TypeScript, `(items: X) => void` is NOT assignable to `() => any` because
-    /// the source requires 1 argument but the target is called with 0.
-    /// This mirrors tsc's behavior where function arity is enforced even in bivariant
-    /// callback positions.
-    fn callback_source_has_excess_required_params(&self, source: TypeId, target: TypeId) -> bool {
-        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source) else {
-            return false;
-        };
-        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target) else {
-            return false;
-        };
-
-        // If target has a rest parameter, the arity is effectively unlimited
-        // (handled by the existing generic rest check or the full subtype check).
-        let target_has_rest = target_fn.params.last().is_some_and(|p| p.rest);
-        if target_has_rest {
-            return false;
-        }
-
-        let source_required = crate::utils::required_param_count(&source_fn.params);
-        let target_fixed_count = target_fn.params.len();
-
-        // Extra source params of type `void` are effectively optional in TypeScript
-        if source_required > target_fixed_count {
-            let extra_are_void = source_fn
-                .params
-                .iter()
-                .skip(target_fixed_count)
-                .take(source_required.saturating_sub(target_fixed_count))
-                .all(|param| {
-                    param.type_id == TypeId::VOID
-                        || if let Some(crate::TypeData::Union(list_id)) =
-                            self.interner.lookup(param.type_id)
-                        {
-                            self.interner.type_list(list_id).contains(&TypeId::VOID)
-                        } else {
-                            false
-                        }
-                });
-            return !extra_are_void;
-        }
-
-        false
-    }
-
-    fn callback_requires_more_fixed_params_than_generic_rest_allows(
-        &self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        let normalize = |shape: crate::types::FunctionShape| {
-            use crate::type_queries::unpack_tuple_rest_parameter;
-
-            let mut normalized = shape.clone();
-            normalized.params = shape
-                .params
-                .iter()
-                .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
-                .collect();
-            normalized
-        };
-
-        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source) else {
-            return false;
-        };
-        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target) else {
-            return false;
-        };
-
-        let source_fn = normalize(source_fn);
-        let target_fn = normalize(target_fn);
-        let Some(target_rest) = target_fn.params.last().filter(|param| param.rest) else {
-            return false;
-        };
-
-        let target_rest_is_generic =
-            crate::type_queries::is_type_parameter_like(self.interner, target_rest.type_id)
-                || crate::type_queries::contains_type_parameters_db(
-                    self.interner,
-                    target_rest.type_id,
-                );
-
-        if !target_rest_is_generic {
-            return false;
-        }
-
-        let source_required = crate::utils::required_param_count(&source_fn.params);
-        let target_fixed_count = target_fn.params.len().saturating_sub(1);
-        source_required > target_fixed_count
-    }
-
-    fn type_uses_inference_placeholders(&self, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::TypeParameter(info)) => {
-                let name = self.interner.resolve_atom(info.name);
-                name.as_str().starts_with("__infer_")
-                    || info
-                        .constraint
-                        .is_some_and(|constraint| self.type_uses_inference_placeholders(constraint))
-            }
-            Some(TypeData::Infer(info)) => info
-                .constraint
-                .is_some_and(|constraint| self.type_uses_inference_placeholders(constraint)),
-            Some(TypeData::Function(shape_id)) => {
-                let shape = self.interner.function_shape(shape_id);
-                self.function_signature_is_contextually_sensitive(&shape.params)
-                    || self.type_uses_inference_placeholders(shape.return_type)
-            }
-            // Callable types represent class constructor values (pre-existing,
-            // never contextually sensitive). Merged with default arm below.
-            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => self
-                .interner
-                .type_list(members)
-                .iter()
-                .any(|&member| self.type_uses_inference_placeholders(member)),
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => self
-                .interner
-                .object_shape(shape_id)
-                .properties
-                .iter()
-                .any(|prop| self.type_uses_inference_placeholders(prop.type_id)),
-            Some(TypeData::Array(elem))
-            | Some(TypeData::ReadonlyType(elem))
-            | Some(TypeData::NoInfer(elem))
-            | Some(TypeData::KeyOf(elem))
-            | Some(TypeData::Enum(_, elem)) => self.type_uses_inference_placeholders(elem),
-            Some(TypeData::Tuple(elements)) => self
-                .interner
-                .tuple_list(elements)
-                .iter()
-                .any(|elem| self.type_uses_inference_placeholders(elem.type_id)),
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner.type_application(app_id);
-                self.type_uses_inference_placeholders(app.base)
-                    || app
-                        .args
-                        .iter()
-                        .any(|&arg| self.type_uses_inference_placeholders(arg))
-            }
-            Some(TypeData::IndexAccess(obj, key)) => {
-                self.type_uses_inference_placeholders(obj)
-                    || self.type_uses_inference_placeholders(key)
-            }
-            Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner.get_conditional(cond_id);
-                self.type_uses_inference_placeholders(cond.check_type)
-                    || self.type_uses_inference_placeholders(cond.extends_type)
-                    || self.type_uses_inference_placeholders(cond.true_type)
-                    || self.type_uses_inference_placeholders(cond.false_type)
-            }
-            Some(TypeData::Mapped(mapped_id)) => {
-                let mapped = self.interner.get_mapped(mapped_id);
-                self.type_uses_inference_placeholders(mapped.constraint)
-                    || self.type_uses_inference_placeholders(mapped.template)
-            }
-            Some(TypeData::StringIntrinsic { type_arg, .. }) => {
-                self.type_uses_inference_placeholders(type_arg)
-            }
-            Some(TypeData::TemplateLiteral(spans)) => self
-                .interner
-                .template_list(spans)
-                .iter()
-                .any(|span| match span {
-                    crate::types::TemplateSpan::Text(_) => false,
-                    crate::types::TemplateSpan::Type(inner) => {
-                        self.type_uses_inference_placeholders(*inner)
-                    }
-                }),
-            _ => false,
-        }
-    }
-
     /// Expand a `TypeParameter` to its constraint (if it has one).
     /// This is used when a `TypeParameter` from an outer scope is used as an argument.
     pub(super) fn expand_type_param(&self, ty: TypeId) -> TypeId {
@@ -1474,47 +1262,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                // Two or more adjacent variadic type parameters (`...args: [...A, ...B]`)
-                // cannot be split without an implied arity, which a tuple-typed rest
-                // parameter never has (tsc's `getNonArrayRestType` returns `undefined`
-                // for it). tsc infers nothing here, leaving `A`/`B` to fall back to
-                // their constraints — so bail out of the single-variadic slicing below
-                // rather than mis-distributing the arguments.
+                // A tuple-typed rest parameter is, to tsc, just a tuple parameter:
+                // its fixed prefix, single variadic middle, and fixed suffix are all
+                // inferred together by `inferFromTupleTypes`. We mirror that by packing
+                // EVERY trailing argument into one source tuple and inferring it against
+                // the whole rest tuple type, so `constrain_tuple_types` can recover every
+                // element position — including the fixed prefix/suffix type parameters
+                // (`H` and `L` in `...args: [H, ...M, L]`) that a middle-only slice drops.
+                //
+                // This is correct precisely when the tuple has exactly one variadic
+                // element that is an inference variable:
+                //   * 0 such elements — nothing variadic to distribute; a fully fixed
+                //     tuple rest param (`...args: [T, number]`) is inferred positionally
+                //     by the normal argument loop, and a concrete-only spread
+                //     (`...args: [string, ...number[]]`) carries no inference variable.
+                //   * 2+ such elements (`...args: [...A, ...B]`) cannot be split without
+                //     an implied arity, which a tuple-typed rest parameter never has
+                //     (tsc's `getNonArrayRestType` returns `undefined`); tsc infers
+                //     nothing and both fall back to their constraints, so we bail and let
+                //     Round 1's positional loop leave them unconstrained.
                 let infer_var_rest_count = elements
                     .iter()
                     .filter(|elem| elem.rest && var_map.contains_key(&elem.type_id))
                     .count();
-                if infer_var_rest_count >= 2 {
+                if infer_var_rest_count != 1 {
                     return None;
                 }
-                elements.iter().enumerate().find_map(|(i, elem)| {
-                    if !elem.rest {
-                        return None;
-                    }
-                    if !var_map.contains_key(&elem.type_id) {
-                        return None;
-                    }
-
-                    // Count trailing elements after the variadic part, but allow optional
-                    // tail elements to be omitted when they don't match.
-                    let tail = &elements[i + 1..];
-                    let min_index = rest_start + i;
-                    let mut trailing_count = 0usize;
-                    let mut arg_index = arg_types.len();
-                    for tail_elem in tail.iter().rev() {
-                        if arg_index <= min_index {
-                            break;
-                        }
-                        let arg_type = arg_types[arg_index - 1];
-                        let assignable = self.checker.is_assignable_to(arg_type, tail_elem.type_id);
-                        if tail_elem.optional && !assignable {
-                            break;
-                        }
-                        trailing_count += 1;
-                        arg_index -= 1;
-                    }
-                    Some((rest_start + i, elem.type_id, trailing_count))
-                })
+                let source_tuple = self.build_rest_argument_source_tuple(arg_types, rest_start);
+                return Some((rest_start, rest_param_type, source_tuple));
             }
             // Application rest param: e.g., `...args: TupleMapper<Tuple>` where Tuple
             // is an inference variable and TupleMapper is a mapped type alias.
@@ -1558,39 +1333,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // The variadic arguments start at start_index and end before trailing elements.
         let end_index = arg_types.len().saturating_sub(trailing_count);
         let tuple_elements: Vec<TupleElement> = if start_index < end_index {
-            arg_types[start_index..end_index]
-                .iter()
-                .flat_map(|&ty| {
-                    if let Some(inner) = self.spread_argument_marker_inner(ty) {
-                        return vec![TupleElement {
-                            type_id: inner,
-                            name: None,
-                            optional: false,
-                            rest: true,
-                        }];
-                    }
-                    // Recognize spread marker tuples [...T] from the checker.
-                    // Only match markers whose inner type is a TypeParameter.
-                    if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(ty) {
-                        let elems = self.interner.tuple_list(elems_id);
-                        if elems.len() == 1
-                            && elems[0].rest
-                            && matches!(
-                                self.interner.lookup(elems[0].type_id),
-                                Some(TypeData::TypeParameter(_))
-                            )
-                        {
-                            return elems.to_vec();
-                        }
-                    }
-                    vec![TupleElement {
-                        type_id: ty,
-                        name: None,
-                        optional: false,
-                        rest: false,
-                    }]
-                })
-                .collect()
+            self.rest_argument_tuple_elements(&arg_types[start_index..end_index])
         } else {
             Vec::new()
         };
@@ -1606,6 +1349,58 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target_type,
             self.interner.tuple(tuple_elements),
         ))
+    }
+
+    /// Convert a slice of call-argument types into tuple elements for variadic
+    /// tuple inference. A spread-argument marker (`f(...xs)`) and a checker
+    /// `[...T]` marker tuple whose inner type is a bare type parameter both
+    /// become `rest` elements so the resulting source tuple keeps the same
+    /// variadic structure tsc sees; every other argument becomes a fixed
+    /// element.
+    fn rest_argument_tuple_elements(&self, args: &[TypeId]) -> Vec<TupleElement> {
+        args.iter()
+            .flat_map(|&ty| {
+                if let Some(inner) = self.spread_argument_marker_inner(ty) {
+                    return vec![TupleElement {
+                        type_id: inner,
+                        name: None,
+                        optional: false,
+                        rest: true,
+                    }];
+                }
+                // Recognize spread marker tuples [...T] from the checker.
+                // Only match markers whose inner type is a TypeParameter.
+                if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(ty) {
+                    let elems = self.interner.tuple_list(elems_id);
+                    if elems.len() == 1
+                        && elems[0].rest
+                        && matches!(
+                            self.interner.lookup(elems[0].type_id),
+                            Some(TypeData::TypeParameter(_))
+                        )
+                    {
+                        return elems.to_vec();
+                    }
+                }
+                vec![TupleElement {
+                    type_id: ty,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                }]
+            })
+            .collect()
+    }
+
+    /// Pack every trailing argument (`arg_types[rest_start..]`) into one source
+    /// tuple so it can be inferred against a tuple-typed rest parameter as a
+    /// whole. tsc treats a tuple-typed rest parameter exactly like a tuple
+    /// parameter, so the entire argument list — fixed prefix, variadic middle,
+    /// and fixed suffix — is distributed in a single `inferFromTupleTypes` pass.
+    fn build_rest_argument_source_tuple(&self, arg_types: &[TypeId], rest_start: usize) -> TypeId {
+        let elements =
+            self.rest_argument_tuple_elements(arg_types.get(rest_start..).unwrap_or(&[]));
+        self.interner.tuple(elements)
     }
 
     /// Check if a type evaluates to or contains a function type.
@@ -1869,167 +1664,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             TypeData::TypeParameter(_)
             | TypeData::Infer(_)
-            | TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::BoundParameter(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ThisType
-            | TypeData::ModuleNamespace(_)
-            | TypeData::UnresolvedTypeName(_)
-            | TypeData::Error => false,
-        }
-    }
-
-    /// Check if a type is contextually sensitive (requires contextual typing for inference).
-    ///
-    /// Contextually sensitive types include:
-    /// - Function types (lambda expressions)
-    /// - Callable types (object with call signatures)
-    /// - Union/Intersection types containing contextually sensitive members
-    /// - Object literals with callable properties (methods)
-    ///
-    /// These types need deferred inference in Round 2 after non-contextual
-    /// arguments have been processed and type variables have been fixed.
-    pub(crate) fn is_contextually_sensitive(&self, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        // Check memoization cache to avoid exponential re-traversal on deeply
-        // nested type structures (e.g., Application chains where each level
-        // references the previous type multiple times via keyof).
-        if let Some(&cached) = self.contextual_sensitivity_cache.borrow().get(&type_id) {
-            return cached;
-        }
-        let result = self.is_contextually_sensitive_inner(type_id);
-        self.contextual_sensitivity_cache
-            .borrow_mut()
-            .insert(type_id, result);
-        result
-    }
-
-    fn is_contextually_sensitive_inner(&self, type_id: TypeId) -> bool {
-        let key = match self.interner.lookup(type_id) {
-            Some(key) => key,
-            None => return false,
-        };
-
-        match key {
-            // Function types are contextually sensitive only when one of their
-            // parameter types still needs contextual typing (has `any` type or
-            // inference placeholder). Fully annotated function arguments --
-            // including generic function references like `id<T>(x: T) => T` --
-            // should participate in Round 1 generic inference.
-            //
-            // In tsc, contextual sensitivity is an AST-level check
-            // (isContextSensitive) that looks at whether the expression is a
-            // function expression/arrow with unannotated parameters. A simple
-            // identifier referring to a generic function is NOT contextually
-            // sensitive. We approximate this by only checking parameter types
-            // for placeholder/any markers, not the presence of type_params.
-            TypeData::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                self.function_signature_is_contextually_sensitive(&shape.params)
-            }
-            // Union/Intersection: contextually sensitive if any member is
-            TypeData::Union(members) | TypeData::Intersection(members) => {
-                let members = self.interner.type_list(members);
-                members
-                    .iter()
-                    .any(|&member| self.is_contextually_sensitive(member))
-            }
-
-            // Object types: only fresh object literals can be contextually sensitive.
-            // Non-fresh objects (class instances, evaluated generic types like Set<T>)
-            // are never contextually sensitive — their types are already determined.
-            // This matches tsc's isContextSensitive which checks the AST expression,
-            // not the type: variable references are never contextually sensitive.
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL)
-                    && (shape.all_properties_context_sensitive()
-                        || shape
-                            .properties
-                            .iter()
-                            .any(|prop| self.is_contextually_sensitive(prop.type_id)))
-            }
-
-            // Array types: check element type
-            TypeData::Array(elem) => self.is_contextually_sensitive(elem),
-
-            // Tuple types: check all elements
-            TypeData::Tuple(elements) => {
-                let elements = self.interner.tuple_list(elements);
-                elements
-                    .iter()
-                    .any(|elem| self.is_contextually_sensitive(elem.type_id))
-            }
-
-            // Type applications: check base and arguments
-            TypeData::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                self.is_contextually_sensitive(app.base)
-                    || app
-                        .args
-                        .iter()
-                        .any(|&arg| self.is_contextually_sensitive(arg))
-            }
-
-            // Readonly types: look through to inner type
-            TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.is_contextually_sensitive(inner)
-            }
-
-            // Type parameters with constraints: check constraint
-            TypeData::TypeParameter(info) | TypeData::Infer(info) => info
-                .constraint
-                .is_some_and(|constraint| self.is_contextually_sensitive(constraint)),
-
-            // Index access: check both object and key types
-            TypeData::IndexAccess(obj, key) => {
-                self.is_contextually_sensitive(obj) || self.is_contextually_sensitive(key)
-            }
-
-            // Conditional types: check all branches
-            TypeData::Conditional(cond_id) => {
-                let cond = self.interner.get_conditional(cond_id);
-                self.is_contextually_sensitive(cond.check_type)
-                    || self.is_contextually_sensitive(cond.extends_type)
-                    || self.is_contextually_sensitive(cond.true_type)
-                    || self.is_contextually_sensitive(cond.false_type)
-            }
-
-            // Mapped types: check constraint and template
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.get_mapped(mapped_id);
-                self.is_contextually_sensitive(mapped.constraint)
-                    || self.is_contextually_sensitive(mapped.template)
-            }
-
-            // KeyOf, StringIntrinsic: check operand
-            TypeData::KeyOf(operand)
-            | TypeData::StringIntrinsic {
-                type_arg: operand, ..
-            } => self.is_contextually_sensitive(operand),
-
-            // Enum types: check member type
-            TypeData::Enum(_def_id, member_type) => self.is_contextually_sensitive(member_type),
-
-            // Template literals: check type spans
-            TypeData::TemplateLiteral(spans) => {
-                let spans = self.interner.template_list(spans);
-                spans.iter().any(|span| match span {
-                    TemplateSpan::Text(_) => false,
-                    TemplateSpan::Type(inner) => self.is_contextually_sensitive(*inner),
-                })
-            }
-
-            // Non-contextually sensitive types (Callable = class constructor values)
-            TypeData::Callable(_)
             | TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Lazy(_)

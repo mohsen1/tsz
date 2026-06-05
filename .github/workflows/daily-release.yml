@@ -8,7 +8,7 @@ name: Daily Release
 #     If `main` has commits past the latest `vX.Y.Z` tag, compute the next
 #     patch version, edit `Cargo.toml` and `Cargo.lock` in lockstep, push a
 #     branch, and open a `chore(release): bump try-tsz publish version to …`
-#     PR with the `merge-queue` label. Poor Man's Merge Queue does the rest.
+#     PR. Managers queue the ready PR with GitHub's native merge queue.
 #
 #   tag-on-merge   (push to main)
 #     When a release-bump commit merges to `main`, extract the version from
@@ -236,8 +236,7 @@ jobs:
             --base main \
             --head "${branch_with_date}" \
             --title "chore(release): bump try-tsz publish version to ${NEXT}" \
-            --body "${body}" \
-            --label merge-queue
+            --body "${body}"
 
       - name: Summary
         if: always()
