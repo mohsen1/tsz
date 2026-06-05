@@ -600,6 +600,62 @@ impl<'a> TypeFormatter<'a> {
         Some(union)
     }
 
+    /// Expand a raw `Application` of a *variadic* (spread) tuple type alias to
+    /// its flattened tuple form for display.
+    ///
+    /// tsc instantiates spread tuple aliases (`Prepend<T, A> = [T, ...A]`,
+    /// `Concat<A, B> = [...A, ...B]`, `IdTuple<T> = [...T]`) through tuple
+    /// spreading, which yields a fresh tuple carrying no `aliasSymbol`; the
+    /// printer then renders the structural tuple (`[1, 2, 3]`) rather than the
+    /// named application (`Prepend<1, [2, 3]>`).
+    ///
+    /// Only handles fully concrete arguments and bails unless the spread
+    /// flattens to a tuple with no surviving rest element, so partially generic
+    /// or unresolved-recursive applications keep their named form (the formatter
+    /// has no resolver to expand nested alias references such as `Zip<...>`).
+    fn variadic_tuple_alias_application_display(
+        &self,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        let def_store = self.def_store?;
+        let def_id = match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => def_store.find_def_for_type(base)?,
+        };
+        let def = def_store.get(def_id)?;
+        if def.kind != crate::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return None;
+        }
+        let body = def.body?;
+        // The declared body must be a tuple with at least one rest/spread
+        // element — the structural marker for a variadic tuple alias.
+        if !crate::type_queries::data::is_variadic_tuple(self.interner, body) {
+            return None;
+        }
+        // Local flattening has no resolver, so only attempt it for concrete
+        // arguments; generic args would leave unresolved spreads behind.
+        if args.iter().any(|&arg| {
+            crate::visitors::visitor_predicates::contains_type_parameters(self.interner, arg)
+        }) {
+            return None;
+        }
+        let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
+        for (param, &arg) in def.type_params.iter().zip(args.iter()) {
+            subst.insert(param.name, arg);
+        }
+        let substituted =
+            crate::instantiation::instantiate::instantiate_type(self.interner, body, &subst);
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+        // Require a fully flattened tuple (no leftover rest element): an
+        // unresolved nested spread (e.g. `[..., ...Zip<...>]`) must keep the
+        // named application form rather than render a half-expanded tuple.
+        (evaluated != base
+            && matches!(self.interner.lookup(evaluated), Some(TypeData::Tuple(_)))
+            && !crate::type_queries::data::is_variadic_tuple(self.interner, evaluated))
+        .then_some(evaluated)
+    }
+
     /// Returns `true` when the application points to a distributive conditional
     /// alias whose `check_arg` is `boolean` or a union — i.e., the application
     /// would distribute via `distributed_conditional_application_display`. The
