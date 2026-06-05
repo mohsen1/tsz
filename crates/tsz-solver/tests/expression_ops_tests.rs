@@ -598,7 +598,10 @@ fn test_bct_unique_required_fields_prove_subtype_reduction_noop() {
     });
 
     assert!(
-        subtype_reduction_proven_noop_by_unique_required_fields(&interner, &[a, b, c]),
+        bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
+            &interner,
+            &[a, b, c]
+        ),
         "unique required public fields should prove that no object candidate is a subtype"
     );
 
@@ -622,7 +625,7 @@ fn test_bct_unique_required_fields_noop_proof_rejects_optional_and_indexed_shape
     let optional_a = interner.object(vec![PropertyInfo::opt(name_a, TypeId::NUMBER)]);
     let required_b = interner.object(vec![PropertyInfo::new(name_b, TypeId::NUMBER)]);
     assert!(
-        !subtype_reduction_proven_noop_by_unique_required_fields(
+        !bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
             &interner,
             &[optional_a, required_b]
         ),
@@ -640,7 +643,7 @@ fn test_bct_unique_required_fields_noop_proof_rejects_optional_and_indexed_shape
         ..ObjectShape::default()
     });
     assert!(
-        !subtype_reduction_proven_noop_by_unique_required_fields(
+        !bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
             &interner,
             &[indexed_a, required_b]
         ),
