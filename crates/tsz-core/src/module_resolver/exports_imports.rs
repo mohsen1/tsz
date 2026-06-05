@@ -543,27 +543,13 @@ impl ModuleResolver {
         }
     }
 
-    /// Resolve a `typesVersions` paths object against a subpath, mirroring
-    /// tsc's `matchPatternOrExact` + `findBestPatternMatch` (`utilities.ts`)
-    /// chain inside `tryLoadModuleUsingPaths`:
+    /// Resolve a `typesVersions` paths object against a subpath, then probe the
+    /// ordered candidate targets on disk via `try_file_or_directory`.
     ///
-    /// 1. If a no-`*` key equals `subpath` exactly, it wins — wildcards do not
-    ///    get to compete. This is the `matchableStringSet.has(candidate)`
-    ///    short-circuit.
-    /// 2. Otherwise, among the single-`*` wildcard keys, pick the one with the
-    ///    longest **prefix** (text before `*`), breaking ties by first
-    ///    occurrence in declaration order. tsc's `findBestPatternMatch` uses
-    ///    `pattern.prefix.length > longestMatchPrefixLength` (strict `>`), so
-    ///    later equal-prefix matches do not replace earlier ones.
-    /// 3. Two-or-more-`*` keys are skipped entirely; tsc's `tryParsePattern`
-    ///    returns undefined for them and they never enter the candidate set.
-    ///
-    /// Once a matching key is selected, tsc iterates the value array and
-    /// returns the first target whose substituted path exists on disk; we do
-    /// the same with `try_file_or_directory`. Importantly, we do NOT fall
-    /// through to wildcard matching when an exact key matched but no target
-    /// file exists — that mirrors tsc's `if (matchedPattern) { ... return; }`
-    /// early return.
+    /// The version-range selection and exact / longest-prefix pattern matching
+    /// (including `*` substitution) are owned by the shared
+    /// `tsz_common::module_resolution::types_versions` module, so this resolver
+    /// cannot drift from the CLI driver, the checker redirect, or tsc.
     pub(super) fn resolve_types_versions(
         &self,
         package_dir: &Path,
@@ -574,83 +560,14 @@ impl ModuleResolver {
         let compiler_version =
             types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
         let paths = select_types_versions_paths(types_versions, compiler_version)?;
-
-        // 1) Exact (no-`*`) key matches the subpath verbatim → tsc returns it
-        //    immediately, ignoring any wildcard that would also match. We
-        //    iterate to find the matching exact key rather than `.get()` so the
-        //    iteration order is consistent with the wildcard pass below.
-        for (key, value) in paths {
-            if !key.contains('*') && key == subpath {
-                return self.apply_types_versions_targets(
-                    package_dir,
-                    value,
-                    "",
-                    target_package_type,
-                );
+        for target in
+            tsz_common::module_resolution::types_versions::candidate_targets(paths, subpath)
+        {
+            let resolved = package_dir.join(target.trim_start_matches("./"));
+            if let Some(found) = self.try_file_or_directory(&resolved, target_package_type) {
+                return Some(found);
             }
         }
-
-        // 2) Wildcards: longest prefix wins, ties → first in declaration
-        //    order. `best` stores `(prefix_len, value, captured wildcard)`;
-        //    keeping `prefix_len` inside the tuple removes the separate
-        //    `best_prefix_len` shadow that the previous shape required.
-        let mut best: Option<(usize, &serde_json::Value, String)> = None;
-        for (key, value) in paths {
-            let Some((prefix, suffix)) = parse_types_versions_pattern(key) else {
-                continue;
-            };
-            if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
-                continue;
-            }
-            let start = prefix.len();
-            let end = subpath.len() - suffix.len();
-            if end < start {
-                continue;
-            }
-            // Strict `>` so equal-prefix ties keep the earlier entry (tsc's
-            // `findBestPatternMatch`).
-            if best
-                .as_ref()
-                .is_some_and(|(best_len, ..)| prefix.len() <= *best_len)
-            {
-                continue;
-            }
-            best = Some((prefix.len(), value, subpath[start..end].to_string()));
-        }
-
-        let (_, value, wildcard) = best?;
-        self.apply_types_versions_targets(package_dir, value, &wildcard, target_package_type)
-    }
-
-    /// Iterate the `value` of a `typesVersions` paths entry (a single string or
-    /// an array of strings), substitute `*` with `wildcard`, and return the
-    /// first target that resolves on disk. Mirrors tsc's `forEach(paths[...])`
-    /// in `tryLoadModuleUsingPaths`.
-    fn apply_types_versions_targets(
-        &self,
-        package_dir: &Path,
-        value: &serde_json::Value,
-        wildcard: &str,
-        target_package_type: Option<super::PackageType>,
-    ) -> Option<PathBuf> {
-        // tsc's `replaceFirstStar` substitutes only the first `*` in the
-        // target string. `apply_wildcard_substitution` does the same when
-        // called with `is_directory_match=false`; we pass `false` because the
-        // matched key is either a single-`*` wildcard or an exact (no-`*`)
-        // key — neither is the legacy trailing-slash "directory" form that
-        // the flag handles.
-        let try_target = |target: &str| {
-            let substituted = apply_wildcard_substitution(target, wildcard, false);
-            let resolved = package_dir.join(substituted.trim_start_matches("./"));
-            self.try_file_or_directory(&resolved, target_package_type)
-        };
-        match value {
-            serde_json::Value::String(target) => try_target(target.as_str()),
-            serde_json::Value::Array(list) => list
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .find_map(try_target),
-            _ => None,
-        }
+        None
     }
 }

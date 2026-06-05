@@ -57,6 +57,9 @@ pub mod perf_counters;
 // Centralized file-extension constants and helpers.
 pub mod file_extensions;
 
+// Shared module-resolution primitives (e.g. `typesVersions` selection).
+pub mod module_resolution;
+
 // Char-boundary-safe text windowing helpers (leading-prefix scan caps).
 pub mod text_scan;
 
