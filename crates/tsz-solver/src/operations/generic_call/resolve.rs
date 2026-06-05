@@ -375,6 +375,59 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Record this call's inference placeholders and the subset shared across
+        // more than one parameter. Higher-order (TS 3.4) re-generalization of a
+        // generic function argument is only safe when the argument's contextual
+        // placeholders are not chained through a shared inference variable (the
+        // `B` of `compose(f: (a: A) => B, g: (b: B) => C)`). See
+        // `instantiate_generic_function_argument_against_target`.
+        //
+        // This metadata is only consulted when an argument is itself a generic
+        // function (the sole trigger for re-generalization), so the whole
+        // computation — including the per-parameter `collect_referenced_types`
+        // walk, which is expensive for large generic signatures — is skipped
+        // when no argument is a generic function. The two sets are still cleared
+        // so a later read cannot observe a previous call's state.
+        self.current_call_inference_placeholders.clear();
+        self.shared_inference_placeholders.clear();
+        let any_arg_is_generic_function = arg_types.iter().any(|&arg_type| {
+            Self::get_contextual_signature_cached(self.interner, arg_type)
+                .is_some_and(|shape| !shape.type_params.is_empty())
+        });
+        if any_arg_is_generic_function {
+            self.current_call_inference_placeholders
+                .extend(type_param_placeholder_atoms.iter().copied());
+            if func.params.len() > 1 {
+                let mut param_reference_counts: FxHashMap<tsz_common::Atom, u32> =
+                    FxHashMap::default();
+                let mut seen_in_param: FxHashSet<tsz_common::Atom> = FxHashSet::default();
+                for param in &func.params {
+                    seen_in_param.clear();
+                    for referenced in crate::visitor::collect_referenced_types(
+                        self.interner.as_type_database(),
+                        param.type_id,
+                    ) {
+                        if let Some(info) =
+                            crate::type_param_info(self.interner.as_type_database(), referenced)
+                            && local_type_param_names.contains(&info.name)
+                            && seen_in_param.insert(info.name)
+                        {
+                            *param_reference_counts.entry(info.name).or_insert(0) += 1;
+                        }
+                    }
+                }
+                for (tp, &placeholder_atom) in func
+                    .type_params
+                    .iter()
+                    .zip(type_param_placeholder_atoms.iter())
+                {
+                    if param_reference_counts.get(&tp.name).copied().unwrap_or(0) > 1 {
+                        self.shared_inference_placeholders.insert(placeholder_atom);
+                    }
+                }
+            }
+        }
+
         // Re-set declared constraints using the full substitution now that all
         // placeholders exist. When type parameter order is `<T extends ..U.., U extends P>`,
         // the initial pass above sets T's constraint before U's placeholder exists, so
