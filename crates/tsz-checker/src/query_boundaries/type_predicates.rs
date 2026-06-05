@@ -15,6 +15,10 @@ pub(crate) fn is_top_level_error_or_error_union_member(
         })
 }
 
+pub(crate) fn type_contains_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::narrowing::type_contains_undefined(db, type_id)
+}
+
 pub(crate) fn contains_conditional_with_application_extends(
     db: &dyn TypeDatabase,
     type_id: TypeId,
