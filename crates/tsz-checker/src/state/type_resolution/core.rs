@@ -189,7 +189,9 @@ impl<'a> CheckerState<'a> {
                 })
         {
             let alias_type = self.type_reference_symbol_type(local_sym_id);
-            if let Some(instance_type) = self.instance_type_from_constructor_type(alias_type) {
+            if let Some(instance_type) =
+                self.instance_type_from_named_import_type_reference(alias_type)
+            {
                 return instance_type;
             }
         }
