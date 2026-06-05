@@ -1175,12 +1175,16 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            // tsc preserves literal types in fresh object literal error messages
-            // when the target property type accepts literals (e.g., discriminated
-            // unions: `tag: "A" | "B" | "C"`). Otherwise it widens (e.g., `string`).
-            // Check the target property type to decide.
-            // When the target is a union (e.g., discriminated union ADT), check
-            // each union member's properties for literal acceptance.
+            // tsc preserves a fresh literal property only when the contextual
+            // (target) property type carries a literal of the *same* primitive
+            // base (mirroring `getWidenedLiteralLikeTypeForContextualType`); the
+            // base must match so a numeric source against a string-literal target
+            // still widens. The former check recognized string literals only, so
+            // numeric/boolean/bigint properties were wrongly widened.
+            let source_literal_base = crate::query_boundaries::common::widen_literal_to_primitive(
+                self.ctx.types,
+                value_type,
+            );
             let target_accepts_literal = property_name
                 .and_then(|name| {
                     // First try the direct object shape
@@ -1189,9 +1193,17 @@ impl<'a> CheckerState<'a> {
                             .properties
                             .iter()
                             .find(|p| p.name == name)
+                            .filter(|p| {
+                                self.type_contains_literal_of_primitive_base(
+                                    p.type_id,
+                                    source_literal_base,
+                                )
+                            })
                             .map(|p| p.type_id);
                     }
-                    // For union targets, check each member's properties
+                    // For union targets, check each member's properties. The
+                    // per-member gate already enforces the base match, so the
+                    // returned type needs no re-check below.
                     let target = target?;
                     let members =
                         crate::query_boundaries::common::union_members(self.ctx.types, target)?;
@@ -1203,16 +1215,17 @@ impl<'a> CheckerState<'a> {
                             )
                             && let Some(prop) =
                                 member_shape.properties.iter().find(|p| p.name == name)
-                            && self.type_contains_string_literal(prop.type_id)
+                            && self.type_contains_literal_of_primitive_base(
+                                prop.type_id,
+                                source_literal_base,
+                            )
                         {
                             return Some(prop.type_id);
                         }
                     }
                     None
                 })
-                .is_some_and(|target_prop_type| {
-                    self.type_contains_string_literal(target_prop_type)
-                });
+                .is_some();
             if let Some(literal_display) = self.literal_expression_display(value_idx) {
                 let preserve_normalized_union_boolean = preserve_literal_source_for_normalized_union
                     && matches!(literal_display.as_str(), "true" | "false");

@@ -1610,6 +1610,37 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::type_contains_string_literal(self.ctx.types, type_id)
     }
 
+    /// True when `type_id` is — or, recursively, has a union member that is — a
+    /// unit literal type whose widened primitive base equals `primitive_base`
+    /// (one of `string` / `number` / `boolean` / `bigint`).
+    ///
+    /// Generalizes the string-literal-only acceptance test used when deciding
+    /// whether to preserve a fresh source literal in an assignment mismatch
+    /// display. It mirrors the per-kind constituent check in tsc's
+    /// `isLiteralOfContextualType`: the source literal is kept only when the
+    /// contextual target carries a literal of the matching primitive base, so a
+    /// numeric source against a string-literal target still widens.
+    ///
+    /// When `primitive_base` is not itself a primitive base (e.g. the source was
+    /// not a literal) no literal member can match and this returns `false`,
+    /// preserving the prior widening behavior for non-literal sources.
+    pub(in crate::error_reporter) fn type_contains_literal_of_primitive_base(
+        &self,
+        type_id: TypeId,
+        primitive_base: TypeId,
+    ) -> bool {
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            return members.iter().any(|&member| {
+                self.type_contains_literal_of_primitive_base(member, primitive_base)
+            });
+        }
+        let widened =
+            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, type_id);
+        widened != type_id && widened == primitive_base
+    }
+
     pub(in crate::error_reporter) fn literal_expression_display(
         &self,
         expr_idx: NodeIndex,
@@ -1640,7 +1671,15 @@ impl<'a> CheckerState<'a> {
                     .replace('\t', "\\t");
                 Some(format!("\"{escaped}\""))
             }
-            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+            // Numeric and bigint literals render from their scanned token text
+            // verbatim. The bigint token value carries the trailing `n` (e.g.
+            // `1n`), matching tsc; without the bigint case a fresh object-literal
+            // `bigint` property (interned in widened form) could not have its
+            // literal text resurrected and displayed as `bigint` where tsc shows
+            // `1n`.
+            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16 =>
+            {
                 let lit = self.ctx.arena.get_literal(node)?;
                 Some(lit.text.clone())
             }
