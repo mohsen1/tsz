@@ -10,8 +10,6 @@
 //! - `check_type_node` — recursive type node validation (mapped types, conditionals, etc.)
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
-mod type_query_flow;
-
 use super::alias_defid_visited_pool::with_alias_defid_visited;
 use crate::state::CheckerState;
 use tsz_parser::parser::node::NodeAccess;
