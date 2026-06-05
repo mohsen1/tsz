@@ -159,6 +159,23 @@ impl<'a> CheckerState<'a> {
             let global_type_is_lowerable = |binder: &BinderState, type_name: &str| {
                 self.source_file_global_type_is_direct_lowerable(binder, type_name)
             };
+            let local_type_shadows_global = |binder: &BinderState, type_name: &str| {
+                self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                    .is_some()
+                    && binder
+                        .file_locals
+                        .get(type_name)
+                        .and_then(|sym_id| binder.get_symbol(sym_id).map(|symbol| (sym_id, symbol)))
+                        .is_some_and(|(sym_id, symbol)| {
+                            symbol.has_any_flags(symbol_flags::TYPE)
+                                && Self::source_file_symbol_has_local_type_declaration(
+                                    symbol_arena,
+                                    binder,
+                                    sym_id,
+                                    symbol,
+                                )
+                        })
+            };
             let global_value_is_lowerable = |binder: &BinderState, value_name: &str| {
                 self.source_file_global_value_is_direct_lowerable(binder, value_name)
             };
@@ -170,6 +187,7 @@ impl<'a> CheckerState<'a> {
             let proof = super::cross_file_direct_alias_chain::SourceFileAliasProofContext {
                 current_file_idx: Some(target_file_idx),
                 global_type_is_lowerable: &global_type_is_lowerable,
+                local_type_shadows_global: &local_type_shadows_global,
                 global_value_is_lowerable: &global_value_is_lowerable,
                 import_alias_target: Some(&import_alias_target),
             };

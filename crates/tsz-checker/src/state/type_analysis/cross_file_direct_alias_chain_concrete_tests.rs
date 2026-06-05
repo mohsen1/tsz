@@ -180,10 +180,12 @@ fn direct_source_file_type_alias_rejects_recursive_mapped_projection_guard() {
                 .expect("_DeepReadonlyObject symbol");
             let target_arena = state.ctx.get_arena_for_file(1);
             let global_type_is_lowerable = |_: &BinderState, _: &str| true;
+            let local_type_shadows_global = |_: &BinderState, _: &str| false;
             let global_value_is_lowerable = |_: &BinderState, _: &str| true;
             let proof = SourceFileAliasProofContext {
                 current_file_idx: Some(1),
                 global_type_is_lowerable: &global_type_is_lowerable,
+                local_type_shadows_global: &local_type_shadows_global,
                 global_value_is_lowerable: &global_value_is_lowerable,
                 import_alias_target: None,
             };

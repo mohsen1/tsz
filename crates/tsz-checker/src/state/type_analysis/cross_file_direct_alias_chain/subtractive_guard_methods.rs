@@ -242,9 +242,11 @@ impl<'a> CheckerState<'a> {
         proof: &SourceFileAliasProofContext<'b>,
     ) -> bool {
         let Some(raw_sym_id) = binder.file_locals.get(name) else {
-            return (proof.global_type_is_lowerable)(binder, name);
+            return !(proof.local_type_shadows_global)(binder, name)
+                && (proof.global_type_is_lowerable)(binder, name);
         };
         Self::source_file_local_symbol_can_fall_back_to_global_type(arena, binder, raw_sym_id)
+            && !(proof.local_type_shadows_global)(binder, name)
             && (proof.global_type_is_lowerable)(binder, name)
     }
 
