@@ -839,13 +839,6 @@ pub(crate) fn compile_with_cache_and_changes(
     Ok(result)
 }
 
-/// Returns true if the given diagnostic code is a grammar-level error that should
-/// take priority over TS5107/TS5101 deprecation diagnostics.
-///
-/// When deprecated compiler options produce TS5107, tsc makes them fatal (stops
-/// compilation early). However, tsc suppresses TS5107 when real file-level grammar
-/// errors exist. This function identifies which diagnostic codes count as "grammar
-
 /// Build file info with inclusion reasons
 fn build_file_infos(
     sources: &[SourceEntry],

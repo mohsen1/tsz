@@ -8,6 +8,7 @@ use tsz_solver::computation::TypeResolver;
 use tsz_solver::narrowing::CachedPropertyType;
 
 impl<'a> CheckerState<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn try_resolve_optional_property_chain_fast_path(
         &mut self,
         idx: NodeIndex,

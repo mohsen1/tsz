@@ -11,6 +11,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn resolve_identifier_property_access(
         &mut self,
         idx: NodeIndex,

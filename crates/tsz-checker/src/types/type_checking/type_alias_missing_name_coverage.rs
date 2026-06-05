@@ -546,7 +546,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn primitive_or_literal_type_kind_is_covered(kind: u16) -> bool {
+    const fn primitive_or_literal_type_kind_is_covered(kind: u16) -> bool {
         matches!(
             kind,
             k if k == SyntaxKind::AnyKeyword as u16
