@@ -60,53 +60,59 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let last_assign_pos =
-            if let Some(&pos) = self.ctx.symbol_last_assignment_pos.borrow().get(&sym_id) {
-                pos
-            } else {
-                let analyzer = self.flow_analyzer();
-                analyzer
-                    .reference_symbol_cache
-                    .borrow_mut()
-                    .insert(idx.0, Some(sym_id));
-                self.ctx
-                    .flow_reference_match_cache
-                    .borrow_mut()
-                    .retain(|&(a, b), _| a != idx.0 && b != idx.0);
+        let last_assign_pos = if let Some(&pos) = self
+            .ctx
+            .symbol_flow_memo
+            .last_assignment_pos
+            .borrow()
+            .get(&sym_id)
+        {
+            pos
+        } else {
+            let analyzer = self.flow_analyzer();
+            analyzer
+                .reference_symbol_cache
+                .borrow_mut()
+                .insert(idx.0, Some(sym_id));
+            self.ctx
+                .flow_reference_match_cache
+                .borrow_mut()
+                .retain(|&(a, b), _| a != idx.0 && b != idx.0);
 
-                let mut last_pos = 0;
-                for i in 0..self.ctx.binder.flow_nodes.len() {
-                    let flow_id = FlowNodeId(i as u32);
-                    let Some(flow) = self.ctx.binder.flow_nodes.get(flow_id) else {
-                        continue;
-                    };
-                    if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
-                        continue;
-                    }
-
-                    let Some(node) = self.ctx.arena.get(flow.node) else {
-                        continue;
-                    };
-                    if matches!(
-                        node.kind,
-                        syntax_kind_ext::VARIABLE_DECLARATION
-                            | syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                            | syntax_kind_ext::PARAMETER
-                    ) {
-                        continue;
-                    }
-
-                    if analyzer.assignment_targets_reference(flow.node, idx) {
-                        last_pos = last_pos.max(node.pos);
-                    }
+            let mut last_pos = 0;
+            for i in 0..self.ctx.binder.flow_nodes.len() {
+                let flow_id = FlowNodeId(i as u32);
+                let Some(flow) = self.ctx.binder.flow_nodes.get(flow_id) else {
+                    continue;
+                };
+                if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                    continue;
                 }
 
-                self.ctx
-                    .symbol_last_assignment_pos
-                    .borrow_mut()
-                    .insert(sym_id, last_pos);
-                last_pos
-            };
+                let Some(node) = self.ctx.arena.get(flow.node) else {
+                    continue;
+                };
+                if matches!(
+                    node.kind,
+                    syntax_kind_ext::VARIABLE_DECLARATION
+                        | syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                        | syntax_kind_ext::PARAMETER
+                ) {
+                    continue;
+                }
+
+                if analyzer.assignment_targets_reference(flow.node, idx) {
+                    last_pos = last_pos.max(node.pos);
+                }
+            }
+
+            self.ctx
+                .symbol_flow_memo
+                .last_assignment_pos
+                .borrow_mut()
+                .insert(sym_id, last_pos);
+            last_pos
+        };
 
         last_assign_pos > ref_pos
     }
@@ -465,6 +471,37 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         sym_id: SymbolId,
     ) -> bool {
+        // Symbol-stable predicate: every assignment flow node targeting `sym_id`
+        // is the same regardless of which reference `idx` we started from, so the
+        // full flow-node scan below only needs to run once per symbol. Without
+        // this memo, each reference to the symbol re-scans every flow node,
+        // turning N references into an O(N · flow_nodes) cost.
+        if let Some(&cached) = self
+            .ctx
+            .symbol_flow_memo
+            .has_non_initializer_assignment
+            .borrow()
+            .get(&sym_id)
+        {
+            return cached;
+        }
+
+        let result = self.compute_has_non_initializer_assignment_for_reference(idx, sym_id);
+
+        self.ctx
+            .symbol_flow_memo
+            .has_non_initializer_assignment
+            .borrow_mut()
+            .insert(sym_id, result);
+
+        result
+    }
+
+    fn compute_has_non_initializer_assignment_for_reference(
+        &self,
+        idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
         let analyzer = self.flow_analyzer();
         analyzer
             .reference_symbol_cache
@@ -575,7 +612,9 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_visited,
             &self.ctx.flow_results,
         )
-        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+        .with_symbol_last_assignment_pos(&self.ctx.symbol_flow_memo.last_assignment_pos)
+        .with_symbol_nested_closure_assignment(&self.ctx.symbol_flow_memo.nested_closure_assignment)
+        .with_symbol_first_identifier_ref(&self.ctx.symbol_flow_memo.first_identifier_ref)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         if let Some(class_info) = &self.ctx.enclosing_class
