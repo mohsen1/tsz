@@ -1323,10 +1323,13 @@ impl<'a> Printer<'a> {
                 && expr_node.is_string_literal()
             {
                 let is_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
-                    lit.text == "use strict"
+                    tsz_common::directives::is_use_strict_directive(
+                        lit.raw_text.as_deref(),
+                        &lit.text,
+                    )
                 } else if let Some(text) = self.source_text {
                     crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
-                        .is_ok_and(|s| s == "\"use strict\"" || s == "'use strict'")
+                        .is_ok_and(tsz_common::directives::is_use_strict_directive_raw_text)
                 } else {
                     false
                 };
@@ -1891,21 +1894,6 @@ impl<'a> Printer<'a> {
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
         ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
 
-        if !self.hoisted_deferred_static_class_result_temps.is_empty() {
-            let var_decl = format!(
-                "var {};",
-                self.hoisted_deferred_static_class_result_temps.join(", ")
-            );
-            self.writer
-                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
-        }
-
-        if !ref_vars.is_empty() {
-            let var_decl = format!("var {};", ref_vars.join(", "));
-            self.writer
-                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
-        }
-
         // A class-lowering temp can be reachable from more than one hoist
         // bucket (e.g. a class alias reserved as a file-level class temp that
         // is also collected with the private-field var names). Emit each name
@@ -1922,10 +1910,41 @@ impl<'a> Printer<'a> {
             })
             .cloned()
             .collect();
-        if !file_level_class_temps.is_empty() {
-            let var_decl = format!("var {};", file_level_class_temps.join(", "));
-            self.writer
-                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+
+        if !self.ctx.options.legacy_decorators {
+            let mut same_location_ref_vars = file_level_class_temps;
+            same_location_ref_vars.extend(
+                self.hoisted_deferred_static_class_result_temps
+                    .iter()
+                    .cloned(),
+            );
+            same_location_ref_vars.extend(ref_vars);
+            if !same_location_ref_vars.is_empty() {
+                let var_decl = format!("var {};", same_location_ref_vars.join(", "));
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
+        } else {
+            if !self.hoisted_deferred_static_class_result_temps.is_empty() {
+                let var_decl = format!(
+                    "var {};",
+                    self.hoisted_deferred_static_class_result_temps.join(", ")
+                );
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
+
+            if !ref_vars.is_empty() {
+                let var_decl = format!("var {};", ref_vars.join(", "));
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
+
+            if !file_level_class_temps.is_empty() {
+                let var_decl = format!("var {};", file_level_class_temps.join(", "));
+                self.writer
+                    .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+            }
         }
 
         if !self.hoisted_assignment_value_temps.is_empty() {
