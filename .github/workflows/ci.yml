@@ -905,9 +905,9 @@ jobs:
           compression-level: 1
 
   unit:
-    # Required unit context. Run on the Cloud Build private pool instead of
-    # the 8-vCPU self-hosted runner: the old local path repeatedly hit
-    # linker/process kills while the same suite passed through Cloud Build.
+    # Required unit context. Keep normal PR unit coverage on the Cloud Run
+    # self-hosted pool; reserve Cloud Build for intentionally heavy offload
+    # paths such as benchmark preparation/shards.
     # Keep the status name as `unit` so branch protection remains stable.
     name: unit
     needs: gate
@@ -918,25 +918,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Submit required unit suite to Cloud Build pool
-        # `gcloud builds submit` tars the working directory, uploads it to the
-        # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
-        # private-pool build. Keep polling coarse enough that concurrent PR
-        # unit jobs do not exhaust Cloud Build get-request quota.
-        run: |
-          set -euo pipefail
-          timeout 25m gcloud builds submit \
-            --project=tsz-ci \
-            --region=us-central1 \
-            --polling-interval=10 \
-            --config=scripts/cloudbuild/cloudbuild-unit.yaml \
-            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
-            .
+      - name: Run required unit suite
+        run: scripts/ci/github-suite.sh unit
 
   unit-cloudbuild:
     # Compatibility status for dashboards and branch-protection rules that may
-    # still look for the experimental Cloud Build context. The Cloud Build unit
-    # suite is now executed by the required `unit` job above.
+    # still look for the retired experimental Cloud Build unit context. The
+    # required unit suite is executed by the Cloud Run `unit` job above.
     name: unit-cloudbuild
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
@@ -947,7 +935,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Report promoted unit path
-        run: echo "Cloud Build unit suite is enforced by the required unit job."
+        run: echo "Unit suite is enforced by the required Cloud Run unit job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the

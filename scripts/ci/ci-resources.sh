@@ -67,10 +67,8 @@ default_cargo_build_jobs() {
       #   * 12288 (2 jobs) intermediate — still SIGKILLs (this PR's first run).
       #   * 24576 (1 job) ← current. Safe on 32 GiB box; floor(32768/24576)=1.
       #
-      # The real fix for compile time is a bigger box (Cloud Build private
-      # pool e2-highcpu-32 in PR #7591). Once that lands and is promoted, this
-      # cap stops mattering — Cloud Build runs the same compile at -j32 on a
-      # box where memory isn't the constraint.
+      # Keep unit tests on the Cloud Run runner and serialize enough of the
+      # compile to stay under the 32 GiB instance limit.
       mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     dist-binaries)

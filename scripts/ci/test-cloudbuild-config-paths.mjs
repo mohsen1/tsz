@@ -11,7 +11,6 @@ const workflowConfigs = new Map([
     ".github/workflows/bench.yml",
     ["cloudbuild-bench-prepare.yaml", "cloudbuild-bench-shard.yaml"],
   ],
-  [".github/workflows/ci.yml", ["cloudbuild-unit.yaml"]],
 ]);
 const workflowDir = path.join(ROOT, ".github", "workflows");
 const workflowFiles = fs
