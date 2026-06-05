@@ -86,9 +86,10 @@ hash_source_tree() {
 #
 # Source identity:
 #   - When the fixture directory is itself the toplevel of a git repository, use
-#     HEAD plus a content-sensitive dirty marker (git diff against HEAD). A clean
-#     tree yields an empty, stable marker; uncommitted edits change it, so a
-#     stale tree cannot falsely hit.
+#     HEAD plus a content-sensitive dirty marker (git diff against HEAD) and the
+#     compiled source-tree content hash. A clean tree yields an empty, stable
+#     marker; uncommitted tracked edits and untracked compiled source files
+#     change the key, so a stale tree cannot falsely hit.
 #   - Otherwise fall back to a content hash of the compiled source tree. This is
 #     the case for generated-app rows, which have no per-fixture .git and live
 #     inside the tsz checkout: a bare `git rev-parse HEAD` there walks up into
@@ -112,10 +113,11 @@ compute_compile_fingerprint() {
   local source_id="" toplevel=""
   toplevel="$(git -C "$fixture_dir" rev-parse --show-toplevel 2>/dev/null || true)"
   if [[ -n "$toplevel" && -n "$fixture_phys" && "$toplevel" == "$fixture_phys" ]]; then
-    local git_ref="" dirty_marker=""
+    local git_ref="" dirty_marker="" source_tree_marker=""
     git_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || true)"
     dirty_marker="$(git -C "$fixture_dir" diff HEAD 2>/dev/null | sha256_of_stdin)"
-    source_id="git:${git_ref}:${dirty_marker}"
+    source_tree_marker="$(hash_source_tree "$src_dir")"
+    source_id="git:${git_ref}:${dirty_marker}:tree:${source_tree_marker}"
   else
     source_id="tree:$(hash_source_tree "$src_dir")"
   fi

@@ -89,6 +89,11 @@ git_quiet -C "$OUTER" add -A
 git_quiet -C "$OUTER" commit -m "outer v3"
 emit B_AFTER_OUTER_COMMIT "$(compute_compile_fingerprint git-fixture "$FIX/tsconfig.json" "$FIX/src")"
 
+# Add an untracked compiled source file. The git diff marker omits this case, so
+# the git-fixture identity must also include the compiled source-tree hash.
+printf 'export const z: number = 1;\n' > "$FIX/src/untracked.ts"
+emit B_UNTRACKED "$(compute_compile_fingerprint git-fixture "$FIX/tsconfig.json" "$FIX/src")"
+
 # Dirty the tracked tree (no commit). The content-sensitive dirty marker must
 # move the key so a stale tree cannot falsely hit.
 printf 'export const y: number = 99;\n' > "$FIX/src/lib.ts"
@@ -123,6 +128,7 @@ for (const key of [
   "OUTER_HEAD",
   "B_FIRST",
   "B_AFTER_OUTER_COMMIT",
+  "B_UNTRACKED",
   "B_DIRTY",
   "B_AFTER_COMMIT",
 ]) {
@@ -159,6 +165,11 @@ assert.equal(
   kv.B_FIRST,
   kv.B_AFTER_OUTER_COMMIT,
   "git-fixture fingerprint must be stable across outer (tsz) commits",
+);
+assert.notEqual(
+  kv.B_FIRST,
+  kv.B_UNTRACKED,
+  "git-fixture fingerprint must change when an untracked compiled source file is added",
 );
 assert.notEqual(
   kv.B_FIRST,
