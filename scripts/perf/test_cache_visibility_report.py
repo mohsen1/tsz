@@ -357,6 +357,40 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertFalse(candidates[0].needs_review)
 
+    def test_statistics_in_file_stem_module_cover_cache_field(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/evaluate.rs",
+                "\n".join(
+                    [
+                        "pub struct TypeEvaluator {",
+                        "    infer_match_eval_cache: FxHashMap<TypeId, TypeId>,",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+            self.write(
+                root,
+                "src/evaluate/cache_stats.rs",
+                "\n".join(
+                    [
+                        "pub struct TypeEvaluatorCacheStatistics {",
+                        "    infer_match_eval_entries: usize,",
+                        "    infer_match_eval_estimated_size_bytes: usize,",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual(len(candidates), 1)
+        self.assertFalse(candidates[0].needs_review)
+
     def test_solver_visitor_predicate_memos_are_visible(self):
         root = Path(__file__).resolve().parents[2]
         candidates = self.module.scan([root / "crates/tsz-solver/src/visitors"])
