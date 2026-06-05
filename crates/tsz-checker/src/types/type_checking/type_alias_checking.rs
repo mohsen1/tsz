@@ -1372,11 +1372,6 @@ impl<'a> CheckerState<'a> {
                             type_ref.type_arguments.as_ref(),
                         );
                     if !is_bare_scoped_type_parameter {
-                        if let Some(type_arguments) = &type_ref.type_arguments {
-                            for &arg_idx in &type_arguments.nodes {
-                                check_child_type_node!(self, arg_idx);
-                            }
-                        }
                         if let Some(sym_id) = self
                             .resolve_type_symbol_for_lowering(type_ref.type_name)
                             .map(tsz_binder::SymbolId)
@@ -1384,6 +1379,11 @@ impl<'a> CheckerState<'a> {
                                 || self.type_alias_reaches_resolving_alias(sym_id))
                         {
                             return;
+                        }
+                        if let Some(type_arguments) = &type_ref.type_arguments {
+                            for &arg_idx in &type_arguments.nodes {
+                                check_child_type_node!(self, arg_idx);
+                            }
                         }
                         if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
                             let _ = if nested_in_type_literal {

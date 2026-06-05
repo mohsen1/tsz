@@ -39,6 +39,7 @@ jobs:
       bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
       perf_tool_only: ${{ steps.gate.outputs.perf_tool_only }}
       arch_tool_only: ${{ steps.gate.outputs.arch_tool_only }}
+      metadata_only_skip: ${{ steps.gate.outputs.metadata_only_skip }}
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
@@ -71,13 +72,14 @@ jobs:
               # Body/title edits can repair AgentName, project-corpus, or WIP
               # metadata without changing the PR head SHA. Refresh only the
               # metadata gates so stale failed PR-body checks can clear without
-              # asking agents to push a no-op code commit. Keep this off the
-              # protected "CI Summary" context: it did not run heavy CI and
-              # must not satisfy branch protection for the head SHA.
+              # asking agents to push a no-op code commit. The summary job
+              # mirrors the previous real CI Summary for this exact head SHA so
+              # native merge queue still sees the protected context without a
+              # light run masking a failed full run.
               echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
               should_run=false
               full_run=false
-              required_summary=false
+              metadata_only_skip=true
               compiler_checks_required=false
             fi
             # The `labeled` event triggers on every label add. We only care
@@ -297,9 +299,6 @@ jobs:
                 required_summary=false
               fi
             fi
-            if [[ "$metadata_only_skip" == "true" ]]; then
-              required_summary=false
-            fi
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             # Skip redundant main CI when the push is a PR merge already validated by PR CI.
             # Saves ~40+ runner-minutes per merge (32 conformance + lint + unit + wasm + emit shards).
@@ -435,6 +434,7 @@ jobs:
           echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
           echo "perf_tool_only=${perf_tool_only}" >> "$GITHUB_OUTPUT"
           echo "arch_tool_only=${arch_tool_only}" >> "$GITHUB_OUTPUT"
+          echo "metadata_only_skip=${metadata_only_skip}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
@@ -1258,12 +1258,18 @@ jobs:
     steps:
       - name: Verify required CI jobs
         env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CI_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           python3 - <<'PY'
           import json
           import os
           import sys
+          import urllib.parse
+          import urllib.request
 
           needs = json.loads(os.environ["NEEDS_JSON"])
           gate = needs["gate"]
@@ -1272,6 +1278,7 @@ jobs:
           bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
           perf_tool_only = gate.get("outputs", {}).get("perf_tool_only") == "true"
           arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
+          metadata_only_skip = gate.get("outputs", {}).get("metadata_only_skip") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
           gate_result = gate.get("result")
@@ -1284,7 +1291,51 @@ jobs:
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
+          def github_json(path):
+              token = os.environ["GH_TOKEN"]
+              request = urllib.request.Request(
+                  f"https://api.github.com{path}",
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+          def mirror_previous_required_summary():
+              repository = os.environ["GITHUB_REPOSITORY"]
+              current_run_id = int(os.environ["GITHUB_RUN_ID"])
+              head_sha = os.environ["CI_HEAD_SHA"]
+              query = urllib.parse.urlencode({
+                  "head_sha": head_sha,
+                  "event": "pull_request",
+                  "per_page": "20",
+              })
+              runs = github_json(f"/repos/{repository}/actions/workflows/ci.yml/runs?{query}").get("workflow_runs", [])
+              runs = [run for run in runs if int(run.get("id", 0)) != current_run_id]
+              runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
+              for run in runs:
+                  jobs = github_json(f"/repos/{repository}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
+                  summaries = [job for job in jobs if job.get("name") == "CI Summary"]
+                  if not summaries:
+                      continue
+                  summary = summaries[-1]
+                  conclusion = summary.get("conclusion")
+                  url = summary.get("html_url") or run.get("html_url")
+                  if conclusion == "success":
+                      print(f"Metadata-only CI mirrors successful CI Summary from run {run['id']}: {url}")
+                      return
+                  print(f"Previous CI Summary for this head was {conclusion or 'missing'} in run {run['id']}: {url}")
+                  sys.exit(1)
+              print(f"Metadata-only CI could not find a previous required CI Summary for head {head_sha}.")
+              sys.exit(1)
+
           if not should_run:
+              if metadata_only_skip:
+                  mirror_previous_required_summary()
+                  sys.exit(0)
               if bench_shell_only:
                   bench_smoke = needs.get("bench-script-smoke", {})
                   if bench_smoke.get("result") != "success":
