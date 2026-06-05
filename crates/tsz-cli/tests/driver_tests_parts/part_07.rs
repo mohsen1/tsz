@@ -43,7 +43,7 @@ fn compile_outdir_places_output_in_directory() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "build"
           },
           "include": ["src/**/*.ts"]
@@ -149,7 +149,7 @@ fn compile_outdir_nested_structure() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -187,7 +187,7 @@ fn compile_outdir_deep_nested_path() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "build/output/js"
           },
           "include": ["src/**/*.ts"]
@@ -666,7 +666,7 @@ fn compile_missing_multiple_files_in_files_array_returns_error() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/a.ts", "src/b.ts", "src/c.ts"]

@@ -125,7 +125,7 @@ fn compile_with_project_dir_uses_tsconfig() {
     write_file(
         &config_dir.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "include": ["src/**/*.ts"]
@@ -372,7 +372,7 @@ fn compile_with_jsx_preserve_emits_jsx_extension() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "jsx": "preserve",
             "strict": false
@@ -406,7 +406,7 @@ fn compile_resolves_relative_imports_from_files_list() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -484,7 +484,7 @@ fn compile_resolves_paths_mappings() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "baseUrl": ".",
             "ignoreDeprecations": "6.0",
@@ -668,7 +668,7 @@ fn compile_resolves_node_modules_types() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -712,7 +712,7 @@ fn compile_resolves_tsconfig_types_includes_selected_packages() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "noEmitOnError": true,
             "types": ["foo"]
@@ -757,7 +757,7 @@ fn compile_resolves_tsconfig_type_roots_includes_packages() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "noEmitOnError": true,
             "typeRoots": ["types"]
@@ -789,7 +789,7 @@ fn compile_resolves_node_modules_exports_subpath() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "node16",
             "moduleResolution": "node16",
@@ -1179,7 +1179,7 @@ fn compile_resolves_node_modules_types_versions() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -1229,7 +1229,7 @@ fn compile_resolves_node_modules_types_versions_best_match() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -1304,7 +1304,7 @@ fn compile_resolves_node_modules_types_versions_uses_first_matching_range_in_dec
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "ignoreDeprecations": "6.0",
@@ -1438,7 +1438,7 @@ fn compile_resolves_node_modules_types_versions_respects_cli_version_override() 
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -1492,7 +1492,7 @@ fn compile_resolves_node_modules_types_versions_respects_env_version_override() 
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -1547,7 +1547,7 @@ fn compile_resolves_node_modules_types_versions_respects_tsconfig_version_overri
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true,
@@ -1612,7 +1612,7 @@ fn compile_resolves_node_modules_types_versions_tsconfig_extends_inherits_overri
         &base.join("tsconfig.json"),
         r#"{
           "extends": "./config/base.json",
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -1667,7 +1667,7 @@ fn compile_resolves_node_modules_types_versions_env_overrides_tsconfig() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true,
@@ -1723,7 +1723,7 @@ fn compile_resolves_node_modules_types_versions_empty_env_uses_tsconfig() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true,

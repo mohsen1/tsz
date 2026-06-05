@@ -6,7 +6,7 @@ fn compile_resolves_node_modules_types_versions_cli_overrides_env_and_tsconfig()
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true,
@@ -70,7 +70,7 @@ fn compile_resolves_node_modules_types_versions_invalid_override_falls_back() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -124,7 +124,7 @@ fn compile_resolves_node_modules_types_versions_invalid_env_falls_back() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -179,7 +179,7 @@ fn compile_resolves_node_modules_types_versions_invalid_tsconfig_falls_back() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true,
@@ -235,7 +235,7 @@ fn compile_resolves_node_modules_types_versions_falls_back_to_wildcard() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "node",
             "noEmitOnError": true
@@ -300,7 +300,7 @@ fn compile_resolves_package_exports_versioned_condition_respects_compiler_versio
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "node16",
             "moduleResolution": "node16",
@@ -363,7 +363,7 @@ fn compile_resolves_package_imports_versioned_condition_respects_compiler_versio
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "node16",
             "moduleResolution": "node16",
@@ -414,7 +414,7 @@ fn compile_resolves_package_imports_wildcard() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "node16",
             "moduleResolution": "node16",
@@ -685,7 +685,7 @@ fn compile_resolves_package_imports_prefers_types_condition() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "node16",
             "moduleResolution": "node16",
@@ -736,7 +736,7 @@ fn compile_resolves_package_imports_prefers_require_condition_for_commonjs() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "commonjs",
             "noEmitOnError": true
@@ -789,7 +789,7 @@ fn compile_resolves_package_imports_prefers_import_condition_for_esm() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "esnext",
             "moduleResolution": "bundler",
@@ -850,7 +850,7 @@ fn compile_bundler_does_not_default_to_browser_condition() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "bundler",
             "noEmitOnError": true
@@ -906,7 +906,7 @@ fn compile_bundler_uses_browser_condition_when_in_custom_conditions() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "moduleResolution": "bundler",
             "customConditions": ["browser"],
@@ -1062,7 +1062,7 @@ fn compile_node_next_resolves_js_extension_to_ts() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "nodenext",
             "moduleResolution": "nodenext",
@@ -1098,7 +1098,7 @@ fn compile_node_next_prefers_mts_for_module_package() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "nodenext",
             "moduleResolution": "nodenext",
@@ -1146,7 +1146,7 @@ fn compile_node_next_prefers_cts_for_commonjs_package() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "nodenext",
             "moduleResolution": "nodenext",
@@ -1194,7 +1194,7 @@ fn compile_with_cache_emits_only_dirty_files() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/alpha.ts", "src/beta.ts"]
@@ -1239,7 +1239,7 @@ fn compile_with_cache_updates_dependencies_for_changed_files() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -1297,7 +1297,7 @@ fn compile_with_cache_skips_dependents_when_exports_unchanged() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -1350,7 +1350,7 @@ fn compile_with_cache_rechecks_dependents_on_export_change() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -1406,7 +1406,7 @@ fn compile_with_cache_body_only_edit_skips_dependents() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -1455,7 +1455,7 @@ fn compile_with_cache_invalidates_paths() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "noEmitOnError": true
           },
@@ -1495,7 +1495,7 @@ fn compile_with_cache_invalidates_dependents() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "noEmitOnError": true
           },
@@ -1540,7 +1540,7 @@ fn invalidate_paths_with_dependents_symbols_keeps_unrelated_cache() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -1582,7 +1582,7 @@ fn invalidate_paths_with_dependents_symbols_handles_reexports() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -1622,7 +1622,7 @@ fn invalidate_paths_with_dependents_symbols_handles_import_equals() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "module": "commonjs"
           },
@@ -1669,7 +1669,7 @@ fn invalidate_paths_with_dependents_symbols_handles_namespace_reexports() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
@@ -1711,7 +1711,7 @@ fn invalidate_paths_with_dependents_symbols_handles_star_reexports() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {"rootDir": ".", 
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist"
           },
           "files": ["src/index.ts"]
