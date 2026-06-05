@@ -19,6 +19,24 @@ use super::{
 mod duplicate_shape;
 mod finalize;
 
+pub(super) struct FinishGenericCallResolutionArgs<'a> {
+    pub(super) func: &'a FunctionShape,
+    pub(super) arg_types: &'a [TypeId],
+    pub(super) actual_this_type: Option<TypeId>,
+    pub(super) infer_ctx: InferenceContext<'a>,
+    pub(super) substitution: &'a TypeSubstitution,
+    pub(super) type_param_vars: &'a [InferenceVar],
+    pub(super) type_param_placeholder_atoms: &'a [tsz_common::Atom],
+    pub(super) local_type_param_names: &'a FxHashSet<tsz_common::Atom>,
+    pub(super) var_map: &'a FxHashMap<TypeId, InferenceVar>,
+    pub(super) direct_param_vars: &'a FxHashSet<InferenceVar>,
+    pub(super) noinfer_param_vars: &'a FxHashSet<InferenceVar>,
+    pub(super) rest_tuple_target_type: Option<TypeId>,
+    pub(super) structural_return_subst: &'a TypeSubstitution,
+    pub(super) first_direct_primitive_mismatch: Option<(usize, TypeId, TypeId)>,
+    pub(super) saw_deferred_arg: bool,
+}
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn object_constraint_properties_are_any(&self, constraint: TypeId) -> bool {
         let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
@@ -1746,23 +1764,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        self.finish_generic_call_resolution(
+        self.finish_generic_call_resolution(FinishGenericCallResolutionArgs {
             func,
             arg_types,
             actual_this_type,
             infer_ctx,
-            &substitution,
-            &type_param_vars,
-            &type_param_placeholder_atoms,
-            &local_type_param_names,
-            &var_map,
-            &direct_param_vars,
-            &noinfer_param_vars,
+            substitution: &substitution,
+            type_param_vars: &type_param_vars,
+            type_param_placeholder_atoms: &type_param_placeholder_atoms,
+            local_type_param_names: &local_type_param_names,
+            var_map: &var_map,
+            direct_param_vars: &direct_param_vars,
+            noinfer_param_vars: &noinfer_param_vars,
             rest_tuple_target_type,
-            &structural_return_subst,
+            structural_return_subst: &structural_return_subst,
             first_direct_primitive_mismatch,
             saw_deferred_arg,
-        )
+        })
     }
 
     fn apply_callback_optional_rest_slots(

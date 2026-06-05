@@ -55,7 +55,8 @@ use tsz::parser::node::NodeArena;
 use tsz::parser::syntax_kind_ext;
 use tsz::parser::{NodeIndex, ParseDiagnostic};
 use tsz::scanner::SyntaxKind;
-use tsz_solver::construction::QueryCache;
+use tsz::solver_cache::StoreStatistics;
+use tsz::solver_cache::construction::{QueryCache, QueryCacheStatistics};
 
 #[path = "diagnostic_source.rs"]
 mod diagnostic_source;
@@ -184,9 +185,9 @@ pub struct CompilationResult {
     /// Estimated heap memory of the `TypeInterner` in bytes (populated for `--extendedDiagnostics`).
     pub interner_estimated_bytes: usize,
     /// Aggregate query-cache statistics (populated for `--extendedDiagnostics`).
-    pub query_cache_stats: Option<tsz_solver::construction::QueryCacheStatistics>,
+    pub query_cache_stats: Option<QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
-    pub def_store_stats: Option<tsz_solver::StoreStatistics>,
+    pub def_store_stats: Option<StoreStatistics>,
     /// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.
     pub phase_timings: PhaseTimings,
     /// Merged-program residency stats (populated for `--extendedDiagnostics`).
@@ -838,13 +839,6 @@ pub(crate) fn compile_with_cache_and_changes(
     result.invalidation_summaries = summaries;
     Ok(result)
 }
-
-/// Returns true if the given diagnostic code is a grammar-level error that should
-/// take priority over TS5107/TS5101 deprecation diagnostics.
-///
-/// When deprecated compiler options produce TS5107, tsc makes them fatal (stops
-/// compilation early). However, tsc suppresses TS5107 when real file-level grammar
-/// errors exist. This function identifies which diagnostic codes count as "grammar
 
 /// Build file info with inclusion reasons
 fn build_file_infos(

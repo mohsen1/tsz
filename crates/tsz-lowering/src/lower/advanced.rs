@@ -466,6 +466,14 @@ impl<'a> TypeLowering<'a> {
                 && let Some(ident) = self.arena.get_identifier(name_node)
             {
                 let name = ident.escaped_text.as_str();
+                if data
+                    .type_arguments
+                    .as_ref()
+                    .is_none_or(|args| args.nodes.is_empty())
+                    && let Some(type_param) = self.lookup_type_param(name)
+                {
+                    return type_param;
+                }
 
                 // Handle string manipulation intrinsic types.
                 // String intrinsics (Uppercase, Lowercase, Capitalize, Uncapitalize)

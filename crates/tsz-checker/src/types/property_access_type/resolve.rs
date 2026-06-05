@@ -578,13 +578,15 @@ impl<'a> CheckerState<'a> {
             access.expression,
             access.name_or_argument,
             name_node,
-            object_type,
-            original_object_type,
-            access.question_dot_token,
-            skip_flow_narrowing,
-            skip_result_flow_for_result,
-            write_presence_only,
-            optional_property_chain_cache_key.as_ref(),
+            super::optional_fast_path::OptionalPropertyChainFastPathRequest {
+                object_type,
+                original_object_type,
+                question_dot_token: access.question_dot_token,
+                skip_flow_narrowing,
+                skip_result_flow_for_result,
+                write_presence_only,
+                optional_property_chain_cache_key: optional_property_chain_cache_key.as_ref(),
+            },
         ) {
             return type_id;
         }
@@ -1015,17 +1017,19 @@ impl<'a> CheckerState<'a> {
             idx,
             access,
             name_node,
-            object_type,
-            original_object_type,
-            display_object_type,
-            skip_flow_narrowing,
-            skip_result_flow_for_result,
-            write_presence_only,
-            receiver_has_daa_error,
-            accessibility_error_emitted,
-            commonjs_named_props_disallowed,
-            is_this_access,
-            js_expando_before_assignment,
+            super::identifier_resolution::IdentifierPropertyAccessRequest {
+                object_type,
+                original_object_type,
+                display_object_type,
+                skip_flow_narrowing,
+                skip_result_flow_for_result,
+                write_presence_only,
+                receiver_has_daa_error,
+                accessibility_error_emitted,
+                commonjs_named_props_disallowed,
+                is_this_access,
+                js_expando_before_assignment,
+            },
         )
     }
 }
