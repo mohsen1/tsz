@@ -1440,6 +1440,17 @@ pub fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     }
 }
 
+/// True when `type_id`, after unwrapping a single `readonly`, is a tuple type
+/// that contains at least one rest/spread element — i.e. a *variadic* tuple
+/// such as `[T, ...A]`, `[...A, ...B]`, or `[...A, L]`.
+pub fn is_variadic_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let inner = unwrap_readonly(db, type_id);
+    matches!(
+        db.lookup(inner),
+        Some(TypeData::Tuple(list_id)) if db.tuple_list(list_id).iter().any(|e| e.rest)
+    )
+}
+
 /// Unwrap all readonly type wrappers recursively.
 ///
 /// Keeps unwrapping until the type is no longer a `ReadonlyType`.
