@@ -247,83 +247,11 @@ impl<'a> CheckerState<'a> {
         });
         // Generic aliases still get the syntax/diagnostic body walk below.
         // Defer semantic body construction until a use site supplies type args.
-        let generic_alias_body_can_defer_eager_construction = if has_type_params {
-            use tsz_parser::parser::syntax_kind_ext;
-
-            let mut pending = vec![alias.type_node];
-            let mut can_defer = true;
-
-            while let Some(type_node_idx) = pending.pop() {
-                let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
-                    can_defer = false;
-                    break;
-                };
-
-                match type_node.kind {
-                    k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
-                            can_defer = false;
-                            break;
-                        };
-                        if let Some(type_arguments) = &type_ref.type_arguments {
-                            pending.extend(type_arguments.nodes.iter().copied());
-                        }
-                    }
-                    k if k == syntax_kind_ext::ARRAY_TYPE => {
-                        let Some(array_type) = self.ctx.arena.get_array_type(type_node) else {
-                            can_defer = false;
-                            break;
-                        };
-                        pending.push(array_type.element_type);
-                    }
-                    k if k == syntax_kind_ext::UNION_TYPE
-                        || k == syntax_kind_ext::INTERSECTION_TYPE =>
-                    {
-                        let Some(composite_type) = self.ctx.arena.get_composite_type(type_node)
-                        else {
-                            can_defer = false;
-                            break;
-                        };
-                        pending.extend(composite_type.types.nodes.iter().copied());
-                    }
-                    k if k == syntax_kind_ext::PARENTHESIZED_TYPE
-                        || k == syntax_kind_ext::OPTIONAL_TYPE
-                        || k == syntax_kind_ext::REST_TYPE =>
-                    {
-                        let Some(wrapped_type) = self.ctx.arena.get_wrapped_type(type_node) else {
-                            can_defer = false;
-                            break;
-                        };
-                        pending.push(wrapped_type.type_node);
-                    }
-                    k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-                        let Some(indexed_access) =
-                            self.ctx.arena.get_indexed_access_type(type_node)
-                        else {
-                            can_defer = false;
-                            break;
-                        };
-                        pending.push(indexed_access.object_type);
-                        pending.push(indexed_access.index_type);
-                    }
-                    k if k == syntax_kind_ext::LITERAL_TYPE => {}
-                    _ => {
-                        can_defer = false;
-                        break;
-                    }
-                }
-            }
-
-            can_defer
-        } else {
-            false
-        };
-
         let skip_eager_generic_alias_body = has_type_params
             && !should_check_variance_annotations
             && !is_generic_self_circular
             && !has_deferred_self_reference
-            && generic_alias_body_can_defer_eager_construction;
+            && self.type_alias_body_allows_lazy_generic_semantic_body(alias.type_node);
         let body_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
@@ -618,11 +546,7 @@ impl<'a> CheckerState<'a> {
             }
         } else if !self.validate_signature_only_type_literal_alias_body(alias.type_node) {
             self.check_type_node(alias.type_node);
-            if !self
-                .type_alias_body_missing_names_syntax_covered_by_type_node_checking(alias.type_node)
-                && !self
-                    .type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node)
-            {
+            if !self.type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node) {
                 self.check_type_alias_body_for_missing_names_after_type_node_check(alias.type_node);
             }
         }
@@ -1603,6 +1527,7 @@ impl<'a> CheckerState<'a> {
                         let atom = self.ctx.types.intern_string(&name);
                         let mut constraint_type = TypeId::UNKNOWN;
                         if tp_data.constraint != tsz_parser::parser::NodeIndex::NONE {
+                            check_child_type_node_in_current_scope!(self, tp_data.constraint);
                             let resolved = self.get_type_from_type_node(tp_data.constraint);
                             if resolved != TypeId::ERROR {
                                 constraint_type = resolved;

@@ -8,14 +8,14 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn type_alias_body_missing_names_syntax_covered_by_type_node_checking(
+    pub(crate) fn type_alias_body_allows_lazy_generic_semantic_body(
         &self,
         root: NodeIndex,
     ) -> bool {
-        self.type_alias_body_missing_names_syntax_covered_inner(root)
+        self.type_alias_body_allows_lazy_generic_semantic_body_inner(root)
     }
 
-    fn type_alias_body_missing_names_syntax_covered_inner(&self, node_idx: NodeIndex) -> bool {
+    fn type_alias_body_allows_lazy_generic_semantic_body_inner(&self, node_idx: NodeIndex) -> bool {
         if node_idx == NodeIndex::NONE {
             return true;
         }
@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
                 };
                 type_ref.type_arguments.as_ref().is_none_or(|args| {
                     args.nodes.iter().copied().all(|arg_idx| {
-                        self.type_alias_body_missing_names_syntax_covered_inner(arg_idx)
+                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(arg_idx)
                     })
                 })
             }
@@ -39,47 +39,21 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 composite.types.nodes.iter().copied().all(|member_idx| {
-                    self.type_alias_body_missing_names_syntax_covered_inner(member_idx)
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(member_idx)
                 })
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 self.ctx.arena.get_array_type(node).is_some_and(|array| {
-                    self.type_alias_body_missing_names_syntax_covered_inner(array.element_type)
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(array.element_type)
                 })
             }
-            k if k == syntax_kind_ext::TUPLE_TYPE => {
-                let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
-                    return false;
-                };
-                tuple.elements.nodes.iter().copied().all(|element_idx| {
-                    self.type_alias_body_missing_names_syntax_covered_inner(element_idx)
-                })
-            }
-            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => self
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => self
                 .ctx
                 .arena
-                .get_named_tuple_member(node)
-                .is_some_and(|member| {
-                    self.type_alias_body_missing_names_syntax_covered_inner(member.type_node)
+                .get_wrapped_type(node)
+                .is_some_and(|wrapped| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(wrapped.type_node)
                 }),
-            k if k == syntax_kind_ext::OPTIONAL_TYPE
-                || k == syntax_kind_ext::REST_TYPE
-                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
-            {
-                self.ctx
-                    .arena
-                    .get_wrapped_type(node)
-                    .is_some_and(|wrapped| {
-                        self.type_alias_body_missing_names_syntax_covered_inner(wrapped.type_node)
-                    })
-            }
-            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-                let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) else {
-                    return false;
-                };
-                self.type_alias_body_missing_names_syntax_covered_inner(indexed.object_type)
-                    && self.type_alias_body_missing_names_syntax_covered_inner(indexed.index_type)
-            }
             k if Self::primitive_or_literal_type_kind_is_covered(k) => true,
             _ => false,
         }

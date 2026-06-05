@@ -52,3 +52,21 @@ let value: {alias}<string> = 1;
         );
     }
 }
+
+#[test]
+fn lazy_alias_keeps_recursive_conditional_depth_diagnostic() {
+    let codes = diagnostic_codes(
+        r#"
+type Foo<T> = T extends unknown
+  ? unknown extends `${infer Rest}`
+    ? Foo<T>
+    : Foo<unknown>
+  : unknown;
+"#,
+    );
+
+    assert!(
+        codes.contains(&2589),
+        "generic conditional aliases must still run declaration-time depth checks: {codes:?}"
+    );
+}
