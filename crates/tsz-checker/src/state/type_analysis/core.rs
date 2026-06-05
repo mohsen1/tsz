@@ -1528,19 +1528,17 @@ impl<'a> CheckerState<'a> {
                     .register_type_to_def(result, def_id);
                 self.ctx.definition_store.set_body(def_id, result);
 
-                // Mark the body as "computed" when the declared alias body is a
-                // non-generic reducing operator whose result tsc renders without
-                // an `aliasSymbol`. `find_type_alias_by_body` and the diagnostic
-                // formatters then show the underlying structural type rather than
-                // the alias name. Generic aliases keep their name since the
-                // operator is part of the definition, not a simplification.
-                let body_is_computed = self
+                // Record the body's display provenance (see
+                // `record_alias_body_provenance`). Only a non-generic alias is a
+                // candidate: a generic alias keeps its name because the operator
+                // is part of the definition, not a simplification.
+                let alias_is_non_generic = self
                     .ctx
                     .definition_store
                     .get(def_id)
-                    .filter(|d| d.type_params.is_empty())
-                    .and_then(|_| self.ctx.binder.get_symbol(sym_id))
-                    .is_some_and(|symbol| {
+                    .is_some_and(|d| d.type_params.is_empty());
+                let body_is_computed = alias_is_non_generic
+                    && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
                         symbol.declarations.iter().any(|&decl_idx| {
                             super::source_alias_attribution::alias_declaration_body_is_computed(
                                 self.ctx.arena,
@@ -1550,9 +1548,7 @@ impl<'a> CheckerState<'a> {
                             )
                         })
                     });
-                if body_is_computed {
-                    self.ctx.definition_store.mark_body_as_computed(result);
-                }
+                self.record_alias_body_provenance(result, body_is_computed, alias_is_non_generic);
                 // Also register the evaluated form of the type.
                 // Type aliases with union/intersection bodies often contain Lazy
                 // members (e.g., `type Exotic = CatDog | ManBearPig`). When these
@@ -1574,15 +1570,34 @@ impl<'a> CheckerState<'a> {
                         // otherwise the reverse lookup repaints the alias name onto
                         // the shared structural result (e.g. a conditional that
                         // reduces to `{ a: 1; }`).
-                        if body_is_computed {
-                            self.ctx.definition_store.mark_body_as_computed(evaluated);
-                        }
+                        self.record_alias_body_provenance(
+                            evaluated,
+                            body_is_computed,
+                            alias_is_non_generic,
+                        );
                     }
                 }
             }
         }
 
         result
+    }
+
+    /// Record the display provenance of an alias body `TypeId`: a reducing
+    /// result is "computed" (rendered structurally), while a constructive
+    /// non-generic alias body is "directly named" so it keeps its name even if a
+    /// computed alias resolves to the same interned shape ("direct wins").
+    fn record_alias_body_provenance(
+        &self,
+        body: TypeId,
+        is_computed: bool,
+        alias_is_non_generic: bool,
+    ) {
+        if is_computed {
+            self.ctx.definition_store.mark_body_as_computed(body);
+        } else if alias_is_non_generic {
+            self.ctx.definition_store.mark_body_as_directly_named(body);
+        }
     }
 
     /// Resolve a `typeof X` type query with flow-sensitive narrowing.
