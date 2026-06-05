@@ -10,7 +10,7 @@
 //! - Best common type calculation
 //! - Efficient unification with path compression
 
-use crate::construction::TypeDatabase;
+use crate::construction::{QueryDatabase, TypeDatabase};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
@@ -261,6 +261,8 @@ pub(crate) struct InferenceContext<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Type resolver for semantic lookups (e.g., base class queries)
     pub(crate) resolver: Option<&'a dyn crate::relations::subtype::TypeResolver>,
+    // Shared query database for cache-aware inference-time instantiation.
+    pub(crate) query_db: Option<&'a dyn QueryDatabase>,
     /// Memoized subtype checks used by BCT and bound validation.
     pub(crate) subtype_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
     /// Active subtype checks used for coinductive cycle breaking in the
@@ -364,6 +366,7 @@ impl<'a> InferenceContext<'a> {
         InferenceContext {
             interner,
             resolver: None,
+            query_db: None,
             subtype_cache: RefCell::new(FxHashMap::default()),
             active_subtype_checks: RefCell::new(FxHashSet::default()),
             table: InPlaceUnificationTable::new(),
@@ -391,6 +394,32 @@ impl<'a> InferenceContext<'a> {
         InferenceContext {
             interner,
             resolver: Some(resolver),
+            query_db: None,
+            subtype_cache: RefCell::new(FxHashMap::default()),
+            active_subtype_checks: RefCell::new(FxHashSet::default()),
+            table: InPlaceUnificationTable::new(),
+            type_params: Vec::new(),
+            declared_constraints: FxHashMap::default(),
+            literal_preserving_declared_constraints: FxHashSet::default(),
+            app_expansion_depth: 0,
+            in_contra_mode: false,
+            reverse_mapped_properties: FxHashMap::default(),
+            source_is_type_annotation: false,
+            infer_depth: 0,
+            infer_visited: FxHashSet::default(),
+            top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_with_substituted_candidates: FxHashSet::default(),
+            in_array_element_context: false,
+            in_readonly_source_context: false,
+            implied_arities: FxHashMap::default(),
+        }
+    }
+
+    pub fn with_query_db(query_db: &'a dyn QueryDatabase) -> Self {
+        InferenceContext {
+            interner: query_db.as_type_database(),
+            resolver: Some(query_db),
+            query_db: Some(query_db),
             subtype_cache: RefCell::new(FxHashMap::default()),
             active_subtype_checks: RefCell::new(FxHashSet::default()),
             table: InPlaceUnificationTable::new(),
