@@ -14,5 +14,9 @@ mod rhs_literal_walker;
 mod tests;
 
 #[cfg(test)]
+#[path = "../assignment_checker_generic_display_tests.rs"]
+mod generic_display_tests;
+
+#[cfg(test)]
 #[path = "../assignment_checker_lib_identity_tests.rs"]
 mod lib_identity_tests;
