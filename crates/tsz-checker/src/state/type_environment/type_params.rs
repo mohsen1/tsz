@@ -199,7 +199,14 @@ impl<'a> CheckerState<'a> {
             (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
 
         let type_parameters = if flags & symbol_flags::TYPE_ALIAS != 0 {
-            let type_alias = arena.get_type_alias(node)?;
+            let Some(type_alias) = arena.get_type_alias(node) else {
+                // Merged symbols such as `NodeFilter` can present a value
+                // declaration before the type-alias declaration. This
+                // candidate cannot contribute type parameters; returning
+                // `None` would force a child checker before the later alias
+                // declaration gets a chance to provide the real params.
+                return Some(Vec::new());
+            };
             let Some(type_parameters) = type_alias.type_parameters.as_ref() else {
                 return Some(Vec::new());
             };

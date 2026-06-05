@@ -132,6 +132,37 @@ fn scope_independent_constraint_and_default_take_arena_only_fast_path() {
 }
 
 #[test]
+fn merged_type_alias_value_declaration_takes_arena_only_empty_fast_path() {
+    // Merged lib-style symbols can expose their value declaration before
+    // the type-alias declaration. The value declaration cannot contribute
+    // type parameters, but that is still an arena-only empty result; it
+    // must not force a `TypeEnvironmentCore` child checker before the
+    // later alias declaration is considered.
+    let file1 = r#"
+        export declare var RenamedFilter: {
+            readonly ACCEPT: 1;
+        };
+        export type RenamedFilter =
+            ((node: number) => number) | { acceptNode(node: number): number };
+    "#;
+    let file2 = r#"
+        import { RenamedFilter } from "./file1";
+        type Bad = RenamedFilter<string>;
+    "#;
+    let (_diags, cache) = tsz_checker::test_utils::check_multi_file_with_type_params_cache(
+        &[("file2.ts", file2), ("file1.ts", file1)],
+        "file2.ts",
+        opts(),
+    );
+    assert!(
+        cache.is_empty(),
+        "merged type-alias/value symbols with no type params should not construct \
+         the cross-file type-params slow path; cache had {} entries",
+        cache.len()
+    );
+}
+
+#[test]
 fn cache_stores_only_positive_type_param_results() {
     // Negative extraction results are intentionally not cached. A
     // `None` answer can be context-dependent, so memoizing it can
