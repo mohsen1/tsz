@@ -627,7 +627,7 @@ const checked: boolean = Op.is(made);
         );
         assert!(
             needs_separate_boxed_prime_checker(true, false, false, 10, true),
-            "fresh-checker tiny runs still need the separate prime checker"
+            "fresh-checker tiny runs still need the separate prime checker when reuse is forced off"
         );
         assert!(
             needs_separate_boxed_prime_checker(

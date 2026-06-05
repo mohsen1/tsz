@@ -157,12 +157,13 @@ fn file_session_reuse_test_override() -> Option<bool> {
 //   5,251 files:  5.4x faster off (cross-pkg mapped types)
 //   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
 //
-// Tiny generated apps are a different regime where sequential fresh-checker
-// setup dominates, but the reuse path is still not byte-identical for every
-// conformance shape (alias display and checked-JS prototype evidence can
-// observe retained state). Keep reuse opt-in until that semantic gap closes.
+// Tiny no-emit projects are a different regime where fresh-checker
+// construction and boxed-lib priming dominate the wall-clock floor. Route those
+// projects through the deterministic sequential reuse path by default; larger
+// batches remain reuse-off unless explicitly opted in until the scale-cliff and
+// byte-identity gaps close.
 // Two env knobs remain:
-//   * `TSZ_FILE_SESSION_REUSE=1` opts back in (legacy explicit-opt-in knob
+//   * `TSZ_FILE_SESSION_REUSE=1` opts larger projects back in (legacy explicit-opt-in knob
 //     from the pre-#6870 era).
 //   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off, preserving
 //     scripts that already pin the off behaviour. Takes precedence over
@@ -188,7 +189,7 @@ const fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> boo
 const fn file_session_reuse_from_workload(
     disable_set: bool,
     enable_set: bool,
-    _work_item_count: usize,
+    work_item_count: usize,
 ) -> bool {
     if disable_set {
         return false;
@@ -196,7 +197,7 @@ const fn file_session_reuse_from_workload(
     if enable_set {
         return true;
     }
-    false
+    work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
 }
 
 fn file_session_reuse_requested(work_item_count: usize) -> bool {
@@ -1279,10 +1280,12 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // it across files via `CheckerContext::switch_to_file` instead
             // of constructing one per file. As of PR #7521 + the experiment
             // doc at `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`,
-            // this remains OPT-IN (`TSZ_FILE_SESSION_REUSE=1`) because the
-            // reuse path regresses wall time 4-14x at 1k+ files and is not yet
-            // byte-identical for all tiny conformance shapes. The fresh-checker
-            // branch below (`check_file_with_fresh_checker`) remains the default.
+            // this remains opt-in for larger projects (`TSZ_FILE_SESSION_REUSE=1`) because the
+            // reuse path regresses wall time 4-14x at 1k+ files. Tiny no-emit
+            // projects use it by default so a real checker covers boxed-lib priming
+            // and avoids paying fresh-checker setup twice. The fresh-checker
+            // branch below (`check_file_with_fresh_checker`) remains the default
+            // for larger projects.
             // This flag applies to the sequential branch here; the parallel
             // branch below has its own chunked worker-reuse path with the
             // same opt-in default.
