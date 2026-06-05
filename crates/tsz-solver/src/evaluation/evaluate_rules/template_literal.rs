@@ -57,13 +57,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TemplateSpan::Type(type_id) => {
                     let evaluated = self.evaluate(*type_id);
                     normalized_spans.push(TemplateSpan::Type(evaluated));
-                    let strings = self.extract_literal_strings(evaluated);
-                    let span_count = self
-                        .template_span_complexity_cardinality(evaluated)
-                        .or_else(|| (!strings.is_empty()).then_some(strings.len()));
+                    let span_count = self.template_span_complexity_cardinality(evaluated);
 
                     if let Some(span_count) = span_count {
                         total_combinations = total_combinations.saturating_mul(span_count);
+                        if total_combinations >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                            self.interner().mark_union_too_complex();
+                            return TypeId::STRING;
+                        }
+                    }
+
+                    let strings = self.extract_literal_strings(evaluated);
+                    if span_count.is_none() && !strings.is_empty() {
+                        total_combinations = total_combinations.saturating_mul(strings.len());
                         if total_combinations >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
                             self.interner().mark_union_too_complex();
                             return TypeId::STRING;
@@ -125,8 +131,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let literal_types: Vec<TypeId> = combinations
-            .iter()
-            .map(|s| self.interner().literal_string(s))
+            .into_iter()
+            .map(|s| self.interner().literal_string(&s))
             .collect();
 
         if literal_types.len() == 1 {
@@ -216,7 +222,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(TypeData::Union(members)) = self.interner().lookup(type_id) {
             let members = self.interner().type_list(members);
-            let mut result = Vec::new();
+            let mut result = Vec::with_capacity(members.len());
             for &member in members.iter() {
                 let strings = self.extract_literal_strings_impl(member, depth + 1);
                 if strings.is_empty() {
