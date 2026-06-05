@@ -145,9 +145,16 @@ impl<'a> CheckerState<'a> {
     /// a type parameter." for each type-parameter portion of `object_type` whose
     /// constraint has a non-public property with the given `name`.
     ///
-    /// For union object types (e.g. `(T | B)["a"]`), each member is checked
-    /// individually. Only actual `TypeParameter` nodes trigger the diagnostic —
-    /// concrete class types are skipped (tsc only reports TS4105 on type params).
+    /// tsc treats both explicit type parameters and the polymorphic `this` type
+    /// as type parameters here (`this` is a type parameter whose constraint is
+    /// the enclosing class/interface). So `T["secret"]`, `this["secret"]`, and
+    /// `(T | this)["secret"]` all report TS4105 when `secret` is non-public,
+    /// while a concrete class index (`Base["secret"]`) does not.
+    ///
+    /// For union object types each member is checked individually. The
+    /// "constraint" against which the property accessibility is tested is the
+    /// type parameter's declared constraint, or — for the `this` type — the
+    /// enclosing class/interface instance type.
     pub(super) fn check_ts4105_private_on_type_parameter(
         &mut self,
         error_node: NodeIndex,
@@ -156,41 +163,78 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        // Collect the type parameters to inspect: either the object type itself
-        // (if it's a type parameter) or the type-parameter members of a union.
-        let mut type_params_to_check: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
-
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
-            type_params_to_check.push(object_type);
-        } else if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
-        {
-            for &member in &members {
-                if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member) {
-                    type_params_to_check.push(member);
-                }
-            }
-        }
-
-        let mut emitted = false;
-        for &tp in &type_params_to_check {
-            if let Some(constraint) =
-                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, tp)
-                && has_nonpublic_property(self.ctx.types, constraint, property_name)
-                && !emitted
+        // tsc reports TS4105 only when the indexed object is a type parameter or
+        // the polymorphic `this` type (a concrete class index does not). The
+        // member accessibility is decided against the type parameter's declared
+        // constraint, or — for `this` — the enclosing class/interface instance
+        // type. Union object types are checked per member.
+        let members: smallvec::SmallVec<[TypeId; 4]> =
+            match crate::query_boundaries::common::union_members(self.ctx.types, object_type) {
+                Some(members) => members.iter().copied().collect(),
+                None => smallvec::smallvec![object_type],
+            };
+        let emits_ts4105 = members.iter().any(|&member| {
+            let constraint = if crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                member,
+            ) {
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, member)
+            } else if crate::query_boundaries::type_predicates::is_this_type(self.ctx.types, member)
             {
-                let message = format_message(
-                        diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
-                        &[property_name],
-                    );
-                self.error_at_node(
-                        error_node,
-                        &message,
-                        diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
-                    );
-                emitted = true;
-            }
+                self.resolve_enclosing_this_instance_type(error_node)
+            } else {
+                None
+            };
+            constraint.is_some_and(|c| has_nonpublic_property(self.ctx.types, c, property_name))
+        });
+        if emits_ts4105 {
+            let message = format_message(
+                diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+                &[property_name],
+            );
+            self.error_at_node(
+                error_node,
+                &message,
+                diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+            );
         }
+    }
+
+    /// Resolve the concrete instance type of the class/interface that lexically
+    /// encloses `node` — the constraint of the polymorphic `this` type in that
+    /// scope. Walks up the AST to the nearest class/interface declaration (or
+    /// class expression) and reads its binder symbol's instance type.
+    ///
+    /// Used by [`check_ts4105_private_on_type_parameter`] because the indexed-
+    /// access type-checking pass does not push the runtime `this` binding, so
+    /// the enclosing declaration is the reliable source for the `this` type's
+    /// member accessibility.
+    fn resolve_enclosing_this_instance_type(&self, node: NodeIndex) -> Option<TypeId> {
+        let mut current = node;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > 1024 {
+                return None;
+            }
+            let n = self.ctx.arena.get(current)?;
+            if matches!(
+                n.kind,
+                syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                let sym_id = self.ctx.binder.get_node_symbol(current)?;
+                return self
+                    .ctx
+                    .symbol_instance_types
+                    .get(&sym_id)
+                    .or_else(|| self.ctx.symbol_types.get(&sym_id))
+                    .copied();
+            }
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+        None
     }
 
     pub(super) fn is_numeric_index_on_parameters_utility(
