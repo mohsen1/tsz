@@ -1241,16 +1241,6 @@ pub(crate) fn is_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_tuple_type(db, type_id)
 }
 
-/// `true` when `type_id` is a *union or intersection* that contains an
-/// anonymous object — i.e. it mentions an object but is not itself a bare
-/// object/mapped shape. Computed-alias structural display keeps these deferred
-/// (a union/intersection that mixes objects elaborates through a separate path)
-/// while still letting a bare object or mapped result render structurally.
-pub(crate) fn union_or_intersection_with_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::union_or_intersection_mentions_object(db, type_id)
-        && !tsz_solver::type_queries::is_object_type(db, type_id)
-}
-
 pub(crate) fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_intersection_type(db, type_id)
 }

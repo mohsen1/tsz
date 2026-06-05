@@ -117,7 +117,9 @@ pub(crate) fn alias_declaration_body_is_computed(
         syntax_kind_ext::CONDITIONAL_TYPE | syntax_kind_ext::INDEXED_ACCESS_TYPE => {
             !crate::query_boundaries::common::is_conditional_type(db, result)
                 && !crate::query_boundaries::common::is_index_access_type(db, result)
-                && !crate::query_boundaries::common::union_or_intersection_with_object(db, result)
+                && !crate::query_boundaries::diagnostics::union_or_intersection_with_object(
+                    db, result,
+                )
         }
         // `keyof { ... }` over an inline object *type literal* is a reducing
         // operator like indexed access: it resolves away into the operand's key
