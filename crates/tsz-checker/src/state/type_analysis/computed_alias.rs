@@ -128,14 +128,14 @@ impl<'a> CheckerState<'a> {
             // `file_locals.get(name)` returns ALIAS sym_ids for imported names;
             // ALIAS is not part of `symbol_flags::TYPE`, so downstream resolvers
             // would reject it. Follow the alias chain to the declaring sym_id.
-            if let Some(file_idx) = decl_file_idx {
-                if let Some(alias_target) = self.source_file_import_alias_target_for_lowering(
+            if let Some(file_idx) = decl_file_idx
+                && let Some(alias_target) = self.source_file_import_alias_target_for_lowering(
                     file_idx,
                     decl_binder,
                     current_sym,
-                ) {
-                    current_sym = alias_target.sym_id;
-                }
+                )
+            {
+                current_sym = alias_target.sym_id;
             }
 
             Some(current_sym)
