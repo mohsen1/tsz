@@ -1410,6 +1410,42 @@ fn typeof_result_carve_out_does_not_apply_to_subset() {
     );
 }
 
+/// A union whose `union_origin` preserves a nested *anonymous* sub-union
+/// (e.g. the `number | undefined` produced by `T[K]` inside a homomorphic
+/// mapped template `{ [K in keyof T]: T[K] | null }`) must still render
+/// `null`/`undefined` at the canonical tail — `number | null | undefined`,
+/// matching tsc — not leak the nested `undefined` ahead of `null`.
+#[test]
+fn nested_anonymous_union_origin_hoists_nullish_to_tail() {
+    let db = TypeInterner::new();
+    let inner = db.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]); // number | undefined
+    let outer = db.union(vec![TypeId::NUMBER, TypeId::UNDEFINED, TypeId::NULL]);
+    // Simulate the `T[K] | null` origin preserving the nested sub-union.
+    db.store_union_origin(outer, vec![inner, TypeId::NULL]);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(outer), "number | null | undefined");
+}
+
+/// The hoist must keep the non-nullish remainder of a nested anonymous union
+/// cohesive: `(string | number | undefined) | null` renders as
+/// `string | number | null | undefined`.
+#[test]
+fn nested_anonymous_union_origin_keeps_remainder_cohesive() {
+    let db = TypeInterner::new();
+    let inner = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let outer = db.union(vec![
+        TypeId::STRING,
+        TypeId::NUMBER,
+        TypeId::UNDEFINED,
+        TypeId::NULL,
+    ]);
+    db.store_union_origin(outer, vec![inner, TypeId::NULL]);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(outer), "string | number | null | undefined");
+}
+
 // =================================================================
 // Cyclic source-position graph guard (issue #7574 — 4th overflow).
 //
