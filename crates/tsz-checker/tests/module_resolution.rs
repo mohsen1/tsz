@@ -366,8 +366,12 @@ fn test_resolution_does_not_depend_on_alias_explosion() {
 }
 
 // ===========================================================================
-// TargetIndex / build_target_index
+// TargetIndex / build_target_index (internal helpers)
 // ===========================================================================
+//
+// `build_target_index` and `TargetIndex` are private internals used by
+// `build_module_resolution_maps`. These tests exercise the skip/count
+// invariants that `build_module_resolution_maps` relies on.
 
 #[test]
 fn test_target_index_len_matches_non_skipped_files() {
@@ -399,66 +403,72 @@ fn test_empty_file_list_builds_empty_index() {
 }
 
 // ===========================================================================
-// resolve_from_source (index-based direct resolution)
+// Specifier resolution parity — build_module_resolution_maps
 // ===========================================================================
+//
+// The `resolve_from_source` helper (a `TargetIndex`-based single-specifier
+// resolver) was retired because it duplicated the logic already present in
+// `resolve_specifier_via_file_index` without having any production callers.
+// The resolution behaviors it tested are now covered here via
+// `build_module_resolution_maps`, which is the driver-facing path, and by
+// the `resolve_specifier_via_file_index` section below.
 
 #[test]
-fn test_resolve_from_source_relative_file() {
+fn test_resolution_maps_relative_file_resolution() {
+    // Mirrors the retired test_resolve_from_source_relative_file:
+    // `./types` from `main.ts` should resolve to index 1.
     let files = vec![
         "/proj/src/main.ts".to_string(),
         "/proj/src/types.ts".to_string(),
     ];
-    let index = build_target_index(&files);
-    let spec = normalize_import_specifier("./types").unwrap();
-    assert_eq!(
-        resolve_from_source("/proj/src/main.ts", &spec, &index),
-        Some(1)
-    );
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&1));
 }
 
 #[test]
-fn test_resolve_from_source_directory_index() {
+fn test_resolution_maps_directory_index_resolution() {
+    // Mirrors the retired test_resolve_from_source_directory_index:
+    // both `./lib` and `./lib/` (trailing-slash stripped by normalize)
+    // from `main.ts` should resolve to index 1.
     let files = vec![
         "/proj/src/main.ts".to_string(),
         "/proj/src/lib/index.ts".to_string(),
     ];
-    let index = build_target_index(&files);
-    for raw in &["./lib", "./lib/"] {
-        let spec = normalize_import_specifier(raw).unwrap();
-        assert_eq!(
-            resolve_from_source("/proj/src/main.ts", &spec, &index),
-            Some(1),
-            "failed for {raw}",
-        );
-    }
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./lib".to_string())), Some(&1));
+    // `./lib/` normalizes to `./lib` (trailing slash stripped), same key.
 }
 
 #[test]
-fn test_resolve_from_source_dot_and_dot_slash_both_work() {
+fn test_resolution_maps_dot_and_dot_slash_directory_index() {
+    // Mirrors the retired test_resolve_from_source_dot_and_dot_slash_both_work:
+    // both `.` and `./` from `file.ts` in `a/` should resolve to `a/index.ts`
+    // (index 0).
     let files = vec![
         "/proj/a/index.ts".to_string(),
         "/proj/a/file.ts".to_string(),
     ];
-    let index = build_target_index(&files);
-    for raw in &[".", "./"] {
-        let spec = normalize_import_specifier(raw).unwrap();
-        assert_eq!(
-            resolve_from_source("/proj/a/file.ts", &spec, &index),
-            Some(0),
-            "failed for {raw}",
-        );
-    }
+    let (paths, _) = build_module_resolution_maps(&files);
+    // `file.ts` is src_idx 1. Both `.` and `./` register in the map.
+    assert_eq!(
+        paths.get(&(1, ".".to_string())),
+        Some(&0),
+        ". should resolve"
+    );
+    assert_eq!(
+        paths.get(&(1, "./".to_string())),
+        Some(&0),
+        "./ should resolve"
+    );
 }
 
 #[test]
-fn test_resolve_from_source_returns_none_for_bare_specifiers() {
+fn test_resolution_maps_bare_specifier_not_registered_for_nested() {
+    // Mirrors the retired test_resolve_from_source_returns_none_for_bare_specifiers:
+    // external package bare specifiers like `lodash` are not in the map.
     let files = vec!["/proj/src/main.ts".to_string()];
-    let index = build_target_index(&files);
-    let spec = normalize_import_specifier("lodash").unwrap();
-    assert_eq!(
-        resolve_from_source("/proj/src/main.ts", &spec, &index),
-        None
-    );
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert!(paths.get(&(0, "lodash".to_string())).is_none());
 }
 
 // ===========================================================================
@@ -1739,25 +1749,27 @@ fn test_resolution_map_prefers_source_over_declaration_independent_of_order() {
 }
 
 #[test]
-fn test_resolve_from_source_prefers_source_over_declaration() {
-    // The `TargetIndex`-based resolver mirrors the same priority rule.
+fn test_resolution_maps_prefers_source_over_declaration() {
+    // The resolution map (and by extension `build_module_resolution_maps`) must
+    // prefer the source file over the declaration file when both share one stem.
+    // This mirrors the behavior of the retired `resolve_from_source` helper.
     let files = vec![
         "/proj/src/main.ts".to_string(),
         "/proj/src/api.d.ts".to_string(),
         "/proj/src/api.ts".to_string(),
     ];
-    let index = build_target_index(&files);
-    let spec = normalize_import_specifier("./api").unwrap();
+    let (paths, _) = build_module_resolution_maps(&files);
+    // Extensionless `./api` from src_idx 0 (main.ts) must resolve to index 2
+    // (api.ts source), not index 1 (api.d.ts declaration).
     assert_eq!(
-        resolve_from_source("/proj/src/main.ts", &spec, &index),
-        Some(2),
+        paths.get(&(0, "./api".to_string())),
+        Some(&2),
         "./api must resolve to source api.ts, not api.d.ts",
     );
     // Explicit declaration spelling still selects the declaration file.
-    let dts_spec = normalize_import_specifier("./api.d.ts").unwrap();
     assert_eq!(
-        resolve_from_source("/proj/src/main.ts", &dts_spec, &index),
-        Some(1),
+        paths.get(&(0, "./api.d.ts".to_string())),
+        Some(&1),
         "./api.d.ts must still resolve to the declaration file",
     );
 }
