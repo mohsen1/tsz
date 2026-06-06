@@ -462,6 +462,14 @@ impl<'a> CheckerState<'a> {
         if self.declared_source_annotation_names_type_query_alias(expr_idx) {
             return false;
         }
+        // A computed-body alias carries no `aliasSymbol` in tsc, so its source is
+        // rendered structurally, never by name. Scalar bodies already expand (the
+        // index-signature gate below returns `false`), but tuple/array bodies slip
+        // past that gate via their numeric index signature; route them through the
+        // shared display policy so every reducible body drops the alias annotation.
+        if self.source_declared_type_is_displayed_as_underlying(expr_type) {
+            return false;
+        }
         if annotation.contains("`${") {
             return true;
         }
@@ -524,6 +532,20 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// True when `ty` resolves to a non-generic type alias that tsc renders by
+    /// its underlying (computed) type rather than its declared name — see
+    /// [`crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying`],
+    /// which owns the `Lazy(DefId)` / resolved-shape resolution behind the query
+    /// boundary.
+    fn source_declared_type_is_displayed_as_underlying(&self, ty: TypeId) -> bool {
+        crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            ty,
+        )
+        .is_some()
     }
 
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
