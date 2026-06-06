@@ -1450,6 +1450,7 @@ impl ParserState {
 
     pub(crate) fn parse_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
         if code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+            && message == "')' expected."
             && self.is_token(SyntaxKind::CloseParenToken)
             && start == self.token_pos()
             && self.speculate(|parser| {
@@ -1460,6 +1461,7 @@ impl ParserState {
             return;
         }
         if code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+            && message == "')' expected."
             && self.get_source_text().as_bytes().get(start as usize) == Some(&b')')
             && self.get_source_text().as_bytes().get(start as usize + 1) == Some(&b';')
         {

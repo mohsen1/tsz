@@ -39,8 +39,10 @@
 //! byte-for-byte with the fast path on vs off.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::symbol_flags;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::{DefId, TypeId};
 
 /// Kill-switch for the lazy single-member lib-interface property-access fast
@@ -156,11 +158,9 @@ impl CheckerState<'_> {
     ///    not perform.
     /// 5. The interface name is not compiler-managed and not shadowed by a
     ///    file-local type declaration.
-    /// 6. The program has no global augmentations. Augmentation-aware programs
-    ///    use full materialization so global interface merge state remains
-    ///    authoritative across chained lib-interface reads.
-    /// 7. The interface is not globally augmented (`declare global { interface
-    ///    X { ... } }`), which could add the accessed member out of band.
+    /// 6. Neither the interface nor any declared lib heritage base is globally
+    ///    augmented or shadowed by a user declaration, which could change the
+    ///    inherited member set or diagnostic source.
     pub(crate) fn lazy_lib_member_receiver_def_id(
         &self,
         object_type: tsz_solver::TypeId,
@@ -206,10 +206,10 @@ impl CheckerState<'_> {
             return None;
         }
 
-        // A globally-augmented interface may gain members from a separate
-        // `declare global` block; fall back to full materialization so the
-        // augmented members are visible.
-        if self.lib_interface_is_globally_augmented(&name) {
+        // A globally-augmented or user-shadowed interface/base may gain members
+        // from a separate declaration. Fall back to full materialization so
+        // merge state and diagnostic source locations stay authoritative.
+        if self.lib_interface_or_heritage_is_augmented_or_shadowed(sym_id, &name) {
             return None;
         }
 
@@ -234,6 +234,110 @@ impl CheckerState<'_> {
                 .global_augmentation_targets_index
                 .as_ref()
                 .is_some_and(|index| !index.is_empty())
+    }
+
+    fn lib_interface_or_heritage_is_augmented_or_shadowed(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        name: &str,
+    ) -> bool {
+        let mut stack = vec![(sym_id, name.to_string())];
+        let mut seen = Vec::new();
+
+        while let Some((current_sym_id, current_name)) = stack.pop() {
+            if seen.contains(&current_sym_id) {
+                continue;
+            }
+            seen.push(current_sym_id);
+
+            if self.lib_name_is_augmented_or_shadowed(current_sym_id, &current_name) {
+                return true;
+            }
+
+            let Some(symbol) = self.ctx.binder.get_symbol(current_sym_id) else {
+                continue;
+            };
+            for base_name in self.lib_interface_heritage_names(current_sym_id, symbol) {
+                if let Some(base_sym_id) = self.ctx.binder.file_locals.get(&base_name) {
+                    stack.push((base_sym_id, base_name));
+                } else if self.lib_interface_is_globally_augmented(&base_name)
+                    || self.ctx.file_local_type_shadow_for_lib_name(&base_name)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn lib_name_is_augmented_or_shadowed(&self, sym_id: tsz_binder::SymbolId, name: &str) -> bool {
+        self.lib_interface_is_globally_augmented(name)
+            || self.ctx.file_local_type_shadow_for_lib_name(name)
+            || self
+                .ctx
+                .symbol_has_current_file_type_declaration(sym_id, name)
+    }
+
+    fn lib_interface_heritage_names(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        for &decl_idx in &symbol.declarations {
+            let arena = self
+                .ctx
+                .binder
+                .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+            self.collect_interface_heritage_names(arena, decl_idx, &mut names);
+        }
+        names
+    }
+
+    fn collect_interface_heritage_names(
+        &self,
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+        names: &mut Vec<String>,
+    ) {
+        let Some(interface) = arena
+            .get(decl_idx)
+            .and_then(|node| arena.get_interface(node))
+        else {
+            return;
+        };
+        let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+            return;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(heritage) = arena
+                .get(clause_idx)
+                .and_then(|node| arena.get_heritage_clause(node))
+            else {
+                continue;
+            };
+            for &type_idx in &heritage.types.nodes {
+                if let Some(name) = self.heritage_type_name(arena, type_idx)
+                    && !names.contains(&name)
+                {
+                    names.push(name);
+                }
+            }
+        }
+    }
+
+    fn heritage_type_name(&self, arena: &NodeArena, type_idx: NodeIndex) -> Option<String> {
+        let node = arena.get(type_idx)?;
+        let expr_idx = if let Some(expr) = arena.get_expr_type_args(node) {
+            expr.expression
+        } else if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            arena.get_type_ref(node)?.type_name
+        } else {
+            type_idx
+        };
+        expression_name_text_in_arena(arena, expr_idx)
     }
 
     /// Try to resolve `prop_name` on an eligible simple lib-interface receiver by

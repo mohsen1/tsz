@@ -1390,7 +1390,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
-        1,
+        0,
     ),
     (
         "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
@@ -1407,6 +1407,22 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:find_source_pattern_outside_quoted_text|find_matching_source_paren|skip_quoted_source_text)\b"
         ),
         0,
+    ),
+    (
+        # The async ES5 lowering path still has one source-text fallback for
+        # recovered `yield` detection. Keep it visible so the future parser- or
+        # lowering-owned fact can ratchet this to zero in the same PR.
+        "Emitter boundary: async yield source-text fallback (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "transforms"
+            / "async_es5_ir_discovery.rs"
+        ],
+        re.compile(r"\bfn\s+node_text_contains_yield\s*\("),
+        1,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
