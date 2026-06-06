@@ -31,10 +31,12 @@
 
 mod check;
 mod handlers_code_fixes;
+mod handlers_code_fixes_combined;
 mod handlers_code_fixes_enum_member;
 mod handlers_code_fixes_fallbacks;
 mod handlers_code_fixes_implement_interface;
 mod handlers_code_fixes_imports;
+mod handlers_code_fixes_isolated_decl;
 mod handlers_code_fixes_jsdoc;
 mod handlers_code_fixes_synthetic;
 mod handlers_code_fixes_utils;

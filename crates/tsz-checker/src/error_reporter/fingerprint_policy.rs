@@ -771,7 +771,8 @@ impl<'a> CheckerState<'a> {
                 }]
             }
             SubtypeFailureReason::UnionSourceMismatch { .. }
-            | SubtypeFailureReason::ConditionalBranchMismatch { .. } => {
+            | SubtypeFailureReason::ConditionalBranchMismatch { .. }
+            | SubtypeFailureReason::TypeParameterConstraintMismatch { .. } => {
                 vec![self.union_member_related_line(Some(reason), start, length, 0)?]
             }
             SubtypeFailureReason::UnionTargetMismatch { .. } => {
@@ -905,6 +906,11 @@ impl<'a> CheckerState<'a> {
                 branch_target,
                 ..
             } => (*branch_source, *branch_target),
+            tsz_solver::SubtypeFailureReason::TypeParameterConstraintMismatch {
+                constraint_type,
+                target_type,
+                ..
+            } => (*constraint_type, *target_type),
             _ => return None,
         };
         let member_str = self.format_type_for_diagnostic_role(

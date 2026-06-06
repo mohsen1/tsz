@@ -425,6 +425,9 @@ path = "tests/tuple_variadic_position_elaboration_tests.rs"
 name = "conditional_alias_source_display_tests"
 path = "tests/conditional_alias_source_display_tests.rs"
 [[test]]
+name = "type_parameter_source_constraint_chain_tests"
+path = "tests/type_parameter_source_constraint_chain_tests.rs"
+[[test]]
 name = "readonly_tuple_to_array_constraint_tests"
 path = "tests/readonly_tuple_to_array_constraint_tests.rs"
 [[test]]
