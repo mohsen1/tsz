@@ -50,80 +50,8 @@ use tsz_common::interner::Atom;
 
 mod closed_eval;
 mod display_alias;
+mod query_budget;
 mod support;
-
-thread_local! {
-    /// Live count of nested `evaluate` frames across *all* `TypeEvaluator`
-    /// instances on the current thread. A value of `0` means no evaluation is in
-    /// flight, so the next `evaluate` begins a fresh top-level query.
-    static EVAL_QUERY_ACTIVE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    /// Total `evaluate` operations performed in the current top-level query.
-    /// Reset whenever [`EVAL_QUERY_ACTIVE`] transitions from `0`, so the budget is
-    /// per top-level query and never carries over to poison sibling type
-    /// positions. See [`TypeEvaluator::MAX_EVAL_OPS_PER_QUERY`].
-    static EVAL_QUERY_OPS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// Resolve the per-query `evaluate` operation budget, honoring the
-/// `TSZ_MAX_EVAL_OPS` override.
-///
-/// Defaults to `default_max` ([`TypeEvaluator::MAX_EVAL_OPS_PER_QUERY`]). The
-/// override exists so tests can force the cross-instance runaway bail at a small
-/// budget instead of spinning through one and a half million operations; a value
-/// of `0` (or an unparseable value) falls back to the default.
-fn max_eval_ops_per_query(default_max: u32) -> u32 {
-    use std::sync::OnceLock;
-    static OVERRIDE: OnceLock<Option<u32>> = OnceLock::new();
-    let configured = *OVERRIDE.get_or_init(|| {
-        std::env::var("TSZ_MAX_EVAL_OPS")
-            .ok()
-            .and_then(|v| v.trim().parse::<u32>().ok())
-            .filter(|&v| v > 0)
-    });
-    configured.unwrap_or(default_max)
-}
-
-/// RAII frame that maintains the thread-local per-query `evaluate` operation
-/// budget across every `TypeEvaluator` instance (see
-/// [`TypeEvaluator::MAX_EVAL_OPS_PER_QUERY`]).
-///
-/// On construction it increments the live frame count (resetting the op counter
-/// when starting a fresh top-level query) and bumps the op counter, recording
-/// whether the budget is now exhausted. On drop it decrements the live frame
-/// count, so the bound is restored on every return path, including panics.
-struct EvalQueryFrame {
-    /// Whether the per-query operation budget was exhausted on entry.
-    budget_exhausted: bool,
-}
-
-impl EvalQueryFrame {
-    #[inline]
-    fn enter(max_ops: u32) -> Self {
-        let active = EVAL_QUERY_ACTIVE.with(|c| {
-            let v = c.get();
-            c.set(v + 1);
-            v
-        });
-        if active == 0 {
-            EVAL_QUERY_OPS.with(|c| c.set(0));
-        }
-        let ops = EVAL_QUERY_OPS.with(|c| {
-            let v = c.get().saturating_add(1);
-            c.set(v);
-            v
-        });
-        Self {
-            budget_exhausted: ops > max_ops,
-        }
-    }
-}
-
-impl Drop for EvalQueryFrame {
-    #[inline]
-    fn drop(&mut self) {
-        EVAL_QUERY_ACTIVE.with(|c| c.set(c.get().saturating_sub(1)));
-    }
-}
 
 /// Type evaluator for meta-types.
 ///
@@ -586,56 +514,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.mark_exceeded();
     }
 
-    /// Global thread-local depth counter for cross-evaluator stack overflow prevention.
-    ///
-    /// Each `SubtypeChecker::evaluate_type` creates a fresh `TypeEvaluator` with fresh
-    /// per-evaluator guards. But the OS stack accumulates across ALL of them. For example,
-    /// `Vector<T> implements Seq<T>` where `Opt<T>` has `toVector(): Vector<T>` and
-    /// `Vector` has `Exclude<T, U>` in an overload return type: each structural comparison
-    /// level creates ~8 evaluate calls, and the subtype checker recurses 10+ levels deep,
-    /// producing 100+ nested evaluate frames that overflow the 8MB default stack.
-    ///
-    /// This counter tracks cumulative `evaluate` frames across all `TypeEvaluator` instances
-    /// on the current thread's call stack. When it exceeds `MAX_GLOBAL_EVAL_DEPTH`, we
-    /// bail out with ERROR to prevent stack overflow.
+    /// Global thread-local depth counter for cross-evaluator stack overflow
+    /// prevention. Each `SubtypeChecker::evaluate_type` creates a fresh
+    /// `TypeEvaluator`, but the OS stack accumulates across ALL of them: deep
+    /// structural comparisons (e.g. `Vector<T> implements Seq<T>` with `Exclude`
+    /// in an overload return) produce 100+ nested evaluate frames that overflow
+    /// the 8MB default stack. This counter tracks cumulative `evaluate` frames
+    /// across every `TypeEvaluator` on the call stack and bails with ERROR once
+    /// it exceeds `MAX_GLOBAL_EVAL_DEPTH`.
     const MAX_GLOBAL_EVAL_DEPTH: u32 = 200;
-
-    /// Total `evaluate` operations permitted for a single top-level evaluation
-    /// query (the outermost `evaluate` call on the thread, before it returns).
-    ///
-    /// `MAX_GLOBAL_EVAL_DEPTH` bounds the live call-*stack* depth, but some
-    /// recursive type families never grow a deep stack: conditional and
-    /// `infer`-pattern evaluation spin up *fresh* `TypeEvaluator` / `SubtypeChecker`
-    /// instances mid-relation, each with per-instance guards reset to zero, and
-    /// bounce between a handful of types whose identity keeps changing (fresh
-    /// `infer` placeholders / object shapes), so no per-instance cycle, depth, or
-    /// iteration guard ever fires. A recursive generic wrapper applied to a
-    /// literal/object argument — `type Unbox<T> = T extends Box<infer U> ?
-    /// Unbox<U> : T` over `Box<2>`, or the standard-library `Awaited<Promise<2>>`
-    /// — hangs the compile this way.
-    ///
-    /// This budget is the cross-instance work bound that mirrors tsc's global
-    /// `instantiationCount`: it counts *every* `evaluate` operation across all
-    /// instances within one top-level query and forces a bail once exhausted, so
-    /// the runaway terminates regardless of which boundary it bounces through. It
-    /// is reset at the start of every top-level query, so a single pathological
-    /// type position never poisons the rest of the file. The bound is generous —
-    /// legitimate type evaluation, even heavy recursive utility libraries, stays
-    /// orders of magnitude below it (the whole-file `MAX_EVALUATION_FUEL` is only
-    /// `2_000_000`); only genuinely unbounded recursion reaches it.
-    ///
-    /// Overridable via the `TSZ_MAX_EVAL_OPS` environment variable, which tests
-    /// use to force the bail quickly without a multi-million-op spin. See
-    /// [`max_eval_ops_per_query`].
-    ///
-    /// Defaults to the whole-file `MAX_EVALUATION_FUEL` (`2_000_000`): a single
-    /// top-level query that out-works the entire file's
-    /// evaluation-fuel budget is, by construction, a runaway. This keeps the
-    /// guard strictly weaker than the existing whole-file fuel for terminating
-    /// evaluations (which never approach it), so it changes behaviour only for
-    /// the cross-instance recursions that the fuel's per-128-iteration sampling
-    /// fails to observe.
-    const MAX_EVAL_OPS_PER_QUERY: u32 = 2_000_000;
 
     /// Evaluate a type, resolving any meta-types if possible.
     /// Returns the evaluated type (may be the same if no evaluation needed).
@@ -663,29 +550,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if self.guard.is_exceeded() {
             return TypeId::ERROR;
         }
-
-        // Cross-instance per-query operation budget. Tracks every `evaluate`
-        // operation across all `TypeEvaluator` instances within one top-level
-        // query (reset when the outermost frame begins). Some recursive type
-        // families — recursive generic wrappers applied to literal/object
-        // arguments, e.g. `type Unbox<T> = T extends Box<infer U> ? Unbox<U> : T`
-        // over `Box<2>`, or the standard-library `Awaited<Promise<2>>` — bounce
-        // between fresh `TypeEvaluator` / `SubtypeChecker` instances whose
-        // per-instance cycle/depth/iteration guards all reset to zero each level,
-        // so none ever fires and the compile hangs. This shared budget is the
-        // cross-instance analogue of tsc's global `instantiationCount`: once it is
-        // exhausted every nested frame bails immediately, so the runaway unwinds
-        // and terminates. The type is left opaque (`silent_depth_bailed`) rather
-        // than propagating a sticky ERROR, mirroring the depth-bailout arms below.
-        // `EvalQueryFrame` is RAII, so the live-frame count is restored on every
-        // return path; the op counter persists until the whole query unwinds.
-        let _query_frame =
-            EvalQueryFrame::enter(max_eval_ops_per_query(Self::MAX_EVAL_OPS_PER_QUERY));
-        if _query_frame.budget_exhausted {
-            self.deep_recursion_seen = true;
-            self.silent_depth_bailed = true;
+        // Cross-instance per-query operation budget (see `query_budget`).
+        let Some(_query_frame) = self.enter_eval_query_budget() else {
             return type_id;
-        }
+        };
 
         // Cross-evaluator stack overflow prevention.
         // Only check thread-local global depth when the local guard depth
@@ -2128,57 +1996,3 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/evaluate_application_orchestrator_tests.rs"]
 mod orchestrator_tests;
-
-#[cfg(test)]
-mod query_budget_tests {
-    use super::{EVAL_QUERY_ACTIVE, EVAL_QUERY_OPS, EvalQueryFrame, max_eval_ops_per_query};
-
-    /// The per-query operation counter resets when a fresh top-level query
-    /// begins (live frame count returns to zero), so one type position can never
-    /// carry its op count into the next.
-    #[test]
-    fn op_counter_resets_per_top_level_query() {
-        // First query: three nested frames, none over budget.
-        {
-            let _f1 = EvalQueryFrame::enter(1000);
-            let _f2 = EvalQueryFrame::enter(1000);
-            let _f3 = EvalQueryFrame::enter(1000);
-            assert_eq!(EVAL_QUERY_OPS.with(std::cell::Cell::get), 3);
-            assert_eq!(EVAL_QUERY_ACTIVE.with(std::cell::Cell::get), 3);
-        }
-        // All frames dropped -> live count back to zero.
-        assert_eq!(EVAL_QUERY_ACTIVE.with(std::cell::Cell::get), 0);
-
-        // Second top-level query starts fresh: op counter reset to 1, not 4.
-        let _f = EvalQueryFrame::enter(1000);
-        assert_eq!(EVAL_QUERY_OPS.with(std::cell::Cell::get), 1);
-    }
-
-    /// Once the budget is exceeded within a single query, the frame reports
-    /// exhaustion so `evaluate` can bail; nested frames keep reporting it until
-    /// the query unwinds.
-    #[test]
-    fn budget_exhaustion_is_reported_until_query_unwinds() {
-        let f1 = EvalQueryFrame::enter(2);
-        assert!(!f1.budget_exhausted, "op 1 of 2 is within budget");
-        let f2 = EvalQueryFrame::enter(2);
-        assert!(!f2.budget_exhausted, "op 2 of 2 is within budget");
-        let f3 = EvalQueryFrame::enter(2);
-        assert!(f3.budget_exhausted, "op 3 exceeds the budget of 2");
-        let f4 = EvalQueryFrame::enter(2);
-        assert!(
-            f4.budget_exhausted,
-            "still exhausted while the query is live"
-        );
-        drop((f1, f2, f3, f4));
-        assert_eq!(EVAL_QUERY_ACTIVE.with(std::cell::Cell::get), 0);
-    }
-
-    /// With no override the resolved budget is the supplied default.
-    #[test]
-    fn budget_defaults_when_env_unset() {
-        // The override is read once via `OnceLock`; in the absence of a set
-        // `TSZ_MAX_EVAL_OPS` (the default test environment) the default is used.
-        assert_eq!(max_eval_ops_per_query(123_456), 123_456);
-    }
-}
