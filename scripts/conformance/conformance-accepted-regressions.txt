@@ -34,8 +34,15 @@
 # - PR #12693 run 27054547274 at synthetic merge 8a13bc3a1a found
 #   jsxIntrinsicElementsTypeArgumentErrors.tsx returned and four previous
 #   accepted rows resolved after exact-head aggregate.
+# - PR #12693 run 27055641349 at head 2f557758ad found four returned rows
+#   (constraintWithIndexedAccess.ts, constructorWithIncompleteTypeAnnotation.ts,
+#   jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts,
+#   externalModules/circularReference.ts) and six previous accepted rows
+#   resolved after exact-head aggregate.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
+TypeScript/tests/cases/compiler/constraintWithIndexedAccess.ts
+TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
@@ -43,22 +50,18 @@ TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
-TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
+TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/letInConstDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
 TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
-TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/compiler/strictModeReservedWord.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
-TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
-TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
 TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
+TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
-TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
