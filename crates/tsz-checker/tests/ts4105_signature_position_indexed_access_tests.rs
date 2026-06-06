@@ -263,6 +263,31 @@ export declare function tailLength<T extends unknown[]>(
     );
 }
 
+/// The compact branch form stays clean even when the inferred binder is used
+/// directly as the indexed-access object.
+#[test]
+fn conditional_infer_branch_indexed_access_does_not_report_ts2304() {
+    let diags = diagnostics(
+        r#"
+type TailLength<T extends unknown[]> = T extends [...unknown[], ...infer R]
+    ? R["length"]
+    : never;
+
+type Value = TailLength<[1, 2, 3]>;
+"#,
+    );
+    assert_eq!(
+        count(&diags, 2304),
+        0,
+        "infer variables in conditional branches must not be resolved by the TS4105 probe; got {diags:?}"
+    );
+    assert_eq!(
+        count(&diags, TS4105),
+        0,
+        "infer variables are not TS4105 candidates; got {diags:?}"
+    );
+}
+
 /// Recursive declaration-file aliases may use a rest-position `infer` binding
 /// and immediately index that inferred tuple in the conditional true branch.
 /// Signature-position TS4105 probing must not surface a duplicate TS2304 for
