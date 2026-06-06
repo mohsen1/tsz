@@ -210,6 +210,9 @@ mod generator_union_return_type_tests;
 #[path = "tests/generator_yield_identity_tests.rs"]
 mod generator_yield_identity_tests;
 #[cfg(test)]
+#[path = "tests/generic_callable_outer_type_param_mismatch_tests.rs"]
+mod generic_callable_outer_type_param_mismatch_tests;
+#[cfg(test)]
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
 #[cfg(test)]
@@ -732,6 +735,9 @@ mod for_in_narrowing_tests;
 #[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
 mod fresh_const_array_mutable_assignment_tests;
 #[cfg(test)]
+#[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
+mod fresh_object_literal_union_literal_kind_display_tests;
+#[cfg(test)]
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
 #[cfg(test)]
@@ -1092,6 +1098,9 @@ mod recursive_alias_application_target_display_tests;
 #[path = "tests/recursive_callable_infer_cycle_tests.rs"]
 mod recursive_callable_infer_cycle_tests;
 #[cfg(test)]
+#[path = "tests/recursive_conditional_infer_termination_tests.rs"]
+mod recursive_conditional_infer_termination_tests;
+#[cfg(test)]
 #[path = "tests/recursive_generic_arrow_tests.rs"]
 mod recursive_generic_arrow_tests;
 #[cfg(test)]
@@ -1166,6 +1175,9 @@ mod this_context_self_type_tests;
 #[cfg(test)]
 #[path = "tests/this_void_method_call_tests.rs"]
 mod this_void_method_call_tests;
+#[cfg(test)]
+#[path = "tests/truthiness_promise_coercion_tests.rs"]
+mod truthiness_promise_coercion_tests;
 #[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;

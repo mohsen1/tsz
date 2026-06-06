@@ -1501,4 +1501,50 @@ impl Server {
             Some(candidate)
         }
     }
+
+    /// Returns `true` when another open or project file exports a symbol with
+    /// the given `name` — used to decide whether to offer an auto-import fix.
+    pub(super) fn has_potential_auto_import_symbol(
+        &self,
+        current_file_path: &str,
+        name: &str,
+    ) -> bool {
+        if self.open_files.iter().any(|(path, content)| {
+            path != current_file_path
+                && content.contains(name)
+                && (content.contains("export ")
+                    || content.contains("declare module")
+                    || content.contains("module.exports")
+                    || content.contains("exports."))
+        }) {
+            return true;
+        }
+
+        let mut seen_paths = rustc_hash::FxHashSet::default();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if path == current_file_path || !seen_paths.insert(path.clone()) {
+                    continue;
+                }
+                let Some(content) = self
+                    .open_files
+                    .get(path)
+                    .cloned()
+                    .or_else(|| std::fs::read_to_string(path).ok())
+                else {
+                    continue;
+                };
+                if content.contains(name)
+                    && (content.contains("export ")
+                        || content.contains("declare module")
+                        || content.contains("module.exports")
+                        || content.contains("exports."))
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }

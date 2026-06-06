@@ -8,6 +8,7 @@ use crate::emitter::core::{PrivateAccessorDef, PrivateMethodDef};
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{ClassData, Node};
+use tsz_scanner::SyntaxKind;
 
 pub(super) struct ClassEs6AfterBody<'a> {
     pub(super) node: &'a Node,
@@ -601,44 +602,74 @@ impl<'a> Printer<'a> {
                             s.clone()
                         }
                     };
-                    self.write("Object.defineProperty(");
-                    self.write(&class_name);
-                    self.write(", ");
-                    self.write(&define_name);
-                    self.write(", {");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("enumerable: true,");
-                    self.write_line();
-                    self.write("configurable: true,");
-                    self.write_line();
-                    self.write("writable: true,");
-                    self.write_line();
-                    self.write("value: ");
-                    let before = self.writer.len();
-                    self.emit_static_field_initializer_with_inner_comments(
-                        *init_idx,
-                        static_initializer_this_binding,
-                        static_initializer_super_base,
-                        externalized_static_initializer_uses_undefined_receiver,
-                    );
-                    let after = self.writer.len();
-                    if let Some(alias) =
-                        static_initializer_self_alias.or(static_initializer_class_alias.as_deref())
-                        && !class_name.is_empty()
-                        && class_name != alias
-                    {
-                        let full = self.writer.get_output().to_string();
-                        let segment = &full[before..after];
-                        let replaced = replace_identifier(segment, &class_name, alias);
-                        if replaced != segment {
-                            self.writer.truncate(before);
-                            self.write(&replaced);
+                    if self.static_field_initializer_is_object_rest_assignment(*init_idx) {
+                        self.write("Object.defineProperty(");
+                        self.write(&class_name);
+                        self.write(", ");
+                        self.write(&define_name);
+                        self.write(", Object.assign({ enumerable: true, configurable: true, writable: true, value: ");
+                        let before = self.writer.len();
+                        self.emit_static_field_initializer_with_inner_comments(
+                            *init_idx,
+                            static_initializer_this_binding,
+                            static_initializer_super_base,
+                            externalized_static_initializer_uses_undefined_receiver,
+                        );
+                        let after = self.writer.len();
+                        if let Some(alias) = static_initializer_self_alias
+                            .or(static_initializer_class_alias.as_deref())
+                            && !class_name.is_empty()
+                            && class_name != alias
+                        {
+                            let full = self.writer.get_output().to_string();
+                            let segment = &full[before..after];
+                            let replaced = replace_identifier(segment, &class_name, alias);
+                            if replaced != segment {
+                                self.writer.truncate(before);
+                                self.write(&replaced);
+                            }
                         }
+                        self.write(" }));");
+                    } else {
+                        self.write("Object.defineProperty(");
+                        self.write(&class_name);
+                        self.write(", ");
+                        self.write(&define_name);
+                        self.write(", {");
+                        self.write_line();
+                        self.increase_indent();
+                        self.write("enumerable: true,");
+                        self.write_line();
+                        self.write("configurable: true,");
+                        self.write_line();
+                        self.write("writable: true,");
+                        self.write_line();
+                        self.write("value: ");
+                        let before = self.writer.len();
+                        self.emit_static_field_initializer_with_inner_comments(
+                            *init_idx,
+                            static_initializer_this_binding,
+                            static_initializer_super_base,
+                            externalized_static_initializer_uses_undefined_receiver,
+                        );
+                        let after = self.writer.len();
+                        if let Some(alias) = static_initializer_self_alias
+                            .or(static_initializer_class_alias.as_deref())
+                            && !class_name.is_empty()
+                            && class_name != alias
+                        {
+                            let full = self.writer.get_output().to_string();
+                            let segment = &full[before..after];
+                            let replaced = replace_identifier(segment, &class_name, alias);
+                            if replaced != segment {
+                                self.writer.truncate(before);
+                                self.write(&replaced);
+                            }
+                        }
+                        self.write_line();
+                        self.decrease_indent();
+                        self.write("});");
                     }
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("});");
                 } else {
                     self.write(&class_name);
                     match name_emit {
@@ -1080,5 +1111,16 @@ impl<'a> Printer<'a> {
             );
             self.scoped_class_expression_self_alias = prev_self_alias;
         }
+    }
+
+    fn static_field_initializer_is_object_rest_assignment(&self, init_idx: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(init_idx) else {
+            return false;
+        };
+        let Some(binary) = self.arena.get_binary_expr(init_node) else {
+            return false;
+        };
+        binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self.assignment_pattern_has_object_rest(binary.left)
     }
 }

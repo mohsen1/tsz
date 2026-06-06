@@ -1403,7 +1403,12 @@ impl ParserState {
         let saved_context_flags = self.context_flags;
         self.context_flags |= CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION;
         self.parse_expected(SyntaxKind::OpenParenToken);
-        let expression = self.parse_expression();
+        let recovered_const_for_of_header = self.is_recovered_const_for_of_header_start();
+        let expression = if recovered_const_for_of_header {
+            self.create_missing_expression()
+        } else {
+            self.parse_expression()
+        };
         if expression.is_none() {
             // Emit TS1109 for empty parentheses or invalid expression: ([missing])
             self.error_expression_expected();
@@ -1411,7 +1416,7 @@ impl ParserState {
         let end_pos = self.token_end();
         if self.is_token(SyntaxKind::CloseParenToken) {
             self.parse_expected(SyntaxKind::CloseParenToken);
-        } else {
+        } else if !recovered_const_for_of_header {
             use tsz_common::diagnostics::diagnostic_codes;
             if self.should_report_error() {
                 self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);

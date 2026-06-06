@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
     /// "constraint" against which the property accessibility is tested is the
     /// type parameter's declared constraint, or — for the `this` type — the
     /// enclosing class/interface instance type.
-    pub(super) fn check_ts4105_private_on_type_parameter(
+    pub(crate) fn check_ts4105_private_on_type_parameter(
         &mut self,
         error_node: NodeIndex,
         object_type: TypeId,

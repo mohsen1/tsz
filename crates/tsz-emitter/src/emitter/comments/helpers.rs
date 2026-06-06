@@ -1138,13 +1138,19 @@ impl<'a> Printer<'a> {
         let bytes = text.as_bytes();
         for c in &self.all_comments {
             if c.pos >= range_start && c.end <= actual_start {
-                // Only collect block comments (/* ... */), not line comments (// ...).
-                // Line comments between members are trailing comments of the previous
-                // member (e.g. `get p() { ... } // error`), not leading comments of
-                // the next property being lowered into the constructor.
                 if c.pos as usize + 1 < bytes.len()
                     && bytes[c.pos as usize] == b'/'
                     && bytes[c.pos as usize + 1] == b'*'
+                    && let Ok(comment_text) =
+                        crate::safe_slice::slice(text, c.pos as usize, c.end as usize)
+                {
+                    result.push(comment_text.to_string());
+                } else if c.pos as usize + 1 < bytes.len()
+                    && bytes[c.pos as usize] == b'/'
+                    && bytes[c.pos as usize + 1] == b'/'
+                    && text
+                        .get(range_start as usize..c.pos as usize)
+                        .is_some_and(|between| between.contains('\n'))
                     && let Ok(comment_text) =
                         crate::safe_slice::slice(text, c.pos as usize, c.end as usize)
                 {

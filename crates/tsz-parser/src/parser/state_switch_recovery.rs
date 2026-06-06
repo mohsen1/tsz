@@ -393,7 +393,10 @@ impl ParserState {
                 SyntaxKind::CommaToken | SyntaxKind::QuestionToken
             );
         let mut expression = if started_with_assignment_operator {
-            self.error_expression_expected();
+            self.parse_error_at_current_token(
+                diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
             let operator_token = self.token() as u16;
             self.next_token();
             let mut right = self.parse_assignment_expression();
@@ -620,6 +623,15 @@ impl ParserState {
                 );
                 self.next_token();
             }
+        } else if started_with_binary_operator
+            && self.is_token(SyntaxKind::CloseParenToken)
+            && self.speculate(|parser| {
+                parser.next_token();
+                parser.is_token(SyntaxKind::ColonToken)
+            })
+        {
+            self.next_token();
+            self.next_token();
         } else if !self.can_parse_semicolon() {
             let jsx_head_needs_semicolon = self.arena.get(expression).is_some_and(|node| {
                 matches!(

@@ -108,6 +108,19 @@ impl<'a> CheckerState<'a> {
         if self.ctx.has_parse_errors {
             return;
         }
+        if self.ctx.is_js_file()
+            && self.ctx.diagnostics.iter().any(|d| {
+                !matches!(
+                    d.code,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE
+                        | diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO
+                        | diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY
+                ) && (tsz_common::diagnostics::is_parser_grammar_diagnostic(d.code)
+                    || tsz_common::diagnostics::is_js_grammar_diagnostic(d.code))
+            })
+        {
+            return;
+        }
         // Prevent duplicate TS1212/TS1213/TS1214 at the same position.
         // Multiple paths (type resolution, identifier resolution, parameter checking)
         // can trigger this for the same identifier; tsc only emits one.

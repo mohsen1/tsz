@@ -29,6 +29,7 @@ pgo_profile_fingerprint() {
         printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         printf 'UTILITY_TYPES_REF=%s\n' "$UTILITY_TYPES_REF"
         printf 'TS_TOOLBELT_REF=%s\n' "$TS_TOOLBELT_REF"
         printf 'TS_ESSENTIALS_REF=%s\n' "$TS_ESSENTIALS_REF"
@@ -63,6 +64,7 @@ pgo_training_fingerprint() {
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
         printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         local label
         for label in "${BENCH_PGO_TRAINING_INPUTS[@]}"; do
             printf 'training_input=%s\n' "$label"
@@ -90,6 +92,7 @@ write_pgo_training_metadata() {
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
         printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         printf 'training_input_count=%s\n' "${#BENCH_PGO_TRAINING_INPUTS[@]}"
         printf 'training_failure_count=%s\n' "${#BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"
         local label
@@ -117,6 +120,7 @@ write_pgo_training_unavailable_metadata() {
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
         printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         printf 'training_input_count=0\n'
         printf 'training_failure_count=0\n'
     } > "$out_file"
@@ -857,6 +861,8 @@ check_prerequisites() {
         local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
         local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
         local pgo_cache_metadata="$pgo_cache_dir/profile.metadata"
+        local bench_rust_target_cpu="${BENCH_RUST_TARGET_CPU:-native}"
+        local bench_rust_target_flags="-Ctarget-cpu=${bench_rust_target_cpu}"
         local pgo_target_dir
         local optimized_target_dir
         local pgo_profile_data_source="fresh"
@@ -905,7 +911,7 @@ check_prerequisites() {
                 # CFG hash mismatches during profile-use. BENCH_PGO_PANIC_UNWIND=1
                 # is still useful when deliberately training on crashy inputs,
                 # because panic=abort can skip LLVM's profiling atexit flush.
-                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir -Ctarget-cpu=native"
+                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir ${bench_rust_target_flags}"
                 if [[ "${BENCH_PGO_PANIC_UNWIND:-0}" == "1" ]]; then
                     pgo_generate_rustflags="$pgo_generate_rustflags -Cpanic=unwind"
                 fi
@@ -964,7 +970,7 @@ check_prerequisites() {
                     "PGO Step 3/3: optimized binary build" \
                     CARGO_TARGET_DIR="$optimized_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged ${bench_rust_target_flags}" \
                     cargo build --profile dist -p tsz-cli --bin tsz; then
                     if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
                         echo -e "${RED}✗ PGO dist build failed and BENCH_REQUIRE_PGO=1${NC}"
@@ -979,7 +985,7 @@ check_prerequisites() {
                         "PGO Step 3 fallback: standard dist build" \
                         CARGO_TARGET_DIR="$optimized_target_dir" \
                         CARGO_INCREMENTAL=0 \
-                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        RUSTFLAGS="$bench_rust_target_flags" \
                         cargo build --profile dist -p tsz-cli --bin tsz
                 else
                     pgo_optimized=true
@@ -996,7 +1002,7 @@ check_prerequisites() {
                     "PGO Step 3: standard dist build" \
                     CARGO_TARGET_DIR="$optimized_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Ctarget-cpu=native" \
+                    RUSTFLAGS="$bench_rust_target_flags" \
                     cargo build --profile dist -p tsz-cli --bin tsz
             fi
             mkdir -p "$TSZ_OUTPUT_DIR"
@@ -1022,7 +1028,7 @@ check_prerequisites() {
                 "Standard dist build" \
                 CARGO_TARGET_DIR="$optimized_target_dir" \
                 CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Ctarget-cpu=native" \
+                RUSTFLAGS="$bench_rust_target_flags" \
                 cargo build --profile dist -p tsz-cli --bin tsz
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"

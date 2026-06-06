@@ -1666,9 +1666,7 @@ impl QueryDatabase for QueryCache<'_> {
             query_id
         });
 
-        let mut evaluator =
-            crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
-        evaluator = evaluator.with_query_db(self);
+        let mut evaluator = self.query_backed_evaluator();
         let result = evaluator.evaluate_request_result(request).into_type_id();
 
         // PERF: Persist intermediate evaluation results from this session into
@@ -1699,6 +1697,31 @@ impl QueryDatabase for QueryCache<'_> {
             query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
         }
         result
+    }
+
+    /// Cache-aware override of the `QueryDatabase` default, which would build a
+    /// `query_db = None` evaluator and bypass the cross-call instantiation cache.
+    fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
+        self.query_backed_evaluator().evaluate_conditional(cond)
+    }
+
+    fn evaluate_index_access_with_options(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        let mut evaluator = self.query_backed_evaluator();
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.evaluate_index_access(object_type, index_type)
+    }
+
+    fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+        self.query_backed_evaluator().evaluate_keyof(operand)
+    }
+
+    fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+        self.query_backed_evaluator().evaluate_mapped(mapped)
     }
 
     /// Look up a cross-call `instantiate_type` result.

@@ -6,4 +6,5 @@ mod call_recovery;
 mod core;
 mod es5_super_receiver;
 mod literals;
+mod literals_recovery;
 mod static_super;
