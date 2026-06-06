@@ -300,10 +300,9 @@ impl<'a> TypeFormatter<'a> {
     /// A non-distributive application of a generic alias whose *declared body is
     /// a conditional type* loses its alias symbol when the conditional resolves:
     /// the operator resolves into its branch and never stamps the enclosing
-    /// alias onto the result, so tsc renders the resolved type structurally for
-    /// **any** resolved shape (`DeepReadonly<{ b: number }>` →
-    /// `{ readonly b: number; }`, `DeepReadonly<number>` → `number`, issue
-    /// #10914), never `Name<Args>`.
+    /// alias onto anonymous object/mapped results, so tsc renders those results
+    /// structurally (`DeepReadonly<{ b: number }>` →
+    /// `{ readonly b: number; }`, issue #10914), not as `Name<Args>`.
     ///
     /// Returns the evaluated type to format in place of the application form.
     /// Returns `None` for a mapped/object-bodied application (`Partial<T>` keeps
@@ -349,11 +348,15 @@ impl<'a> TypeFormatter<'a> {
         }
         // A conditional still deferred after evaluation never reduced (an
         // unresolved operand); the raw node is no more informative than the
-        // application form, so keep the application form.
+        // application form, so keep the application form. Non-object results
+        // also keep the application surface; expanding tuple/scalar helper
+        // applications produces conformance fingerprint drift in assignment
+        // diagnostics where tsc preserves the helper spelling.
         if matches!(
             self.interner.lookup(evaluated),
             Some(TypeData::Conditional(_))
-        ) {
+        ) || !crate::type_queries::is_object_or_mapped_type(self.interner, evaluated)
+        {
             return None;
         }
         Some(evaluated)

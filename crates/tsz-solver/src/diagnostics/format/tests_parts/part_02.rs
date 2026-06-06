@@ -858,6 +858,47 @@ fn conditional_alias_application_resolving_to_object_renders_structurally() {
     );
 }
 
+#[test]
+fn conditional_alias_application_resolving_to_tuple_keeps_application_surface() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let t_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t = db.type_param(t_param);
+    let tuple = db.tuple(vec![crate::types::TupleElement {
+        type_id: t,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let cond = db.conditional(crate::types::ConditionalType {
+        check_type: t,
+        extends_type: TypeId::STRING,
+        true_type: tuple,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let tuple_box_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("TupleBox"),
+        vec![t_param],
+        cond,
+    ));
+    let app = db.application(db.lazy(tuple_box_def), vec![TypeId::STRING]);
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+
+    assert_eq!(
+        fmt.format(app),
+        "TupleBox<string>",
+        "Only anonymous object/mapped conditional alias application results \
+         expand structurally; tuple results keep the application surface"
+    );
+}
+
 // =====================================================================
 // Union containing a Lazy alias — TS2859 / general union-display parity
 // =====================================================================

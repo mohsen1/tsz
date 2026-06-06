@@ -1559,7 +1559,7 @@ impl<'a> CheckerState<'a> {
                     && self.can_register_evaluated_alias_form(def_id, result)
                     && {
                         let evaluated = self.evaluate_type_with_env(result);
-                        common_query::is_object_or_mapped_type(
+                        diagnostic_query::is_object_or_mapped_type(
                             self.ctx.types.as_type_database(),
                             evaluated,
                         )
