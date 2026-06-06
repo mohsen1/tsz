@@ -323,6 +323,71 @@ impl<'a> CheckerState<'a> {
         expr_ops::union_context_prefers_tuple_array_literal(self.ctx.types, contextual)
     }
 
+    /// For an array literal whose contextual type is an *ambiguous* union of array
+    /// shapes, derive the union of the arms' element types so an inner element
+    /// adopts the right per-arm shape instead of widening.
+    ///
+    /// `get_array_element_type` maps over the union members and unions the per-arm
+    /// element types (mirroring tsc's `mapType` in
+    /// `getContextualTypeForElementExpression`). Threading that union back to the
+    /// element fixes nested array/object literals (e.g. the inner `[1]` of `[[1]]`
+    /// against `[number][] | [string, boolean][]` stays `[number]` instead of
+    /// widening to `number[]` and failing TS2322), and — because the downstream
+    /// contextual-parameter logic already resolves a union contextual type
+    /// correctly — also lets closure elements pick the matching function arm (or
+    /// fall back to implicit-any TS7006 when the arms genuinely conflict), matching
+    /// tsc in both directions.
+    fn ambiguous_union_element_context(&mut self, resolved: Option<TypeId>) -> Option<TypeId> {
+        let resolved = resolved?;
+        // Strip a `readonly`/`NoInfer` wrapper around the whole contextual type,
+        // then take each union arm's array element type — looking through per-arm
+        // `readonly`/`NoInfer` wrappers as well — and union the results. Readonly
+        // unwrapping is done locally here rather than inside the shared
+        // `get_array_element_type` so the change stays scoped to array-literal
+        // contextual typing and does not perturb other consumers such as overload
+        // error elaboration.
+        let resolved = self.strip_array_context_wrappers(resolved);
+        let members: Vec<TypeId> = query_common::union_members(self.ctx.types, resolved)
+            .map(|list| list.iter().copied().collect())
+            .unwrap_or_else(|| vec![resolved]);
+        let mut elems: Vec<TypeId> = Vec::with_capacity(members.len());
+        for member in members {
+            let member = self.strip_array_context_wrappers(member);
+            let helper = ContextualTypeContext::with_expected(self.ctx.types, member);
+            if let Some(elem) = helper
+                .get_array_element_type()
+                .filter(|&ty| ty != TypeId::NEVER)
+            {
+                elems.push(elem);
+            }
+        }
+        let elem = match elems.len() {
+            0 => return None,
+            1 => elems[0],
+            _ => self.ctx.types.union(elems),
+        };
+        // Don't thread an element type that still contains free type parameters.
+        // That regime belongs to generic inference / overload resolution, where the
+        // contextual union is a synthetic merge of candidate parameter types
+        // (e.g. `T[] | readonly T[]`); per-element contextual typing there perturbs
+        // overload error recovery and diagnostic anchoring. The concrete
+        // tuple/array-union widening this fixes never carries free type parameters.
+        if query_common::contains_type_parameters(self.ctx.types, elem) {
+            return None;
+        }
+        Some(elem)
+    }
+
+    /// Strip a single layer of `readonly`/`NoInfer` wrapper, repeatedly, so a
+    /// `readonly readonly T[]`-style nesting is fully unwrapped before array
+    /// element extraction.
+    fn strip_array_context_wrappers(&self, mut type_id: TypeId) -> TypeId {
+        while let Some(inner) = query_common::unwrap_readonly_or_noinfer(self.ctx.types, type_id) {
+            type_id = inner;
+        }
+        type_id
+    }
+
     fn array_literal_context_forces_tuple_like(&mut self, contextual: TypeId) -> bool {
         let contextual = self.resolve_lazy_type(contextual);
         (crate::query_boundaries::common::array_applicable_type(self.ctx.types, contextual)
@@ -812,11 +877,29 @@ impl<'a> CheckerState<'a> {
             // Build per-element typing request instead of mutating ctx.contextual_type
             let elem_request = if union_array_context_is_ambiguous && !force_tuple_for_union_context
             {
-                // When the contextual union is ambiguous (multiple applicable element types),
-                // clear the contextual type for each element so closures don't inherit
-                // the array's union contextual type and inadvertently get typed parameters.
-                // EXCEPTION: union-of-all-tuples is handled via per-position typing below.
-                crate::context::TypingRequest::NONE
+                // When the contextual union is ambiguous (multiple applicable element
+                // types), we generally clear the contextual type for each element so
+                // closures don't inherit the array's union contextual type and
+                // inadvertently get typed parameters (which would suppress the
+                // implicit-any TS7006 that tsc emits).
+                //
+                // EXCEPTION: union-of-all-tuples is handled via per-position typing
+                // below. A second exception is handled here: an inner element still
+                // needs the union of the arms' element types as its contextual type.
+                // Mapping over a union contextual type is exactly what tsc's
+                // `getContextualTypeForElementExpression` does, so the inner element
+                // adopts the right per-arm shape instead of widening (e.g. the inner
+                // `[1]` of `[[1]]` against `[number][] | [string, boolean][]` must stay
+                // `[number]`, not widen to `number[]` and fail TS2322). Closures still
+                // resolve correctly because the contextual-parameter logic handles a
+                // union contextual type — picking the matching function arm, or
+                // emitting implicit-any (TS7006) when the arms genuinely conflict.
+                match self.ambiguous_union_element_context(resolved_contextual_type) {
+                    Some(ty) => request.read().contextual(
+                        query_common::no_infer_inner_type(self.ctx.types, ty).unwrap_or(ty),
+                    ),
+                    None => crate::context::TypingRequest::NONE,
+                }
             } else if let Some(ref helper) = ctx_helper {
                 if tuple_context.is_some()
                     || force_tuple_for_union_context
