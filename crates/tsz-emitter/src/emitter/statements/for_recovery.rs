@@ -231,11 +231,11 @@ fn parse_single_identifier_call(text: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn is_identifier_start(ch: char) -> bool {
+const fn is_identifier_start(ch: char) -> bool {
     ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
 }
 
-fn is_identifier_part(ch: char) -> bool {
+const fn is_identifier_part(ch: char) -> bool {
     is_identifier_start(ch) || ch.is_ascii_digit()
 }
 
