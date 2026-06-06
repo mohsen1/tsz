@@ -1596,6 +1596,21 @@ impl<'a> CheckerState<'a> {
                     self.format_assignability_type_for_message(declared_type, target);
                 let widened_display = self.format_assignability_type_for_message(widened, target);
                 if literal_display != widened_display {
+                    // tsc widens a declared *unit-literal* source (`0n`, `"x"`,
+                    // `42`, `true`) to its base when the target cannot hold a
+                    // literal (`boolean`, `bigint`, …), and keeps the literal only
+                    // against a literal-sensitive target (`0`, `"x"`). The
+                    // call-argument source path already mirrors this; do the same
+                    // for return/assignment identifier sources so the three
+                    // positions agree with tsc. Compound literal surfaces
+                    // (tuples, objects, `as const`) have no scalar `literal_value`
+                    // and keep their existing preserve-the-literal behaviour.
+                    if crate::query_boundaries::common::literal_value(self.ctx.types, declared_type)
+                        .is_some()
+                        && !self.is_literal_sensitive_assignment_target(target)
+                    {
+                        return Some(widened_display);
+                    }
                     return Some(literal_display);
                 }
             }
