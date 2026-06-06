@@ -160,6 +160,25 @@ function stableStringify(value: Record<string, unknown>): string {
   return JSON.stringify(obj);
 }
 
+function detailRowsFingerprint(results: Array<Record<string, unknown>>): string {
+  const rows = results.map(result => ({
+    baselineFile: result.baselineFile ?? null,
+    dtsError: result.dtsError ?? null,
+    dtsStatus: result.dtsStatus ?? null,
+    jsError: result.jsError ?? null,
+    jsStatus: result.jsStatus ?? null,
+    name: result.name ?? null,
+    testPath: result.testPath ?? null,
+  })).sort((left, right) => {
+    const leftKey = `${left.name ?? ''}\0${left.baselineFile ?? ''}\0${left.testPath ?? ''}`;
+    const rightKey = `${right.name ?? ''}\0${right.baselineFile ?? ''}\0${right.testPath ?? ''}`;
+    if (leftKey < rightKey) return -1;
+    if (leftKey > rightKey) return 1;
+    return 0;
+  });
+  return `sha256:${hashString(JSON.stringify(rows))}`;
+}
+
 function getCacheKey(
   sourceKey: string,
   target: number,
@@ -1519,6 +1538,8 @@ async function main() {
     const dtsTotal = dtsPass + dtsFail;
     const detail = {
       timestamp: new Date().toISOString(),
+      detailFingerprint: detailRowsFingerprint(allResults),
+      detailResultCount: allResults.length,
       summary: {
         jsTotal,
         jsPass,

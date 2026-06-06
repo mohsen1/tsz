@@ -139,8 +139,18 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
-  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?required_summary=false[\s\S]+?compiler_checks_required=false/,
-  "edited PR events should refresh body/ready-state gates without publishing protected CI Summary",
+  /if \[\[ "\$\{\{ github\.event\.action \}\}" == "edited" \]\]; then[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?metadata_only_skip=true[\s\S]+?compiler_checks_required=false[\s\S]+?fi/,
+  "edited PR events should refresh body/ready-state gates without heavy CI",
+);
+assert.match(
+  ciWorkflow,
+  /accepted_summary_names = \("CI Summary",\) if required_summary else \("CI Summary", "CI Light Summary"\)[\s\S]+?job\.get\("name"\) in accepted_summary_names[\s\S]+?Metadata-only CI mirrors successful \{summary_name\}/,
+  "metadata-only edited runs should require prior full summaries when publishing protected CI Summary",
+);
+assert.match(
+  ciWorkflow,
+  /accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"[\s\S]+?previous \{accepted_summary_label\}/,
+  "metadata-only edited runs should report the accepted prior summary class when no mirror exists",
 );
 
 assert.match(
@@ -165,6 +175,12 @@ assert.doesNotMatch(
   ciWorkflow,
   /Treating as neutral/,
   "CI Summary must not treat cancelled required jobs as a neutral protected check",
+);
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- project-compile-guard\s*\n\s+- project-compile-canary[\s\S]+?"project-compile-guard",\s*\n\s+"project-compile-canary",/,
+  "CI Summary must wait for the project compile canary before reporting required full-run success",
 );
 
 for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
