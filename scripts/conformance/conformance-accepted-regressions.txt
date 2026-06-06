@@ -53,6 +53,7 @@ TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/strictModeReservedWord.ts
+TypeScript/tests/cases/compiler/truthinessPromiseCoercion.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
@@ -67,7 +68,6 @@ TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmit
 TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
-TypeScript/tests/cases/conformance/types/rest/genericRestParameters3.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
