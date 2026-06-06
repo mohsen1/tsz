@@ -10,7 +10,7 @@ use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
+use tsz_solver::narrowing::{NarrowingContext, TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
     fn narrow_to_falsy_via_flow_boundary(&self, type_id: TypeId) -> TypeId {
@@ -36,18 +36,12 @@ impl<'a> FlowAnalyzer<'a> {
 
     fn narrow_with_guard_via_flow_boundary(
         &self,
+        narrowing: &NarrowingContext<'_>,
         type_id: TypeId,
         guard: &TypeGuard,
         is_true_branch: bool,
     ) -> TypeId {
-        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
-        flow_query::narrow_with_guard(
-            self.interner,
-            env_borrow.as_deref(),
-            type_id,
-            guard,
-            is_true_branch,
-        )
+        flow_query::narrow_with_guard_in_context(narrowing, type_id, guard, is_true_branch)
     }
 
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
@@ -810,10 +804,11 @@ impl<'a> FlowAnalyzer<'a> {
                             // This applies to ALL guards, not just typeof
                             // For `x !== "string"` or `x.kind !== "circle"`, the true branch should EXCLUDE
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)
-                            let result = narrowing.narrow_type(
+                            let result = self.narrow_with_guard_via_flow_boundary(
+                                &narrowing,
                                 type_id,
                                 &guard,
-                                GuardSense::from(effective_sense),
+                                effective_sense,
                             );
                             if effective_sense
                                 && matches!(guard, TypeGuard::Typeof(TypeofKind::Object))
@@ -971,12 +966,12 @@ impl<'a> FlowAnalyzer<'a> {
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
                 let matches = self.is_matching_reference(condition_ref, target);
                 if matches {
-                    let narrowed = narrowing.narrow_type(
+                    return self.narrow_with_guard_via_flow_boundary(
+                        &narrowing,
                         type_id,
                         &TypeGuard::Truthy,
-                        GuardSense::from(is_true_branch),
+                        is_true_branch,
                     );
-                    return narrowed;
                 }
 
                 if let Some((base, prop_names)) = self.binding_element_property_alias(condition_ref)
@@ -1313,6 +1308,7 @@ impl<'a> FlowAnalyzer<'a> {
                 let typeof_base_type =
                     flow_boundary::catch_variable_typeof_base_from_flow(type_id, is_catch_var);
                 let narrowed = self.narrow_with_guard_via_flow_boundary(
+                    narrowing,
                     typeof_base_type,
                     &TypeGuard::Typeof(typeof_kind),
                     effective_truth,
@@ -1529,16 +1525,18 @@ impl<'a> FlowAnalyzer<'a> {
                         {
                             return right_type;
                         }
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
-                            GuardSense::Positive,
+                            true,
                         );
                     } else if is_unit_type(self.interner, right_type) {
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
-                            GuardSense::Negative,
+                            false,
                         );
                     }
                 }
@@ -1558,16 +1556,18 @@ impl<'a> FlowAnalyzer<'a> {
                         {
                             return left_type;
                         }
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),
-                            GuardSense::Positive,
+                            true,
                         );
                     } else if is_unit_type(self.interner, left_type) {
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),
-                            GuardSense::Negative,
+                            false,
                         );
                     }
                 }
@@ -1897,10 +1897,11 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     self.make_narrowing_context()
                 };
-                return Some(narrowing.narrow_type(
+                return Some(self.narrow_with_guard_via_flow_boundary(
+                    &narrowing,
                     type_id,
                     &TypeGuard::Truthy,
-                    GuardSense::from(is_true_branch),
+                    is_true_branch,
                 ));
             }
         }
