@@ -38,7 +38,6 @@
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
-TypeScript/tests/cases/compiler/declarationEmitRecursiveConditionalAliasPreserved.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts

@@ -1028,9 +1028,10 @@ impl<'a> CheckerState<'a> {
     /// parameter or the polymorphic `this` type (the only objects for which
     /// TS4105 applies). Used to gate the signature-position TS4105 check so we
     /// never resolve concrete object forms such as `typeof X` — resolving those
-    /// out of order can poison the per-node type cache. Conservatively treats a
-    /// bare `this`/type-reference (possibly wrapped in parens or combined in a
-    /// union/intersection) as a candidate; the resolved-type check in
+    /// out of order can poison the per-node type cache. Conservatively treats
+    /// `this` and bare type references already present in the active
+    /// `type_parameter_scope` as candidates (possibly wrapped in parens or
+    /// combined in a union/intersection); the resolved-type check in
     /// `check_ts4105_private_on_type_parameter` makes the final decision.
     fn indexed_access_object_is_type_param_candidate(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -1038,11 +1039,21 @@ impl<'a> CheckerState<'a> {
         };
         match node.kind {
             k if k == syntax_kind_ext::THIS_TYPE => true,
-            k if k == syntax_kind_ext::TYPE_REFERENCE => self
-                .ctx
-                .arena
-                .get_type_ref(node)
-                .is_some_and(|type_ref| type_ref.type_arguments.is_none()),
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                self.ctx.arena.get_type_ref(node).is_some_and(|type_ref| {
+                    type_ref.type_arguments.is_none()
+                        && self
+                            .ctx
+                            .arena
+                            .get(type_ref.type_name)
+                            .and_then(|name| self.ctx.arena.get_identifier(name))
+                            .is_some_and(|ident| {
+                                self.ctx
+                                    .type_parameter_scope
+                                    .contains_key(ident.escaped_text.as_str())
+                            })
+                })
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
                 self.ctx.arena.get_wrapped_type(node).is_some_and(|paren| {
                     self.indexed_access_object_is_type_param_candidate(paren.type_node)
