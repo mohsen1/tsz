@@ -43,6 +43,8 @@ const LOSS_CLOSURE_BY_ROW = new Map([
         "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
       command:
         "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-toolbelt-project.perf.json --noEmit -p .target-bench/external/ts-toolbelt/tsconfig.flat.json",
       issue: 8356,
       url: "https://github.com/tsz-org/tsz/issues/8356",
     },
@@ -629,8 +631,8 @@ export function createTsgoWinnerReport(input, inputPath) {
   const missingTargetGapAttributionPlan = targetGapRows
     .filter((row) => !hasCompleteAttribution(row.attribution_status))
     .map(missingAttributionPlanForRow);
-  const targetGapRowsWithAttributionCommand = missingTargetGapAttributionPlan
-    .filter((row) => row.attribution_command).length;
+  const targetGapRowsWithAttributionCommand = targetGapRows
+    .filter((row) => row.loss_closure?.attribution_command).length;
 
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row) && !duplicateNames.has(row?.name))
