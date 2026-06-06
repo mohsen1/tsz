@@ -55,11 +55,11 @@ artifacts are triage inputs only, not current public truth.
 | --- | ---: |
 | Diagnostic conformance | checked detail is `100.0%` exact (`12,585 / 12,585`) |
 | Accepted-regression strictness | `30` listed tests in `conformance-accepted-regressions.txt`; the dashboard remains exact, but strictness debt must be justified or paid down before treating the runway as retired |
-| JavaScript emit | `99.5%` (`13,468 / 13,530`) in README/public aggregate and checked detail |
-| Declaration emit | `99.5%` (`1,661 / 1,669`) in README/public aggregate and checked detail |
+| JavaScript emit | `100.0%` rounded (`13,526 / 13,530`) in README/public aggregate and checked detail |
+| Declaration emit | `100.0%` exact (`1,669 / 1,669`) in README/public aggregate and checked detail |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
 | Open bug issues | `68` open `bug` issues in live GitHub orientation (point-in-time count; drifts daily) |
-| Output-surgery audit | passing: `0` unallowlisted calls, `0` stale allowlist entries; resource-region output surgery is capped at `4 / 4` with `0` remaining budget slots |
+| Output-surgery audit | passing: `0` unallowlisted calls, `0` stale allowlist entries, `0` allowlisted calls |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -121,16 +121,15 @@ changes the picture.
    parity, bug closure, green project rows, and `2x` timing wins over `tsgo`.
    Architecture cleanup is part of that goal only when it ratchets a measured
    boundary counter down or unblocks one of those gates.
-7. Emit remains the largest numeric parity gap and a real architecture risk:
-   the README/public aggregate and checked detail agree at JavaScript emit
-   `13,468 / 13,530` and declaration emit `1,661 / 1,669`. DTS still needs to
-   move away from late semantic discovery during printing toward a precomputed
-   declaration/public-API summary.
-8. Output-surgery audit is passing with exhausted pressure: the current audit
-   reports `0` unallowlisted calls and `0` stale allowlist entries. Resource-region
-   output-surgery is now `4 / 4`; Studio emit work should keep ratcheting it
-   down, and any cap increase must name an owner, removal condition, and
-   counter update.
+7. Emit remains a release-gate tail and a real architecture risk: the
+   README/public aggregate and checked detail agree at JavaScript emit
+   `13,526 / 13,530`, with four JS rows left, and declaration emit is exact at
+   `1,669 / 1,669`. DTS still needs to move away from late semantic discovery
+   during printing toward a precomputed declaration/public-API summary.
+8. Output-surgery audit is passing with no allowlist pressure: the current audit
+   reports `0` unallowlisted calls, `0` stale allowlist entries, and `0`
+   allowlisted calls. Studio emit work should keep it there; any cap increase
+   must name an owner, removal condition, and counter update.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows
