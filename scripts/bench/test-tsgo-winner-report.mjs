@@ -186,6 +186,7 @@ withTempDir((dir) => {
   assert.equal(report.totals.green_tsgo_winners_with_attribution, 1);
   assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
+  assert.match(result.stdout, /2x target gaps with attribution commands: 1\/3/);
   assert.deepEqual(report.two_x_target, {
     tsz_speedup_target: 2,
     eligible_green_rows: 4,
@@ -195,6 +196,33 @@ withTempDir((dir) => {
     project_rows_below_target: 2,
     rows_with_attribution: 1,
     missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
+    rows_with_attribution_command: 1,
+    missing_attribution_plan: [
+      {
+        name: "vite-vanilla-ts-app",
+        target_gap_factor: report.target_gaps[1].target_gap_factor,
+        tsz_speedup_vs_tsgo: report.target_gaps[1].tsz_speedup_vs_tsgo,
+        semantic_owner_family: "generated Vite dependency graph",
+        owner: "Track 7/9 generated app lib/module identity",
+        issue: 7378,
+        url: "https://github.com/tsz-org/tsz/issues/7378",
+        attribution_command: report.target_gaps[1].loss_closure.attribution_command,
+        timing_command: report.target_gaps[1].loss_closure.command,
+        attribution_warning: "attribution artifact missing",
+      },
+      {
+        name: "single-file-loss",
+        target_gap_factor: report.target_gaps[2].target_gap_factor,
+        tsz_speedup_vs_tsgo: report.target_gaps[2].tsz_speedup_vs_tsgo,
+        semantic_owner_family: null,
+        owner: null,
+        issue: null,
+        url: null,
+        attribution_command: null,
+        timing_command: null,
+        attribution_warning: "attribution artifact missing",
+      },
+    ],
     worst_gap: report.target_gaps[0],
   });
   assert.deepEqual(
@@ -702,6 +730,14 @@ withTempDir((dir) => {
   assert.equal(report.two_x_target.rows_below_target, 2);
   assert.equal(report.two_x_target.rows_with_attribution, 1);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, ["vite-vanilla-ts-app"]);
+  assert.equal(report.two_x_target.rows_with_attribution_command, 1);
+  assert.deepEqual(report.two_x_target.missing_attribution_plan.map((row) => row.name), [
+    "vite-vanilla-ts-app",
+  ]);
+  assert.match(
+    report.two_x_target.missing_attribution_plan[0].attribution_command,
+    /nextjs-fresh-app|vite-vanilla-ts-app/,
+  );
   const tsEssentials = report.target_gaps.find((row) => row.name === "ts-essentials-project");
   assert.deepEqual(tsEssentials.attribution_status, {
     present: true,

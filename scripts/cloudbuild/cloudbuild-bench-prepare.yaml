@@ -9,6 +9,7 @@ steps:
       - 'BENCH_COLD=1'
       - 'BENCH_PGO=1'
       - 'BENCH_REQUIRE_PGO=1'
+      - 'BENCH_RUST_TARGET_CPU=x86-64'
       - 'TSC_NPM_SPEC=6.0.2'
       - 'CARGO_BUILD_JOBS=32'
       - 'CARGO_INCREMENTAL=0'
