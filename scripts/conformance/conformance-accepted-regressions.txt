@@ -37,26 +37,35 @@
 # - PR #12748 run 27057787055 at synthetic merge bf33f5f1ef found four
 #   current-main rows still failing on exact-head aggregate after rebasing on
 #   current main.
-# - PR #12544 run 27062048114 at synthetic merge 6f255a75a0 found ten resolved
-#   accepted rows after rebasing on current main. It also found
+# - PR #12544 run 27062518424 at synthetic merge for head 87bacd18a4 found
+#   circularReference.ts resolved after rebasing on current main. It also found
 #   privateNamesAndIndexedAccess.ts as a new unlisted row; that row is tracked
 #   in an issue instead of growing this ledger.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
+TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
+TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
+TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
+TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
+TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
-TypeScript/tests/cases/conformance/externalModules/circularReference.ts
+TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
+TypeScript/tests/cases/conformance/importDefer/dynamicImportDeferInvalidStandalone.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
 TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts
+TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts
 TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
+TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
+TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
