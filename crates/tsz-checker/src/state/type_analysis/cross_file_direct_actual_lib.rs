@@ -4,6 +4,7 @@ use tsz_common::perf_counters::CrossArenaSymbolMissSource;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 use super::cross_file_direct::{
@@ -54,7 +55,7 @@ pub(super) fn iterator_object_has_global_augmentations(
 }
 
 impl<'a> CheckerState<'a> {
-    fn value_merged_dom_interface_members_are_lazy_resolvable(
+    fn value_merged_dom_interface_has_only_lazy_safe_methods(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -85,7 +86,12 @@ impl<'a> CheckerState<'a> {
                         let Some(signature) = arena.get_signature(member) else {
                             return false;
                         };
-                        signature.type_annotation != NodeIndex::NONE
+                        if signature.type_annotation == NodeIndex::NONE {
+                            return false;
+                        }
+                        arena
+                            .get(signature.type_annotation)
+                            .is_some_and(|node| node.kind == SyntaxKind::VoidKeyword as u16)
                     }
                     _ => true,
                 }
@@ -203,12 +209,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         // DOM value/interface pairs used in type position can stay as lazy lib
-        // identities when their own member surface is resolvable by the lazy
-        // member gateway. Method signatures are safe here because
-        // `resolve_simple_lib_interface_own_property` lowers unambiguous method
-        // groups through `TypeLowering`; call/construct signatures still require
-        // the full child/interface path.
-        if !self.value_merged_dom_interface_members_are_lazy_resolvable(sym_id, &symbol) {
+        // identities when their own method surface cannot contribute a
+        // non-void result shape. Method-heavy interfaces such as `Document`
+        // still need the child/interface path so overload return types and
+        // contextual callback parameters are fully materialized on demand.
+        if !self.value_merged_dom_interface_has_only_lazy_safe_methods(sym_id, &symbol) {
             return None;
         }
 

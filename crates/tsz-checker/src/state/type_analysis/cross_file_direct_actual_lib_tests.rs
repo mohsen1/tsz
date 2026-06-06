@@ -535,24 +535,17 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
         .get(&document_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("Document should have a delegate arena");
-    let (document_type, document_params) = state
-        .direct_value_merged_builtin_lib_interface_symbol_type(
-            document_sym_id,
-            CrossArenaSymbolMissSource::SymbolArena,
-            Some(document_arena),
-            false,
-        )
-        .expect("method-heavy value-merged DOM interfaces should stay lazy");
-    assert!(document_params.is_empty());
     assert!(
-        crate::query_boundaries::common::lazy_def_id(state.ctx.types, document_type).is_some(),
-        "Document should return a type-position Lazy ref",
+        state
+            .direct_value_merged_builtin_lib_interface_symbol_type(
+                document_sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(document_arena),
+                false,
+            )
+            .is_none(),
+        "value-merged DOM interfaces with non-void method returns should stay on the existing child/interface path",
     );
-    let query_selector = state
-        .resolve_simple_lib_interface_own_property("Document", "querySelector")
-        .expect("single-member DOM resolver should lower inherited method groups");
-    assert_ne!(query_selector, TypeId::ERROR);
-    assert_ne!(query_selector, TypeId::UNKNOWN);
 
     let document_value_sym_id = state
         .ctx
