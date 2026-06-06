@@ -165,6 +165,42 @@ n = s;
     );
 }
 
+/// Recursive mapped-object aliases still need the role-specific formatter: tsc
+/// reduces through mapped property substitutions here and reports the concrete
+/// property value type (`string`), not the recursive alias application.
+#[test]
+fn recursive_mapped_alias_property_value_still_reduces() {
+    let messages = assignability_messages(
+        r#"
+type Envelope<Subject, Extra> = {
+    readonly[Key in keyof Subject]: {
+        value: Subject[Key];
+        also: Extra;
+        readonly children: Envelope<Subject[Key], Extra>;
+    };
+}
+
+interface Payload {
+    name: string;
+    count: number;
+}
+
+declare const output: Envelope<Payload, boolean>;
+const shouldFail: { important: boolean } = output.name.children;
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Type 'string' is not assignable to type '{ important: boolean; }'."),
+        "recursive mapped property value should reduce to the concrete source, got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("Envelope<string")),
+        "mapped/object recursion must not be preserved by the tuple guard, got: {messages:?}"
+    );
+}
+
 /// Fallback boundary: a *non-recursive* tuple alias is NOT affected by the
 /// recursive guard. `tsc` expands a non-recursive tuple alias structurally in
 /// the assignment-target position, so the guard must leave that behavior intact.
