@@ -62,12 +62,14 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
             {
                 "crates/tsz-emitter/src/recovery.rs": (
                     'if source_text.contains("malformed emit shape") {}\n'
+                    "if source_text[start..end].contains(';') {}\n"
                 ),
             }
         )
         hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
-        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
         self.assertIn("recovery.rs:1", hits[0])
+        self.assertIn("recovery.rs:2", hits[1])
 
     def test_flags_file_name_and_path_substring_decisions(self):
         pattern, _max_lines = self._check_by_name("file-name/path")

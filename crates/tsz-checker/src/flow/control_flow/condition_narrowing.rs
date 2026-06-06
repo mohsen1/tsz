@@ -346,9 +346,14 @@ impl<'a> FlowAnalyzer<'a> {
                 let narrowed = if excluded_types.is_empty() {
                     type_id
                 } else if target_is_switch_expr {
-                    narrowing.narrow_excluding_types(type_id, &excluded_types)
+                    flow_query::narrow_excluding_types_in_context(
+                        narrowing,
+                        type_id,
+                        &excluded_types,
+                    )
                 } else if let Some((ref path, _, _)) = discriminant_info {
-                    narrowing.narrow_by_excluding_discriminant_values(
+                    flow_query::narrow_by_excluding_discriminant_values_in_context(
+                        narrowing,
                         type_id,
                         path,
                         &excluded_types,
@@ -561,13 +566,18 @@ impl<'a> FlowAnalyzer<'a> {
             if !excluded_types.is_empty() {
                 if target_is_switch_expr {
                     // Use batched narrowing for O(N) instead of O(N²)
-                    return narrowing.narrow_excluding_types(type_id, &excluded_types);
+                    return flow_query::narrow_excluding_types_in_context(
+                        narrowing,
+                        type_id,
+                        &excluded_types,
+                    );
                 } else if let Some((path, is_optional, _)) = discriminant_info {
                     if is_optional && excluded_types.contains(&TypeId::UNDEFINED) {
                         return type_id;
                     }
                     // Use batched discriminant narrowing
-                    return narrowing.narrow_by_excluding_discriminant_values(
+                    return flow_query::narrow_by_excluding_discriminant_values_in_context(
+                        narrowing,
                         type_id,
                         &path,
                         &excluded_types,
@@ -1331,7 +1341,8 @@ impl<'a> FlowAnalyzer<'a> {
             //     return standard strings at runtime, so the condition is always
             //     false; the complement narrows to primitives)
             if effective_truth {
-                return narrowing.narrow_excluding_types(
+                return flow_query::narrow_excluding_types_in_context(
+                    narrowing,
                     type_id,
                     &[TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN],
                 );
