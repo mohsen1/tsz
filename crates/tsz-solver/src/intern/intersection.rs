@@ -279,6 +279,14 @@ impl TypeInterner {
             return TypeId::NEVER;
         }
 
+        // Pattern template literal reduction (tsc `extractRedundantTemplateLiterals`):
+        // `keyof T & ` `` `${number}` `` and friends keep only the keys that inhabit
+        // the pattern. Runs before the size-gated union distribution below so the
+        // large key unions `keyof` produces on tuples are handled directly.
+        if let Some(reduced) = self.reduce_pattern_template_intersection(&flat) {
+            return reduced;
+        }
+
         // Merge same-named type parameters before distribution.
         // When Application evaluation produces unconstrained copies of type parameters
         // (e.g., `DatafulFoo<T>` produces `T` without constraint from the interface,

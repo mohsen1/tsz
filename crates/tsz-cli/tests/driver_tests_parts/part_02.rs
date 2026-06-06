@@ -580,7 +580,7 @@ fn compile_with_source_map_emits_map_outputs() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "sourceMap": true
           },
@@ -640,7 +640,7 @@ fn compile_with_inline_source_map_embeds_map_data_url() {
     write_file(
         &base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
+          "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
             "inlineSourceMap": true
           },

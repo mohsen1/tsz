@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { measurementProfileStatus } from "./measurement-profile.mjs";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
@@ -98,6 +99,20 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       url: "https://github.com/tsz-org/tsz/issues/8858",
     },
   ],
+  [
+    "200 generic functions",
+    {
+      owner: "Track 10 generic function scaling guard",
+      operation:
+        "generic async function checking with recursive DeepPartial option types and Promise<Result<T>> return construction",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^200 generic functions$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-200-generic-functions>.ts",
+      issue: 12271,
+      url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
 ]);
 
 function lossClosureForRow(row) {
@@ -116,24 +131,6 @@ function tszSpeedupVsTsgo(row) {
   if (row?.winner === "tsz") return factor;
   if (row?.winner === "tsgo") return 1 / factor;
   return null;
-}
-
-function measurementProfileStatus(input) {
-  const profile = input?.measurement_profile;
-  if (!profile || typeof profile !== "object") {
-    return {
-      present: false,
-      mode: null,
-      warning: "measurement_profile missing",
-    };
-  }
-
-  const mode = typeof profile.mode === "string" && profile.mode ? profile.mode : null;
-  return {
-    present: true,
-    mode,
-    warning: mode ? null : "measurement_profile.mode missing",
-  };
 }
 
 function inferDominantSubsystemFromPerfSnapshot(snapshot) {

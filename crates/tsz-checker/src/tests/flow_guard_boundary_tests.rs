@@ -153,3 +153,107 @@ fn in_condition_narrowing_routes_through_flow_query_boundary() {
         "checker `in` narrowing should not construct and apply `InProperty` guards locally"
     );
 }
+
+#[test]
+fn definite_assignment_undefined_skip_uses_flow_query_boundary() {
+    let usage_source = fs::read_to_string("src/flow/flow_analysis/usage.rs")
+        .expect("failed to read flow usage source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_usage: String = usage_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("type_contains_undefined,"),
+        "flow analysis boundary should expose the solver-owned undefined predicate"
+    );
+    assert!(
+        compact_usage.contains("query_boundaries::flow_analysis::type_contains_undefined("),
+        "TS2454 flow usage should ask the flow query boundary for undefined membership"
+    );
+    assert!(
+        !compact_usage.contains("tsz_solver::narrowing::type_contains_undefined"),
+        "flow usage should not import the solver narrowing predicate directly"
+    );
+}
+
+#[test]
+fn direct_source_file_optional_param_undefined_check_uses_query_boundary() {
+    let source = fs::read_to_string("src/state/type_analysis/cross_file_direct_functions.rs")
+        .expect("failed to read direct source-file function lowering source");
+    let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        compact_source.contains("query_boundaries::type_predicates::type_contains_undefined("),
+        "direct source-file optional parameter lowering should ask a query boundary for undefined membership"
+    );
+    assert!(
+        !compact_source.contains("tsz_solver::narrowing::type_contains_undefined"),
+        "direct source-file lowering should not call the solver narrowing predicate directly"
+    );
+}
+
+#[test]
+fn condition_false_branch_falsy_narrowing_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_to_falsy("),
+        "flow analysis boundary should expose solver-owned falsy narrowing"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_to_falsy("),
+        "condition false-branch truthiness narrowing should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_to_falsy(type_id)"),
+        "condition narrowing should not call solver falsy narrowing directly"
+    );
+}
+
+#[test]
+fn condition_typeof_narrowing_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_by_typeof_result("),
+        "flow analysis boundary should expose solver-owned typeof result narrowing"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_by_typeof_result("),
+        "condition typeof narrowing should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_by_typeof(")
+            && !compact_condition.contains(".narrow_by_typeof_negation("),
+        "condition narrowing should not call solver typeof narrowing directly"
+    );
+}

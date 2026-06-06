@@ -8,7 +8,7 @@ mod keyof_constraint;
 
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
-    TypeSubstitution, instantiate_type, instantiate_type_preserving,
+    TypeSubstitution, instantiate_type_cached, instantiate_type_preserving_cached,
     instantiate_type_preserving_with_declared,
 };
 use crate::objects::PropertyCollectionResult;
@@ -72,7 +72,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         );
 
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
-        let remapped = instantiate_type_preserving(self.interner(), name_type, &subst);
+        let remapped =
+            instantiate_type_preserving_cached(self.interner(), self.query_db(), name_type, &subst);
 
         tracing::trace!(
             remapped_before_eval = remapped.0,
@@ -505,12 +506,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
                 }
 
-                // `readonly [a, b]`: map each element and preserve readonly
-                // unless the modifier strips it (`-readonly`).
+                // `readonly` tuple/array source, delegated (`None` => object path).
                 Some(TypeData::ReadonlyType(inner)) => {
-                    if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
-                        return self
-                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, true);
+                    if let Some(result) =
+                        self.evaluate_mapped_over_readonly_source(mapped, source, inner)
+                    {
+                        return result;
                     }
                 }
 
@@ -655,7 +656,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         declared_type,
                     )
                 } else {
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst)
+                    instantiate_type_preserving_cached(
+                        self.interner(),
+                        self.query_db(),
+                        mapped.template,
+                        &subst,
+                    )
                 };
                 let evaluated = self.evaluate(instantiated_template);
 
@@ -777,7 +783,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         declared_type,
                     )
                 } else {
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst)
+                    instantiate_type_preserving_cached(
+                        self.interner(),
+                        self.query_db(),
+                        mapped.template,
+                        &subst,
+                    )
                 };
                 let evaluated = self.evaluate(instantiated);
                 if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
@@ -907,7 +918,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_object: Option<TypeId>,
     ) -> IndexSignature {
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
-        let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+        let instantiated =
+            instantiate_type_cached(self.interner(), self.query_db(), mapped.template, &subst);
         let mut value_type = self.evaluate(instantiated);
         let (idx_optional, idx_readonly) =
             self.get_mapped_modifiers(&mapped, inherits_modifiers, source_object, key_type);
@@ -986,8 +998,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             subst.insert(mapped.type_param.name, member);
 
             // Evaluate the `as` clause to get the remapped key
-            let remapped_key = self.evaluate(instantiate_type_preserving(
+            let remapped_key = self.evaluate(instantiate_type_preserving_cached(
                 self.interner(),
+                self.query_db(),
                 name_type,
                 &subst,
             ));
@@ -1017,8 +1030,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             // Evaluate the template with the substitution
-            let instantiated_template =
-                instantiate_type_preserving(self.interner(), mapped.template, &subst);
+            let instantiated_template = instantiate_type_preserving_cached(
+                self.interner(),
+                self.query_db(),
+                mapped.template,
+                &subst,
+            );
             let property_type = self.evaluate(instantiated_template);
 
             if property_type == TypeId::ERROR && self.is_depth_exceeded() {

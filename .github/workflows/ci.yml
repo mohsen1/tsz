@@ -39,6 +39,7 @@ jobs:
       bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
       perf_tool_only: ${{ steps.gate.outputs.perf_tool_only }}
       arch_tool_only: ${{ steps.gate.outputs.arch_tool_only }}
+      metadata_only_skip: ${{ steps.gate.outputs.metadata_only_skip }}
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
@@ -71,13 +72,14 @@ jobs:
               # Body/title edits can repair AgentName, project-corpus, or WIP
               # metadata without changing the PR head SHA. Refresh only the
               # metadata gates so stale failed PR-body checks can clear without
-              # asking agents to push a no-op code commit. Keep this off the
-              # protected "CI Summary" context: it did not run heavy CI and
-              # must not satisfy branch protection for the head SHA.
+              # asking agents to push a no-op code commit. The summary job
+              # mirrors the previous real CI Summary for this exact head SHA so
+              # native merge queue still sees the protected context without a
+              # light run masking a failed full run.
               echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
               should_run=false
               full_run=false
-              required_summary=false
+              metadata_only_skip=true
               compiler_checks_required=false
             fi
             # The `labeled` event triggers on every label add. We only care
@@ -147,7 +149,7 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
@@ -297,9 +299,6 @@ jobs:
                 required_summary=false
               fi
             fi
-            if [[ "$metadata_only_skip" == "true" ]]; then
-              required_summary=false
-            fi
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             # Skip redundant main CI when the push is a PR merge already validated by PR CI.
             # Saves ~40+ runner-minutes per merge (32 conformance + lint + unit + wasm + emit shards).
@@ -399,7 +398,7 @@ jobs:
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
                     compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
-                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                       || true)
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \
@@ -435,6 +434,7 @@ jobs:
           echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
           echo "perf_tool_only=${perf_tool_only}" >> "$GITHUB_OUTPUT"
           echo "arch_tool_only=${arch_tool_only}" >> "$GITHUB_OUTPUT"
+          echo "metadata_only_skip=${metadata_only_skip}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
@@ -905,10 +905,10 @@ jobs:
           compression-level: 1
 
   unit:
-    # Required unit context. Run on the Cloud Build private pool instead of
-    # the 8-vCPU self-hosted runner: the old local path repeatedly hit
-    # linker/process kills while the same suite passed through Cloud Build.
-    # Keep the status name as `unit` so branch protection remains stable.
+    # Required unit context. Keep this on the Cloud Build private pool: direct
+    # Cloud Run unit still OOMs while linking checker integration test targets
+    # even with one test thread and single-threaded lld. The remaining compiler
+    # shards run on the Cloud Run runner fleet.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
@@ -935,19 +935,27 @@ jobs:
 
   unit-cloudbuild:
     # Compatibility status for dashboards and branch-protection rules that may
-    # still look for the experimental Cloud Build context. The Cloud Build unit
-    # suite is now executed by the required `unit` job above.
+    # still look for the old experimental Cloud Build context. The required
+    # Cloud Build unit suite is enforced by the `unit` job above.
     name: unit-cloudbuild
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    needs: [gate, unit]
+    if: always() && needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
       - name: Report promoted unit path
-        run: echo "Cloud Build unit suite is enforced by the required unit job."
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$UNIT_RESULT" != "success" ]]; then
+            echo "Required Cloud Build unit job did not pass: ${UNIT_RESULT}"
+            exit 1
+          fi
+          echo "Cloud Build unit suite is enforced by the required unit job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -1236,6 +1244,7 @@ jobs:
       - dist-binaries
       - lsp-e2e
       - project-compile-guard
+      - project-compile-canary
       - wasm
       - wasm-web
       - node-harness-prep
@@ -1250,12 +1259,18 @@ jobs:
     steps:
       - name: Verify required CI jobs
         env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CI_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           python3 - <<'PY'
           import json
           import os
           import sys
+          import urllib.parse
+          import urllib.request
 
           needs = json.loads(os.environ["NEEDS_JSON"])
           gate = needs["gate"]
@@ -1264,7 +1279,9 @@ jobs:
           bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
           perf_tool_only = gate.get("outputs", {}).get("perf_tool_only") == "true"
           arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
+          metadata_only_skip = gate.get("outputs", {}).get("metadata_only_skip") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
+          required_summary = gate.get("outputs", {}).get("required_summary") == "true"
 
           gate_result = gate.get("result")
           if gate_result != "success":
@@ -1276,7 +1293,55 @@ jobs:
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
+          def github_json(path):
+              token = os.environ["GH_TOKEN"]
+              request = urllib.request.Request(
+                  f"https://api.github.com{path}",
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+          def mirror_previous_required_summary():
+              repository = os.environ["GITHUB_REPOSITORY"]
+              current_run_id = int(os.environ["GITHUB_RUN_ID"])
+              head_sha = os.environ["CI_HEAD_SHA"]
+              query = urllib.parse.urlencode({
+                  "head_sha": head_sha,
+                  "event": "pull_request",
+                  "per_page": "20",
+              })
+              runs = github_json(f"/repos/{repository}/actions/workflows/ci.yml/runs?{query}").get("workflow_runs", [])
+              runs = [run for run in runs if int(run.get("id", 0)) != current_run_id]
+              runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
+              accepted_summary_names = ("CI Summary",) if required_summary else ("CI Summary", "CI Light Summary")
+              accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"
+              for run in runs:
+                  jobs = github_json(f"/repos/{repository}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
+                  summaries = [job for job in jobs if job.get("name") in accepted_summary_names]
+                  if not summaries:
+                      continue
+                  summaries.sort(key=lambda job: 0 if job.get("name") == "CI Summary" else 1)
+                  summary = summaries[0]
+                  summary_name = summary.get("name") or "CI Summary"
+                  conclusion = summary.get("conclusion")
+                  url = summary.get("html_url") or run.get("html_url")
+                  if conclusion == "success":
+                      print(f"Metadata-only CI mirrors successful {summary_name} from run {run['id']}: {url}")
+                      return
+                  print(f"Previous {summary_name} for this head was {conclusion or 'missing'} in run {run['id']}: {url}")
+                  sys.exit(1)
+              print(f"Metadata-only CI could not find a previous {accepted_summary_label} for head {head_sha}.")
+              sys.exit(1)
+
           if not should_run:
+              if metadata_only_skip:
+                  mirror_previous_required_summary()
+                  sys.exit(0)
               if bench_shell_only:
                   bench_smoke = needs.get("bench-script-smoke", {})
                   if bench_smoke.get("result") != "success":
@@ -1310,6 +1375,7 @@ jobs:
           if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
+                  "project-compile-canary",
                   "conformance-snapshot-gate",
               })
               required.update({

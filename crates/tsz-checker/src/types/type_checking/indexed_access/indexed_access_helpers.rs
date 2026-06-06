@@ -145,9 +145,16 @@ impl<'a> CheckerState<'a> {
     /// a type parameter." for each type-parameter portion of `object_type` whose
     /// constraint has a non-public property with the given `name`.
     ///
-    /// For union object types (e.g. `(T | B)["a"]`), each member is checked
-    /// individually. Only actual `TypeParameter` nodes trigger the diagnostic —
-    /// concrete class types are skipped (tsc only reports TS4105 on type params).
+    /// tsc treats both explicit type parameters and the polymorphic `this` type
+    /// as type parameters here (`this` is a type parameter whose constraint is
+    /// the enclosing class/interface). So `T["secret"]`, `this["secret"]`, and
+    /// `(T | this)["secret"]` all report TS4105 when `secret` is non-public,
+    /// while a concrete class index (`Base["secret"]`) does not.
+    ///
+    /// For union object types each member is checked individually. The
+    /// "constraint" against which the property accessibility is tested is the
+    /// type parameter's declared constraint, or — for the `this` type — the
+    /// enclosing class/interface instance type.
     pub(super) fn check_ts4105_private_on_type_parameter(
         &mut self,
         error_node: NodeIndex,
@@ -156,41 +163,78 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        // Collect the type parameters to inspect: either the object type itself
-        // (if it's a type parameter) or the type-parameter members of a union.
-        let mut type_params_to_check: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
-
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
-            type_params_to_check.push(object_type);
-        } else if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
-        {
-            for &member in &members {
-                if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member) {
-                    type_params_to_check.push(member);
-                }
-            }
-        }
-
-        let mut emitted = false;
-        for &tp in &type_params_to_check {
-            if let Some(constraint) =
-                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, tp)
-                && has_nonpublic_property(self.ctx.types, constraint, property_name)
-                && !emitted
+        // tsc reports TS4105 only when the indexed object is a type parameter or
+        // the polymorphic `this` type (a concrete class index does not). The
+        // member accessibility is decided against the type parameter's declared
+        // constraint, or — for `this` — the enclosing class/interface instance
+        // type. Union object types are checked per member.
+        let members: smallvec::SmallVec<[TypeId; 4]> =
+            match crate::query_boundaries::common::union_members(self.ctx.types, object_type) {
+                Some(members) => members.iter().copied().collect(),
+                None => smallvec::smallvec![object_type],
+            };
+        let emits_ts4105 = members.iter().any(|&member| {
+            let constraint = if crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                member,
+            ) {
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, member)
+            } else if crate::query_boundaries::type_predicates::is_this_type(self.ctx.types, member)
             {
-                let message = format_message(
-                        diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
-                        &[property_name],
-                    );
-                self.error_at_node(
-                        error_node,
-                        &message,
-                        diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
-                    );
-                emitted = true;
-            }
+                self.resolve_enclosing_this_instance_type(error_node)
+            } else {
+                None
+            };
+            constraint.is_some_and(|c| has_nonpublic_property(self.ctx.types, c, property_name))
+        });
+        if emits_ts4105 {
+            let message = format_message(
+                diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+                &[property_name],
+            );
+            self.error_at_node(
+                error_node,
+                &message,
+                diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+            );
         }
+    }
+
+    /// Resolve the concrete instance type of the class/interface that lexically
+    /// encloses `node` — the constraint of the polymorphic `this` type in that
+    /// scope. Walks up the AST to the nearest class/interface declaration (or
+    /// class expression) and reads its binder symbol's instance type.
+    ///
+    /// Used by [`check_ts4105_private_on_type_parameter`] because the indexed-
+    /// access type-checking pass does not push the runtime `this` binding, so
+    /// the enclosing declaration is the reliable source for the `this` type's
+    /// member accessibility.
+    fn resolve_enclosing_this_instance_type(&self, node: NodeIndex) -> Option<TypeId> {
+        let mut current = node;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > 1024 {
+                return None;
+            }
+            let n = self.ctx.arena.get(current)?;
+            if matches!(
+                n.kind,
+                syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                let sym_id = self.ctx.binder.get_node_symbol(current)?;
+                return self
+                    .ctx
+                    .symbol_instance_types
+                    .get(&sym_id)
+                    .or_else(|| self.ctx.symbol_types.get(&sym_id))
+                    .copied();
+            }
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+        None
     }
 
     pub(super) fn is_numeric_index_on_parameters_utility(
@@ -415,16 +459,343 @@ impl<'a> CheckerState<'a> {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 return false;
             };
-            let Some(signature) = self.ctx.arena.get_signature(member_node) else {
-                return false;
-            };
-            crate::types_domain::queries::core::get_literal_property_name(
-                self.ctx.arena,
-                signature.name,
-            )
-            .as_deref()
+            self.ctx
+                .arena
+                .get_signature(member_node)
+                .map(|signature| signature.name)
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .map(|property| property.name)
+                })
+                .and_then(|name| {
+                    crate::types_domain::queries::core::get_literal_property_name(
+                        self.ctx.arena,
+                        name,
+                    )
+                })
+                .as_deref()
                 == Some(property_name)
         })
+    }
+
+    pub(super) fn type_literal_dispatch_index_is_declared_key_subset(
+        &self,
+        object_type_node: NodeIndex,
+        index_type_node: NodeIndex,
+    ) -> bool {
+        let Some(keys) = self.type_literal_declared_property_keys(object_type_node) else {
+            return false;
+        };
+        !keys.is_empty()
+            && self.type_node_declared_literal_subset(index_type_node, &keys, &mut Vec::new(), 0)
+    }
+
+    fn type_literal_declared_property_keys(&self, type_node_idx: NodeIndex) -> Option<Vec<String>> {
+        let obj_node = self.ctx.arena.get(type_node_idx)?;
+        if obj_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let type_lit = self.ctx.arena.get_type_literal(obj_node)?;
+        let mut keys = Vec::new();
+        for &member_idx in &type_lit.members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                return None;
+            }
+            let (name_idx, _type_annotation) =
+                self.type_literal_member_name_and_type(member_node)?;
+            let name = crate::types_domain::queries::core::get_literal_property_name(
+                self.ctx.arena,
+                name_idx,
+            )?;
+            keys.push(name);
+        }
+        Some(keys)
+    }
+
+    fn type_node_declared_literal_subset(
+        &self,
+        node_idx: NodeIndex,
+        allowed_keys: &[String],
+        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+        depth: usize,
+    ) -> bool {
+        if depth > 12 || node_idx == NodeIndex::NONE {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if let Some(literal) = self.ctx.arena.get_literal(node) {
+            return allowed_keys.iter().any(|key| key == &literal.text);
+        }
+        if let Some(literal_type) = self.ctx.arena.get_literal_type(node) {
+            return self.type_node_declared_literal_subset(
+                literal_type.literal,
+                allowed_keys,
+                visited_aliases,
+                depth + 1,
+            );
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
+                self.ctx
+                    .arena
+                    .get_wrapped_type(node)
+                    .is_some_and(|wrapped| {
+                        self.type_node_declared_literal_subset(
+                            wrapped.type_node,
+                            allowed_keys,
+                            visited_aliases,
+                            depth + 1,
+                        )
+                    })
+            }
+            k if k == syntax_kind_ext::UNION_TYPE => self
+                .ctx
+                .arena
+                .get_composite_type(node)
+                .is_some_and(|composite| {
+                    !composite.types.nodes.is_empty()
+                        && composite.types.nodes.iter().copied().all(|member_idx| {
+                            self.type_node_declared_literal_subset(
+                                member_idx,
+                                allowed_keys,
+                                visited_aliases,
+                                depth + 1,
+                            )
+                        })
+                }),
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => self
+                .ctx
+                .arena
+                .get_conditional_type(node)
+                .is_some_and(|conditional| {
+                    self.type_node_declared_literal_subset(
+                        conditional.true_type,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    ) && self.type_node_declared_literal_subset(
+                        conditional.false_type,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    )
+                }),
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => self
+                .ctx
+                .arena
+                .get_indexed_access_type(node)
+                .is_some_and(|indexed| {
+                    self.indexed_access_declared_values_subset(
+                        indexed.object_type,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    )
+                }),
+            k if k == syntax_kind_ext::TYPE_REFERENCE => self
+                .ctx
+                .arena
+                .get_type_ref(node)
+                .and_then(|type_ref| {
+                    self.type_reference_alias_body(type_ref.type_name, visited_aliases)
+                })
+                .is_some_and(|body| {
+                    self.type_node_declared_literal_subset(
+                        body,
+                        allowed_keys,
+                        visited_aliases,
+                        depth + 1,
+                    )
+                }),
+            _ => false,
+        }
+    }
+
+    fn indexed_access_declared_values_subset(
+        &self,
+        object_type_node: NodeIndex,
+        allowed_keys: &[String],
+        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+        depth: usize,
+    ) -> bool {
+        let Some(type_literals) =
+            self.possible_type_literals_from_indexed_dispatch(object_type_node, depth)
+        else {
+            return false;
+        };
+        !type_literals.is_empty()
+            && type_literals.into_iter().all(|type_lit_idx| {
+                let Some(type_lit_node) = self.ctx.arena.get(type_lit_idx) else {
+                    return false;
+                };
+                let Some(type_lit) = self.ctx.arena.get_type_literal(type_lit_node) else {
+                    return false;
+                };
+                !type_lit.members.nodes.is_empty()
+                    && type_lit.members.nodes.iter().copied().all(|member_idx| {
+                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                            return false;
+                        };
+                        let Some((_name_idx, type_annotation)) =
+                            self.type_literal_member_name_and_type(member_node)
+                        else {
+                            return false;
+                        };
+                        self.type_node_declared_literal_subset(
+                            type_annotation,
+                            allowed_keys,
+                            visited_aliases,
+                            depth + 1,
+                        )
+                    })
+            })
+    }
+
+    fn possible_type_literals_from_indexed_dispatch(
+        &self,
+        node_idx: NodeIndex,
+        depth: usize,
+    ) -> Option<Vec<NodeIndex>> {
+        if depth > 12 {
+            return None;
+        }
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return Some(vec![node_idx]);
+        }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.possible_type_literals_from_indexed_dispatch(wrapped.type_node, depth + 1);
+        }
+        let indexed = self.ctx.arena.get_indexed_access_type(node)?;
+        let inner_literals =
+            self.possible_type_literals_from_indexed_dispatch(indexed.object_type, depth + 1)?;
+        let mut values = Vec::new();
+        for type_lit_idx in inner_literals {
+            let type_lit_node = self.ctx.arena.get(type_lit_idx)?;
+            let type_lit = self.ctx.arena.get_type_literal(type_lit_node)?;
+            for &member_idx in &type_lit.members.nodes {
+                let member_node = self.ctx.arena.get(member_idx)?;
+                let (_name_idx, type_annotation) =
+                    self.type_literal_member_name_and_type(member_node)?;
+                let value_node = self.ctx.arena.get(type_annotation)?;
+                let value_idx = if value_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                    self.ctx.arena.get_wrapped_type(value_node)?.type_node
+                } else {
+                    type_annotation
+                };
+                if self
+                    .ctx
+                    .arena
+                    .get(value_idx)
+                    .is_some_and(|value_node| value_node.kind == syntax_kind_ext::TYPE_LITERAL)
+                {
+                    values.push(value_idx);
+                } else {
+                    return None;
+                }
+            }
+        }
+        Some(values)
+    }
+
+    fn type_reference_alias_body(
+        &self,
+        type_name: NodeIndex,
+        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+    ) -> Option<NodeIndex> {
+        let raw_sym_id = self.resolve_type_symbol_for_lowering(type_name)?;
+        let sym_id = tsz_binder::SymbolId(raw_sym_id);
+        if visited_aliases.contains(&sym_id) {
+            return None;
+        }
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+            || symbol.declarations.len() != 1
+        {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(symbol.declarations[0])?;
+        let alias = self.ctx.arena.get_type_alias(decl_node)?;
+        visited_aliases.push(sym_id);
+        Some(alias.type_node)
+    }
+
+    fn type_literal_member_name_and_type(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        if let Some(signature) = self.ctx.arena.get_signature(member_node) {
+            return Some((signature.name, signature.type_annotation));
+        }
+        self.ctx
+            .arena
+            .get_property_decl(member_node)
+            .map(|property| (property.name, property.type_annotation))
+    }
+
+    fn indexed_access_tuple_selector_part(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Option<(String, usize)> {
+        let node = self.ctx.arena.get(node_idx)?;
+        let indexed = self.ctx.arena.get_indexed_access_type(node)?;
+        let selector_name = self
+            .ctx
+            .arena
+            .get(indexed.object_type)
+            .and_then(|object_node| self.ctx.arena.get_type_ref(object_node))
+            .and_then(|type_ref| self.ctx.arena.get(type_ref.type_name))
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())?
+            .to_owned();
+        let element_index = self.type_index_numeric_literal(indexed.index_type)?;
+        Some((selector_name, element_index))
+    }
+
+    fn type_index_numeric_literal(&self, node_idx: NodeIndex) -> Option<usize> {
+        let node = self.ctx.arena.get(node_idx)?;
+        let literal_node = if let Some(literal_type) = self.ctx.arena.get_literal_type(node) {
+            self.ctx.arena.get(literal_type.literal)?
+        } else {
+            node
+        };
+        let literal = self.ctx.arena.get_literal(literal_node)?;
+        let value = literal
+            .value
+            .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&literal.text))?;
+        if value.fract() != 0.0 || value < 0.0 {
+            return None;
+        }
+        Some(value as usize)
+    }
+
+    fn tuple_selector_element_type(
+        &mut self,
+        selector_name: &str,
+        element_index: usize,
+    ) -> Option<TypeId> {
+        let selector_type = self.ctx.type_parameter_scope.get(selector_name).copied()?;
+        let elements = crate::query_boundaries::type_computation::access::tuple_elements(
+            self.ctx.types,
+            selector_type,
+        )?;
+        let element = elements.get(element_index)?;
+        if element.rest {
+            return None;
+        }
+        Some(element.type_id)
     }
 
     pub(super) fn type_literal_keyof_from_node(
@@ -444,13 +815,14 @@ impl<'a> CheckerState<'a> {
             if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
                 return None;
             }
-            if let Some(sig) = self.ctx.arena.get_signature(member_node)
-                && let Some(name) = self.get_property_name(sig.name)
+            if let Some((name_idx, _type_annotation)) =
+                self.type_literal_member_name_and_type(member_node)
+                && let Some(name) = self.get_property_name(name_idx)
             {
                 let key_type = self
                     .ctx
                     .arena
-                    .get(sig.name)
+                    .get(name_idx)
                     .filter(|name_node| name_node.kind == SyntaxKind::NumericLiteral as u16)
                     .and_then(|name_node| self.ctx.arena.get_literal(name_node))
                     .and_then(|lit| {
@@ -529,13 +901,15 @@ impl<'a> CheckerState<'a> {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
-            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+            let Some((_name_idx, type_annotation)) =
+                self.type_literal_member_name_and_type(member_node)
+            else {
                 continue;
             };
-            if sig.type_annotation == NodeIndex::NONE {
+            if type_annotation == NodeIndex::NONE {
                 return false;
             }
-            let Some(value_keyof) = self.type_literal_keyof_from_node(sig.type_annotation) else {
+            let Some(value_keyof) = self.type_literal_keyof_from_node(type_annotation) else {
                 return false;
             };
             if !self
@@ -566,6 +940,30 @@ impl<'a> CheckerState<'a> {
         let Some(nested) = self.ctx.arena.get_indexed_access_type(object_node) else {
             return false;
         };
+
+        if let (
+            Some((nested_selector, nested_element_index)),
+            Some((outer_selector, outer_element_index)),
+        ) = (
+            self.indexed_access_tuple_selector_part(nested.index_type),
+            self.indexed_access_tuple_selector_part(outer_index_node_idx),
+        ) && nested_selector == outer_selector
+            && let (Some(nested_element_type), Some(outer_element_type)) = (
+                self.tuple_selector_element_type(&nested_selector, nested_element_index),
+                self.tuple_selector_element_type(&outer_selector, outer_element_index),
+            )
+            && let Some(nested_base_keyof) = self.type_literal_keyof_from_node(nested.object_type)
+            && self
+                .indexed_access_key_space_relation_outcome(nested_element_type, nested_base_keyof)
+                .related
+            && self.type_literal_member_values_accept_index(
+                nested.object_type,
+                outer_element_type,
+                None,
+            )
+        {
+            return true;
+        }
 
         let nested_index_type = self.get_type_from_type_node(nested.index_type);
         let mut nested_index_constraint =

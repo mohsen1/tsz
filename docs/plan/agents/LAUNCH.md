@@ -9,6 +9,13 @@ lane's `agent:*` label, finish them, enqueue them, document the blocker, close
 with evidence, or hand them off before new issue work. Agents should not park
 drafts and start fresh PRs; owned open PRs are the current work queue.
 
+Keep PR comments quiet. Routine state belongs in the PR body, GitHub check
+state, and `node scripts/ci/pr-ownership-report.mjs`; do not post heartbeat
+comments for unchanged waiting/running/checking state. Use signed PR comments
+only for state transitions, blockers, handoffs/takeovers, queue-failure root
+cause, closure/superseded evidence, readiness risk, or submitted review
+findings.
+
 Each prompt is intentionally a `/goal` landing loop. The agent keeps working
 until its scoped changes land on `main`, and then starts the next scoped item
 that advances all tests, all benchmarks, `2x` green-row performance over
@@ -68,5 +75,5 @@ it manages open PRs, keeps labels and readiness state clean, submits reviews,
 queues eligible PRs, and waits when there is no useful PR action.
 
 ```text
-/goal You are AgentName Studio-manager. At the start of each cycle, run `git fetch origin main` and `scripts/agents/show-goal.sh Studio-manager`, then run the remaining commands listed under Start Every Cycle in `docs/plan/agents/Studio-manager.md` and follow that goal file. Manage PRs and submit reviews: audit labels, inspect owned and unowned PRs, request or provide actionable reviews, keep WIP/draft/native-queue state accurate, enqueue only verified ready PRs, prevent duplicate work, and keep going until all release-gate changes land in main. If no PR needs action, wait and refresh instead of marking the goal complete.
+/goal You are AgentName Studio-manager. At the start of each cycle, run `git fetch origin main` and `scripts/agents/show-goal.sh Studio-manager`, then run the remaining commands listed under Start Every Cycle in `docs/plan/agents/Studio-manager.md` and follow that goal file. Manage PRs and submit reviews: audit labels, inspect owned and unowned PRs, follow `Manager Next Actions` from `node scripts/ci/pr-ownership-report.mjs`, request or provide actionable reviews, keep WIP/draft/native-queue state accurate, enqueue only verified ready PRs, prevent duplicate work, and keep going until all release-gate changes land in main. Keep PR comments quiet: update PR bodies for routine state, do not post heartbeat comments, and comment only for blockers, handoffs/takeovers, queue-failure root cause, closure evidence, readiness risk, or review findings. If no PR needs action, wait and refresh instead of marking the goal complete.
 ```

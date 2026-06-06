@@ -203,6 +203,13 @@ NC='\033[0m'
 # shellcheck source=scripts/bench/lib/bench-vs-tsgo-prereqs.sh
 source "$SCRIPT_DIR/lib/bench-vs-tsgo-prereqs.sh"
 
+# Persist the project-file-stats line-count cache beside the other
+# run-surviving bench subdirectories (dist/, tools/, external/) instead of the
+# per-run temp dir, so unchanged fixture sources are line-counted at most once
+# across row invocations (issue #10923). Resolved once here via the prereqs
+# helper so the default lives in a single place.
+TSZ_PROJECT_FILE_STATS_CACHE_DIR="$(bench_project_file_stats_cache_dir)"
+export TSZ_PROJECT_FILE_STATS_CACHE_DIR
 
 # shellcheck source=scripts/bench/lib/bench-vs-tsgo-results.sh
 source "$SCRIPT_DIR/lib/bench-vs-tsgo-results.sh"

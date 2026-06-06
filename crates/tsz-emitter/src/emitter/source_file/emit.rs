@@ -1323,10 +1323,13 @@ impl<'a> Printer<'a> {
                 && expr_node.is_string_literal()
             {
                 let is_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
-                    lit.text == "use strict"
+                    tsz_common::directives::is_use_strict_directive(
+                        lit.raw_text.as_deref(),
+                        &lit.text,
+                    )
                 } else if let Some(text) = self.source_text {
                     crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
-                        .is_ok_and(|s| s == "\"use strict\"" || s == "'use strict'")
+                        .is_ok_and(tsz_common::directives::is_use_strict_directive_raw_text)
                 } else {
                     false
                 };
