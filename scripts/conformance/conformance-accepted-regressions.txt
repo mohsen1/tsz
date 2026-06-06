@@ -46,9 +46,6 @@ TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
-TypeScript/tests/cases/compiler/letInConstDeclarations_ES6.ts
-TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
-TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
@@ -81,3 +78,11 @@ TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varia
 # (store_parametric_structural_back_reference). Provenance is now recorded for
 # those instances, so display matches tsc. Covered by
 # recursive_generic_interface_application_display_tests.
+# letInLetDeclarations_ES6.ts / letInConstDeclarations_ES6.ts /
+# letInLetConstDeclOfForOfAndForIn_ES6.ts: RESOLVED (#12786). `let` used as a
+# binding name in a `let`/`const` lexical declaration (including `for-of`/
+# `for-in` loop variables) now emits TS1212 ("Identifier expected. 'let' is a
+# reserved word in strict mode.") alongside TS2480, matching tsc. The
+# declaration-site strict-mode reserved-word check no longer exempts `let` in
+# lexical declarations. Covered by
+# ts1212_ts2480_let_in_lexical_declaration_tests.

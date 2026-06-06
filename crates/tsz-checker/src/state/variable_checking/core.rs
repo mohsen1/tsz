@@ -535,10 +535,15 @@ impl<'a> CheckerState<'a> {
                 use tsz_parser::parser::node_flags;
                 node_flags::LET | node_flags::CONST
             } != 0;
+        // TS1212 fires for any future-reserved word used as a binding name in
+        // strict mode (binder `checkContextualIdentifier`). `tsc` does not
+        // exempt `let` in a `let`/`const` lexical declaration: such a binding
+        // gets BOTH TS1212 (strict-mode reserved word) and the dedicated TS2480
+        // below. The reserved-word check is therefore unconditional here; the
+        // `is_let_name_in_lexical_declaration` flag only gates TS2480.
         if !is_ambient
             && !name_has_unicode_escape
             && self.is_strict_mode_for_node(var_decl.name)
-            && !is_let_name_in_lexical_declaration
             && let Some(ref name) = var_name
             && crate::state_checking::is_strict_mode_reserved_name(name)
             && !(name.as_str() == "arguments" && in_non_ambient_class)

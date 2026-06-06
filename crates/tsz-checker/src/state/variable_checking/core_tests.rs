@@ -1807,3 +1807,105 @@ mod function_type_nested_check_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod ts1212_ts2480_let_in_lexical_declaration_tests {
+    //! `let` used as a binding name in a `let`/`const` lexical declaration
+    //! (including the loop variable of a `for-of`/`for-in`) must, in strict
+    //! mode, produce BOTH TS1212 ("Identifier expected. 'let' is a reserved
+    //! word in strict mode.") and TS2480 ("'let' is not allowed to be used as
+    //! a name in 'let' or 'const' declarations."), at the binding name, exactly
+    //! like `tsc`. TS1212 is the general strict-mode reserved-word diagnostic
+    //! that fires for any future-reserved word used as a binding identifier; it
+    //! is not suppressed merely because the declaration is lexical.
+    use crate::test_utils::{check_source_diagnostics, diagnostic_codes};
+
+    fn codes(source: &str) -> Vec<u32> {
+        let mut c = diagnostic_codes(&check_source_diagnostics(source));
+        c.sort_unstable();
+        c
+    }
+
+    #[test]
+    fn let_name_in_let_declaration() {
+        // letInLetDeclarations_ES6.ts witness.
+        assert_eq!(codes("let x = 50, let = 5;"), vec![1212, 2480]);
+    }
+
+    #[test]
+    fn let_name_in_const_declaration() {
+        // letInConstDeclarations_ES6.ts witness.
+        assert_eq!(codes("const x = 50, let = 5;"), vec![1212, 2480]);
+    }
+
+    #[test]
+    fn let_name_in_nested_block_lexical_declaration() {
+        assert_eq!(codes("{\n    const x = 10, let = 20;\n}"), vec![1212, 2480]);
+    }
+
+    #[test]
+    fn let_name_in_for_of_let() {
+        // letInLetConstDeclOfForOfAndForIn_ES6.ts witness.
+        assert_eq!(codes("for (let let of [1,2,3]) {}"), vec![1212, 2480]);
+    }
+
+    #[test]
+    fn let_name_in_for_of_const() {
+        assert_eq!(codes("for (const let of [1,2,3]) {}"), vec![1212, 2480]);
+    }
+
+    #[test]
+    fn let_name_in_for_in_let() {
+        assert_eq!(codes("for (let let in [1,2,3]) {}"), vec![1212, 2480]);
+    }
+
+    #[test]
+    fn let_name_in_for_in_const() {
+        assert_eq!(codes("for (const let in [1,2,3]) {}"), vec![1212, 2480]);
+    }
+
+    /// Adjacent case: `let` as the name of a `var` declaration is still a
+    /// strict-mode reserved-word usage (TS1212) but is NOT a lexical
+    /// declaration, so TS2480 must not fire.
+    #[test]
+    fn let_name_in_var_declaration_is_ts1212_only() {
+        assert_eq!(codes("var let = 5;"), vec![1212]);
+    }
+
+    /// Adjacent case: another future-reserved word (`yield`) used as a lexical
+    /// binding name fires TS1212 the same way; it is not a `let`/`const` name
+    /// so no TS2480.
+    #[test]
+    fn yield_name_in_const_declaration_is_ts1212_only() {
+        assert_eq!(codes("const yield = 1;"), vec![1212]);
+    }
+
+    /// Negative: a plain identifier binding name in a lexical declaration
+    /// produces neither diagnostic.
+    #[test]
+    fn regular_name_in_lexical_declaration_is_clean() {
+        assert!(codes("const foo = 1; let bar = 2;").is_empty());
+    }
+
+    /// The emitted message text must match `tsc` byte-for-byte (the conformance
+    /// gate compares message keys), for both diagnostics.
+    #[test]
+    fn let_in_const_emits_exact_tsc_message_text() {
+        let diags = check_source_diagnostics("const x = 50, let = 5;");
+        let message_for = |code: u32| -> Vec<&str> {
+            diags
+                .iter()
+                .filter(|d| d.code == code)
+                .map(|d| d.message_text.as_str())
+                .collect()
+        };
+        assert_eq!(
+            message_for(1212),
+            vec!["Identifier expected. 'let' is a reserved word in strict mode."]
+        );
+        assert_eq!(
+            message_for(2480),
+            vec!["'let' is not allowed to be used as a name in 'let' or 'const' declarations."]
+        );
+    }
+}
