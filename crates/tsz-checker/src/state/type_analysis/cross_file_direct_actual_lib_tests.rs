@@ -702,6 +702,78 @@ interface CombinedTarget extends AlphaBase, BetaBase {}
 }
 
 #[test]
+fn simple_lib_member_with_lib_interface_reference_annotation_stays_lazy() {
+    // A non-readonly member whose annotation is a bare reference to an eligible
+    // simple lib interface (`inner: Leaf`) must resolve to a `Lazy(DefId)` ref
+    // rather than the materialized `Leaf` shape, so chained access such as
+    // `wrapper.inner.value` keeps each link on the single-member fast path. A
+    // member referencing a generic lib interface (`boxed: Generic<string>`)
+    // lowers to an `Application`, is ineligible for the lazy receiver path, and
+    // must fall back to full materialization.
+    let lib_files = vec![Arc::new(LibFile::from_source(
+        "lib.lazy-ref-member.d.ts".to_string(),
+        r#"
+interface Leaf {
+  value: string;
+}
+
+interface Generic<T> {
+  item: T;
+}
+
+interface Wrapper {
+  inner: Leaf;
+  boxed: Generic<string>;
+}
+"#
+        .to_string(),
+    ))];
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let inner = state
+        .resolve_simple_lib_interface_own_property("Wrapper", "inner")
+        .expect("a non-readonly member typed as a simple lib interface should resolve lazily");
+    assert!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, inner).is_some(),
+        "the member should lower to a Lazy(DefId) reference, not a materialized object shape",
+    );
+    assert!(
+        state.lazy_lib_member_receiver_def_id(inner).is_some(),
+        "the lazily-resolved member should itself be eligible for further lazy member access",
+    );
+
+    assert!(
+        state
+            .resolve_simple_lib_interface_own_property("Wrapper", "boxed")
+            .is_none(),
+        "a member referencing a generic lib interface is ineligible and must fall back to full materialization",
+    );
+}
+
+#[test]
 fn value_merged_builtin_dom_interface_type_argument_keeps_inherited_members() {
     let lib_files = load_compiled_lib_files(&[
         "lib.es5.d.ts",

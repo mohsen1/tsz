@@ -289,13 +289,6 @@ impl CheckerState<'_> {
         {
             return None;
         }
-        if self.type_annotation_is_lib_interface_reference(
-            member_arena,
-            sig.type_annotation,
-            &lib_binders,
-        ) {
-            return None;
-        }
         // Readonly properties carry extra write semantics. Leave those on the
         // full path so their exact behavior is authoritative. Optional plain
         // properties are safe here because property access returns the read
@@ -348,6 +341,27 @@ impl CheckerState<'_> {
             .with_arena(member_arena)
             .lower_type(sig.type_annotation);
         if member_type == TypeId::ERROR {
+            return None;
+        }
+        // A member whose annotation is itself a bare lib-interface reference
+        // (e.g. `body: HTMLElement`) can stay lazy: lowering produces a
+        // `Lazy(DefId)` ref — the same shape PR #8638 keeps for type-position
+        // annotations — so chained access like `document.body.innerHTML` resolves
+        // each link through the single-member fast path instead of materializing
+        // the intermediate interface. Keep the lazy result only when the lowered
+        // reference is itself an eligible simple lib interface (non-generic,
+        // unmerged, unaugmented, unshadowed); that guarantees downstream property
+        // access on the returned `Lazy(DefId)` resolves identically to
+        // materializing the reference. The eligibility check is necessarily
+        // post-lowering: it inspects the lowered shape (a bare `Lazy` stays
+        // eligible, while a generic/augmented reference becomes an `Application`
+        // and falls back to full materialization with its authoritative shape).
+        if self.type_annotation_is_lib_interface_reference(
+            member_arena,
+            sig.type_annotation,
+            &lib_binders,
+        ) && self.lazy_lib_member_receiver_def_id(member_type).is_none()
+        {
             return None;
         }
         Some(member_type)
