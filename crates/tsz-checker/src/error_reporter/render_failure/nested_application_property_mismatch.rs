@@ -158,6 +158,11 @@ impl<'a> CheckerState<'a> {
                 source_element,
                 target_element,
                 ..
+            }
+            | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch {
+                source_element,
+                target_element,
+                ..
             } => (*source_element, *target_element),
             // `ArrayElementMismatch` self-heads with the *array* types (`se[]`
             // vs `te[]`), not its element types, so the nested render must keep
@@ -547,25 +552,86 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let source = ctx.source;
-        let target = ctx.target;
-        let idx = ctx.idx;
-        let depth = ctx.depth;
-        let start = ctx.start;
-        let length = ctx.length;
-        let file_name = ctx.file_name.clone();
         let index_str = index.to_string();
-
         // TS2626: source and target positions are both the element index for a
         // fixed tuple element mismatch.
         let detail = format_message(
             diagnostic_messages::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
             &[&index_str, &index_str],
         );
+        self.render_tuple_positional_chain(
+            ctx,
+            detail,
+            diagnostic_codes::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
+            source_element,
+            target_element,
+            nested_reason,
+        )
+    }
+
+    /// Build the `(message, code)` for a variadic/rest tuple positional
+    /// mismatch: the plural TS2627 `Type at positions <start> through <end> in
+    /// source is not compatible with type at position <target> in target.` when
+    /// the source span covers more than one element, or the singular TS2626
+    /// `Type at position <start> in source ... position <target> in target.` for
+    /// a one-element span. The target position is the rest slot index, which
+    /// generally differs from the source span. Rendered through the shared
+    /// [`Self::render_tuple_positional_chain`].
+    pub(super) fn variadic_positional_detail(
+        source_start: usize,
+        source_end: usize,
+        target_position: usize,
+    ) -> (String, u32) {
+        if source_start == source_end {
+            (
+                format_message(
+                    diagnostic_messages::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
+                    &[&source_start.to_string(), &target_position.to_string()],
+                ),
+                diagnostic_codes::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
+            )
+        } else {
+            (
+                format_message(
+                    diagnostic_messages::TYPE_AT_POSITIONS_THROUGH_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_T,
+                    &[
+                        &source_start.to_string(),
+                        &source_end.to_string(),
+                        &target_position.to_string(),
+                    ],
+                ),
+                diagnostic_codes::TYPE_AT_POSITIONS_THROUGH_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_T,
+            )
+        }
+    }
+
+    /// Shared scaffolding for the positional tuple-mismatch chain used by both
+    /// the fixed-element ([`Self::render_tuple_element_type_mismatch`]) render and
+    /// the variadic-span dispatch (via [`Self::variadic_positional_detail`]).
+    ///
+    /// At `depth == 0` it heads with the `Type 'S' is not assignable to type
+    /// 'T'.` line and attaches `detail` (the TS2626/TS2627 positional line) as a
+    /// nested related-information entry; deeper in a chain it emits the
+    /// positional line directly. The failing element relation is then drilled
+    /// beneath via [`Self::push_tuple_element_inner_failure`].
+    pub(super) fn render_tuple_positional_chain(
+        &mut self,
+        ctx: &RenderContext,
+        detail: String,
+        detail_code: u32,
+        source_element: TypeId,
+        target_element: TypeId,
+        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Diagnostic {
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
 
         let mut diag = if depth == 0 {
             let (source_str, target_str) =
-                self.format_top_level_assignability_message_types_at(source, target, idx);
+                self.format_top_level_assignability_message_types_at(ctx.source, ctx.target, idx);
             let base = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_str, &target_str],
@@ -583,18 +649,12 @@ impl<'a> CheckerState<'a> {
                 length,
                 message_text: detail,
                 category: DiagnosticCategory::Message,
-                code: diagnostic_codes::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
-                            depth: 0,
+                code: detail_code,
+                depth: 0,
             });
             diag
         } else {
-            Diagnostic::error(
-                file_name,
-                start,
-                length,
-                detail,
-                diagnostic_codes::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
-            )
+            Diagnostic::error(file_name, start, length, detail, detail_code)
         };
 
         if depth < 5 {
@@ -787,6 +847,7 @@ impl<'a> CheckerState<'a> {
         matches!(
             reason,
             tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::MissingProperty { .. }
                 | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
@@ -900,6 +961,7 @@ impl<'a> CheckerState<'a> {
         matches!(
             reason,
             tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::ReturnTypeMismatch { .. }

@@ -14,6 +14,9 @@ categories.workspace = true
 [features]
 default = []
 
+[lib]
+doctest = false
+
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
@@ -416,6 +419,9 @@ path = "tests/readonly_tuple_source_display_tests.rs"
 [[test]]
 name = "tuple_arity_elaboration_tests"
 path = "tests/tuple_arity_elaboration_tests.rs"
+[[test]]
+name = "tuple_variadic_position_elaboration_tests"
+path = "tests/tuple_variadic_position_elaboration_tests.rs"
 [[test]]
 name = "conditional_alias_source_display_tests"
 path = "tests/conditional_alias_source_display_tests.rs"
