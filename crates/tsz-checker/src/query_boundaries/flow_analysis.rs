@@ -420,6 +420,34 @@ pub(crate) fn narrow_by_property_truthiness_in_context(
     narrowing.narrow_by_property_truthiness(type_id, property_path, is_true_branch)
 }
 
+/// Exclude known values from a flow type using the caller's active flow
+/// narrowing context.
+///
+/// The checker owns discovering the control-flow fact and deciding when a broad
+/// primitive source should remain unchanged. The solver owns the set algebra
+/// used to subtract those values.
+pub(crate) fn narrow_excluding_types_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    excluded_types: &[TypeId],
+) -> TypeId {
+    narrowing.narrow_excluding_types(type_id, excluded_types)
+}
+
+/// Exclude known values from a discriminant-property flow fact using the
+/// caller's active flow narrowing context.
+///
+/// The checker owns syntax/path discovery and optional-chain guard rails. The
+/// solver owns filtering union members by discriminant value.
+pub(crate) fn narrow_by_excluding_discriminant_values_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    excluded_types: &[TypeId],
+) -> TypeId {
+    narrowing.narrow_by_excluding_discriminant_values(type_id, property_path, excluded_types)
+}
+
 /// Narrow a value to the object-like branch of an `instanceof`-style check.
 pub(crate) fn narrow_to_objectish(
     db: &dyn QueryDatabase,
