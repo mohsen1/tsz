@@ -1244,6 +1244,7 @@ jobs:
       - dist-binaries
       - lsp-e2e
       - project-compile-guard
+      - project-compile-canary
       - wasm
       - wasm-web
       - node-harness-prep
@@ -1280,6 +1281,7 @@ jobs:
           arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
           metadata_only_skip = gate.get("outputs", {}).get("metadata_only_skip") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
+          required_summary = gate.get("outputs", {}).get("required_summary") == "true"
 
           gate_result = gate.get("result")
           if gate_result != "success":
@@ -1316,20 +1318,24 @@ jobs:
               runs = github_json(f"/repos/{repository}/actions/workflows/ci.yml/runs?{query}").get("workflow_runs", [])
               runs = [run for run in runs if int(run.get("id", 0)) != current_run_id]
               runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
+              accepted_summary_names = ("CI Summary",) if required_summary else ("CI Summary", "CI Light Summary")
+              accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"
               for run in runs:
                   jobs = github_json(f"/repos/{repository}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
-                  summaries = [job for job in jobs if job.get("name") == "CI Summary"]
+                  summaries = [job for job in jobs if job.get("name") in accepted_summary_names]
                   if not summaries:
                       continue
-                  summary = summaries[-1]
+                  summaries.sort(key=lambda job: 0 if job.get("name") == "CI Summary" else 1)
+                  summary = summaries[0]
+                  summary_name = summary.get("name") or "CI Summary"
                   conclusion = summary.get("conclusion")
                   url = summary.get("html_url") or run.get("html_url")
                   if conclusion == "success":
-                      print(f"Metadata-only CI mirrors successful CI Summary from run {run['id']}: {url}")
+                      print(f"Metadata-only CI mirrors successful {summary_name} from run {run['id']}: {url}")
                       return
-                  print(f"Previous CI Summary for this head was {conclusion or 'missing'} in run {run['id']}: {url}")
+                  print(f"Previous {summary_name} for this head was {conclusion or 'missing'} in run {run['id']}: {url}")
                   sys.exit(1)
-              print(f"Metadata-only CI could not find a previous required CI Summary for head {head_sha}.")
+              print(f"Metadata-only CI could not find a previous {accepted_summary_label} for head {head_sha}.")
               sys.exit(1)
 
           if not should_run:
@@ -1369,6 +1375,7 @@ jobs:
           if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
+                  "project-compile-canary",
                   "conformance-snapshot-gate",
               })
               required.update({
