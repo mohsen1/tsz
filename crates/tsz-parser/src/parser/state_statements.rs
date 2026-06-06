@@ -1658,8 +1658,6 @@ impl ParserState {
                                 "Variable declaration expected.",
                                 diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
                             );
-                            let snapshot = self.scanner.save_state();
-                            let saved_token = self.current_token;
                             self.next_token();
                             if !matches!(
                                 self.token(),
@@ -1671,9 +1669,8 @@ impl ParserState {
                                     "Variable declaration expected.",
                                     diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
                                 );
+                                self.next_token();
                             }
-                            self.scanner.restore_state(snapshot);
-                            self.current_token = saved_token;
                             break;
                         }
                         // `const x: C[#bar] = 3;` is recovered as a malformed
