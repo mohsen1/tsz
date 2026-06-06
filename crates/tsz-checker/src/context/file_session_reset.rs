@@ -281,6 +281,9 @@ impl<'a> CheckerContext<'a> {
             .indexed_object_map_branch_constraint
             .clear();
         self.type_reference_validation_caches
+            .type_param_default_constraint
+            .clear();
+        self.type_reference_validation_caches
             .type_node_surface
             .clear();
         self.in_conditional_extends_depth = 0;

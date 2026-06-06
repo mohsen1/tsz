@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { measurementProfileStatus } from "./measurement-profile.mjs";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
@@ -130,24 +131,6 @@ function tszSpeedupVsTsgo(row) {
   if (row?.winner === "tsz") return factor;
   if (row?.winner === "tsgo") return 1 / factor;
   return null;
-}
-
-function measurementProfileStatus(input) {
-  const profile = input?.measurement_profile;
-  if (!profile || typeof profile !== "object") {
-    return {
-      present: false,
-      mode: null,
-      warning: "measurement_profile missing",
-    };
-  }
-
-  const mode = typeof profile.mode === "string" && profile.mode ? profile.mode : null;
-  return {
-    present: true,
-    mode,
-    warning: mode ? null : "measurement_profile.mode missing",
-  };
 }
 
 function inferDominantSubsystemFromPerfSnapshot(snapshot) {

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tsz_common::interner::Atom;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum PrimitiveClass {
+pub(crate) enum PrimitiveClass {
     String,
     Number,
     Boolean,
@@ -805,7 +805,7 @@ impl TypeInterner {
             .map(|idx| &props[idx])
     }
 
-    fn primitive_class_for(&self, type_id: TypeId) -> Option<PrimitiveClass> {
+    pub(crate) fn primitive_class_for(&self, type_id: TypeId) -> Option<PrimitiveClass> {
         match type_id {
             TypeId::STRING => return Some(PrimitiveClass::String),
             TypeId::NUMBER => return Some(PrimitiveClass::Number),
