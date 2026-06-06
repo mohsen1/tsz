@@ -269,6 +269,18 @@ pub(crate) fn narrow_with_guard(
     narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
 }
 
+/// Apply a solver-owned type guard using the caller's active flow narrowing
+/// context. This preserves the flow pass's resolver and shared narrowing cache
+/// while keeping the guard application behind the query boundary.
+pub(crate) fn narrow_with_guard_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    guard: &TypeGuard,
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
+}
+
 /// Apply a runtime `typeof` result to a flow type.
 ///
 /// The checker owns recognizing `typeof x === "..."` or switch-case syntax and
