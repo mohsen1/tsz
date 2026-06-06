@@ -1191,6 +1191,7 @@ impl ParserState {
             VariableData {
                 modifiers: None,
                 declarations: declarations_list,
+                recovered_typeof_member_calls: Vec::new(),
             },
             flags,
         )

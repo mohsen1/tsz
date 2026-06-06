@@ -232,7 +232,8 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # derived through `query_boundaries::type_computation::access`, not the
         # `common` barrel). It is an existing request-shaped helper already used
         # throughout this file — no new quarantine entry.
-        3278,
+        # Ratcheted 3278→3202 after current arch-smoke caught live-count slack.
+        3202,
     ),
 ]
 
@@ -355,10 +356,26 @@ REGEX_LINE_COUNT_CHECKS = [
         14,
     ),
     (
-        "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
+        "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
-        re.compile(r"\bsource_text\.contains\s*\("),
-        3,
+        re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
+        0,
+    ),
+    (
+        "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "emitter"
+            / "statements"
+            / "recovered_variable_statement.rs"
+        ],
+        re.compile(
+            r"\b(?:find_source_pattern_outside_quoted_text|find_matching_source_paren|skip_quoted_source_text)\b"
+        ),
+        0,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",

@@ -531,39 +531,46 @@ pub(crate) const fn extension_candidates_for_resolution(
     }
 }
 
+/// Lexically normalize a path: collapse `.`, resolve `..` against the
+/// preceding *named* segment, and leave the path otherwise untouched. This is
+/// purely textual — it never touches the filesystem — so it is the stable
+/// identity key for files that cannot be canonicalized.
+///
+/// Two corrections over a naive `PathBuf::pop` loop, both of which otherwise
+/// let one logical file mint several distinct identity keys:
+/// - `..` clamps at the filesystem root / drive prefix (matching `tsc`/Node)
+///   instead of popping past it, so an absolute `/a/../../b` stays absolute
+///   (`/b`) rather than degrading to a relative `b`.
+/// - leading `..` on a relative path is preserved (`../foo` stays `../foo`)
+///   instead of being silently dropped.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            std::path::Component::RootDir
-            | std::path::Component::Normal(_)
-            | std::path::Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-
-    normalized
+    // The collapse algorithm is shared with the `tsz-core` resolver's
+    // `normalize_path_segments` via `tsz_common` so the driver's canonical file
+    // identity and the resolver's textual identity cannot drift.
+    tsz_common::module_resolution::path_identity::normalize_segments(path)
 }
 
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
     let normalized = normalize_path(path);
     if options.preserve_symlinks {
+        return normalized;
+    }
+    // When the path cannot be canonicalized (missing or transiently
+    // unreadable file, relative anchor), the lexically-normalized path is the
+    // only deterministic identity key. Falling back to the *raw* input — as a
+    // bare `canonicalize_or_owned` would — lets `./a/b.ts`, `a/b.ts`, and
+    // `a/b.ts/` resolve to three distinct IDs for one file, which is precisely
+    // the "unstable canonical IDs" symptom. The real-path branch only matters
+    // when canonicalization actually succeeds.
+    let Ok(canonical) = std::fs::canonicalize(path) else {
+        return normalized;
+    };
+    let preserve_package_link_identity = path_has_symlinked_package_ancestor(path)
+        || (!has_node_modules_component(path) && has_node_modules_component(&canonical));
+    if preserve_package_link_identity {
         normalized
     } else {
-        let canonical = canonicalize_or_owned(path);
-        let preserve_package_link_identity = path_has_symlinked_package_ancestor(path)
-            || (!has_node_modules_component(path) && has_node_modules_component(&canonical));
-        if preserve_package_link_identity {
-            normalized
-        } else {
-            canonical
-        }
+        canonical
     }
 }
 
@@ -836,3 +843,7 @@ pub(crate) const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
 #[cfg(test)]
 #[path = "paths_imports_tests.rs"]
 mod paths_imports_tests;
+
+#[cfg(test)]
+#[path = "canonical_id_tests.rs"]
+mod canonical_id_tests;

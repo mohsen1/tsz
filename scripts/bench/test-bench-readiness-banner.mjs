@@ -13,6 +13,20 @@ assert.deepEqual(benchReadinessMessages(null), []);
 
 assert.match(
   benchReadinessMessages(null, {
+    measurement_profile: {
+      warning: "release-pgo metadata missing profile fingerprint",
+    },
+    two_x_target: {
+      eligible_green_rows: 2,
+      rows_below_target: 0,
+      missing_attribution_rows: [],
+    },
+  }).join(" "),
+  /measurement profile warning: release-pgo metadata missing profile fingerprint/,
+);
+
+assert.match(
+  benchReadinessMessages(null, {
     two_x_target: {
       eligible_green_rows: 2,
       rows_below_target: 1,

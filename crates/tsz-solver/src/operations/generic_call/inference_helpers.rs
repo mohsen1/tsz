@@ -1751,16 +1751,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .map(|&pt| self.outer_inference_placeholder_atom(pt))
                 .collect();
             // Fail closed: only re-generalize when the placeholders belong to the
-            // call currently being resolved (guards against nested/stale state)
-            // and none of them is shared across multiple callee parameters (which
-            // would chain this argument's type parameters through a shared
-            // inference variable, e.g. `compose`'s middle type `B`).
+            // call currently being resolved (guards against nested/stale state).
+            // Shared placeholders are allowed here: in pure higher-order wrappers
+            // like `pipe`, the shared middle type is exactly how tsc carries a
+            // source placeholder from one generic function argument's return into
+            // the next generic function argument's parameter before the final
+            // result is re-generalized.
             let safe_to_regeneralize = placeholder_atoms.as_ref().is_some_and(|atoms| {
                 !atoms.is_empty()
-                    && atoms.iter().all(|atom| {
-                        self.current_call_inference_placeholders.contains(atom)
-                            && !self.shared_inference_placeholders.contains(atom)
-                    })
+                    && atoms
+                        .iter()
+                        .all(|atom| self.current_call_inference_placeholders.contains(atom))
             });
             if safe_to_regeneralize {
                 return source_ty;

@@ -23,6 +23,24 @@ pub(crate) fn type_alias_displayed_as_underlying(
     tsz_solver::type_alias_displayed_as_underlying(db, definitions, def_id)
 }
 
+/// As [`type_alias_displayed_as_underlying`], but accepts a `TypeId` instead of
+/// a `DefId`: resolves `ty` to the non-generic type alias it references — either
+/// a `Lazy(DefId)` alias reference or the already-resolved structural result
+/// that still maps back to the alias `DefId` via the def store — then applies
+/// the shared underlying-display policy. Returns the underlying `TypeId` to
+/// display in place of the alias name, or `None` when `ty` is not such an alias.
+///
+/// Keeping the `Lazy` resolution here (rather than at the checker call site)
+/// avoids growing the `query_boundaries::common` quarantine in checker modules.
+pub(crate) fn type_displayed_as_underlying(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    ty: TypeId,
+) -> Option<TypeId> {
+    let def_id = common::lazy_def_id(db, ty).or_else(|| definitions.find_def_for_type(ty))?;
+    type_alias_displayed_as_underlying(db, definitions, def_id)
+}
+
 pub(crate) fn source_preserves_declared_generic_alias_display(
     db: &dyn TypeDatabase,
     source: TypeId,
@@ -154,6 +172,15 @@ pub(crate) fn has_optional_parameter_undefined_surface(
 pub(crate) fn is_literal_for_alias_display(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_literal_or_literal_union_type(db, type_id)
         || common::is_template_literal_type(db, type_id)
+}
+
+/// True when `type_id` is a scalar unit literal (`0n`, `42`, `"x"`, `true`) —
+/// i.e. it carries a single `LiteralValue`. Unlike [`is_literal_for_alias_display`]
+/// this excludes literal *unions* and template-literal types, so the
+/// assignability source-display widening only fires for a lone literal whose
+/// base primitive `tsc` shows against a non-literal-sensitive target.
+pub(crate) fn is_unit_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    common::literal_value(db, type_id).is_some()
 }
 
 /// A deferred string-mapping intrinsic (`Uppercase`/`Lowercase`/`Capitalize`/

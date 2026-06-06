@@ -18,7 +18,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -32,6 +32,7 @@ import {
   hasCompletePhaseMetadata,
   isGreen,
 } from "./row-utils.mjs";
+import { measurementProfileStatus } from "./measurement-profile.mjs";
 
 const args = process.argv.slice(2);
 
@@ -41,6 +42,7 @@ function parseArgs(rawArgs) {
     requireGreen: false,
     requireCleanMetadata: false,
     requireSourceCurrent: false,
+    requiredProjectTimingPairs: 0,
     expectedSourceCommit: process.env.TSZ_BENCH_EXPECT_SOURCE_COMMIT ?? null,
     filePath: null,
   };
@@ -55,6 +57,16 @@ function parseArgs(rawArgs) {
       options.requireCleanMetadata = true;
     } else if (arg === "--require-source-current") {
       options.requireSourceCurrent = true;
+    } else if (arg === "--require-project-timing-pairs") {
+      const next = rawArgs[i + 1] ?? "";
+      if (/^\d+$/.test(next)) {
+        options.requiredProjectTimingPairs = Number(next);
+        i += 1;
+      } else {
+        options.requiredProjectTimingPairs = 1;
+      }
+    } else if (arg.startsWith("--require-project-timing-pairs=")) {
+      options.requiredProjectTimingPairs = Number(arg.slice("--require-project-timing-pairs=".length));
     } else if (arg === "--expect-source-commit") {
       options.expectedSourceCommit = rawArgs[i + 1] ?? "";
       i += 1;
@@ -73,9 +85,14 @@ const {
   requireGreen,
   requireCleanMetadata,
   requireSourceCurrent,
+  requiredProjectTimingPairs: rawRequiredProjectTimingPairs,
   expectedSourceCommit: rawExpectedSourceCommit,
   filePath,
 } = parseArgs(args);
+
+const requiredProjectTimingPairs = Number.isFinite(rawRequiredProjectTimingPairs)
+  ? Math.max(0, rawRequiredProjectTimingPairs)
+  : 0;
 
 function currentGitHead() {
   try {
@@ -122,57 +139,6 @@ function rowState(row, duplicate = false) {
 }
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
-
-function analyzeMeasurementProfile(artifact) {
-  const profile = artifact?.measurement_profile;
-  if (!profile || typeof profile !== "object") {
-    return {
-      present: false,
-      mode: null,
-      tsz_binary_source: null,
-      pgo_requested: null,
-      pgo_required: null,
-      pgo_optimized: null,
-      profile_fingerprint: null,
-      training_fingerprint: null,
-      training_input_count: null,
-      training_failure_count: null,
-      warning: "measurement_profile missing",
-    };
-  }
-
-  const pgo = profile.profile_guided_optimization && typeof profile.profile_guided_optimization === "object"
-    ? profile.profile_guided_optimization
-    : {};
-  const mode = typeof profile.mode === "string" && profile.mode.trim()
-    ? profile.mode.trim()
-    : null;
-  const warning = (() => {
-    if (!mode) return "measurement_profile.mode missing";
-    if (mode === "release-pgo") {
-      const missing = [];
-      if (pgo.optimized !== true) missing.push("pgo optimized flag");
-      if (!pgo.profile_fingerprint) missing.push("profile fingerprint");
-      if (!pgo.training_fingerprint) missing.push("training fingerprint");
-      if (missing.length) return `release-pgo metadata missing ${missing.join(", ")}`;
-    }
-    return null;
-  })();
-
-  return {
-    present: true,
-    mode,
-    tsz_binary_source: profile.tsz_binary_source ?? null,
-    pgo_requested: pgo.requested ?? null,
-    pgo_required: pgo.required ?? null,
-    pgo_optimized: pgo.optimized ?? null,
-    profile_fingerprint: pgo.profile_fingerprint ?? null,
-    training_fingerprint: pgo.training_fingerprint ?? null,
-    training_input_count: pgo.training_input_count ?? null,
-    training_failure_count: pgo.training_failure_count ?? null,
-    warning,
-  };
-}
 
 function cleanValidationWarnings(warnings) {
   if (!Array.isArray(warnings)) return [];
@@ -304,10 +270,18 @@ function analyzeArtifact(artifact, expectedCommit) {
   });
 
   return {
-    measurementProfile: analyzeMeasurementProfile(artifact),
+    measurementProfile: measurementProfileStatus(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
     sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
     rows,
+    successfulProjectTimingPairs: rows.filter((row) => (
+      row.state === "green" &&
+      Number.isFinite(Number(row.tsz_ms)) &&
+      Number(row.tsz_ms) > 0 &&
+      Number.isFinite(Number(row.tsgo_ms)) &&
+      Number(row.tsgo_ms) > 0 &&
+      row.winner !== "error"
+    )),
     missing: rows.filter((r) => r.state === "missing"),
     red: rows.filter((r) => r.state === "red"),
     yellow: rows.filter((r) => r.state === "yellow"),
@@ -326,7 +300,7 @@ function uniqueRowsByName(rows) {
   return [...byName.values()];
 }
 
-function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, sourceFreshness, rows, missing, red, yellow, gray, green, duplicates }) {
+function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, sourceFreshness, rows, successfulProjectTimingPairs, missing, red, yellow, gray, green, duplicates }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
   const metadataWarningsList = metadataWarnings(measurementProfile, validationWarnings);
   const nonGreenRows = rows
@@ -359,6 +333,8 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, v
     metadata_clean: metadataWarningsList.length === 0,
     metadata_warnings_total: metadataWarningsList.length,
     required_row_count: rows?.length ?? REQUIRED_PROJECT_ROWS.length,
+    successful_project_timing_pairs: successfulProjectTimingPairs?.length ?? 0,
+    required_project_timing_pairs: requiredProjectTimingPairs,
     green: green?.length ?? 0,
     yellow: yellow?.length ?? 0,
     red: red?.length ?? 0,
@@ -467,11 +443,11 @@ function artifactAge(generatedAt) {
   return `${h} h ago`;
 }
 
-function buildReport({ artifact, measurementProfile, validationWarnings, sourceFreshness, rows, missing, red, yellow, gray, green, duplicates }) {
+function buildReport({ artifact, measurementProfile, validationWarnings, sourceFreshness, rows, successfulProjectTimingPairs, missing, red, yellow, gray, green, duplicates }) {
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
-  const profile = measurementProfile ?? analyzeMeasurementProfile(artifact);
+  const profile = measurementProfile ?? measurementProfileStatus(artifact);
   const profileLabel = profile.present
     ? `${profile.mode ?? "unknown"}${profile.warning ? ` (${profile.warning})` : ""}`
     : profile.warning;
@@ -495,6 +471,7 @@ function buildReport({ artifact, measurementProfile, validationWarnings, sourceF
     `| PGO profile | ${profile.profile_fingerprint ? `\`${profile.profile_fingerprint.slice(0, 12)}\`` : "—"} |`,
     `| PGO training | ${profile.training_fingerprint ? `\`${profile.training_fingerprint.slice(0, 12)}\`` : "—"} |`,
     `| Required rows | ${rows.length} |`,
+    `| Successful project timing pairs | ${successfulProjectTimingPairs.length} |`,
     `| ✅ green | ${green.length} |`,
     `| ⚠️ yellow | ${yellow.length} |`,
     `| ❌ red | ${red.length} |`,
@@ -597,6 +574,7 @@ if (artifactAbsent || parseError) {
         gray: null,
         green: null,
         duplicates: null,
+        successfulProjectTimingPairs: null,
       })) + "\n",
     );
   }
@@ -604,7 +582,19 @@ if (artifactAbsent || parseError) {
 }
 
 const analysis = analyzeArtifact(artifact, expectedSourceCommit);
-const { measurementProfile, validationWarnings, sourceFreshness, rows, missing, red, yellow, gray, green, duplicates } = analysis;
+const {
+  measurementProfile,
+  validationWarnings,
+  sourceFreshness,
+  rows,
+  successfulProjectTimingPairs,
+  missing,
+  red,
+  yellow,
+  gray,
+  green,
+  duplicates,
+} = analysis;
 
 writeReport(buildReport({ artifact, ...analysis }));
 
@@ -618,6 +608,7 @@ if (jsonOutput) {
       validationWarnings,
       sourceFreshness,
       rows,
+      successfulProjectTimingPairs,
       missing,
       red,
       yellow,
@@ -667,6 +658,14 @@ if (requireCleanMetadata) {
 if (requireSourceCurrent && sourceFreshness.current !== true) {
   process.stderr.write(
     `bench-artifact-readiness: source freshness failed: ${sourceFreshness.warning ?? "no expected source commit provided"}\n`,
+  );
+  process.exit(1);
+}
+
+if (successfulProjectTimingPairs.length < requiredProjectTimingPairs) {
+  process.stderr.write(
+    `bench-artifact-readiness: ${successfulProjectTimingPairs.length} successful project timing pair(s); ` +
+      `required ${requiredProjectTimingPairs} before publishing latest benchmark data\n`,
   );
   process.exit(1);
 }

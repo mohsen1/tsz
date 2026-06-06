@@ -647,7 +647,11 @@ impl<'a> ES5ClassTransformer<'a> {
             if comment.end as usize > end {
                 break;
             }
-            if !source_text[comment_start..comment.pos as usize].contains('\n') {
+            if !crate::safe_slice::span_contains_line_break(
+                source_text,
+                comment_start,
+                comment.pos as usize,
+            ) {
                 continue;
             }
             let text = &source_text[comment.pos as usize..comment.end as usize];
@@ -666,7 +670,7 @@ impl<'a> ES5ClassTransformer<'a> {
         };
         let start = std::cmp::min(start as usize, source_text.len());
         let end = std::cmp::min(end as usize, source_text.len());
-        start < end && source_text[start..end].contains(';')
+        crate::safe_slice::span_contains_byte(source_text, start, end, b';')
     }
 
     /// Create a base `AstToIr` converter with shared temp var counter and transforms

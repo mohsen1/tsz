@@ -13,9 +13,16 @@ const BENCH_SHARD_CLOUDBUILD = path.join(
   "cloudbuild",
   "cloudbuild-bench-shard.yaml",
 );
+const BENCH_PREPARE_CLOUDBUILD = path.join(
+  ROOT,
+  "scripts",
+  "cloudbuild",
+  "cloudbuild-bench-prepare.yaml",
+);
 
 const workflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
 const shardCloudbuild = fs.readFileSync(BENCH_SHARD_CLOUDBUILD, "utf8");
+const prepareCloudbuild = fs.readFileSync(BENCH_PREPARE_CLOUDBUILD, "utf8");
 
 const successGraceWindows = workflow.match(
   /success_seen_at=""[\s\S]+?success_grace_seconds=7200/g,
@@ -66,6 +73,17 @@ assert.match(
   workflow,
   /- name: Upload benchmark prep diagnostics[\s\S]+if: failure\(\)[\s\S]+name: bench-prep-diagnostics[\s\S]+bench-prep-cloudbuild\.log[\s\S]+cloudbuild-artifacts\.json[\s\S]+latest-bench-prep\.env/,
   "bench-prep-artifact should upload Cloud Build handoff diagnostics when prep artifact polling fails",
+);
+
+assert.match(
+  prepareCloudbuild,
+  /BENCH_RUST_TARGET_CPU=x86-64/,
+  "Cloud Build benchmark prep should build portable PGO binaries instead of target-cpu=native",
+);
+assert.match(
+  shardCloudbuild,
+  /BENCH_RUST_TARGET_CPU=x86-64/,
+  "Cloud Build benchmark shards should inherit the same portable bench target CPU",
 );
 
 assert.match(

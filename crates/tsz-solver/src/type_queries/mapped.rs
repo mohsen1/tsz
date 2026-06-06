@@ -34,6 +34,28 @@ pub fn optional_mapped_type_adds_implicit_undefined(
     !template_covers_optional_undefined_display(db, mapped.template)
 }
 
+/// Whether a mapped type is still *deferred/generic* — its key source,
+/// template, or `as` clause references a free type parameter beyond its bound
+/// iteration variable, so the relation cannot expand it to concrete properties.
+///
+/// A fully concrete homomorphic mapped target such as `{ [K in keyof A]?: A[K] }`
+/// over a non-generic `A` is wholly expandable, so callers that special-case
+/// deferred mapped surfaces (e.g. the implicit `| undefined` ambiguity that an
+/// optional-add mapped target would otherwise display) must not treat it as
+/// deferred: tsc evaluates it to a concrete object and reports precise
+/// structural diagnostics (excess properties, exact member display) against the
+/// expanded shape.
+pub fn mapped_type_is_deferred_generic(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(mapped) = super::data::get_mapped_type(db, type_id) else {
+        return false;
+    };
+    crate::visitors::visitor_predicates::contains_free_type_parameters_except_name(
+        db,
+        type_id,
+        mapped.type_param.name,
+    )
+}
+
 fn template_covers_optional_undefined_display(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if matches!(type_id, TypeId::UNDEFINED | TypeId::ANY | TypeId::UNKNOWN) {
         return true;
