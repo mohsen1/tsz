@@ -59,6 +59,8 @@ TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
 TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
+TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+TypeScript/tests/cases/compiler/strictModeReservedWord.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
