@@ -529,10 +529,9 @@ impl<'a> CheckerState<'a> {
             var_decl.type_annotation
         } else if let Some(param) = self.ctx.arena.get_parameter(decl) {
             param.type_annotation
-        } else if let Some(prop) = self.ctx.arena.get_property_decl(decl) {
-            prop.type_annotation
         } else {
-            return None;
+            let prop = self.ctx.arena.get_property_decl(decl)?;
+            prop.type_annotation
         };
         annotation.is_some().then_some(annotation)
     }
