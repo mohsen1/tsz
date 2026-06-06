@@ -1894,26 +1894,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         TypingRequest::NONE
                     };
-                    // A function body makes its own literal-widening decisions.
-                    // When this closure is being type-checked as an argument to a
-                    // generic call, the call's argument-collection scope leaves
-                    // `preserve_literal_types` set so that literal *arguments* can
-                    // seed type-parameter inference. That flag must not leak into
-                    // the body's own statements: a local `const s = { ok: false }`
-                    // widens to `{ ok: boolean }` by its declaration rules,
-                    // independent of the surrounding inference. Without clearing
-                    // it, the local keeps its narrow property literal (`false`)
-                    // and a later `s.ok = true` produces a false TS2322
-                    // ("'true' is not assignable to 'false'"). Return statements
-                    // re-establish their own preservation policy in
-                    // `check_return_statement`, so this only affects the body's
-                    // non-return computations. Mirrors the nested-function
-                    // clearing in `return_expression_type` and the accessor body
-                    // walk in `accessor_element.rs`.
-                    let saved_preserve_literals = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = false;
+                    let saved = std::mem::replace(&mut self.ctx.preserve_literal_types, false);
                     self.check_statement_with_request(body, &body_request);
-                    self.ctx.preserve_literal_types = saved_preserve_literals;
+                    self.ctx.preserve_literal_types = saved;
                 }
                 if let Some(snap) = diag_snap {
                     snap.rollback(&mut self.ctx.diagnostic_state());
