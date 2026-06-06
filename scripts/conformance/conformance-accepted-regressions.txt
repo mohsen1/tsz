@@ -41,6 +41,9 @@
 #   circularReference.ts resolved after rebasing on current main. It also found
 #   privateNamesAndIndexedAccess.ts as a new unlisted row; that row is tracked
 #   in an issue instead of growing this ledger.
+# - PR #12822 run 27068748412 at synthetic merge 7260874ab3 found three
+#   non-compiler rows resolved; the compiler/* rows still appear in the
+#   exact-head aggregate and stay listed.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
@@ -59,9 +62,6 @@ TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
-TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts
-TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts
-TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
