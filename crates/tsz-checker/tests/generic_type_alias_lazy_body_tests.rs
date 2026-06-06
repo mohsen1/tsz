@@ -37,6 +37,31 @@ type Alias<U> = Box<U, U>;
 }
 
 #[test]
+fn lazy_generic_alias_defers_scoped_argument_constraints_but_checks_concrete_arguments() {
+    let scoped_codes = diagnostic_codes(
+        r#"
+type NeedsString<T extends string> = T;
+type Alias<Value extends string> = NeedsString<Value>;
+"#,
+    );
+    assert!(
+        !scoped_codes.contains(&2344),
+        "scoped generic arguments should defer constraint validation to use sites: {scoped_codes:?}"
+    );
+
+    let concrete_codes = diagnostic_codes(
+        r#"
+type NeedsString<T extends string> = T;
+type Alias<Value> = NeedsString<number>;
+"#,
+    );
+    assert!(
+        concrete_codes.contains(&2344),
+        "concrete arguments must still report TS2344 at declaration time: {concrete_codes:?}"
+    );
+}
+
+#[test]
 fn generic_alias_use_site_still_resolves_body_after_lazy_declaration_check() {
     for (alias, param) in [("Identity", "T"), ("Project", "Value")] {
         let source = format!(

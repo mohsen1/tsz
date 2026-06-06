@@ -1038,6 +1038,181 @@ impl<'a> CheckerState<'a> {
         count_mismatch
     }
 
+    /// Validate only the explicit type-argument count for a type reference.
+    ///
+    /// Lazy generic alias declaration checks use this when the type arguments
+    /// still contain scoped alias parameters. Constraint satisfaction is then
+    /// checked at concrete instantiation sites, while declaration-time arity
+    /// diagnostics still match the normal type-reference path.
+    pub(crate) fn validate_type_reference_type_argument_count(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        type_args_list: &tsz_parser::parser::NodeList,
+        type_ref_idx: NodeIndex,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+        let mut sym_id = sym_id;
+        let syntax_base_name = self
+            .ctx
+            .arena
+            .get(type_ref_idx)
+            .and_then(|node| self.ctx.arena.get_type_ref(node))
+            .and_then(|type_ref| self.entity_name_text(type_ref.type_name));
+        let mut local_base_name = None;
+        let mut import_base_name = None;
+        if let Some(base_name) = syntax_base_name.as_deref()
+            && let Some(local_sym_id) =
+                self.current_non_import_reference_symbol_id(sym_id, base_name)
+        {
+            sym_id = local_sym_id;
+            local_base_name = Some(base_name.to_owned());
+        } else if let Some(base_name) = syntax_base_name.as_deref()
+            && let Some(alias_sym_id) = self.ctx.binder.file_locals.get(base_name)
+            && let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id)
+            && self.reference_symbol_is_import_alias(alias_symbol)
+            && let Some(target) = self.resolve_import_alias_cross_file(alias_sym_id)
+        {
+            sym_id = target;
+            import_base_name = Some(base_name.to_owned());
+        }
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.has_any_flags(symbol_flags::ALIAS)
+        {
+            let mut visited_aliases = AliasCycleTracker::new();
+            let resolved = self.resolve_alias_symbol(sym_id, &mut visited_aliases);
+            if let Some(target) = resolved
+                .filter(|&target| target != sym_id)
+                .or_else(|| self.resolve_import_alias_cross_file(sym_id))
+            {
+                sym_id = target;
+            }
+        }
+
+        if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
+            let lib_binders = self.get_lib_binders();
+            if let Some(name) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map(|symbol| symbol.escaped_name.clone())
+            {
+                self.prime_lib_type_params(&name);
+            }
+        }
+
+        let lib_binders = self.get_lib_binders();
+        let base_name = import_base_name.or(local_base_name).unwrap_or_else(|| {
+            self.get_symbol_from_registered_file_target(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone())
+        });
+        let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
+
+        if self.type_reference_alias_collapsed_to_error(sym_id)
+            && (type_params.is_empty() || self.type_alias_is_generic_self_circular(sym_id))
+        {
+            if !type_args_list.nodes.is_empty() {
+                let error_anchor = self
+                    .ctx
+                    .arena
+                    .get(type_ref_idx)
+                    .and_then(|node| self.ctx.arena.get_type_ref(node))
+                    .map(|tr| tr.type_name)
+                    .unwrap_or(type_ref_idx);
+                self.error_at_node_msg(
+                    error_anchor,
+                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                    &[base_name.as_str()],
+                );
+            }
+            return false;
+        }
+
+        if type_params.is_empty() {
+            let has_type_params_in_decl = self.symbol_declaration_has_type_parameters(sym_id);
+            let has_augmented_type_params = self
+                .ctx
+                .binder
+                .file_locals
+                .get(&base_name)
+                .is_some_and(|alias_sym_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(alias_sym_id)
+                        .and_then(|alias_sym| alias_sym.import_module.as_ref())
+                        .is_some_and(|module_spec| {
+                            let import_name = self
+                                .ctx
+                                .binder
+                                .get_symbol(alias_sym_id)
+                                .and_then(|s| s.import_name.clone())
+                                .unwrap_or_else(|| base_name.clone());
+                            self.module_augmentation_has_type_params(module_spec, &import_name)
+                        })
+                });
+            let symbol_type = self.get_type_of_symbol(sym_id);
+            let body_is_explicit_any = self.symbol_declaration_body_is_explicit_any(sym_id);
+            if !has_type_params_in_decl
+                && !has_augmented_type_params
+                && symbol_type != TypeId::ERROR
+                && (symbol_type != TypeId::ANY || body_is_explicit_any)
+                && !type_args_list.nodes.is_empty()
+            {
+                let error_anchor = self
+                    .ctx
+                    .arena
+                    .get(type_ref_idx)
+                    .and_then(|node| self.ctx.arena.get_type_ref(node))
+                    .map(|tr| tr.type_name)
+                    .unwrap_or(type_ref_idx);
+                self.error_at_node_msg(
+                    error_anchor,
+                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                    &[base_name.as_str()],
+                );
+            }
+            return false;
+        }
+
+        let type_arg_error_anchor = self
+            .ctx
+            .arena
+            .get(type_ref_idx)
+            .and_then(|node| self.ctx.arena.get_type_ref(node))
+            .map(|type_ref| type_ref.type_name)
+            .unwrap_or(type_ref_idx);
+        let display_name = Self::format_generic_display_name_with_interner(
+            &base_name,
+            &type_params,
+            self.ctx.types,
+        );
+        let min_required = self
+            .count_required_type_params_from_ast(sym_id)
+            .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, &base_name));
+        let got = type_args_list.nodes.len();
+        let max_expected = type_params.len();
+        if got < min_required || got > max_expected {
+            if min_required < max_expected {
+                let min_str = min_required.to_string();
+                let max_str = max_expected.to_string();
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                    &[&display_name, &min_str, &max_str],
+                );
+            } else {
+                let count_str = max_expected.to_string();
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                    &[&display_name, &count_str],
+                );
+            }
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn validate_type_reference_type_arguments_against_params(
         &mut self,
         type_params: &[tsz_solver::TypeParamInfo],

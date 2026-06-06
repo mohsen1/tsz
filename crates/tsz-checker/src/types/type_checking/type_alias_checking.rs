@@ -567,9 +567,19 @@ impl<'a> CheckerState<'a> {
                 let _ = self.get_type_from_type_literal(alias.type_node);
             }
         } else if !self.validate_signature_only_type_literal_alias_body(alias.type_node) {
-            self.check_type_node(alias.type_node);
-            if !self.type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node) {
-                self.check_type_alias_body_for_missing_names_after_type_node_check(alias.type_node);
+            if skip_eager_generic_alias_body {
+                self.check_lazy_generic_type_alias_body_for_missing_names_after_type_node_check(
+                    alias.type_node,
+                );
+            } else {
+                self.check_type_node(alias.type_node);
+                if !self
+                    .type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node)
+                {
+                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                        alias.type_node,
+                    );
+                }
             }
         }
         record_type_alias_phase_timing(

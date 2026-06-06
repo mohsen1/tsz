@@ -669,18 +669,37 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_idx: NodeIndex,
     ) {
+        self.check_type_alias_body_for_missing_names_after_type_node_check_inner(type_idx, false);
+    }
+
+    pub(crate) fn check_lazy_generic_type_alias_body_for_missing_names_after_type_node_check(
+        &mut self,
+        type_idx: NodeIndex,
+    ) {
+        self.check_type_alias_body_for_missing_names_after_type_node_check_inner(type_idx, true);
+    }
+
+    fn check_type_alias_body_for_missing_names_after_type_node_check_inner(
+        &mut self,
+        type_idx: NodeIndex,
+        defer_scoped_type_arg_constraints: bool,
+    ) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                self.check_type_alias_body_type_reference_name(type_idx);
+                self.check_type_alias_body_type_reference_name(
+                    type_idx,
+                    defer_scoped_type_arg_constraints,
+                );
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(array) = self.ctx.arena.get_array_type(node) {
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                         array.element_type,
+                        defer_scoped_type_arg_constraints,
                     );
                 }
             }
@@ -688,8 +707,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
                     let elements = tuple.elements.nodes.clone();
                     for element_idx in elements {
-                        self.check_type_alias_body_for_missing_names_after_type_node_check(
+                        self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                             element_idx,
+                            defer_scoped_type_arg_constraints,
                         );
                     }
                 }
@@ -699,8 +719,9 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
             {
                 if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                         wrapped.type_node,
+                        defer_scoped_type_arg_constraints,
                     );
                 }
             }
@@ -708,8 +729,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(composite) = self.ctx.arena.get_composite_type(node) {
                     let members = composite.types.nodes.clone();
                     for member_idx in members {
-                        self.check_type_alias_body_for_missing_names_after_type_node_check(
+                        self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                             member_idx,
+                            defer_scoped_type_arg_constraints,
                         );
                     }
                 }
@@ -721,18 +743,25 @@ impl<'a> CheckerState<'a> {
                     let true_type = cond.true_type;
                     let false_type = cond.false_type;
 
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(check_type);
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
+                        check_type,
+                        defer_scoped_type_arg_constraints,
+                    );
 
                     self.ctx.in_conditional_extends_depth += 1;
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                         extends_type,
+                        defer_scoped_type_arg_constraints,
                     );
                     self.ctx.in_conditional_extends_depth -= 1;
                     self.check_unique_symbol_in_conditional_extends(extends_type);
                     self.check_infer_constraint_consistency(extends_type);
 
                     let param_bindings = self.push_infer_bindings_from_extends(extends_type);
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(true_type);
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
+                        true_type,
+                        defer_scoped_type_arg_constraints,
+                    );
                     for (name, previous) in param_bindings.into_iter().rev() {
                         if let Some(prev_type) = previous {
                             self.ctx.type_parameter_scope.insert(name, prev_type);
@@ -740,7 +769,10 @@ impl<'a> CheckerState<'a> {
                             self.ctx.type_parameter_scope.remove(&name);
                         }
                     }
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(false_type);
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
+                        false_type,
+                        defer_scoped_type_arg_constraints,
+                    );
                 }
             }
             k if k == syntax_kind_ext::INFER_TYPE => {
@@ -771,18 +803,21 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES,
                         );
                     }
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                         op.type_node,
+                        defer_scoped_type_arg_constraints,
                     );
                 }
             }
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                         indexed.object_type,
+                        defer_scoped_type_arg_constraints,
                     );
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                         indexed.index_type,
+                        defer_scoped_type_arg_constraints,
                     );
                 }
             }
@@ -792,13 +827,15 @@ impl<'a> CheckerState<'a> {
                         self.push_mapped_type_param_provisional(mapped.type_parameter);
                     self.check_type_parameter_node_for_missing_names(mapped.type_parameter);
                     if mapped.name_type.is_some() {
-                        self.check_type_alias_body_for_missing_names_after_type_node_check(
+                        self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                             mapped.name_type,
+                            defer_scoped_type_arg_constraints,
                         );
                     }
                     if mapped.type_node.is_some() {
-                        self.check_type_alias_body_for_missing_names_after_type_node_check(
+                        self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                             mapped.type_node,
+                            defer_scoped_type_arg_constraints,
                         );
                     } else if self.ctx.no_implicit_any() {
                         self.ctx.report_mapped_type_missing_template(type_idx);
@@ -816,8 +853,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(pred) = self.ctx.arena.get_type_predicate(node)
                     && pred.type_node.is_some()
                 {
-                    self.check_type_alias_body_for_missing_names_after_type_node_check(
+                    self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                         pred.type_node,
+                        defer_scoped_type_arg_constraints,
                     );
                 }
             }
@@ -831,8 +869,9 @@ impl<'a> CheckerState<'a> {
                         let Some(span) = self.ctx.arena.get_template_span(span_node) else {
                             continue;
                         };
-                        self.check_type_alias_body_for_missing_names_after_type_node_check(
+                        self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
                             span.expression,
+                            defer_scoped_type_arg_constraints,
                         );
                     }
                 }
@@ -841,7 +880,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn check_type_alias_body_type_reference_name(&mut self, type_idx: NodeIndex) {
+    fn check_type_alias_body_type_reference_name(
+        &mut self,
+        type_idx: NodeIndex,
+        defer_scoped_type_arg_constraints: bool,
+    ) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
@@ -901,7 +944,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(args) = type_arguments.as_ref()
                     && !self.is_inside_type_parameter_declaration(type_idx)
                 {
-                    self.validate_type_reference_type_arguments(sym_id, args, type_idx);
+                    if defer_scoped_type_arg_constraints
+                        && self.type_arg_nodes_contain_scoped_type_parameter_for_depth_check(args)
+                    {
+                        self.validate_type_reference_type_argument_count(sym_id, args, type_idx);
+                    } else {
+                        self.validate_type_reference_type_arguments(sym_id, args, type_idx);
+                    }
                 }
             }
             TypeSymbolResolution::ValueOnly(_) => {
