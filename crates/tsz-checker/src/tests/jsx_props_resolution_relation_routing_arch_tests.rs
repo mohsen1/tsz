@@ -9,8 +9,12 @@ fn jsx_props_resolution_uses_relation_outcome_boundary() {
 
     assert_eq!(
         source.matches("jsx_props_relation_outcome(").count(),
-        4,
+        6,
         "JSX props resolution relation probes should route through JSX props relation outcomes"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome("),
+        "JSX props resolution should not regress to generic assignment relation routing"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard("),

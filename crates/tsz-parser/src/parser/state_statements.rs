@@ -314,6 +314,22 @@ impl ParserState {
 
             // If we see a closing brace at the top level, report error 1128
             if self.is_token(SyntaxKind::CloseBraceToken) {
+                if self.recovered_definite_assignment_empty_statement_close_brace_pos
+                    == Some(self.token_pos())
+                {
+                    self.recovered_definite_assignment_empty_statement_close_brace_pos = None;
+                    let start_pos = self.token_pos();
+                    let end_pos = self.token_end();
+                    self.next_token();
+                    statements.push(self.arena.add_token(
+                        syntax_kind_ext::EMPTY_STATEMENT,
+                        start_pos,
+                        end_pos,
+                    ));
+                    previous_statement_was_block = false;
+                    prev_block_needs_post_equals_semi = false;
+                    continue;
+                }
                 // Only emit error if we haven't already emitted one at this position
                 if self.token_pos() != self.last_error_pos {
                     use tsz_common::diagnostics::diagnostic_codes;

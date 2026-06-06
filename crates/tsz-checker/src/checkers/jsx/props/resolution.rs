@@ -365,10 +365,10 @@ impl<'a> CheckerState<'a> {
                     if attr_name == "key"
                         && expected_special_type.is_some_and(|expected_type| {
                             !self
-                                .assign_relation_outcome(TypeId::STRING, expected_type)
+                                .jsx_props_relation_outcome(TypeId::STRING, expected_type)
                                 .related
                                 && !self
-                                    .assign_relation_outcome(TypeId::NUMBER, expected_type)
+                                    .jsx_props_relation_outcome(TypeId::NUMBER, expected_type)
                                     .related
                         })
                     {
