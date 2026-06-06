@@ -158,11 +158,11 @@ fn file_session_reuse_test_override() -> Option<bool> {
 //   5,251 files:  5.4x faster off (cross-pkg mapped types)
 //   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
 //
-// Tiny no-emit projects are a different regime where fresh-checker
+// Tiny no-emit TypeScript projects are a different regime where fresh-checker
 // construction and boxed-lib priming dominate the wall-clock floor. Route those
-// projects through the deterministic sequential reuse path by default; larger
-// batches remain reuse-off unless explicitly opted in until the scale-cliff and
-// byte-identity gaps close.
+// projects through the deterministic sequential reuse path by default; JS/JSX
+// and larger batches remain reuse-off unless explicitly opted in until the
+// scale-cliff and byte-identity gaps close.
 // Two env knobs remain:
 //   * `TSZ_FILE_SESSION_REUSE=1` opts larger projects back in (legacy explicit-opt-in knob
 //     from the pre-#6870 era).
@@ -191,7 +191,7 @@ const fn file_session_reuse_from_workload(
     disable_set: bool,
     enable_set: bool,
     work_item_count: usize,
-    has_jsx_mode: bool,
+    has_js_or_jsx_workload: bool,
 ) -> bool {
     if disable_set {
         return false;
@@ -199,13 +199,13 @@ const fn file_session_reuse_from_workload(
     if enable_set {
         return true;
     }
-    if has_jsx_mode {
+    if has_js_or_jsx_workload {
         return false;
     }
     work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
 }
 
-fn file_session_reuse_requested(work_item_count: usize, has_jsx_mode: bool) -> bool {
+fn file_session_reuse_requested(work_item_count: usize, has_js_or_jsx_workload: bool) -> bool {
     #[cfg(test)]
     if let Some(enabled) = file_session_reuse_test_override() {
         return enabled;
@@ -215,7 +215,7 @@ fn file_session_reuse_requested(work_item_count: usize, has_jsx_mode: bool) -> b
         std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
         std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
         work_item_count,
-        has_jsx_mode,
+        has_js_or_jsx_workload,
     )
 }
 
@@ -1047,11 +1047,15 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // file checks. Tiny no-emit batches use the sequential reused-checker
     // path; that real checker primes itself before checking the first file, so
     // a separate prime checker would duplicate the same setup.
-    let has_jsx_mode = options.checker.jsx_mode != JsxMode::None;
+    let has_js_input = program
+        .files
+        .iter()
+        .any(|file| is_js_file(Path::new(&file.file_name)));
+    let has_js_or_jsx_workload = has_js_input || options.checker.jsx_mode != JsxMode::None;
     if needs_separate_boxed_prime_checker(
         options.no_emit,
         options.emit_declarations,
-        file_session_reuse_requested(program.files.len(), has_jsx_mode),
+        file_session_reuse_requested(program.files.len(), has_js_or_jsx_workload),
         program.files.len(),
         !checker_libs.contexts.is_empty(),
     ) {
@@ -1280,7 +1284,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let reuse_requested = file_session_reuse_requested(work_items.len(), has_jsx_mode);
+            let reuse_requested =
+                file_session_reuse_requested(work_items.len(), has_js_or_jsx_workload);
             let parallel_reuse_requested = parallel_file_session_reuse_requested();
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);

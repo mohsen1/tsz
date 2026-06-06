@@ -653,7 +653,7 @@ const checked: boolean = Op.is(made);
     fn file_session_reuse_workload_policy_keeps_reuse_opt_in_for_tiny_batches() {
         assert!(
             file_session_reuse_from_workload(false, false, 10, false),
-            "non-JSX tiny no-emit batches may reuse by default"
+            "non-JS/JSX tiny no-emit batches may reuse by default"
         );
         assert!(
             file_session_reuse_from_workload(
@@ -662,11 +662,11 @@ const checked: boolean = Op.is(made);
                 FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES,
                 false
             ),
-            "the documented tiny-project boundary is the default reuse limit for non-JSX workloads"
+            "the documented tiny-project boundary is the default reuse limit for non-JS/JSX workloads"
         );
         assert!(
             !file_session_reuse_from_workload(false, false, 10, true),
-            "JSX tiny no-emit batches stay fresh by default to preserve diagnostic display identity"
+            "JS/JSX tiny no-emit batches stay fresh by default to preserve diagnostic identity"
         );
         assert!(
             !file_session_reuse_from_workload(
