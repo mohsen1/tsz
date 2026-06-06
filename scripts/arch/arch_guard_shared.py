@@ -1260,7 +1260,11 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # source-display query.
         #
         # Ratcheted 3213→3202 after current arch-smoke caught live-count slack.
-        3202,
+        #
+        # Ratcheted 3202→3197 after generic predicate-target instantiation
+        # moved five flow/narrowing substitution queries through
+        # query_boundaries::flow_analysis instead of the broad common barrel.
+        3197,
     ),
 ]
 
