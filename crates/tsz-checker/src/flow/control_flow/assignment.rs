@@ -4,13 +4,12 @@
 //! has been extracted to `condition_narrowing.rs`.
 
 use super::{FlowAnalyzer, PropertyKey};
-use crate::query_boundaries::common::{
+use crate::query_boundaries::flow_analysis::{
+    PropertyAccessResult, array_type, fallback_compound_assignment_result, get_array_element_type,
     is_assignment_operator as boundary_is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
-};
-use crate::query_boundaries::flow_analysis::{
-    array_type, fallback_compound_assignment_result, get_array_element_type,
-    tuple_elements_for_type, union_members_for_type, widen_literal_to_primitive,
+    new_binary_op_evaluator, tuple_elements_for_type, union_members_for_type,
+    widen_literal_to_primitive,
 };
 use crate::query_boundaries::type_computation::core::BinaryOpResult;
 use rustc_hash::FxHashSet;
@@ -167,7 +166,7 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         match access_result {
-            crate::query_boundaries::common::PropertyAccessResult::Success {
+            PropertyAccessResult::Success {
                 type_id,
                 write_type: Some(write_type),
                 from_index_signature: false,
@@ -697,14 +696,14 @@ impl<'a> FlowAnalyzer<'a> {
     /// Evaluate `left <op> right` through the shared binary-operation boundary,
     /// mapping a type error to `any` to avoid cascading diagnostics. Shared by
     /// the compound-assignment result paths so both route through a single
-    /// `query_boundaries::common` call site.
+    /// flow query-boundary call site.
     fn evaluate_binary_op(
         &self,
         left_type: TypeId,
         right_type: TypeId,
         op_str: &'static str,
     ) -> TypeId {
-        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
+        let evaluator = new_binary_op_evaluator(self.interner);
         match evaluator.evaluate(left_type, right_type, op_str) {
             BinaryOpResult::Success(result) => result,
             BinaryOpResult::TypeError { .. } => TypeId::ANY,
@@ -1095,7 +1094,6 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn destructuring_type_from_key(&self, source_ty: TypeId, key: &PropertyKey) -> TypeId {
-        use crate::query_boundaries::common::PropertyAccessResult;
         match key {
             PropertyKey::Index(index) => self.destructuring_numeric_access_type(source_ty, *index),
             PropertyKey::Atom(atom) => match self.interner.resolve_property_access_with_options(
