@@ -245,11 +245,11 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// or stale state.
     pub(crate) current_call_inference_placeholders: FxHashSet<tsz_common::Atom>,
     /// Subset of [`Self::current_call_inference_placeholders`] that appears in
-    /// more than one parameter of the callee signature. When an argument's
-    /// contextual target uses a shared placeholder (e.g. the middle type `B` in
-    /// `compose(f: (a: A) => B, g: (b: B) => C)`), the argument's free type
-    /// parameters must instead chain through the shared inference variable, so
-    /// higher-order re-generalization of that argument is suppressed.
+    /// more than one parameter of the callee signature. Shared placeholders are
+    /// tracked as call-shape metadata for inference ordering decisions; pure
+    /// higher-order generic arguments may still re-generalize through them so
+    /// wrappers such as `pipe(f: (a: A) => B, g: (b: B) => C)` preserve the
+    /// middle return-to-parameter flow.
     pub(crate) shared_inference_placeholders: FxHashSet<tsz_common::Atom>,
 }
 

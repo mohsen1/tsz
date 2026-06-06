@@ -43,10 +43,49 @@ jobs:
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
+      - id: metadata-active-suite
+        if: github.event_name == 'pull_request' && github.event.action == 'edited'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          active_suite=""
+          for attempt in 1 2 3 4 5 6; do
+            active_suite=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD_SHA}&event=pull_request&per_page=20" \
+              2>/dev/null \
+              | jq -r --argjson current_run_id "${GITHUB_RUN_ID}" '
+                [.workflow_runs[]
+                  | select((.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")
+                  and (.id != $current_run_id))]
+                  | sort_by(.created_at)
+                  | last
+                  | if . == null then empty else [.id, .status, .html_url] | @tsv end
+              ' || true)
+            if [[ -n "$active_suite" ]]; then
+              break
+            fi
+            if [[ "$attempt" -lt 6 ]]; then
+              echo "No active real CI suite for edited PR head is visible yet (attempt ${attempt}/6); retrying."
+              sleep 5
+            fi
+          done
+          if [[ -n "$active_suite" ]]; then
+            echo "active_suite_found=true" >> "$GITHUB_OUTPUT"
+            active_suite_id=$(printf '%s' "$active_suite" | cut -f1)
+            active_suite_status=$(printf '%s' "$active_suite" | cut -f2)
+            active_suite_url=$(printf '%s' "$active_suite" | cut -f3)
+            echo "Exact-head CI suite ${active_suite_id} is ${active_suite_status}; metadata CI will publish CI Light Summary: ${active_suite_url}"
+          else
+            echo "active_suite_found=false" >> "$GITHUB_OUTPUT"
+          fi
       - id: gate
         env:
           GH_TOKEN: ${{ github.token }}
           CI_EVENT_NAME: ${{ github.event_name }}
+          METADATA_ACTIVE_SUITE_FOUND: ${{ steps.metadata-active-suite.outputs.active_suite_found }}
         shell: bash
         run: |
           set -euo pipefail
@@ -69,18 +108,14 @@ jobs:
             echo "Native merge queue group - running full Cloud Run CI for the queued merge commit."
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             if [[ "${{ github.event.action }}" == "edited" ]]; then
-              # Body/title edits can repair AgentName, project-corpus, or WIP
-              # metadata without changing the PR head SHA. Refresh only the
-              # metadata gates so stale failed PR-body checks can clear without
-              # asking agents to push a no-op code commit. The summary job
-              # mirrors the previous real CI Summary for this exact head SHA so
-              # native merge queue still sees the protected context without a
-              # light run masking a failed full run.
               echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
               should_run=false
               full_run=false
               metadata_only_skip=true
               compiler_checks_required=false
+              if [[ "${METADATA_ACTIVE_SUITE_FOUND:-false}" == "true" ]]; then
+                required_summary=false
+              fi
             fi
             # The `labeled` event triggers on every label add. We only care
             # about the `ci-approved` label (used to opt fork PRs into CI).
@@ -1106,6 +1141,9 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           python3 scripts/conformance/check-snapshot-regression.py \
+            --base-ref FETCH_HEAD \
+            --head-ref HEAD
+          python3 scripts/conformance/check-accepted-regression-growth.py \
             --base-ref FETCH_HEAD \
             --head-ref HEAD
       - name: Skip snapshot comparison

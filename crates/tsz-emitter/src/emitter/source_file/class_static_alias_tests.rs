@@ -260,3 +260,80 @@ fn es2015_mixin_arrow_typed_param_and_return_keeps_single_line_block() {
         "Annotated mixin static field should be a comma item.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn es2015_define_static_super_writes_use_hoisted_comma_temps() {
+    let source = "\
+declare class Base { static a: any; }
+class C extends Base {
+    static assign = super.a = 0;
+    static add = super.a += 1;
+    static rest = { ...super.a } = { x: 0 };
+    static pre = ++super.a;
+    static elem = ++super[(\"a\")];
+    static post = super.a++;
+
+    // keep instance comment
+    x = 1;
+}
+";
+    let output = emit_with_define(source, ScriptTarget::ES2015, true);
+
+    assert!(
+        output.contains("var _a;\nvar _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;"),
+        "Object-rest assignment temp should be declared before class/static-super temps in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class C extends (_c = Base)") && output.contains("_b = C;"),
+        "Static field initializers should use separate class and base aliases.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value: (Reflect.set(_c, \"a\", _d = 0, _b), _d)")
+            && output.contains("value: (Reflect.set(_c, \"a\", _e = Reflect.get(_c, \"a\", _b) + 1, _b), _e)")
+            && output.contains("value: (Reflect.set(_c, \"a\", (_g = Reflect.get(_c, \"a\", _b), _f = ++_g), _b), _f)")
+            && output.contains("value: (Reflect.set(_c, _h = (\"a\"), (_k = Reflect.get(_c, _h, _b), _j = ++_k), _b), _j)")
+            && output.contains("value: (Reflect.set(_c, \"a\", (_m = Reflect.get(_c, \"a\", _b), _l = _m++, _m), _b), _l)"),
+        "Value-producing static `super` writes should use hoisted comma expressions, not IIFEs.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Object.defineProperty(C, \"rest\", Object.assign({ enumerable: true, configurable: true, writable: true, value: (_a = { x: 0 },"),
+        "Define-mode object-rest static initializer should use tsc's compact `Object.assign` descriptor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "        // keep instance comment\n        Object.defineProperty(this, \"x\""
+        ),
+        "Leading comments before lowered instance fields should remain in the synthesized constructor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_assign_static_super_writes_use_hoisted_comma_temps() {
+    let source = "\
+declare class Base { static a: any; }
+class C extends Base {
+    static assign = super.a = 0;
+    static add = super.a += 1;
+    static pre = ++super.a;
+
+    // keep instance comment
+    x = 1;
+}
+";
+    let output = emit_with_define(source, ScriptTarget::ES2015, false);
+
+    assert!(
+        output.contains("class C extends (_b = Base)") && output.contains("_a = C;"),
+        "Assignment-mode static field initializers should keep class/base aliases stable.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("C.assign = (Reflect.set(_b, \"a\", _c = 0, _a), _c);")
+            && output.contains("C.add = (Reflect.set(_b, \"a\", _d = Reflect.get(_b, \"a\", _a) + 1, _a), _d);")
+            && output.contains("C.pre = (Reflect.set(_b, \"a\", (_f = Reflect.get(_b, \"a\", _a), _e = ++_f), _a), _e);"),
+        "Assignment-mode static `super` writes should also use hoisted comma expressions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("        // keep instance comment\n        this.x = 1;"),
+        "Leading comments before lowered assignment-mode instance fields should be preserved.\nOutput:\n{output}"
+    );
+}

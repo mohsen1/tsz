@@ -60,3 +60,31 @@ fn rest_parameter_relation_outcome_uses_rest_parameter_request() {
         "rest parameter array diagnostics should have a request-shaped RelationKind::RestParameter helper"
     );
 }
+
+#[test]
+fn rest_tuple_element_array_like_probe_uses_relation_outcome_boundary() {
+    let helper_source = fs::read_to_string("src/types/type_node_helpers.rs")
+        .expect("failed to read type_node_helpers.rs");
+    let boundary_source = fs::read_to_string("src/query_boundaries/type_checking_utilities.rs")
+        .expect("failed to read type_checking_utilities.rs");
+    let compact_helper: String = helper_source
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_helper.contains(
+            "rest_element_array_like_relation_outcome(self.ctx.types,t,readonly_any_array).related"
+        ),
+        "TS2574 rest tuple element array-like probes should consume an outcome-shaped boundary"
+    );
+    assert!(
+        !compact_helper.contains("self.ctx.types.is_assignable_to(t,readonly_any_array)"),
+        "TS2574 rest tuple element array-like probes should not call raw TypeDatabase assignability"
+    );
+    assert!(
+        boundary_source.contains("fn rest_element_array_like_relation_outcome(")
+            && boundary_source.contains("relation_queries::query_relation("),
+        "type-node rest element relation truth should live behind a query boundary"
+    );
+}
