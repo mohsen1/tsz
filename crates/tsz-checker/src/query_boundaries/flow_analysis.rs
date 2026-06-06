@@ -434,6 +434,19 @@ pub(crate) fn narrow_excluding_types_in_context(
     narrowing.narrow_excluding_types(type_id, excluded_types)
 }
 
+/// Exclude one known value from a flow type using the caller's active flow
+/// narrowing context.
+///
+/// The checker owns discovering the equality/nullish fact. The solver owns the
+/// semantic set subtraction.
+pub(crate) fn narrow_excluding_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    excluded_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_excluding_type(type_id, excluded_type)
+}
+
 /// Exclude known values from a discriminant-property flow fact using the
 /// caller's active flow narrowing context.
 ///
@@ -446,6 +459,53 @@ pub(crate) fn narrow_by_excluding_discriminant_values_in_context(
     excluded_types: &[TypeId],
 ) -> TypeId {
     narrowing.narrow_by_excluding_discriminant_values(type_id, property_path, excluded_types)
+}
+
+/// Narrow a flow type by a discriminant equality fact using the caller's active
+/// flow narrowing context.
+///
+/// The checker owns property-path discovery and branch selection. The solver
+/// owns filtering by discriminant value, including constraint and intersection
+/// handling.
+pub(crate) fn narrow_by_discriminant_for_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    literal_type: TypeId,
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_by_discriminant_for_type(type_id, property_path, literal_type, is_true_branch)
+}
+
+/// Narrow a union-like assertion target by a discriminant equality fact.
+///
+/// Assertion handling owns recognizing the predicate target. The solver owns
+/// the discriminant filter itself.
+pub(crate) fn narrow_by_discriminant_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    literal_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_by_discriminant(type_id, property_path, literal_type)
+}
+
+/// Keep only values compatible with a literal equality fact.
+pub(crate) fn narrow_to_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    literal_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_to_type(type_id, literal_type)
+}
+
+/// Return whether a literal comparison target is assignable to the flow type.
+pub(crate) fn literal_assignable_to_in_context(
+    narrowing: &NarrowingContext<'_>,
+    literal_type: TypeId,
+    type_id: TypeId,
+) -> bool {
+    narrowing.literal_assignable_to(literal_type, type_id)
 }
 
 /// Narrow a value to the object-like branch of an `instanceof`-style check.
