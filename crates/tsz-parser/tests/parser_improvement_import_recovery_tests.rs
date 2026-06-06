@@ -476,6 +476,43 @@ fn test_import_dot_defer_standalone_emits_ts1005() {
 }
 
 #[test]
+fn test_import_dot_defer_invalid_standalone_fingerprints_match_tsc() {
+    let function_arg_source = "Function(import.defer);";
+    let (function_arg_parser, _root) = parse_source(function_arg_source);
+    assert!(
+        function_arg_parser
+            .get_diagnostics()
+            .iter()
+            .any(|d| d.code == 1005 && d.message == "'(' expected."),
+        "Expected Function(import.defer) to report missing call paren; diagnostics: {:?}",
+        function_arg_parser.get_diagnostics()
+    );
+
+    let source =
+        "import.defer;\n\n(import.defer)(\"a\");\n\nFunction(import.defer);\n\nimport.defer";
+    let (parser, _root) = parse_source(source);
+
+    let ts1005: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005 && d.message == "'(' expected.")
+        .map(|d| d.start)
+        .collect();
+    let expected = vec![
+        source.find(';').expect("first semicolon") as u32,
+        source.find(")(\"a\")").expect("parenthesized close paren") as u32,
+        source.find(");\n\nimport.defer").expect("call close paren") as u32,
+        source.len() as u32,
+    ];
+    assert_eq!(
+        ts1005,
+        expected,
+        "Expected import.defer without call parens to report at each missing '(' anchor; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_import_dot_invalid_meta_property_ts17012() {
     // `import.foo` (not in call) should emit TS17012
     let source = r"const x = import.foo;";
