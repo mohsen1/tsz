@@ -1026,6 +1026,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             | SubtypeFailureReason::MissingProperty { .. }
                             | SubtypeFailureReason::MissingProperties { .. }
                             | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                            | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
                             | SubtypeFailureReason::PropertyTypeMismatch { .. }
                             | SubtypeFailureReason::ArrayElementMismatch { .. }
                             | SubtypeFailureReason::IndexSignatureMismatch { .. }

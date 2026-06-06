@@ -694,17 +694,19 @@ impl<'a> CheckerState<'a> {
                 ]
             }
             SubtypeFailureReason::ArrayElementMismatch { .. }
+            | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
             | SubtypeFailureReason::TypeArgumentMismatch { .. }
             | SubtypeFailureReason::TupleElementTypeMismatch { .. }
             | SubtypeFailureReason::TupleElementMismatch { .. }
             | SubtypeFailureReason::TupleArityMismatch(_) => {
                 // These reasons relate same-shaped containers whose differing
                 // *component* is the cause (array element types, same-generic type
-                // arguments, a fixed tuple slot, or a tuple arity/length gap). tsc
-                // names both containers in the head — which the call's TS2345 line
-                // already does — then relates the failing component directly
-                // beneath it (for tuples: the positional `Type at position N …`
-                // disambiguator or the `Source has N element(s) …` length line).
+                // arguments, a fixed tuple slot, a variadic span, or a tuple
+                // arity/length gap). tsc names both containers in the head — which
+                // the call's TS2345 line already does — then relates the failing
+                // component directly beneath it (for tuples: the positional `Type
+                // at position N …` disambiguator, variadic position range, or the
+                // `Source has N element(s) …` length line).
                 // Reuse the TS2322 elaboration (`render_failure_reason`) as the
                 // single source of truth: its child lines already carry the right
                 // `code`, `message_text`, `depth`, and `file`, so only the category
