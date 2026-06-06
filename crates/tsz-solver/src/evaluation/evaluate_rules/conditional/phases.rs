@@ -2,7 +2,7 @@
 
 use crate::instantiation::instantiate::instantiate_generic_cached;
 use crate::relations::subtype::TypeResolver;
-use crate::types::{ConditionalType, TypeData, TypeId};
+use crate::types::{ConditionalType, PropertyInfo, TypeData, TypeId};
 use tracing::trace;
 
 use super::super::super::evaluate::TypeEvaluator;
@@ -171,6 +171,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // intrinsic as satisfying callable targets. Ordinary
             // assignment intentionally remains stricter.
             true
+        } else if self.object_literals_have_conflicting_required_property(check_type, extends_type)
+        {
+            // `Extract<Union, { kind: "x" }>` and similar discriminant filters
+            // distribute over every union member. If both sides expose the same
+            // required property with distinct literal values, the relation is
+            // definitively false, so avoid the full structural subtype walk.
+            false
         } else {
             let mut strict_checker = self.conditional_subtype_checker();
             strict_checker.is_subtype_of(check_type, extends_type)
@@ -178,6 +185,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
         self.cache_conditional_subtype(check_type, extends_type, result);
         result
+    }
+
+    fn object_literals_have_conflicting_required_property(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source_shape_id = match self.interner().lookup(source) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+        let target_shape_id = match self.interner().lookup(target) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+
+        let source_shape = self.interner().object_shape(source_shape_id);
+        let target_shape = self.interner().object_shape(target_shape_id);
+
+        target_shape
+            .properties
+            .iter()
+            .filter(|prop| !prop.optional)
+            .any(|target_prop| {
+                let Some(source_prop) =
+                    PropertyInfo::find_in_slice(&source_shape.properties, target_prop.name)
+                else {
+                    return false;
+                };
+                Self::literal_values_are_disjoint(
+                    self.interner().lookup(source_prop.type_id),
+                    self.interner().lookup(target_prop.type_id),
+                )
+            })
+    }
+
+    fn literal_values_are_disjoint(source: Option<TypeData>, target: Option<TypeData>) -> bool {
+        match (source, target) {
+            (Some(TypeData::Literal(source)), Some(TypeData::Literal(target))) => {
+                source.primitive_type_id() == target.primitive_type_id() && source != target
+            }
+            _ => false,
+        }
     }
 
     /// Detect a tail-call pattern in `branch` and return the continuation step.

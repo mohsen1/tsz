@@ -1107,7 +1107,7 @@ impl<'a> CheckerState<'a> {
         pushes
     }
 
-    fn pop_infer_bindings(&mut self, pushes: Vec<(String, Option<TypeId>)>) {
+    pub(crate) fn pop_infer_bindings(&mut self, pushes: Vec<(String, Option<TypeId>)>) {
         for (name, previous) in pushes.into_iter().rev() {
             if let Some(prev) = previous {
                 self.ctx.type_parameter_scope.insert(name, prev);

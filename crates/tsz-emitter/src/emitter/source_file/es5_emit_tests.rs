@@ -1190,6 +1190,43 @@ class RegularClass {\n    accessor shouldError: string;\n}\n";
 }
 
 #[test]
+fn es5_computed_auto_accessor_storage_hoists_with_key_temp() {
+    let source = "class C1 {\n\
+    accessor [\"w\"]: any;\n\
+    accessor [\"x\"] = 1;\n\
+    static accessor [\"y\"]: any;\n\
+    static accessor [\"z\"] = 2;\n\
+}\n\
+\n\
+declare var f: any;\n\
+class C2 {\n\
+    accessor [f()] = 1;\n\
+}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _C2__a_accessor_storage, _a;"),
+        "computed auto-accessor storage should share the file-level hoist with its key temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\nvar _C2__a_accessor_storage;\n"),
+        "computed auto-accessor storage must not be declared again before C2.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es2015_private_field_destructuring_assignment_uses_setter_target() {
     let source = "class C {\n    #value: string;\n    m(arg: { key: string }) {\n        ({ key: this.#value } = arg);\n    }\n}\n";
 
