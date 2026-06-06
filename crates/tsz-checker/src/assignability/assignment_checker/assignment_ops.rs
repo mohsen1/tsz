@@ -895,13 +895,12 @@ impl<'a> CheckerState<'a> {
 
         let declared_recursive_tuple_assignment =
             self.recursive_tuple_declared_assignment_types(left_idx, right_idx);
-        let declared_alias_application_assignment =
-            self.declared_same_alias_application_assignment_types(left_idx, right_idx);
+        let declared_application_assignment =
+            self.declared_same_application_assignment_types(left_idx, right_idx);
         let (compat_source_type, compat_target_type, declared_application_any_target_accepted) =
             if let Some((source_declared, target_declared)) = declared_recursive_tuple_assignment {
                 (source_declared, target_declared, false)
-            } else if let Some((source_declared, target_declared)) =
-                declared_alias_application_assignment
+            } else if let Some((source_declared, target_declared)) = declared_application_assignment
             {
                 let accepts_any_target =
                     self.declared_application_any_target_accepts(source_declared, target_declared);
@@ -1040,8 +1039,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if check_assignability
-                && let Some((source_declared, target_declared)) =
-                    declared_alias_application_assignment
+                && let Some((source_declared, target_declared)) = declared_application_assignment
                 && self.same_type_alias_application_args_reject(source_declared, target_declared)
             {
                 self.error_type_not_assignable_at_with_anchor(
@@ -1926,7 +1924,7 @@ impl<'a> CheckerState<'a> {
         Some((source_declared, target_declared))
     }
 
-    fn declared_same_alias_application_assignment_types(
+    fn declared_same_application_assignment_types(
         &mut self,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
@@ -1937,12 +1935,6 @@ impl<'a> CheckerState<'a> {
         let (target_base, target_args) = self.application_info_or_display_alias(target_declared)?;
         let (source_base, source_args) = self.application_info_or_display_alias(source_declared)?;
         if target_base != source_base || target_args.len() != source_args.len() {
-            return None;
-        }
-
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
 

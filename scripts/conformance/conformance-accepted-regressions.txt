@@ -64,7 +64,6 @@ TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientCo
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
-TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its

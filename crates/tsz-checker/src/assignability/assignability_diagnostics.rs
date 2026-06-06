@@ -574,6 +574,27 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        {
+            let flags = self.ctx.pack_relation_flags();
+            let inputs = crate::query_boundaries::assignability::AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            };
+            if matches!(
+                crate::query_boundaries::assignability::check_application_variance_assignability(
+                    &inputs,
+                ),
+                Some(false)
+            ) {
+                self.error_type_not_assignable_at_with_raw_display_types(source, target, diag_idx);
+                return false;
+            }
+        }
         if !force_nested_error_nullish_report
             && !exact_optional_mismatch
             && self.should_suppress_assignability_diagnostic(source, target)
