@@ -468,7 +468,14 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         for prop in first {
             let mut present_in_all = true;
             let mut type_ids = vec![prop.type_id];
-            let mut all_optional = prop.optional;
+            // A union property is OPTIONAL/READONLY when ANY constituent is,
+            // matching tsc's `createUnionOrIntersectionProperty`
+            // (`optionalFlag |= prop.flags & Optional`). The previous
+            // `all_optional` (require every member) dropped optionality for
+            // heterogeneous unions like `Pick<A | B, 'a'>` where only one member
+            // has `a?`, since such unions are never collapsed by subtype
+            // reduction so the wrong modifier survived.
+            let mut any_optional = prop.optional;
             let mut any_readonly = prop.readonly;
             let mut visibility = prop.visibility;
 
@@ -478,7 +485,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         if let Some(other_prop) = PropertyInfo::find_in_slice(properties, prop.name)
                         {
                             type_ids.push(other_prop.type_id);
-                            all_optional = all_optional && other_prop.optional;
+                            any_optional = any_optional || other_prop.optional;
                             any_readonly = any_readonly || other_prop.readonly;
                             visibility = merge_visibility(visibility, other_prop.visibility);
                         } else {
@@ -507,7 +514,12 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                     existing.type_id = self
                         .interner
                         .intersect_types_raw2(existing.type_id, union_type);
-                    existing.optional = existing.optional && all_optional;
+                    // The union's contribution joins an accumulator built from
+                    // sibling intersection members, so it combines with
+                    // intersection semantics (optional only when both sides are
+                    // optional). `any_optional`/`any_readonly` already encode the
+                    // union's own ANY-member modifiers.
+                    existing.optional = existing.optional && any_optional;
                     existing.readonly = existing.readonly || any_readonly;
                 } else {
                     let new_idx = self.properties.len();
@@ -516,7 +528,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         name: prop.name,
                         type_id: union_type,
                         write_type: union_type,
-                        optional: all_optional,
+                        optional: any_optional,
                         readonly: any_readonly,
                         visibility,
                         is_method: prop.is_method,
