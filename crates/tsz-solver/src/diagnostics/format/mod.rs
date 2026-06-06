@@ -297,6 +297,68 @@ impl<'a> TypeFormatter<'a> {
             .then_some(evaluated)
     }
 
+    /// A non-distributive application of a generic alias whose *declared body is
+    /// a conditional type* loses its alias symbol when the conditional resolves:
+    /// the operator resolves into its branch and never stamps the enclosing
+    /// alias onto the result, so tsc renders the resolved type structurally for
+    /// **any** resolved shape (`DeepReadonly<{ b: number }>` →
+    /// `{ readonly b: number; }`, `DeepReadonly<number>` → `number`, issue
+    /// #10914), never `Name<Args>`.
+    ///
+    /// Returns the evaluated type to format in place of the application form.
+    /// Returns `None` for a mapped/object-bodied application (`Partial<T>` keeps
+    /// its alias symbol), for a result that stays generic, and for a result that
+    /// fails to reduce (a still-deferred conditional), so those keep their
+    /// existing display. The distributive form is handled earlier by
+    /// [`Self::distributed_conditional_application_display`].
+    fn reducing_conditional_application_display(&self, type_id: TypeId) -> Option<TypeId> {
+        let def_store = self.def_store?;
+        // Cheap structural gate (shared with the checker boundary): the base
+        // must resolve to a generic alias whose declared body is a conditional.
+        // Mapped/object-bodied applications (`Partial<T>`) fail this and keep
+        // their alias symbol.
+        if !crate::type_queries::application_base_has_conditional_alias_body(
+            self.interner,
+            def_store,
+            type_id,
+        ) {
+            return None;
+        }
+        // Instantiate the conditional body with the concrete arguments and
+        // evaluate. `instantiate_generic` substitutes the def body directly,
+        // which reduces a nested helper application (`DeepReadonly<{ b }>`)
+        // that a bare `evaluate_type` of the wrapper would leave deferred.
+        let TypeData::Application(app_id) = self.interner.lookup(type_id)? else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let def_id = crate::type_queries::get_lazy_def_id(self.interner, app.base)
+            .or_else(|| def_store.find_def_for_type(app.base))?;
+        let def = def_store.get(def_id)?;
+        let instantiated = crate::computation::instantiate_generic(
+            self.interner,
+            def.body?,
+            &def.type_params,
+            &app.args,
+        );
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
+        if evaluated == TypeId::ERROR
+            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
+        {
+            return None;
+        }
+        // A conditional still deferred after evaluation never reduced (an
+        // unresolved operand); the raw node is no more informative than the
+        // application form, so keep the application form.
+        if matches!(
+            self.interner.lookup(evaluated),
+            Some(TypeData::Conditional(_))
+        ) {
+            return None;
+        }
+        Some(evaluated)
+    }
+
     /// For Application-arg display: when the arg is an `IndexAccess(obj, idx)`
     /// whose `obj` is fully concrete (no type parameters, no infer
     /// placeholders) and `idx` is a literal, resolve the indexed access for

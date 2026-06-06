@@ -3,7 +3,9 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
+use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::common::{lazy_def_id, type_param_info};
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use rustc_hash::FxHashSet;
@@ -1301,7 +1303,6 @@ impl<'a> CheckerState<'a> {
         // next lookup re-enters and observes the fully-built constructor
         // type after the outer resolution completes.
         let result_is_lazy_to_self = {
-            use crate::query_boundaries::common as common_query;
             common_query::lazy_def_id(self.ctx.types.as_type_database(), result)
                 .zip(self.ctx.get_existing_def_id(sym_id))
                 .is_some_and(|(ld, od)| ld == od)
@@ -1537,17 +1538,44 @@ impl<'a> CheckerState<'a> {
                     .definition_store
                     .get(def_id)
                     .is_some_and(|d| d.type_params.is_empty());
-                let body_is_computed = alias_is_non_generic
-                    && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                        symbol.declarations.iter().any(|&decl_idx| {
-                            super::source_alias_attribution::alias_declaration_body_is_computed(
-                                self.ctx.arena,
-                                self.ctx.types,
-                                decl_idx,
-                                result,
-                            )
-                        })
-                    });
+                // Issue #10914: a non-generic alias whose body is an application
+                // of a conditional-bodied generic alias —
+                // `type RO = DeepReadonly<Config>` — carries no `aliasSymbol`
+                // when it resolves to an anonymous object. tsc renders the
+                // resolved object structurally, so mark the body "computed" and
+                // let the established display path expand it. Type-shape
+                // inspection is owned by the solver through the query boundary;
+                // evaluation is guarded exactly like the evaluated-form
+                // registration below to stay clear of free type parameters and
+                // self-referential cycles, and only runs once the cheap
+                // structural gates above have matched.
+                let reducing_object_application = alias_is_non_generic
+                    && diagnostic_query::application_base_has_conditional_alias_body(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        result,
+                    )
+                    && !generic_query::contains_free_type_parameters(self.ctx.types, result)
+                    && self.can_register_evaluated_alias_form(def_id, result)
+                    && {
+                        let evaluated = self.evaluate_type_with_env(result);
+                        common_query::is_object_or_mapped_type(
+                            self.ctx.types.as_type_database(),
+                            evaluated,
+                        )
+                    };
+                let body_is_computed = reducing_object_application
+                    || (alias_is_non_generic
+                        && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                            symbol.declarations.iter().any(|&decl_idx| {
+                                super::source_alias_attribution::alias_declaration_body_is_computed(
+                                    self.ctx.arena,
+                                    self.ctx.types,
+                                    decl_idx,
+                                    result,
+                                )
+                            })
+                        }));
                 self.record_alias_body_provenance(result, body_is_computed, alias_is_non_generic);
                 // Also register the evaluated form of the type.
                 // Type aliases with union/intersection bodies often contain Lazy
