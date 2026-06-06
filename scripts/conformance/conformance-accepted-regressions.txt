@@ -34,6 +34,9 @@
 # - PR #12702 run 27037509191 at exact head 591b1dee210f found six rows
 #   unlisted and eleven previous accepted rows resolved after the recovered
 #   generic-parameter-tail parser fix.
+# - PR #12748 run 27057787055 at synthetic merge bf33f5f1ef found four
+#   current-main rows still failing on exact-head aggregate after rebasing on
+#   current main.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
@@ -50,8 +53,8 @@ TypeScript/tests/cases/compiler/letInConstDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
 TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
-TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/strictModeReservedWord.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
@@ -67,7 +70,6 @@ TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmit
 TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
-TypeScript/tests/cases/conformance/types/rest/genericRestParameters3.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
