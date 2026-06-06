@@ -508,6 +508,65 @@ pub(crate) fn literal_assignable_to_in_context(
     narrowing.literal_assignable_to(literal_type, type_id)
 }
 
+/// Apply a function type-predicate fact to a flow type.
+///
+/// The checker owns resolving the called signature, target expression, and
+/// branch sense. The boundary owns constructing the solver predicate payload
+/// and applying it through the semantic narrowing engine.
+pub(crate) fn narrow_type_predicate(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    predicate_type: TypeId,
+    asserts: bool,
+    is_true_branch: bool,
+) -> TypeId {
+    narrow_with_guard(
+        db,
+        env,
+        type_id,
+        &TypeGuard::Predicate {
+            type_id: Some(predicate_type),
+            asserts,
+        },
+        asserts || is_true_branch,
+    )
+}
+
+/// Apply an assertion predicate without an explicit type (`asserts value`).
+///
+/// The checker owns recognizing that the asserted value is known true after the
+/// call. The solver owns truthiness narrowing beyond plain nullish removal.
+pub(crate) fn narrow_asserts_truthy(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+) -> TypeId {
+    narrow_with_guard(db, env, type_id, &TypeGuard::Truthy, true)
+}
+
+/// Apply a receiver-property predicate to the property flow type.
+///
+/// The checker owns identifying the receiver property and extracting its
+/// contextual predicate type. The solver owns the predicate guard semantics for
+/// the property value.
+pub(crate) fn narrow_property_type_by_predicate(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    predicate_property_type: TypeId,
+) -> TypeId {
+    narrow_inferred_predicate_guard(
+        db,
+        env,
+        type_id,
+        &TypeGuard::Predicate {
+            type_id: Some(predicate_property_type),
+            asserts: false,
+        },
+    )
+}
+
 /// Narrow a value to the object-like branch of an `instanceof`-style check.
 pub(crate) fn narrow_to_objectish(
     db: &dyn QueryDatabase,
