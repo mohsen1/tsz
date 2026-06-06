@@ -243,7 +243,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3191→3174 after assignment numeric display shape queries
         # moved through query_boundaries::diagnostics.
-        3174,
+        #
+        # Ratcheted 3174→3163 after missing-property display shape queries
+        # moved through query_boundaries::diagnostics.
+        3163,
     ),
 ]
 
