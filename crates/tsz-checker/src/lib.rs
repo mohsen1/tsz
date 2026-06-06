@@ -132,6 +132,9 @@ mod class_extends_generic_override_variance_tests;
 #[path = "tests/class_extends_index_relation_routing_arch_tests.rs"]
 mod class_extends_index_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/class_implements_generic_override_variance_tests.rs"]
+mod class_implements_generic_override_variance_tests;
+#[cfg(test)]
 #[path = "tests/class_implements_index_relation_routing_arch_tests.rs"]
 mod class_implements_index_relation_routing_arch_tests;
 #[cfg(test)]
