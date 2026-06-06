@@ -322,6 +322,22 @@ function hasCompleteAttribution(status) {
   return Boolean(status?.present && status?.dominant_subsystem && !status?.warning);
 }
 
+function missingAttributionPlanForRow(row) {
+  const closure = row?.loss_closure ?? null;
+  return {
+    name: row.name,
+    target_gap_factor: row.target_gap_factor,
+    tsz_speedup_vs_tsgo: row.tsz_speedup_vs_tsgo,
+    semantic_owner_family: row.semantic_owner_family ?? null,
+    owner: closure?.owner ?? null,
+    issue: closure?.issue ?? null,
+    url: closure?.url ?? null,
+    attribution_command: closure?.attribution_command ?? null,
+    timing_command: closure?.command ?? null,
+    attribution_warning: row.attribution_status?.warning ?? null,
+  };
+}
+
 function targetGapFactor(speedup) {
   if (speedup == null || speedup <= 0) return null;
   return TARGET_TSZ_SPEEDUP / speedup;
@@ -410,6 +426,11 @@ export function createTsgoWinnerReport(input, inputPath) {
     .filter((row) => !hasCompleteAttribution(row.attribution_status))
     .map((row) => row.name)
     .sort();
+  const missingTargetGapAttributionPlan = targetGapRows
+    .filter((row) => !hasCompleteAttribution(row.attribution_status))
+    .map(missingAttributionPlanForRow);
+  const targetGapRowsWithAttributionCommand = missingTargetGapAttributionPlan
+    .filter((row) => row.attribution_command).length;
 
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row) && !duplicateNames.has(row?.name))
@@ -482,6 +503,8 @@ export function createTsgoWinnerReport(input, inputPath) {
       project_rows_below_target: targetGapRows.filter((row) => row.semantic_owner_family).length,
       rows_with_attribution: targetGapRows.length - missingTargetGapAttributionRows.length,
       missing_attribution_rows: missingTargetGapAttributionRows,
+      rows_with_attribution_command: targetGapRowsWithAttributionCommand,
+      missing_attribution_plan: missingTargetGapAttributionPlan,
       worst_gap: targetGapRows[0] ?? null,
     },
     measurement_profile: measurementProfileStatus(input),
@@ -515,6 +538,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       `project green tsgo winners: ${report.totals.project_green_tsgo_winners}`,
       `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
       `2x target gaps with attribution: ${report.two_x_target.rows_with_attribution}/${report.two_x_target.rows_below_target}`,
+      `2x target gaps with attribution commands: ${report.two_x_target.rows_with_attribution_command}/${report.two_x_target.rows_below_target}`,
       `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
     ].join("\n"),
   );
