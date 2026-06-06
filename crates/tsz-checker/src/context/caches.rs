@@ -51,6 +51,9 @@ pub struct TypeReferenceValidationCaches {
     /// underneath `conditional_branch_constraint` because different conditional
     /// aliases can expose the same mapped-object branch/value constraint pair.
     pub indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    /// Type-parameter default/constraint validations that completed without
+    /// diagnostics for the active checker file.
+    pub type_param_default_constraint: FxHashSet<(u32, TypeId, TypeId)>,
     /// Synthetic type-node surfaces cached for the active checker file.
     pub type_node_surface: TypeNodeSurfaceCaches,
 }

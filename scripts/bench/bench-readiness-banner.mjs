@@ -42,6 +42,13 @@ export function benchReadinessMessages(readiness, winnerReport = null) {
   }
 
   const target = winnerReport?.two_x_target;
+  const measurementWarning = winnerReport?.measurement_profile?.warning;
+  if (typeof measurementWarning === "string" && measurementWarning.length > 0) {
+    messages.push(
+      `Benchmark companion report measurement profile warning: ${measurementWarning}; 2x target evidence may not be comparable.`,
+    );
+  }
+
   const targetGaps = Number(target?.rows_below_target ?? 0);
   if (targetGaps > 0) {
     const eligibleRows = Number(target?.eligible_green_rows ?? 0);

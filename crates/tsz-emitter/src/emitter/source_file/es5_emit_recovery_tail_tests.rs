@@ -452,6 +452,43 @@ fn reserved_parameter_names_recover_without_semantic_type_proxy() {
 }
 
 #[test]
+fn this_parameter_default_new_initializer_emits_recovered_tail() {
+    for (source, expected_tail) in [
+        (
+            "function f(this: C = new C()): number { return this.n; }",
+            "();\nnumber;\n{\n    return this.n;\n}",
+        ),
+        (
+            "function renamed(this: Widget = new Widget()): Result { return this.value; }",
+            "();\nResult;\n{\n    return this.value;\n}",
+        ),
+        (
+            "function normal(this: Widget): Result { return this.value; }",
+            "function normal() { return this.value; }",
+        ),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!("\"use strict\";\n{expected_tail}"),
+            "{source}: defaulted `this` parameter recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn unmatched_decorator_type_assertion_emits_empty_statement() {
     let source = "@<[[import(obju2c77,\n";
 

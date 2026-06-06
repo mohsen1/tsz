@@ -38,7 +38,17 @@ withTempDir((dir) => {
     filter: "project|single",
     measurement_profile: {
       mode: "release-pgo",
+      tsz_binary_source: "bench-dist",
       generated_at: "2026-05-20T00:00:00.000Z",
+      profile_guided_optimization: {
+        requested: true,
+        required: true,
+        optimized: true,
+        profile_fingerprint: "profile-abc123",
+        training_fingerprint: "training-def456",
+        training_input_count: 12,
+        training_failure_count: 0,
+      },
     },
     results: [
       {
@@ -197,6 +207,14 @@ withTempDir((dir) => {
   assert.deepEqual(report.measurement_profile, {
     present: true,
     mode: "release-pgo",
+    tsz_binary_source: "bench-dist",
+    pgo_requested: true,
+    pgo_required: true,
+    pgo_optimized: true,
+    profile_fingerprint: "profile-abc123",
+    training_fingerprint: "training-def456",
+    training_input_count: 12,
+    training_failure_count: 0,
     warning: null,
   });
   assert.deepEqual(report.duplicate_rows, []);
@@ -257,6 +275,38 @@ withTempDir((dir) => {
   const importedReport = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
   assert.equal(importedReport.totals.green_tsgo_winners, 3);
   assert.equal(importedReport.worst.name, "ts-toolbelt-project");
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    measurement_profile: {
+      mode: "release-pgo",
+      tsz_binary_source: "bench-dist",
+      profile_guided_optimization: {
+        requested: true,
+        required: true,
+        optimized: false,
+      },
+    },
+    results: [],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  assert.deepEqual(report.measurement_profile, {
+    present: true,
+    mode: "release-pgo",
+    tsz_binary_source: "bench-dist",
+    pgo_requested: true,
+    pgo_required: true,
+    pgo_optimized: false,
+    profile_fingerprint: null,
+    training_fingerprint: null,
+    training_input_count: null,
+    training_failure_count: null,
+    warning: "release-pgo metadata missing pgo optimized flag, profile fingerprint, training fingerprint",
+  });
 });
 
 withTempDir((dir) => {
@@ -474,6 +524,14 @@ withTempDir((dir) => {
   assert.deepEqual(report.measurement_profile, {
     present: false,
     mode: null,
+    tsz_binary_source: null,
+    pgo_requested: null,
+    pgo_required: null,
+    pgo_optimized: null,
+    profile_fingerprint: null,
+    training_fingerprint: null,
+    training_input_count: null,
+    training_failure_count: null,
     warning: "measurement_profile missing",
   });
   // 6 rows excluded due to missing phase/exit metadata or artifact_missing

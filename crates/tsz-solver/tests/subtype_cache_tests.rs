@@ -764,6 +764,95 @@ fn strict_null_checks_flip_yields_fresh_answer_via_shared_cache() {
     );
 }
 
+// =============================================================================
+// Weak-type (TS2559) enforcement sensitivity.
+//
+// Weak-type enforcement changes the structural subtype answer for weak-type
+// targets but is operation-local state that is NOT encoded in the flag-agnostic
+// `RelationCacheKey`. A result computed while the weak-type trigger fired must
+// therefore stay out of the shared relation cache so a checker running under a
+// different enforcement state cannot observe a poisoned entry.
+// =============================================================================
+
+/// Build a `{ c: string }` source and a weak-type `{ a?: string }` target that
+/// share no property names — the exact shape that drives the TS2559 weak-type
+/// trigger.
+fn weak_type_pair(interner: &TypeInterner) -> (TypeId, TypeId) {
+    let c = interner.intern_string("c");
+    let a = interner.intern_string("a");
+    let source = interner.object(vec![PropertyInfo::new(c, TypeId::STRING)]);
+    let target = interner.object(vec![PropertyInfo::opt(a, TypeId::STRING)]);
+    (source, target)
+}
+
+#[test]
+fn weak_type_enforcement_result_is_not_shared_across_enforcement_states() {
+    // Structural rule: when a non-empty non-weak source is compared to a
+    // weak-type target with no common properties, the answer depends on whether
+    // weak-type enforcement is active. Two checkers that differ only in
+    // `enforce_weak_types` must observe their own answers, never a cached one
+    // from the other state.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let (source, target) = weak_type_pair(&interner);
+
+    // Enforcing checker: weak target with no common properties => not a subtype.
+    let mut enforcing = SubtypeChecker::new(&interner).with_query_db(&db);
+    enforcing.enforce_weak_types = true;
+    let enforced = enforcing.is_subtype_of(source, target);
+    assert!(
+        !enforced,
+        "weak-type enforcement must reject `{{ c: string }}` <: `{{ a?: string }}`"
+    );
+
+    // Non-enforcing checker (the SubtypeChecker default): structurally the
+    // source satisfies an all-optional target, so it IS a subtype. This must be
+    // computed fresh, not served from the enforcing checker's cached `false`.
+    let mut relaxed = SubtypeChecker::new(&interner).with_query_db(&db);
+    let relaxed_result = relaxed.is_subtype_of(source, target);
+    assert!(
+        relaxed_result,
+        "without weak-type enforcement the all-optional target must accept the source; \
+         a cached enforced `false` must not poison this lookup"
+    );
+
+    assert_ne!(
+        enforced, relaxed_result,
+        "the two enforcement states must observe different answers for the weak-type pair"
+    );
+
+    // Re-running each checker in its own mode stays stable (no contamination
+    // through the shared cache in either direction).
+    let mut enforcing_again = SubtypeChecker::new(&interner).with_query_db(&db);
+    enforcing_again.enforce_weak_types = true;
+    assert!(!enforcing_again.is_subtype_of(source, target));
+
+    let mut relaxed_again = SubtypeChecker::new(&interner).with_query_db(&db);
+    assert!(relaxed_again.is_subtype_of(source, target));
+}
+
+#[test]
+fn weak_type_sensitive_result_is_not_memoized() {
+    // The weak-type trigger marks the in-flight result as enforcement-sensitive,
+    // which keeps it out of the shared relation cache. Probing the cache after
+    // an enforcing check must therefore report a miss for that pair, even though
+    // an ordinary (non-weak) subtype check of the same shape would be cached.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let (source, target) = weak_type_pair(&interner);
+
+    let mut enforcing = SubtypeChecker::new(&interner).with_query_db(&db);
+    enforcing.enforce_weak_types = true;
+    assert!(!enforcing.is_subtype_of(source, target));
+
+    let key = enforcing.debug_cache_key_for(source, target);
+    assert_eq!(
+        db.lookup_subtype_cache(key),
+        None,
+        "a weak-enforcement-sensitive result must not be memoized in the shared relation cache"
+    );
+}
+
 #[test]
 fn flag_flip_does_not_reuse_stale_cache_entry() {
     // Pin the cache-keying contract end-to-end: insert a result under one

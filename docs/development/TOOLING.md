@@ -171,10 +171,12 @@ family rows are suppressed by default. Pass `--include-stale-detail` only when
 the report is explicitly framed as historical checked-detail triage rather than
 the current public remaining set.
 
-When checked detail and README/public aggregates match, the named rows are still
-aggregate-only evidence. `--freshness-json` reports
-`rowFreshnessProven: false` until the detail artifact carries row-level source
-metadata.
+When checked detail and README/public aggregates match,
+`scripts/emit/emit-snapshot.json` can prove the named rows too. It does so by
+storing the checked-detail row fingerprint and result count beside the public
+summary. `--freshness-json` reports `rowFreshnessProven: true` only when the
+README aggregate, snapshot summary, detail summary, recomputed detail rows, and
+snapshot fingerprint all agree.
 
 ### Mutation Testing
 
