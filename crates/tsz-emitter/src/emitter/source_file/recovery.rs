@@ -453,6 +453,247 @@ impl<'a> Printer<'a> {
         true
     }
 
+    pub(in crate::emitter) fn emit_recovered_this_parameter_initializer_function_declaration(
+        &mut self,
+        node: &Node,
+        func: &FunctionData,
+    ) -> bool {
+        if !self.function_has_recovered_this_parameter_new_initializer(node, func) {
+            return false;
+        }
+
+        self.write("();");
+        self.write_line();
+        if let Some(return_type) = self.recovered_function_return_type_text(func) {
+            self.write(&return_type);
+            self.write_semicolon();
+            self.write_line();
+        }
+        self.emit(func.body);
+        true
+    }
+
+    fn function_has_recovered_this_parameter_new_initializer(
+        &self,
+        node: &Node,
+        func: &FunctionData,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(body_node) = self.arena.get(func.body) else {
+            return false;
+        };
+        let Some(first_param_idx) = func.parameters.nodes.first().copied() else {
+            return false;
+        };
+        let Some(first_param_node) = self.arena.get(first_param_idx) else {
+            return false;
+        };
+        let Some(first_param) = self.arena.get_parameter(first_param_node) else {
+            return false;
+        };
+        if first_param.initializer.is_some() || !self.parameter_name_is_this(first_param.name) {
+            return false;
+        }
+
+        let Some(open_paren) = self.function_parameter_open_paren(func, node, body_node) else {
+            return false;
+        };
+        let Some(close_paren) =
+            Self::matching_close_paren(text, open_paren, body_node.pos as usize)
+        else {
+            return false;
+        };
+        let first_param_end = Self::first_parameter_text_end(text, open_paren + 1, close_paren);
+        let Some(first_param_text) = text.get(open_paren + 1..first_param_end) else {
+            return false;
+        };
+        let Some(equals) = Self::top_level_equals(first_param_text) else {
+            return false;
+        };
+        Self::starts_with_new_call_initializer(&first_param_text[equals + 1..])
+    }
+
+    fn parameter_name_is_this(&self, name: tsz_parser::parser::NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name) else {
+            return false;
+        };
+        if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        crate::safe_slice::slice(text, name_node.pos as usize, name_node.end as usize)
+            .is_ok_and(|name_text| name_text.trim() == "this")
+    }
+
+    fn function_parameter_open_paren(
+        &self,
+        func: &FunctionData,
+        node: &Node,
+        body_node: &Node,
+    ) -> Option<usize> {
+        let text = self.source_text?;
+        let start = if func.name.is_some() {
+            self.arena.get(func.name).map_or(node.pos, |name| name.end)
+        } else {
+            node.pos
+        } as usize;
+        let end = body_node.pos as usize;
+        text.get(start..end)?
+            .as_bytes()
+            .iter()
+            .position(|&byte| byte == b'(')
+            .map(|offset| start + offset)
+    }
+
+    fn matching_close_paren(text: &str, open_paren: usize, limit: usize) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut depth = 0_i32;
+        let end = limit.min(bytes.len());
+        let mut pos = open_paren;
+        while pos < end {
+            match bytes[pos] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(pos);
+                    }
+                }
+                b'"' | b'\'' | b'`' => {
+                    pos = Self::skip_string_like(bytes, pos, end);
+                }
+                b'/' if bytes.get(pos + 1) == Some(&b'/') => {
+                    pos += 2;
+                    while pos < end && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                    continue;
+                }
+                b'/' if bytes.get(pos + 1) == Some(&b'*') => {
+                    pos += 2;
+                    while pos + 1 < end && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                        pos += 1;
+                    }
+                    pos = (pos + 2).min(end);
+                    continue;
+                }
+                _ => {}
+            }
+            pos += 1;
+        }
+        None
+    }
+
+    fn first_parameter_text_end(text: &str, start: usize, close_paren: usize) -> usize {
+        let bytes = text.as_bytes();
+        let mut depth = 0_i32;
+        let mut pos = start;
+        while pos < close_paren {
+            match bytes[pos] {
+                b',' if depth == 0 => return pos,
+                b'(' | b'[' | b'{' | b'<' => depth += 1,
+                b')' | b']' | b'}' | b'>' => depth -= 1,
+                b'"' | b'\'' | b'`' => {
+                    pos = Self::skip_string_like(bytes, pos, close_paren);
+                }
+                b'/' if bytes.get(pos + 1) == Some(&b'/') => {
+                    pos += 2;
+                    while pos < close_paren && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                    continue;
+                }
+                b'/' if bytes.get(pos + 1) == Some(&b'*') => {
+                    pos += 2;
+                    while pos + 1 < close_paren && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                        pos += 1;
+                    }
+                    pos = (pos + 2).min(close_paren);
+                    continue;
+                }
+                _ => {}
+            }
+            pos += 1;
+        }
+        close_paren
+    }
+
+    fn top_level_equals(text: &str) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut depth = 0_i32;
+        let mut pos = 0;
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b'=' if depth == 0 => return Some(pos),
+                b'(' | b'[' | b'{' | b'<' => depth += 1,
+                b')' | b']' | b'}' | b'>' => depth -= 1,
+                b'"' | b'\'' | b'`' => {
+                    pos = Self::skip_string_like(bytes, pos, bytes.len());
+                }
+                _ => {}
+            }
+            pos += 1;
+        }
+        None
+    }
+
+    fn starts_with_new_call_initializer(text: &str) -> bool {
+        let trimmed = text.trim_start();
+        let Some(after_new) = trimmed.strip_prefix("new") else {
+            return false;
+        };
+        if !after_new
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            return false;
+        }
+        let Some(open_paren) = after_new.find('(') else {
+            return false;
+        };
+        let args_start = open_paren + 1;
+        let Some(close_paren) = Self::matching_close_paren(after_new, open_paren, after_new.len())
+        else {
+            return false;
+        };
+        after_new[args_start..close_paren].trim().is_empty()
+            && after_new[close_paren + 1..].trim().is_empty()
+    }
+
+    fn recovered_function_return_type_text(&self, func: &FunctionData) -> Option<String> {
+        let text = self.source_text?;
+        let type_node = self.arena.get(func.type_annotation)?;
+        crate::safe_slice::slice(text, type_node.pos as usize, type_node.end as usize)
+            .ok()
+            .map(str::trim)
+            .filter(|type_text| !type_text.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn skip_string_like(bytes: &[u8], start: usize, limit: usize) -> usize {
+        let quote = bytes[start];
+        let mut pos = start + 1;
+        while pos < limit {
+            if bytes[pos] == b'\\' {
+                pos = (pos + 2).min(limit);
+                continue;
+            }
+            if bytes[pos] == quote {
+                return pos;
+            }
+            pos += 1;
+        }
+        limit
+    }
+
     fn reserved_keyword_text_from_source_span(&self, node: &Node) -> Option<&'static str> {
         let text = self.source_text?;
         let keyword = crate::safe_slice::slice(text, node.pos as usize, node.end as usize)

@@ -34,6 +34,9 @@ pub mod source_map;
 // Comment parsing utilities
 pub mod comments;
 
+// ECMAScript directive-prologue (e.g. `"use strict"`) recognition.
+pub use common::directives;
+
 // Diagnostic codes and message templates (shared by parser and checker)
 pub mod diagnostics;
 
@@ -53,6 +56,9 @@ pub mod perf_counters;
 
 // Centralized file-extension constants and helpers.
 pub mod file_extensions;
+
+// Shared module-resolution primitives (e.g. `typesVersions` selection).
+pub mod module_resolution;
 
 // Char-boundary-safe text windowing helpers (leading-prefix scan caps).
 pub mod text_scan;

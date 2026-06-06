@@ -139,8 +139,30 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
-  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?required_summary=false[\s\S]+?compiler_checks_required=false/,
-  "edited PR events should refresh body/ready-state gates without publishing protected CI Summary",
+  /if \[\[ "\$\{\{ github\.event\.action \}\}" == "edited" \]\]; then[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?metadata_only_skip=true[\s\S]+?compiler_checks_required=false[\s\S]+?fi/,
+  "edited PR events should refresh body/ready-state gates without heavy CI",
+);
+assert.match(
+  ciWorkflow,
+  /accepted_summary_names = \("CI Summary",\) if required_summary else \("CI Summary", "CI Light Summary"\)[\s\S]+?job\.get\("name"\) in accepted_summary_names[\s\S]+?Metadata-only CI mirrors successful \{summary_name\}/,
+  "metadata-only edited runs should require prior full summaries when publishing protected CI Summary",
+);
+assert.match(
+  ciWorkflow,
+  /accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"[\s\S]+?previous \{accepted_summary_label\}/,
+  "metadata-only edited runs should report the accepted prior summary class when no mirror exists",
+);
+
+assert.match(
+  ciWorkflow,
+  /scripts\/ci\/\(ci-resources\|gcp-full-ci\|github-suite\|gcp-cache\|suite-metadata\|build-dist\|dist\|wasm\)/,
+  "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",
+);
+
+assert.match(
+  ciWorkflow,
+  /\\.github\/workflows\/\(ci\|bench\)\\.yml/,
+  "CI workflow changes must require compiler CI because they route native merge queue and Cloud Run jobs",
 );
 
 assert.doesNotMatch(
@@ -155,6 +177,12 @@ assert.doesNotMatch(
   "CI Summary must not treat cancelled required jobs as a neutral protected check",
 );
 
+assert.match(
+  ciWorkflow,
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- project-compile-guard\s*\n\s+- project-compile-canary[\s\S]+?"project-compile-guard",\s*\n\s+"project-compile-canary",/,
+  "CI Summary must wait for the project compile canary before reporting required full-run success",
+);
+
 for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
   assert.match(
     ciWorkflow,
@@ -162,3 +190,21 @@ for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
     `${job} should run on hosted Ubuntu so cheap gates are not blocked by the self-hosted pool`,
   );
 }
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}unit:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?Submit required unit suite to Cloud Build pool[\s\S]+?gcloud builds submit[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-unit\.yaml/,
+  "unit should submit the heavy checker-linking unit suite to Cloud Build",
+);
+
+assert.doesNotMatch(
+  ciWorkflow,
+  /\n\s{2}unit:\n[\s\S]+?Run unit suite on Cloud Run runner/,
+  "unit should not run the checker-linking unit suite directly on 32 GiB Cloud Run workers",
+);
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}unit-cloudbuild:\n[\s\S]+?needs: \[gate, unit\][\s\S]+?UNIT_RESULT: \$\{\{ needs\.unit\.result \}\}[\s\S]+?Required Cloud Build unit job did not pass/,
+  "legacy unit-cloudbuild context should mirror the required Cloud Build unit job",
+);

@@ -89,6 +89,12 @@ impl<'a> CheckerState<'a> {
                     let prop = self.ctx.arena.get_shorthand_property(node)?;
                     return prop.name.is_some().then_some(prop.name);
                 }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    // A shorthand method is both the property name and value.
+                    // Use the declaration so diagnostics display the method
+                    // call signature instead of resolving the name as a value.
+                    return Some(current);
+                }
                 k if k == syntax_kind_ext::RETURN_STATEMENT => {
                     let ret = self.ctx.arena.get_return_statement(node)?;
                     return ret.expression.is_some().then_some(ret.expression);

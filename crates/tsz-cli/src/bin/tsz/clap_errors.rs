@@ -187,7 +187,7 @@ fn get_valid_values_for_option(option_name: &str) -> Option<&'static str> {
         ),
         "jsx" => Some("'preserve', 'react-native', 'react-jsx', 'react-jsxdev', 'react'"),
         "moduleResolution" | "module-resolution" | "moduleresolution" => {
-            Some("'node16', 'nodenext', 'bundler'")
+            Some("'node10', 'classic', 'node16', 'nodenext', 'bundler'")
         }
         "moduleDetection" | "module-detection" | "moduledetection" => {
             Some("'auto', 'legacy', 'force'")

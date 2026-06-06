@@ -530,9 +530,15 @@ impl<'a> CheckerState<'a> {
             .get(var_decl.name)
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .is_some_and(|ident| ident.original_text.is_some());
+        let is_let_name_in_lexical_declaration = var_name.as_deref() == Some("let")
+            && self.ctx.arena.get_variable_declaration_flags(decl_idx) & {
+                use tsz_parser::parser::node_flags;
+                node_flags::LET | node_flags::CONST
+            } != 0;
         if !is_ambient
             && !name_has_unicode_escape
             && self.is_strict_mode_for_node(var_decl.name)
+            && !is_let_name_in_lexical_declaration
             && let Some(ref name) = var_name
             && crate::state_checking::is_strict_mode_reserved_name(name)
             && !(name.as_str() == "arguments" && in_non_ambient_class)
@@ -567,21 +573,13 @@ impl<'a> CheckerState<'a> {
             self.emit_eval_or_arguments_strict_mode_error(var_decl.name, name);
         }
         // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
-        if let Some(ref name) = var_name
-            && name == "let"
-            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-        {
-            use tsz_parser::parser::node_flags;
-            let parent_flags = parent_node.flags as u32;
-            if parent_flags & node_flags::LET != 0 || parent_flags & node_flags::CONST != 0 {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                        var_decl.name,
-                        diagnostic_messages::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
-                        diagnostic_codes::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
-                    );
-            }
+        if is_let_name_in_lexical_declaration {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                var_decl.name,
+                diagnostic_messages::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
+                diagnostic_codes::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
+            );
         }
 
         // TS2397: Declaration name conflicts with built-in global identifier.

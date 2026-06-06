@@ -38,7 +38,17 @@ withTempDir((dir) => {
     filter: "project|single",
     measurement_profile: {
       mode: "release-pgo",
+      tsz_binary_source: "bench-dist",
       generated_at: "2026-05-20T00:00:00.000Z",
+      profile_guided_optimization: {
+        requested: true,
+        required: true,
+        optimized: true,
+        profile_fingerprint: "profile-abc123",
+        training_fingerprint: "training-def456",
+        training_input_count: 12,
+        training_failure_count: 0,
+      },
     },
     results: [
       {
@@ -197,6 +207,14 @@ withTempDir((dir) => {
   assert.deepEqual(report.measurement_profile, {
     present: true,
     mode: "release-pgo",
+    tsz_binary_source: "bench-dist",
+    pgo_requested: true,
+    pgo_required: true,
+    pgo_optimized: true,
+    profile_fingerprint: "profile-abc123",
+    training_fingerprint: "training-def456",
+    training_input_count: 12,
+    training_failure_count: 0,
     warning: null,
   });
   assert.deepEqual(report.duplicate_rows, []);
@@ -262,6 +280,38 @@ withTempDir((dir) => {
 withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
   writeJson(input, {
+    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    measurement_profile: {
+      mode: "release-pgo",
+      tsz_binary_source: "bench-dist",
+      profile_guided_optimization: {
+        requested: true,
+        required: true,
+        optimized: false,
+      },
+    },
+    results: [],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  assert.deepEqual(report.measurement_profile, {
+    present: true,
+    mode: "release-pgo",
+    tsz_binary_source: "bench-dist",
+    pgo_requested: true,
+    pgo_required: true,
+    pgo_optimized: false,
+    profile_fingerprint: null,
+    training_fingerprint: null,
+    training_input_count: null,
+    training_failure_count: null,
+    warning: "release-pgo metadata missing pgo optimized flag, profile fingerprint, training fingerprint",
+  });
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
     results: [
       {
         name: "BCT candidates=200",
@@ -281,6 +331,15 @@ withTempDir((dir) => {
         winner: "tsgo",
         factor: 1.06,
       },
+      {
+        name: "200 generic functions",
+        lines: 4200,
+        kb: 120,
+        tsz_ms: 396.48,
+        tsgo_ms: 404.57,
+        winner: "tsz",
+        factor: 1.02,
+      },
     ],
   });
 
@@ -294,18 +353,25 @@ withTempDir((dir) => {
     byName.get("200 classes").loss_closure.attribution_command,
     /TSZ_PERF_COUNTERS=1 .*<generated-200-classes>\.ts/,
   );
+  assert.match(
+    report.target_gaps
+      .find((row) => row.name === "200 generic functions")
+      .loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-200-generic-functions>\.ts/,
+  );
   assert.deepEqual(report.totals.missing_attribution_rows, [
     "200 classes",
     "BCT candidates=200",
   ]);
   assert.deepEqual(
     report.target_gaps.map((row) => row.name),
-    ["BCT candidates=200", "200 classes"],
+    ["BCT candidates=200", "200 classes", "200 generic functions"],
   );
-  assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_below_target, 3);
   assert.equal(report.two_x_target.rows_with_attribution, 0);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, [
     "200 classes",
+    "200 generic functions",
     "BCT candidates=200",
   ]);
 });
@@ -458,6 +524,14 @@ withTempDir((dir) => {
   assert.deepEqual(report.measurement_profile, {
     present: false,
     mode: null,
+    tsz_binary_source: null,
+    pgo_requested: null,
+    pgo_required: null,
+    pgo_optimized: null,
+    profile_fingerprint: null,
+    training_fingerprint: null,
+    training_input_count: null,
+    training_failure_count: null,
     warning: "measurement_profile missing",
   });
   // 6 rows excluded due to missing phase/exit metadata or artifact_missing

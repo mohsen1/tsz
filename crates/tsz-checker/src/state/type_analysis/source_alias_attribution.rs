@@ -93,9 +93,10 @@ pub(crate) fn record_source_alias_rejection_kinds(
 ///   `"a"|"b"`); a distribution into object-typed members keeps the name.
 /// - A **conditional** or **indexed access** resolves away into its branch /
 ///   element type and never carries the alias's `aliasSymbol`, so tsc renders
-///   the evaluated underlying type. Object results are excluded because a
-///   shared object shape is painted through the reverse `find_def_for_type`
-///   lookup, where marking it would mis-route the alias name.
+///   the evaluated underlying type, including bare object and mapped shapes.
+///   Unions/intersections that mix in objects stay deferred to the separate
+///   elaboration path; directly-written aliases sharing a bare object shape are
+///   protected by the def store's "direct wins" provenance.
 pub(crate) fn alias_declaration_body_is_computed(
     arena: &NodeArena,
     db: &dyn TypeDatabase,
@@ -116,7 +117,7 @@ pub(crate) fn alias_declaration_body_is_computed(
         syntax_kind_ext::CONDITIONAL_TYPE | syntax_kind_ext::INDEXED_ACCESS_TYPE => {
             !crate::query_boundaries::common::is_conditional_type(db, result)
                 && !crate::query_boundaries::common::is_index_access_type(db, result)
-                && !crate::query_boundaries::diagnostics::union_or_intersection_mentions_object(
+                && !crate::query_boundaries::diagnostics::union_or_intersection_with_object(
                     db, result,
                 )
         }

@@ -42,6 +42,7 @@ import sys
 import argparse
 import re
 import json
+import hashlib
 from collections import Counter
 from pathlib import Path
 
@@ -49,6 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
 
 DETAIL_FILE = Path(__file__).parent / "emit-detail.json"
+SNAPSHOT_FILE = Path(__file__).parent / "emit-snapshot.json"
 ROOT_DIR = Path(__file__).resolve().parents[2]
 README_FILE = ROOT_DIR / "README.md"
 
@@ -164,6 +166,14 @@ def load_detail():
     return load_snapshot(DETAIL_FILE, "Run: ./scripts/emit/run.sh --json-out")
 
 
+def load_emit_snapshot(path=SNAPSHOT_FILE):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except OSError:
+        return None
+
+
 def emit_summary(data):
     summary = data.get("summary", {})
     return {
@@ -199,11 +209,157 @@ def emit_summary_from_readme_text(text):
     return summary if required.issubset(summary) else None
 
 
+def emit_snapshot_summary(snapshot):
+    if not snapshot:
+        return None
+    summary = snapshot.get("summary")
+    if not summary:
+        return None
+    required = {"jsPass", "jsTotal", "dtsPass", "dtsTotal"}
+    return emit_summary({"summary": summary}) if required.issubset(summary) else None
+
+
 def emit_summary_from_readme(path=README_FILE):
     try:
         return emit_summary_from_readme_text(path.read_text())
     except OSError:
         return None
+
+
+def emit_detail_row_summary(data):
+    results = data.get("results")
+    if not isinstance(results, list):
+        return None
+
+    summary = {
+        "jsPass": 0,
+        "jsFail": 0,
+        "jsSkip": 0,
+        "jsTimeout": 0,
+        "dtsPass": 0,
+        "dtsFail": 0,
+        "dtsSkip": 0,
+    }
+    for result in results:
+        js_status = result.get("jsStatus")
+        dts_status = result.get("dtsStatus")
+        if js_status == "pass":
+            summary["jsPass"] += 1
+        elif js_status == "fail":
+            summary["jsFail"] += 1
+        elif js_status == "timeout":
+            summary["jsFail"] += 1
+            summary["jsTimeout"] += 1
+        else:
+            summary["jsSkip"] += 1
+
+        if dts_status == "pass":
+            summary["dtsPass"] += 1
+        elif dts_status == "fail":
+            summary["dtsFail"] += 1
+        elif dts_status == "timeout":
+            summary["dtsFail"] += 1
+        else:
+            summary["dtsSkip"] += 1
+
+    summary["jsTotal"] = summary["jsPass"] + summary["jsFail"]
+    summary["dtsTotal"] = summary["dtsPass"] + summary["dtsFail"]
+    return summary
+
+
+def emit_detail_rows_match_summary(data):
+    row_summary = emit_detail_row_summary(data)
+    detail_summary = data.get("summary", {})
+    if row_summary is None:
+        return False
+
+    keys = (
+        "jsPass",
+        "jsFail",
+        "jsSkip",
+        "jsTimeout",
+        "jsTotal",
+        "dtsPass",
+        "dtsFail",
+        "dtsSkip",
+        "dtsTotal",
+    )
+    return all(row_summary.get(key) == detail_summary.get(key) for key in keys)
+
+
+def emit_detail_row_fingerprint(data):
+    results = data.get("results")
+    if not isinstance(results, list):
+        return None
+
+    rows = []
+    for result in results:
+        rows.append({
+            "baselineFile": result.get("baselineFile"),
+            "dtsError": result.get("dtsError"),
+            "dtsStatus": result.get("dtsStatus"),
+            "jsError": result.get("jsError"),
+            "jsStatus": result.get("jsStatus"),
+            "name": result.get("name"),
+            "testPath": result.get("testPath"),
+        })
+    encoded = json.dumps(
+        sorted(rows, key=lambda row: (
+            row.get("name") or "",
+            row.get("baselineFile") or "",
+            row.get("testPath") or "",
+        )),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def emit_row_freshness(data, public_summary):
+    snapshot = load_emit_snapshot()
+    snapshot_summary = emit_snapshot_summary(snapshot)
+    detail_summary = emit_summary(data)
+    row_fingerprint = emit_detail_row_fingerprint(data)
+    snapshot_fingerprint = (snapshot or {}).get("detailFingerprint")
+    expected_count = (snapshot or {}).get("detailResultCount")
+    actual_count = len(data.get("results", [])) if isinstance(data.get("results"), list) else None
+    rows_match_summary = emit_detail_rows_match_summary(data)
+
+    proven = (
+        rows_match_summary
+        and row_fingerprint is not None
+        and row_fingerprint == snapshot_fingerprint
+        and expected_count == actual_count
+        and snapshot_summary == detail_summary
+        and snapshot_summary == public_summary
+    )
+
+    if proven:
+        evidence = "emit-snapshot-detail-fingerprint"
+    elif snapshot_fingerprint is None:
+        evidence = "missing-snapshot-fingerprint"
+    elif row_fingerprint != snapshot_fingerprint:
+        evidence = "snapshot-fingerprint-mismatch"
+    elif not rows_match_summary:
+        evidence = "detail-rows-summary-mismatch"
+    elif expected_count != actual_count:
+        evidence = "detail-result-count-mismatch"
+    elif snapshot_summary != detail_summary:
+        evidence = "snapshot-summary-mismatch"
+    elif snapshot_summary != public_summary:
+        evidence = "snapshot-public-summary-mismatch"
+    else:
+        evidence = "unproven"
+
+    return {
+        "proven": proven,
+        "evidence": evidence,
+        "detailFingerprint": row_fingerprint,
+        "snapshotFingerprint": snapshot_fingerprint,
+        "detailResultCount": actual_count,
+        "snapshotDetailResultCount": expected_count,
+        "detailRowsMatchSummary": rows_match_summary,
+    }
 
 
 def emit_freshness_note(detail_summary, public_summary):
@@ -250,18 +406,33 @@ def emit_freshness_status(detail_summary, public_summary):
     return {"state": "aggregate-match", **status}
 
 
-def emit_freshness_report(detail_summary, public_summary):
+def emit_freshness_report(detail_summary, public_summary, detail_data=None):
     status = emit_freshness_status(detail_summary, public_summary)
+    aggregate_matches_public = status["state"] == "aggregate-match"
+    row_freshness = (
+        emit_row_freshness(detail_data, public_summary)
+        if detail_data is not None and aggregate_matches_public
+        else None
+    )
+    row_freshness_proven = bool(row_freshness and row_freshness["proven"])
     return {
         "state": status["state"],
         "detailSummary": detail_summary,
         "publicSummary": public_summary,
         "detailIsCurrent": emit_detail_is_current(status),
+        "detailAggregateMatchesPublic": aggregate_matches_public,
+        "rowFreshnessProven": row_freshness_proven,
+        "rowFreshnessEvidence": (
+            row_freshness["evidence"]
+            if row_freshness is not None
+            else ("aggregate-only" if aggregate_matches_public else status["state"])
+        ),
+        "rowFreshness": row_freshness,
         "jsPassDelta": status.get("jsPassDelta"),
         "dtsPassDelta": status.get("dtsPassDelta"),
         "jsTotalDelta": status.get("jsTotalDelta"),
         "dtsTotalDelta": status.get("dtsTotalDelta"),
-        "message": emit_freshness_status_line_from_status(status),
+        "message": emit_freshness_status_line_from_report(status, row_freshness),
     }
 
 
@@ -269,6 +440,21 @@ def emit_freshness_status_line(data):
     detail_summary = emit_summary(data)
     public_summary = emit_summary_from_readme()
     status = emit_freshness_status(detail_summary, public_summary)
+    row_freshness = (
+        emit_row_freshness(data, public_summary)
+        if status["state"] == "aggregate-match"
+        else None
+    )
+    return emit_freshness_status_line_from_report(status, row_freshness)
+
+
+def emit_freshness_status_line_from_report(status, row_freshness):
+    if status["state"] == "aggregate-match" and row_freshness and row_freshness["proven"]:
+        return (
+            "Emit detail freshness: row-proven "
+            "(README/public aggregate matches checked detail; "
+            "emit-snapshot fingerprint matches detail rows)."
+        )
     return emit_freshness_status_line_from_status(status)
 
 
@@ -378,7 +564,7 @@ def print_emit_freshness_status(data):
 def print_emit_freshness_json(data):
     print(
         json.dumps(
-            emit_freshness_report(emit_summary(data), emit_summary_from_readme()),
+            emit_freshness_report(emit_summary(data), emit_summary_from_readme(), data),
             sort_keys=True,
         )
     )
@@ -580,10 +766,11 @@ def failure_count_by_surface(data, surface):
     return sum(len(results) for results in collect_failures_by_family(data, surface).values())
 
 
-def failure_family_report(data, top=20, include_stale_detail=False):
-    detail_summary = emit_summary(data)
+def failure_family_report(data, top=20, include_stale_detail=False, freshness_data=None):
+    freshness_data = freshness_data or data
+    detail_summary = emit_summary(freshness_data)
     public_summary = emit_summary_from_readme()
-    freshness = emit_freshness_report(detail_summary, public_summary)
+    freshness = emit_freshness_report(detail_summary, public_summary, freshness_data)
     families_suppressed = freshness["state"] == "stale" and not include_stale_detail
 
     surfaces = []
@@ -611,26 +798,37 @@ def failure_family_report(data, top=20, include_stale_detail=False):
     }
 
 
-def print_failure_families_json(data, top=20, include_stale_detail=False):
+def print_failure_families_json(data, top=20, include_stale_detail=False, freshness_data=None):
     print(
         json.dumps(
-            failure_family_report(data, top=top, include_stale_detail=include_stale_detail),
+            failure_family_report(
+                data,
+                top=top,
+                include_stale_detail=include_stale_detail,
+                freshness_data=freshness_data,
+            ),
             sort_keys=True,
         )
     )
 
 
-def show_failure_families(data, top=20, include_stale_detail=False):
+def show_failure_families(data, top=20, include_stale_detail=False, freshness_data=None):
     print("Emit failure families")
     print()
-    detail_summary = emit_summary(data)
+    freshness_data = freshness_data or data
+    detail_summary = emit_summary(freshness_data)
     public_summary = emit_summary_from_readme()
     freshness_status = emit_freshness_status(detail_summary, public_summary)
     if freshness_status["state"] == "stale" and not include_stale_detail:
         print_stale_failure_family_guard(detail_summary, public_summary)
         return
 
-    print_emit_freshness_note(data)
+    if freshness_status["state"] == "aggregate-match":
+        print(emit_freshness_status_line(freshness_data))
+        print()
+    else:
+        print_emit_freshness_note(freshness_data)
+
     for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
         families = collect_failures_by_family(data, surface)
         rows = sorted(
@@ -753,9 +951,19 @@ def main():
     elif args.top_errors:
         show_top_errors(filtered_data, args.top)
     elif args.families_json:
-        print_failure_families_json(filtered_data, args.top, args.include_stale_detail)
+        print_failure_families_json(
+            filtered_data,
+            args.top,
+            args.include_stale_detail,
+            freshness_data=data,
+        )
     elif args.families:
-        show_failure_families(filtered_data, args.top, args.include_stale_detail)
+        show_failure_families(
+            filtered_data,
+            args.top,
+            args.include_stale_detail,
+            freshness_data=data,
+        )
     elif args.close:
         show_close(filtered_data, args.top)
     elif args.status:

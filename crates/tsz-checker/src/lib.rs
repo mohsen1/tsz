@@ -228,6 +228,12 @@ mod heritage_constraint_structural_name_lookup_arch_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "tests/higher_order_regeneralization_tests.rs"]
+mod higher_order_regeneralization_tests;
+#[cfg(test)]
+#[path = "tests/homomorphic_mapped_member_override_tests.rs"]
+mod homomorphic_mapped_member_override_tests;
+#[cfg(test)]
 #[path = "../tests/imported_generator_iterable_tests.rs"]
 mod imported_generator_iterable_tests;
 #[cfg(test)]
@@ -618,6 +624,9 @@ mod class_static_side_relation_routing_arch_tests;
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
 #[cfg(test)]
+#[path = "tests/computed_alias_source_display_tests.rs"]
+mod computed_alias_source_display_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
@@ -722,6 +731,9 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
 mod fresh_const_array_mutable_assignment_tests;
+#[cfg(test)]
+#[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
+mod fresh_object_literal_union_literal_kind_display_tests;
 #[cfg(test)]
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
@@ -948,6 +960,9 @@ mod mapped_infer_with_substitution_tests;
 #[path = "tests/mapped_intersection_excess_property_tests.rs"]
 mod mapped_intersection_excess_property_tests;
 #[cfg(test)]
+#[path = "tests/mapped_optional_target_excess_property_tests.rs"]
+mod mapped_optional_target_excess_property_tests;
+#[cfg(test)]
 #[path = "tests/mapped_true_base_constraint_relation_routing_arch_tests.rs"]
 mod mapped_true_base_constraint_relation_routing_arch_tests;
 #[cfg(test)]
@@ -1071,6 +1086,9 @@ mod property_receiver_display_recursion_overflow_tests;
 #[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
 mod property_receiver_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/recursive_accumulator_depth_tests.rs"]
+mod recursive_accumulator_depth_tests;
+#[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
 #[cfg(test)]
@@ -1167,6 +1185,9 @@ mod ts18048_unary_arithmetic_nullish_tests;
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
 #[cfg(test)]
+#[path = "tests/ts2322_readonly_array_element_elaboration_tests.rs"]
+mod ts2322_readonly_array_element_elaboration_tests;
+#[cfg(test)]
 #[path = "tests/ts2322_same_generic_type_argument_elaboration_tests.rs"]
 mod ts2322_same_generic_type_argument_elaboration_tests;
 #[cfg(test)]
@@ -1220,6 +1241,9 @@ mod union_multi_overload_unified_sig_tests;
 #[cfg(test)]
 #[path = "tests/unique_symbol_assignment_ts2322_tests.rs"]
 mod unique_symbol_assignment_ts2322_tests;
+#[cfg(test)]
+#[path = "tests/variadic_tuple_alias_display_tests.rs"]
+mod variadic_tuple_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;

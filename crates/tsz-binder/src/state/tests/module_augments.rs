@@ -116,6 +116,40 @@ declare module "mylib" {
     );
 }
 
+#[test]
+fn declare_global_function_is_cross_file_global() {
+    // A function declared inside `declare global` in an external module is a
+    // value-level global. It must be visible through file_locals so later
+    // cross-file binders and declaration emit can resolve calls to it.
+    let (binder, _parser) = parse_and_bind(
+        r#"
+export {};
+declare global {
+    interface AmbientResult {}
+    function makeAmbientResult(): AmbientResult;
+}
+"#,
+    );
+
+    let sym_id = binder
+        .file_locals
+        .get("makeAmbientResult")
+        .expect("declare global function should be visible through file_locals");
+    let symbol = binder
+        .get_symbol(sym_id)
+        .expect("declare global function symbol exists");
+    assert!(
+        symbol.has_any_flags(symbol_flags::FUNCTION),
+        "declare global function should keep FUNCTION flags"
+    );
+    assert!(
+        binder
+            .global_augmentations
+            .contains_key("makeAmbientResult"),
+        "declare global function should be tracked as a global augmentation"
+    );
+}
+
 // Regression for #6164: a `declare module "<self>"` augmentation must bind its
 // interface declaration to a separate `SymbolId` from the file-scope interface
 // of the same name. Merging the augmentation's declaration node into the

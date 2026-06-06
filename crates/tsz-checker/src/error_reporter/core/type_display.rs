@@ -1,75 +1,15 @@
 //! Core type display and formatting utilities for error reporting.
 
 mod annotation_format;
+mod recursion_guard;
 
 use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
+pub(in crate::error_reporter::core) use recursion_guard::DisplayRecursionGuard;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
-
-/// Maximum nesting depth for the diagnostic display normalization passes.
-///
-/// Before a type is handed to the solver's diagnostic formatter, the checker
-/// runs cosmetic normalization passes over it (resolving `Lazy` references,
-/// widening fresh literals, re-applying display aliases, materializing finite
-/// mapped types, stripping excess-property wrappers). These passes recurse
-/// structurally through applications, unions, intersections, and object shapes,
-/// and re-enter on each resolved/evaluated `Lazy` reference. On deeply
-/// self-expanding generic types — e.g. the higher-kinded middleware-mutator
-/// chains in `zustand` / `jotai` / `arktype`, where `Mutate<S, [...]>` peels one
-/// tuple element and nests another `StoreMutators[...]` application per step —
-/// that recursion never reaches a non-lazy fixpoint and overflows the worker
-/// stack (issue #12455).
-///
-/// The downstream formatter already truncates nested type printing at depth 8
-/// (`max_depth`) and elides long property-receiver objects by depth 26, so any
-/// normalization performed below this bound is never observable in the rendered
-/// diagnostic. Capping the passes here therefore bottoms out the recursion
-/// without changing any displayed output: once the limit is reached the type is
-/// returned unchanged (the cosmetic normalization is simply skipped for the
-/// unreachable depths). The bound is chosen far above the formatter's visible
-/// depth so realistic diagnostics are unaffected, yet far below the thousands of
-/// frames required to exhaust the worker stack.
-const MAX_DIAGNOSTIC_DISPLAY_RECURSION_DEPTH: u32 = 100;
-
-thread_local! {
-    static DISPLAY_RECURSION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// RAII guard that bounds the recursion depth of the diagnostic display
-/// normalization passes (see [`MAX_DIAGNOSTIC_DISPLAY_RECURSION_DEPTH`]).
-///
-/// A single shared thread-local counter spans every mutually-recursive display
-/// normalization function, so the total stack depth across them is bounded even
-/// when one pass re-enters another. The depth is decremented on `Drop`, so every
-/// return path — including early exits — is accounted for without threading a
-/// depth parameter through each call site.
-pub(in crate::error_reporter::core) struct DisplayRecursionGuard;
-
-impl DisplayRecursionGuard {
-    /// Enter one level of display-normalization recursion.
-    ///
-    /// Returns `None` once the depth cap is reached; the caller must then leave
-    /// the type unchanged (return `ty` / `None`) instead of recursing further.
-    pub(in crate::error_reporter::core) fn enter() -> Option<Self> {
-        DISPLAY_RECURSION_DEPTH.with(|depth| {
-            if depth.get() >= MAX_DIAGNOSTIC_DISPLAY_RECURSION_DEPTH {
-                None
-            } else {
-                depth.set(depth.get() + 1);
-                Some(Self)
-            }
-        })
-    }
-}
-
-impl Drop for DisplayRecursionGuard {
-    fn drop(&mut self) {
-        DISPLAY_RECURSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
-    }
-}
 
 impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn sanitize_type_annotation_text_for_diagnostic(
@@ -1610,6 +1550,34 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::type_contains_string_literal(self.ctx.types, type_id)
     }
 
+    /// True when `type_id` is — or, recursively, has a union member that is — a
+    /// unit literal type whose widened primitive base equals `primitive_base`
+    /// (one of `string` / `number` / `boolean` / `bigint`).
+    ///
+    /// Generalizes the string-literal-only acceptance test used when deciding
+    /// whether to preserve a fresh source literal in an assignment mismatch
+    /// display. It mirrors the per-kind constituent check in tsc's
+    /// `isLiteralOfContextualType`: the source literal is kept only when the
+    /// contextual target carries a literal of the matching primitive base, so a
+    /// numeric source against a string-literal target still widens.
+    ///
+    /// When `primitive_base` is not itself a primitive base (e.g. the source was
+    /// not a literal) no literal member can match and this returns `false`,
+    /// preserving the prior widening behavior for non-literal sources.
+    pub(in crate::error_reporter) fn type_contains_literal_of_primitive_base(
+        &self,
+        type_id: TypeId,
+        primitive_base: TypeId,
+    ) -> bool {
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
+            return members.iter().any(|&member| {
+                self.type_contains_literal_of_primitive_base(member, primitive_base)
+            });
+        }
+        let widened = query::widen_literal_to_primitive(self.ctx.types, type_id);
+        widened != type_id && widened == primitive_base
+    }
+
     pub(in crate::error_reporter) fn literal_expression_display(
         &self,
         expr_idx: NodeIndex,
@@ -1640,7 +1608,15 @@ impl<'a> CheckerState<'a> {
                     .replace('\t', "\\t");
                 Some(format!("\"{escaped}\""))
             }
-            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+            // Numeric and bigint literals render from their scanned token text
+            // verbatim. The bigint token value carries the trailing `n` (e.g.
+            // `1n`), matching tsc; without the bigint case a fresh object-literal
+            // `bigint` property (interned in widened form) could not have its
+            // literal text resurrected and displayed as `bigint` where tsc shows
+            // `1n`.
+            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16 =>
+            {
                 let lit = self.ctx.arena.get_literal(node)?;
                 Some(lit.text.clone())
             }

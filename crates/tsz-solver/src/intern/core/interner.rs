@@ -521,6 +521,33 @@ pub struct TypeInterner {
     pub(super) instance_id: u32,
 }
 
+/// Entry-count snapshot for retained `TypeInterner` predicate caches.
+///
+/// These caches memoize immutable per-`TypeId` content predicates. The snapshot
+/// is observability-only: it does not change cache keys, invalidation, fuel, or
+/// predicate answers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TypePredicateCacheStatistics {
+    /// Number of memoized identity-comparability predicate results.
+    pub identity_comparable_cache_entries: usize,
+    /// Number of memoized `ThisType` containment predicate results.
+    pub contains_this_cache_entries: usize,
+    /// Number of memoized `infer` containment predicate results.
+    pub contains_infer_cache_entries: usize,
+    /// Number of memoized `typeof` query containment predicate results.
+    pub contains_type_query_cache_entries: usize,
+    /// Number of memoized type-parameter containment predicate results.
+    pub contains_type_params_cache_entries: usize,
+    /// Number of memoized lazy-or-recursive containment predicate results.
+    pub contains_lazy_or_recursive_cache_entries: usize,
+    /// Number of memoized unresolved-application containment predicate results.
+    pub contains_unresolved_application_cache_entries: usize,
+    /// Number of memoized resolver-dependent containment predicate results.
+    pub contains_resolver_dependent_cache_entries: usize,
+    /// Number of memoized conditional-type containment predicate results.
+    pub contains_conditional_cache_entries: usize,
+}
+
 impl std::fmt::Debug for TypeInterner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TypeInterner")
@@ -530,6 +557,24 @@ impl std::fmt::Debug for TypeInterner {
 }
 
 impl TypeInterner {
+    /// Capture retained predicate-cache entry counts for perf attribution.
+    #[must_use]
+    pub fn type_predicate_cache_statistics(&self) -> TypePredicateCacheStatistics {
+        TypePredicateCacheStatistics {
+            identity_comparable_cache_entries: self.identity_comparable_cache.len(),
+            contains_this_cache_entries: self.contains_this_cache.len(),
+            contains_infer_cache_entries: self.contains_infer_cache.len(),
+            contains_type_query_cache_entries: self.contains_type_query_cache.len(),
+            contains_type_params_cache_entries: self.contains_type_params_cache.len(),
+            contains_lazy_or_recursive_cache_entries: self.contains_lazy_or_recursive_cache.len(),
+            contains_unresolved_application_cache_entries: self
+                .contains_unresolved_application_cache
+                .len(),
+            contains_resolver_dependent_cache_entries: self.contains_resolver_dependent_cache.len(),
+            contains_conditional_cache_entries: self.contains_conditional_cache.len(),
+        }
+    }
+
     /// Create a new type interner with pre-registered intrinsics.
     ///
     /// Uses lazy initialization for all `DashMap` structures to minimize
@@ -727,7 +772,10 @@ impl TypeInterner {
 
     /// Register a DefId as belonging to a boxed type.
     pub fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
-        self.boxed_def_ids.entry(kind).or_default().push(def_id);
+        let mut def_ids = self.boxed_def_ids.entry(kind).or_default();
+        if !def_ids.contains(&def_id) {
+            def_ids.push(def_id);
+        }
     }
 
     /// Check if a DefId corresponds to a boxed type of the given kind.

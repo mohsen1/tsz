@@ -87,6 +87,52 @@ fn class_boundary_no_erase_generic_probes_use_relation_outcome_boundary() {
 }
 
 #[test]
+fn interface_heritage_member_fallbacks_use_named_diagnostic_relation_guards() {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/classes/interface_heritage_index_compat.rs"),
+    )
+    .expect("failed to read interface_heritage_index_compat.rs");
+
+    let nongeneric_override_helper = source
+        .split("pub(super) fn nongeneric_input_only_generic_override_is_valid")
+        .nth(1)
+        .and_then(|tail| tail.split("fn single_call_signature_return_type").next())
+        .expect("failed to isolate nongeneric override fallback helper");
+    assert!(
+        nongeneric_override_helper
+            .contains("diagnostic_relation_boolean_guard_bivariant(derived, base)"),
+        "non-generic override fallback should name the bivariant diagnostic boolean guard"
+    );
+    assert!(
+        nongeneric_override_helper.contains(
+            "diagnostic_relation_boolean_guard_no_erase_generics(derived_return, base_return)"
+        ),
+        "non-generic override fallback should name the no-erase return diagnostic boolean guard"
+    );
+    assert!(
+        !nongeneric_override_helper.contains("is_assignable_to_bivariant(")
+            && !nongeneric_override_helper.contains("is_assignable_to_no_erase_generics("),
+        "non-generic override fallback should not embed raw relation predicates"
+    );
+
+    let this_member_helper = source
+        .split("pub(super) fn this_member_override_is_polymorphic")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(super) fn type_base_def_id").next())
+        .expect("failed to isolate polymorphic this fallback helper");
+    assert!(
+        this_member_helper
+            .contains("diagnostic_relation_boolean_guard_no_erase_generics(derived, base_member)"),
+        "polymorphic-this fallback should name the no-erase diagnostic boolean guard"
+    );
+    assert!(
+        !this_member_helper.contains("is_assignable_to_no_erase_generics("),
+        "polymorphic-this fallback should not embed a raw no-erase relation predicate"
+    );
+}
+
+#[test]
 fn class_coinductive_return_cycle_param_check_uses_relation_outcome_boundary() {
     let source = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src/query_boundaries/class.rs"),

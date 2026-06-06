@@ -498,6 +498,11 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        if self
+            .type_literal_dispatch_index_is_declared_key_subset(data.object_type, data.index_type)
+        {
+            return;
+        }
 
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -517,6 +522,15 @@ impl<'a> CheckerState<'a> {
 
         if index_type != TypeId::ERROR
             && self.type_literal_ast_key_space_accepts_index(data.object_type, index_type)
+        {
+            return;
+        }
+        if index_type != TypeId::ERROR
+            && self.nested_type_literal_index_access_allows_index(
+                data.object_type,
+                data.index_type,
+                index_type,
+            )
         {
             return;
         }

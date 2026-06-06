@@ -1,4 +1,6 @@
 {
+  "detailFingerprint": "sha256:ae915601e209085f2b623861b2958c2ad662e48802127c28bc065a4ba0422ed0",
+  "detailResultCount": 13531,
   "summary": {
     "jsTotal": 13530,
     "jsPass": 13468,

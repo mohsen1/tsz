@@ -143,94 +143,99 @@ impl<'a> CheckerState<'a> {
             self.contextual_param_types_from_instantiated_params(instantiated_params, args.len())
         };
 
-        let prev_preserve_literals_retry = self.ctx.preserve_literal_types;
-        let prev_in_const_assertion_retry = self.ctx.in_const_assertion;
-        self.ctx.preserve_literal_types = true;
-        if Self::signature_const_type_params_require_readonly_argument_context(
-            self.ctx.types,
-            &sig.type_params,
-        ) {
-            self.ctx.in_const_assertion = true;
-        }
-        let refreshed_arg_types = if used_return_context_sub {
-            let tracked_type_params: rustc_hash::FxHashSet<_> =
-                sig.type_params.iter().map(|tp| tp.name).collect();
-            let mut progressive_sub = retry_substitution.unwrap_or_else(TypeSubstitution::new);
-            let mut progressive_args = Vec::with_capacity(args.len());
-            for (i, &arg_idx) in args.iter().enumerate() {
-                let contextual_type =
-                    self.instantiated_contextual_param_type_at(&sig.params, i, &progressive_sub);
-                let arg_type = self.compute_single_call_argument_type(
-                    arg_idx,
-                    contextual_type,
-                    false,
-                    i,
-                    args.len(),
-                    true,
-                    sig_callable_ctx,
-                );
-                let arg_for_refinement = contextual_type
-                    .map(|expected| {
-                        self.instantiate_generic_function_argument_against_target_params(
-                            arg_type, expected,
-                        )
-                    })
-                    .unwrap_or(arg_type);
-                progressive_args.push(arg_for_refinement);
-                if let Some(shape_param) = sig.params.get(i).map(|p| p.type_id).or_else(|| {
-                    let last = sig.params.last()?;
-                    last.rest.then_some(last.type_id)
-                }) {
-                    let mut arg_substitution = TypeSubstitution::new();
-                    let mut visited = rustc_hash::FxHashSet::default();
-                    self.collect_return_context_substitution(
-                        shape_param,
-                        arg_for_refinement,
-                        &tracked_type_params,
-                        &mut arg_substitution,
-                        &mut visited,
-                    );
-                    for (&name, &ty) in arg_substitution.map() {
-                        if ty == TypeId::UNKNOWN
-                            || ty == TypeId::ERROR
-                            || self.target_contains_blocking_return_context_type_params(
-                                ty,
-                                &tracked_type_params,
-                            )
+        let retry_requires_readonly_argument_context =
+            Self::signature_const_type_params_require_readonly_argument_context(
+                self.ctx.types,
+                &sig.type_params,
+            );
+        let refreshed_arg_types = self.with_overload_contextual_retry_inference_context(
+            retry_requires_readonly_argument_context,
+            |this| {
+                if used_return_context_sub {
+                    let tracked_type_params: rustc_hash::FxHashSet<_> =
+                        sig.type_params.iter().map(|tp| tp.name).collect();
+                    let mut progressive_sub =
+                        retry_substitution.unwrap_or_else(TypeSubstitution::new);
+                    let mut progressive_args = Vec::with_capacity(args.len());
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        let contextual_type = this.instantiated_contextual_param_type_at(
+                            &sig.params,
+                            i,
+                            &progressive_sub,
+                        );
+                        let arg_type = this.compute_single_call_argument_type(
+                            arg_idx,
+                            contextual_type,
+                            false,
+                            i,
+                            args.len(),
+                            true,
+                            sig_callable_ctx,
+                        );
+                        let arg_for_refinement = contextual_type
+                            .map(|expected| {
+                                this.instantiate_generic_function_argument_against_target_params(
+                                    arg_type, expected,
+                                )
+                            })
+                            .unwrap_or(arg_type);
+                        progressive_args.push(arg_for_refinement);
+                        if let Some(shape_param) =
+                            sig.params.get(i).map(|p| p.type_id).or_else(|| {
+                                let last = sig.params.last()?;
+                                last.rest.then_some(last.type_id)
+                            })
                         {
-                            continue;
-                        }
-                        if return_sub_for_retry.get(name).is_some() {
-                            continue;
-                        }
-                        let should_update = match progressive_sub.get(name) {
-                            None => true,
-                            Some(existing) if existing == ty => false,
-                            Some(existing) => {
-                                existing == TypeId::UNKNOWN
-                                    || existing == TypeId::ERROR
-                                    || contains_type_parameters(self.ctx.types, existing)
-                                    || contains_infer_types(self.ctx.types, existing)
+                            let mut arg_substitution = TypeSubstitution::new();
+                            let mut visited = rustc_hash::FxHashSet::default();
+                            this.collect_return_context_substitution(
+                                shape_param,
+                                arg_for_refinement,
+                                &tracked_type_params,
+                                &mut arg_substitution,
+                                &mut visited,
+                            );
+                            for (&name, &ty) in arg_substitution.map() {
+                                if ty == TypeId::UNKNOWN
+                                    || ty == TypeId::ERROR
+                                    || this.target_contains_blocking_return_context_type_params(
+                                        ty,
+                                        &tracked_type_params,
+                                    )
+                                {
+                                    continue;
+                                }
+                                if return_sub_for_retry.get(name).is_some() {
+                                    continue;
+                                }
+                                let should_update = match progressive_sub.get(name) {
+                                    None => true,
+                                    Some(existing) if existing == ty => false,
+                                    Some(existing) => {
+                                        existing == TypeId::UNKNOWN
+                                            || existing == TypeId::ERROR
+                                            || contains_type_parameters(this.ctx.types, existing)
+                                            || contains_infer_types(this.ctx.types, existing)
+                                    }
+                                };
+                                if should_update {
+                                    progressive_sub.insert(name, ty);
+                                }
                             }
-                        };
-                        if should_update {
-                            progressive_sub.insert(name, ty);
                         }
                     }
+                    progressive_args
+                } else {
+                    this.collect_call_argument_types_with_context(
+                        args,
+                        |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
+                        false,
+                        None,
+                        sig_callable_ctx,
+                    )
                 }
-            }
-            progressive_args
-        } else {
-            self.collect_call_argument_types_with_context(
-                args,
-                |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
-                false,
-                None,
-                sig_callable_ctx,
-            )
-        };
-        self.ctx.preserve_literal_types = prev_preserve_literals_retry;
-        self.ctx.in_const_assertion = prev_in_const_assertion_retry;
+            },
+        );
 
         let (retry_result, retry_predicate, _) = self.resolve_call_with_checker_adapter(
             resolved_func_type,
@@ -263,5 +268,24 @@ impl<'a> CheckerState<'a> {
             self.rollback_overload_retry_state(&before_retry_snap);
             None
         }
+    }
+
+    fn with_overload_contextual_retry_inference_context<R>(
+        &mut self,
+        requires_readonly_argument_context: bool,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous_preserve_literals = self.ctx.preserve_literal_types;
+        let previous_in_const_assertion = self.ctx.in_const_assertion;
+        self.ctx.preserve_literal_types = true;
+        if requires_readonly_argument_context {
+            self.ctx.in_const_assertion = true;
+        }
+
+        let result = f(self);
+
+        self.ctx.preserve_literal_types = previous_preserve_literals;
+        self.ctx.in_const_assertion = previous_in_const_assertion;
+        result
     }
 }

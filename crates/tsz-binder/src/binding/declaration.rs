@@ -237,6 +237,16 @@ impl BinderState {
 
                 let sym_id =
                     self.declare_symbol(arena, name, symbol_flags::FUNCTION, idx, is_exported);
+                if self.in_global_augmentation {
+                    self.file_locals.set(name.to_string(), sym_id);
+                    Arc::make_mut(&mut self.global_augmentations)
+                        .entry(name.to_string())
+                        .or_default()
+                        .push(crate::state::GlobalAugmentation::new(
+                            idx,
+                            symbol_flags::FUNCTION,
+                        ));
+                }
                 let tp_count = func
                     .type_parameters
                     .as_ref()

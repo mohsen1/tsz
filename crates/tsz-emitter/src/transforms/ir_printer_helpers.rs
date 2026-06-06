@@ -18,6 +18,14 @@ impl<'a> IRPrinter<'a> {
         rest.parse::<u32>().ok().map(|idx| idx + 1)
     }
 
+    pub(super) fn temp_name_for_counter(index: u32) -> String {
+        if index < 26 {
+            format!("_{}", (b'a' + index as u8) as char)
+        } else {
+            format!("_{}", index - 26)
+        }
+    }
+
     /// Check if a body source range represents a single-line block in the source text.
     /// Uses brace depth counting to find the matching `}` and skips leading trivia.
     /// Check if a source range is on a single line (for object literals, etc.)
