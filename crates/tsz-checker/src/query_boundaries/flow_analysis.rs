@@ -406,6 +406,19 @@ pub(crate) fn narrow_to_falsy(
     narrowing.narrow_to_falsy(type_id)
 }
 
+/// Apply truthiness narrowing with the caller's active flow narrowing context.
+///
+/// The checker owns deciding that the condition matches the target reference.
+/// The boundary owns constructing the solver truthiness guard and applying it
+/// through the semantic narrowing engine.
+pub(crate) fn narrow_to_truthy_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    is_true_branch: bool,
+) -> TypeId {
+    narrow_with_guard_in_context(narrowing, type_id, &TypeGuard::Truthy, is_true_branch)
+}
+
 /// Narrow a union by whether a property path is truthy/falsy.
 ///
 /// The checker owns extracting the property path from syntax and deciding

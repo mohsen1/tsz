@@ -289,6 +289,47 @@ fn condition_guard_application_uses_flow_query_boundary() {
 }
 
 #[test]
+fn condition_truthiness_payload_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let condition_truthiness_fn = compact_condition
+        .split("fnnarrow_logical_assignment_condition(")
+        .next()
+        .and_then(|before_assignment| before_assignment.split("_=>{letcondition_ref=").nth(1))
+        .expect("failed to locate condition truthiness narrowing body");
+    let logical_assignment_body = compact_condition
+        .split("ifcrate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(")
+        .nth(1)
+        .expect("failed to locate logical assignment truthiness body");
+
+    assert!(
+        compact_boundary.contains("fnnarrow_to_truthy_in_context(")
+            && compact_boundary.contains("&TypeGuard::Truthy"),
+        "flow analysis boundary should own truthiness guard payload construction"
+    );
+    assert!(
+        condition_truthiness_fn.contains("flow_query::narrow_to_truthy_in_context(")
+            && logical_assignment_body.contains("flow_query::narrow_to_truthy_in_context("),
+        "condition truthiness callers should route truthiness payloads through the flow query boundary"
+    );
+    assert!(
+        !condition_truthiness_fn.contains("&TypeGuard::Truthy")
+            && !logical_assignment_body.contains("&TypeGuard::Truthy"),
+        "condition truthiness callers should not construct solver truthiness payloads locally"
+    );
+}
+
+#[test]
 fn condition_property_truthiness_uses_flow_query_boundary() {
     let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
         .expect("failed to read condition narrowing source");
