@@ -276,8 +276,11 @@ impl ParserState {
         // Check for ... prefix (rest parameter)
         let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
 
-        // Parse name
-        let name = self.parse_identifier();
+        // Parse name. A named tuple member label is an *identifier name*, so any
+        // keyword or reserved word is a legal label (tsc parses it with
+        // `parseIdentifierName`). Using `parse_identifier` here would wrongly
+        // reject `[in: T]`, `[function: T]`, `[...new: T[]]`, etc. with TS1359.
+        let name = self.parse_identifier_name();
 
         // Check for optional marker
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
