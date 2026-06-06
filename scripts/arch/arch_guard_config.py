@@ -237,7 +237,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted 3202→3197 after generic predicate-target instantiation
         # moved five flow/narrowing substitution queries through
         # query_boundaries::flow_analysis instead of the broad common barrel.
-        3197,
+        #
+        # Ratcheted 3197→3191 after assignment flow operator/property/literal
+        # queries moved through query_boundaries::flow_analysis.
+        3191,
     ),
 ]
 

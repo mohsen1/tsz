@@ -5,12 +5,11 @@
 //! Used by `get_assigned_type` in `assignment.rs` for flow-sensitive narrowing.
 
 use super::FlowAnalyzer;
-use crate::query_boundaries::common::{
-    TypeSubstitution, construct_signatures_for_type, instantiate_type,
-};
 use crate::query_boundaries::flow_analysis::{
-    call_signatures_for_type, function_return_type, get_application_info, is_promise_like_type,
-    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
+    TypeSubstitution, call_signatures_for_type, construct_signatures_for_type,
+    function_return_type, get_application_info, instantiate_type, is_promise_like_type,
+    literal_value, union_members_for_type, unwrap_promise_type_argument,
+    widen_literal_to_primitive,
 };
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_common::interner::Atom;
@@ -371,9 +370,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
         if let Some(computed) = self.arena.get_computed_property(name_node) {
             let key_type = self.fallback_expression_type_from_syntax(computed.expression)?;
-            if let Some(literal) =
-                crate::query_boundaries::common::literal_value(self.interner, key_type)
-            {
+            if let Some(literal) = literal_value(self.interner, key_type) {
                 return Some(match literal {
                     tsz_solver::LiteralValue::Number(value) => {
                         self.interner.intern_string(&value.0.to_string())
