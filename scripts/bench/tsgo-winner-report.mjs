@@ -469,6 +469,75 @@ function missingAttributionPlanForRow(row) {
   };
 }
 
+function markdownValue(value) {
+  if (value == null || value === "") return "n/a";
+  return String(value).replaceAll("|", "\\|");
+}
+
+function formatNumber(value, digits = 2) {
+  const number = asNumber(value);
+  return number == null ? "n/a" : number.toFixed(digits);
+}
+
+export function renderMissingAttributionPlanMarkdown(report) {
+  const target = report?.two_x_target ?? {};
+  const rows = Array.isArray(target.missing_attribution_plan)
+    ? target.missing_attribution_plan
+    : [];
+  const lines = [
+    "# 2x Target Gap Attribution Plan",
+    "",
+    `Generated: ${markdownValue(report?.generated_at)}`,
+    `Source: ${markdownValue(report?.source?.path)}`,
+    "",
+    "| Metric | Value |",
+    "| --- | ---: |",
+    `| Eligible green rows | ${markdownValue(target.eligible_green_rows)} |`,
+    `| Rows below 2x target | ${markdownValue(target.rows_below_target)} |`,
+    `| Project rows below 2x target | ${markdownValue(target.project_rows_below_target)} |`,
+    `| Rows with attribution | ${markdownValue(target.rows_with_attribution)} |`,
+    `| Missing attribution rows | ${rows.length} |`,
+    "",
+  ];
+
+  if (rows.length === 0) {
+    lines.push("All current 2x target gap rows have attribution evidence.", "");
+    return `${lines.join("\n")}\n`;
+  }
+
+  lines.push(
+    "| Rank | Row | Speedup vs tsgo | Gap factor | Owner | Issue |",
+    "| ---: | --- | ---: | ---: | --- | --- |",
+  );
+  rows.forEach((row, index) => {
+    lines.push(
+      `| ${index + 1} | \`${markdownValue(row.name)}\` | ${formatNumber(row.tsz_speedup_vs_tsgo)}x | ${formatNumber(row.target_gap_factor)}x | ${markdownValue(row.owner)} | ${row.url ? `[${markdownValue(row.issue)}](${row.url})` : markdownValue(row.issue)} |`,
+    );
+  });
+
+  lines.push("");
+  rows.forEach((row, index) => {
+    lines.push(
+      `## ${index + 1}. ${markdownValue(row.name)}`,
+      "",
+      `Owner: ${markdownValue(row.owner)}`,
+      `Semantic family: ${markdownValue(row.semantic_owner_family)}`,
+      `Attribution status: ${markdownValue(row.attribution_warning)}`,
+      "",
+    );
+    if (row.attribution_command) {
+      lines.push("Attribution command:", "", "```bash", row.attribution_command, "```", "");
+    } else {
+      lines.push("Attribution command: n/a", "");
+    }
+    if (row.timing_command) {
+      lines.push("Timing command:", "", "```bash", row.timing_command, "```", "");
+    }
+  });
+
+  return `${lines.join("\n")}\n`;
+}
+
 function targetGapFactor(speedup) {
   if (speedup == null || speedup <= 0) return null;
   return TARGET_TSZ_SPEEDUP / speedup;
@@ -654,25 +723,37 @@ export function writeTsgoWinnerReport(inputPath, outputPath) {
   return report;
 }
 
+export function writeMissingAttributionPlan(report, outputPath) {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, renderMissingAttributionPlanMarkdown(report));
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [inputPath, outputPath] = process.argv.slice(2);
+  const [inputPath, outputPath, attributionPlanPath] = process.argv.slice(2);
 
   if (!inputPath || !outputPath) {
-    console.error("usage: tsgo-winner-report.mjs <bench-results.json> <output.json>");
+    console.error("usage: tsgo-winner-report.mjs <bench-results.json> <output.json> [missing-attribution.md]");
     process.exit(2);
   }
 
   const report = writeTsgoWinnerReport(inputPath, outputPath);
-  console.log(
-    [
-      `green tsgo winners: ${report.totals.green_tsgo_winners}`,
-      `project green tsgo winners: ${report.totals.project_green_tsgo_winners}`,
-      `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
-      `2x target gaps with attribution: ${report.two_x_target.rows_with_attribution}/${report.two_x_target.rows_below_target}`,
-      `2x target gaps with attribution commands: ${report.two_x_target.rows_with_attribution_command}/${report.two_x_target.rows_below_target}`,
-      `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
-    ].join("\n"),
-  );
+  if (attributionPlanPath) {
+    writeMissingAttributionPlan(report, attributionPlanPath);
+  }
+  const outputLines = [
+    `green tsgo winners: ${report.totals.green_tsgo_winners}`,
+    `project green tsgo winners: ${report.totals.project_green_tsgo_winners}`,
+    `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
+    `2x target gaps with attribution: ${report.two_x_target.rows_with_attribution}/${report.two_x_target.rows_below_target}`,
+    `2x target gaps with attribution commands: ${report.two_x_target.rows_with_attribution_command}/${report.two_x_target.rows_below_target}`,
+    `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
+  ];
+  if (attributionPlanPath) {
+    outputLines.push(
+      `missing attribution plan: ${path.relative(process.cwd(), attributionPlanPath).split(path.sep).join("/")}`,
+    );
+  }
+  console.log(outputLines.join("\n"));
 
   if (report.totals.duplicate_project_rows > 0) {
     console.error(
