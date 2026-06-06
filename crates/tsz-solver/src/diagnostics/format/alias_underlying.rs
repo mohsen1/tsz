@@ -62,6 +62,13 @@ pub fn type_alias_displayed_as_underlying(
         if def_store.is_computed_body(body)
             && !crate::type_queries::union_or_intersection_mentions_object(interner, body)
         {
+            // A computed *application* body (a reducing-bodied utility
+            // application such as `DeepReadonly<Config>`, issue #10914) must
+            // render its *evaluated* structural result, not the raw `Name<Args>`
+            // application form, so both display pipelines agree on `{ … }`.
+            if matches!(interner.lookup(body), Some(TypeData::Application(_))) {
+                return alias_resolved_body_underlying(interner, body);
+            }
             return Some(body);
         }
         match interner.lookup(body) {
