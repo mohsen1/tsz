@@ -269,6 +269,18 @@ pub(crate) fn narrow_with_guard(
     narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
 }
 
+/// Apply a solver-owned type guard using the caller's active flow narrowing
+/// context. This preserves the flow pass's resolver and shared narrowing cache
+/// while keeping the guard application behind the query boundary.
+pub(crate) fn narrow_with_guard_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    guard: &TypeGuard,
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
+}
+
 /// Apply a runtime `typeof` result to a flow type.
 ///
 /// The checker owns recognizing `typeof x === "..."` or switch-case syntax and
@@ -392,6 +404,20 @@ pub(crate) fn narrow_to_falsy(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_to_falsy(type_id)
+}
+
+/// Narrow a union by whether a property path is truthy/falsy.
+///
+/// The checker owns extracting the property path from syntax and deciding
+/// whether a `never` result is admissible for a non-union source. The solver
+/// owns evaluating property truthiness across the type.
+pub(crate) fn narrow_by_property_truthiness_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_by_property_truthiness(type_id, property_path, is_true_branch)
 }
 
 /// Narrow a value to the object-like branch of an `instanceof`-style check.

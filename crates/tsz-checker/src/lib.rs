@@ -1098,6 +1098,9 @@ mod recursive_alias_application_target_display_tests;
 #[path = "tests/recursive_callable_infer_cycle_tests.rs"]
 mod recursive_callable_infer_cycle_tests;
 #[cfg(test)]
+#[path = "tests/recursive_conditional_infer_termination_tests.rs"]
+mod recursive_conditional_infer_termination_tests;
+#[cfg(test)]
 #[path = "tests/recursive_generic_arrow_tests.rs"]
 mod recursive_generic_arrow_tests;
 #[cfg(test)]
@@ -1172,6 +1175,9 @@ mod this_context_self_type_tests;
 #[cfg(test)]
 #[path = "tests/this_void_method_call_tests.rs"]
 mod this_void_method_call_tests;
+#[cfg(test)]
+#[path = "tests/truthiness_promise_coercion_tests.rs"]
+mod truthiness_promise_coercion_tests;
 #[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;

@@ -34,6 +34,9 @@
 # - PR #12702 run 27037509191 at exact head 591b1dee210f found six rows
 #   unlisted and eleven previous accepted rows resolved after the recovered
 #   generic-parameter-tail parser fix.
+# - PR #12748 run 27057787055 at synthetic merge bf33f5f1ef found four
+#   current-main rows still failing on exact-head aggregate after rebasing on
+#   current main.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
@@ -48,8 +51,8 @@ TypeScript/tests/cases/compiler/letInConstDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
 TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
-TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/strictModeReservedWord.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts

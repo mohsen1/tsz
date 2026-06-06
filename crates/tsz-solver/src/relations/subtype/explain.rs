@@ -392,6 +392,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             resolved_target = eval_target;
         }
 
+        // A type-parameter source matches none of the structural arms below —
+        // it has no object/tuple/union/primitive shape of its own — and tsc
+        // always elaborates `T <: X` through `T`'s base constraint regardless
+        // of the target shape (primitive, object, union, evaluated conditional,
+        // ...). Surface that constraint relation before the shape-specific arms
+        // so the chain reaches the real root instead of collapsing to a bare
+        // `TypeMismatch`/`NoUnionMemberMatches` line.
+        if let Some(reason) =
+            self.explain_type_parameter_constraint_failure(source, resolved_source, resolved_target)
+        {
+            return Some(reason);
+        }
+
         if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
@@ -1094,6 +1107,68 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         Some(SubtypeFailureReason::TypeMismatch {
             source_type: source,
             target_type: target,
+        })
+    }
+
+    /// Elaborate a failed `T <: X` relation (where `T` is a type parameter)
+    /// through `T`'s declared base constraint, mirroring tsc's
+    /// `getBaseConstraintOfType` elaboration.
+    ///
+    /// The structural rule: a type parameter is assignable to a target only
+    /// through its constraint, so when the relation fails the constraint must
+    /// also fail against the (evaluated) target. Surface that constraint-level
+    /// relation as the nested reason so the diagnostic chain reaches the real
+    /// root (`Type '<constraint>' is not assignable to type 'X'.` and deeper)
+    /// instead of stopping at `Type 'T' is not assignable to type 'X'.`.
+    ///
+    /// Independent of the target shape (primitive, object, union, evaluated
+    /// conditional, ...) and of any identifier spelling — it operates purely
+    /// over the constraint TypeId. Unconstrained type parameters carry an
+    /// implicit `unknown` constraint for which tsc adds no elaboration line, so
+    /// they fall through to the bare `TypeMismatch` fallback.
+    fn explain_type_parameter_constraint_failure(
+        &mut self,
+        source: TypeId,
+        resolved_source: TypeId,
+        resolved_target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let info = crate::visitor::type_param_info(self.interner, resolved_source)?;
+        let constraint = info.constraint?;
+
+        // When the *target* is itself a (bare) type parameter, tsc does not
+        // elaborate through the source constraint — it reports the
+        // `'U' could be instantiated with an arbitrary type ...` caveat instead,
+        // which a separate path owns. Adding a constraint chain on top of that
+        // caveat would diverge from tsc, so leave those failures alone.
+        if is_type_parameter(self.interner, resolved_target) {
+            return None;
+        }
+
+        let resolved_constraint = self.resolve_lazy_type(constraint);
+
+        // A constraint that reinterns to the parameter itself carries no extra
+        // information; avoid emitting a degenerate self-referential chain.
+        if resolved_constraint == resolved_source || resolved_constraint == source {
+            return None;
+        }
+
+        // The relation has already failed. If the constraint nonetheless
+        // relates to the target, the parameter failed for a reason other than
+        // its constraint (e.g. variance or positional identity); there is no
+        // constraint-level root to surface, so defer to the bare fallback.
+        if self
+            .check_subtype(resolved_constraint, resolved_target)
+            .is_true()
+        {
+            return None;
+        }
+
+        let nested = self.explain_failure_guarded(resolved_constraint, resolved_target)?;
+        Some(SubtypeFailureReason::TypeParameterConstraintMismatch {
+            source_type: source,
+            target_type: resolved_target,
+            constraint_type: resolved_constraint,
+            nested_reason: Box::new(nested),
         })
     }
 

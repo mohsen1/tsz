@@ -184,6 +184,9 @@ impl<'a> Printer<'a> {
         if self.try_emit_invalid_let_of_array_for_recovery(node, loop_stmt) {
             return;
         }
+        if self.try_emit_typed_for_body_call_recovery(node, loop_stmt) {
+            return;
+        }
 
         // Check if the for initializer has `using` that needs lowering.
         // `for (using d1 = expr, d2 = expr2;;) { body }`

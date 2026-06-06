@@ -541,7 +541,6 @@ checker_integration_test_names() {
 run_unit_tests() {
   ci_section "Workspace nextest suites"
   local package package_names checker_selected general_pkg_args
-  local checker_batch_size checker_batch_names checker_batch_args
   mapfile -t package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
@@ -564,14 +563,24 @@ run_unit_tests() {
   fi
 
   if (( checker_selected )); then
-    # The checker lib-test binary is larger than the 32 GiB CI runners can
-    # link reliably. Keep checker integration tests in unit CI while avoiding
-    # that monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
-    #
-    # Cargo also struggles when one command asks it to link every checker
-    # integration target. Batch the declared targets so each `cargo test
-    # --no-run` phase has a bounded link set while preserving the same test
-    # coverage.
+    if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
+      echo "info: skipping checker integration tests in Cloud Run unit job"
+      return 0
+    fi
+    run_checker_integration_tests
+  fi
+}
+
+run_checker_integration_tests() {
+  ci_section "Checker integration nextest suites"
+  local checker_batch_size checker_batch_names checker_batch_args
+  # The checker lib-test binary is larger than the 32 GiB CI runners can link
+  # reliably. Keep checker integration tests in unit CI while avoiding that
+  # monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
+  #
+  # Cargo also struggles when one command asks it to link every checker
+  # integration target. Batch the declared targets so each `cargo test
+  # --no-run` phase has a bounded link set while preserving the same coverage.
     checker_batch_size="${TSZ_CI_CHECKER_TEST_BATCH_SIZE:-40}"
     if ! [[ "$checker_batch_size" =~ ^[0-9]+$ ]] || (( checker_batch_size < 1 )); then
       echo "error: TSZ_CI_CHECKER_TEST_BATCH_SIZE must be a positive integer" >&2
@@ -603,7 +612,6 @@ run_unit_tests() {
         --build-jobs "$CARGO_BUILD_JOBS" \
         -p tsz-checker "${checker_batch_args[@]}"
     fi
-  fi
 }
 
 build_unit_test_archive() {
@@ -1426,6 +1434,9 @@ main() {
       ;;
     unit)
       timed run_unit_tests run_unit_tests
+      ;;
+    checker-integration)
+      timed run_checker_integration_tests run_checker_integration_tests
       ;;
     unit-shard)
       timed run_unit_shard run_unit_shard

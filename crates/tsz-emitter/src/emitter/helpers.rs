@@ -1124,6 +1124,11 @@ impl<'a> Printer<'a> {
                     self.estimate_object_rest_assignment_pattern_temps(binary.left, source_simple);
             }
 
+            if self.arena.get_class(node).is_some() {
+                self.push_class_static_initializer_temp_children(node, &mut stack);
+                continue;
+            }
+
             if self.is_logical_assignment_temp_scope_boundary(node) {
                 continue;
             }
@@ -1134,6 +1139,28 @@ impl<'a> Printer<'a> {
         }
 
         count
+    }
+
+    fn push_class_static_initializer_temp_children(&self, node: &Node, stack: &mut Vec<NodeIndex>) {
+        let Some(class) = self.arena.get_class(node) else {
+            return;
+        };
+
+        for &member_idx in &class.members.nodes {
+            let Some(member) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member) else {
+                continue;
+            };
+            if !self.arena.is_static(&prop.modifiers) || prop.initializer.is_none() {
+                continue;
+            }
+            stack.push(prop.initializer);
+        }
     }
 
     fn estimate_object_rest_assignment_pattern_temps(
