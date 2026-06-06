@@ -240,7 +240,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3197→3191 after assignment flow operator/property/literal
         # queries moved through query_boundaries::flow_analysis.
-        3191,
+        #
+        # Ratcheted 3191→3174 after assignment numeric display shape queries
+        # moved through query_boundaries::diagnostics.
+        3174,
     ),
 ]
 
