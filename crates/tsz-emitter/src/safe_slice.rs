@@ -92,6 +92,17 @@ pub fn slice(s: &str, start: usize, end: usize) -> Result<&str, SliceError> {
     Ok(&s[start..end])
 }
 
+/// Return whether the byte span contains a line break.
+///
+/// Invalid spans return `false`, matching recovery/trivia callers that should
+/// simply skip malformed ranges instead of panicking during emit.
+pub fn span_contains_line_break(s: &str, start: usize, end: usize) -> bool {
+    let Ok(text) = slice(s, start, end) else {
+        return false;
+    };
+    text.bytes().any(|byte| byte == b'\n' || byte == b'\r')
+}
+
 #[cfg(test)]
 #[path = "../tests/safe_slice.rs"]
 mod tests;

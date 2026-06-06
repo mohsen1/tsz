@@ -2,7 +2,10 @@
 use super::state::{CONTEXT_FLAG_IN_BLOCK, IncrementalParseResult, ParserState};
 use crate::parser::{
     NodeIndex, NodeList,
-    node::{BlockData, QualifiedNameData, SourceFileData, VariableData, VariableDeclarationData},
+    node::{
+        BlockData, QualifiedNameData, RecoveredTypeofMemberCallData, SourceFileData, VariableData,
+        VariableDeclarationData,
+    },
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::diagnostic_codes;
@@ -1087,6 +1090,7 @@ impl ParserState {
             VariableData {
                 modifiers,
                 declarations: self.make_node_list(vec![declaration_list]),
+                recovered_typeof_member_calls: Vec::new(),
             },
         )
     }
@@ -1139,6 +1143,7 @@ impl ParserState {
 
         // Parse declarations with enhanced error recovery
         let mut declarations = Vec::new();
+        let mut recovered_typeof_member_calls = Vec::new();
         let mut had_decl_expected_error = false;
         loop {
             // Check if we can start a variable declaration
@@ -1699,6 +1704,7 @@ impl ParserState {
                     }
                     if was_dot && token_is_keyword(self.token()) {
                         use tsz_common::diagnostics::diagnostic_messages;
+                        let recovered_keyword = self.token();
                         let word = self.current_keyword_text();
                         let msg =
                             diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
@@ -1718,6 +1724,7 @@ impl ParserState {
                             && !self.scanner.has_preceding_line_break()
                         {
                             self.next_token(); // consume `(`
+                            let argument_pos = self.token_full_start();
                             let mut paren_depth = 1u32;
                             while !matches!(
                                 self.token(),
@@ -1731,6 +1738,14 @@ impl ParserState {
                                     SyntaxKind::CloseParenToken => {
                                         paren_depth -= 1;
                                         if paren_depth == 0 {
+                                            if recovered_keyword == SyntaxKind::TypeOfKeyword {
+                                                recovered_typeof_member_calls.push(
+                                                    RecoveredTypeofMemberCallData {
+                                                        argument_pos,
+                                                        argument_end: self.token_pos(),
+                                                    },
+                                                );
+                                            }
                                             self.next_token();
                                             break;
                                         }
@@ -1840,6 +1855,7 @@ impl ParserState {
             VariableData {
                 modifiers: None,
                 declarations: self.make_node_list(declarations),
+                recovered_typeof_member_calls,
             },
             flags,
         )

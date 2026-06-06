@@ -2,6 +2,7 @@ use super::super::Printer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn object_literal_last_shorthand_continuation_tail(
@@ -56,5 +57,54 @@ impl<'a> Printer<'a> {
         }
         let tail = crate::safe_slice::slice(source, search_start + dot_pos, tail_end).ok()?;
         Some(format!(": {tail}"))
+    }
+
+    pub(in crate::emitter) fn object_literal_needs_newline_after_shorthand_before_generator(
+        &self,
+        prop: NodeIndex,
+        next_prop: NodeIndex,
+    ) -> bool {
+        let Some(prop_node) = self.arena.get(prop) else {
+            return false;
+        };
+        if prop_node.kind != syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+            return false;
+        }
+        let Some(shorthand) = self.arena.get_shorthand_property(prop_node) else {
+            return false;
+        };
+        if shorthand.equals_token || shorthand.object_assignment_initializer != NodeIndex::NONE {
+            return false;
+        }
+        let Some(name_node) = self.arena.get(shorthand.name) else {
+            return false;
+        };
+        let is_contextual_accessor_name = name_node.kind == SyntaxKind::GetKeyword as u16
+            || name_node.kind == SyntaxKind::SetKeyword as u16
+            || self
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| matches!(ident.escaped_text.as_str(), "get" | "set"));
+        if !is_contextual_accessor_name {
+            return false;
+        }
+
+        let Some(next_node) = self.arena.get(next_prop) else {
+            return false;
+        };
+        if next_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return false;
+        }
+        let Some(method) = self.arena.get_method_decl(next_node) else {
+            return false;
+        };
+        method.asterisk_token
+            || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                next_node.pos,
+                self.arena
+                    .get(method.body)
+                    .map_or(next_node.end, |body| body.pos),
+            )
     }
 }

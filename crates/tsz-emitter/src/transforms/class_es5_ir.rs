@@ -647,7 +647,11 @@ impl<'a> ES5ClassTransformer<'a> {
             if comment.end as usize > end {
                 break;
             }
-            if !source_text[comment_start..comment.pos as usize].contains('\n') {
+            if !crate::safe_slice::span_contains_line_break(
+                source_text,
+                comment_start,
+                comment.pos as usize,
+            ) {
                 continue;
             }
             let text = &source_text[comment.pos as usize..comment.end as usize];

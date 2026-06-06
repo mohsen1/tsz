@@ -213,7 +213,7 @@ impl<'a> Printer<'a> {
             })
     }
 
-    pub(super) fn class_has_static_computed_method_or_accessor_comma_expr(
+    pub(in crate::emitter) fn class_has_static_computed_method_or_accessor_comma_expr(
         &self,
         class: &ClassData,
         class_idx: NodeIndex,

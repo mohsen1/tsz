@@ -359,7 +359,23 @@ REGEX_LINE_COUNT_CHECKS = [
         "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
-        6,
+        4,
+    ),
+    (
+        "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "emitter"
+            / "statements"
+            / "recovered_variable_statement.rs"
+        ],
+        re.compile(
+            r"\b(?:find_source_pattern_outside_quoted_text|find_matching_source_paren|skip_quoted_source_text)\b"
+        ),
+        0,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
