@@ -134,6 +134,11 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        if self.scoped_static_super_value_write_as_comma {
+            self.emit_scoped_static_super_value_assignment_comma(member, operator, right);
+            return true;
+        }
+
         self.emit_scoped_static_super_value_iife(|this| {
             let key_temp = if operator == SyntaxKind::EqualsToken as u16 {
                 None
@@ -182,6 +187,11 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        if self.scoped_static_super_value_write_as_comma {
+            self.emit_scoped_static_super_value_update_comma(member, operator, is_prefix);
+            return true;
+        }
+
         self.emit_scoped_static_super_value_iife(|this| {
             let key_temp = this.scoped_static_super_element_key_temp(member);
             let result_temp = this.make_unique_name();
@@ -221,6 +231,74 @@ impl<'a> Printer<'a> {
             this.write_semicolon();
         });
         true
+    }
+
+    fn emit_scoped_static_super_value_assignment_comma(
+        &mut self,
+        member: &StaticSuperMember,
+        operator: u16,
+        right: NodeIndex,
+    ) {
+        let key_temp = if operator == SyntaxKind::EqualsToken as u16 {
+            None
+        } else {
+            self.scoped_static_super_element_key_temp(member)
+        };
+        let result_temp = self.make_unique_name_hoisted();
+
+        self.write("(");
+        self.emit_scoped_static_super_set_start_with_key(member, key_temp.as_deref(), true);
+        self.write(&result_temp);
+        self.write(" = ");
+        if operator == SyntaxKind::EqualsToken as u16 {
+            self.emit(right);
+        } else {
+            self.emit_scoped_static_super_get_with_key(member, key_temp.as_deref(), false);
+            self.write(" ");
+            self.write(self.static_super_compound_base_operator(operator));
+            self.write(" ");
+            self.emit(right);
+        }
+        self.emit_scoped_static_super_set_end();
+        self.write(", ");
+        self.write(&result_temp);
+        self.write(")");
+    }
+
+    fn emit_scoped_static_super_value_update_comma(
+        &mut self,
+        member: &StaticSuperMember,
+        operator: u16,
+        is_prefix: bool,
+    ) {
+        let key_temp = self.scoped_static_super_element_key_temp(member);
+        let result_temp = self.make_unique_name_hoisted();
+        let value_temp = self.make_unique_name_hoisted();
+        let op_text = get_operator_text(operator);
+
+        self.write("(");
+        self.emit_scoped_static_super_set_start_with_key(member, key_temp.as_deref(), true);
+        self.write("(");
+        self.write(&value_temp);
+        self.write(" = ");
+        self.emit_scoped_static_super_get_with_key(member, key_temp.as_deref(), false);
+        self.write(", ");
+        self.write(&result_temp);
+        self.write(" = ");
+        if is_prefix {
+            self.write(op_text);
+            self.write(&value_temp);
+        } else {
+            self.write(&value_temp);
+            self.write(op_text);
+            self.write(", ");
+            self.write(&value_temp);
+        }
+        self.write(")");
+        self.emit_scoped_static_super_set_end();
+        self.write(", ");
+        self.write(&result_temp);
+        self.write(")");
     }
 
     fn emit_scoped_static_super_value_iife(&mut self, emit_body: impl FnOnce(&mut Self)) {

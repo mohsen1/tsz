@@ -821,6 +821,14 @@ impl<'a> CheckerState<'a> {
     /// - Checks type literals for call/construct signatures with parameter properties
     /// - Recursively checks nested types (arrays, unions, intersections, etc.)
     pub(crate) fn check_type_for_parameter_properties(&mut self, type_idx: NodeIndex) {
+        self.check_type_param_props(type_idx, true);
+    }
+
+    pub(crate) fn check_type_alias_body_for_parameter_properties(&mut self, type_idx: NodeIndex) {
+        self.check_type_param_props(type_idx, false);
+    }
+
+    fn check_type_param_props(&mut self, type_idx: NodeIndex, include_indexed_access: bool) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
@@ -829,6 +837,19 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::FUNCTION_TYPE
             || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
         {
+            // Push the function type's own type parameters into scope before
+            // recursing into parameter/return annotations. Annotations may
+            // reference them (e.g. `<T extends Base>() => T["x"]`); without the
+            // scope, resolving the indexed-access object `T` would emit a
+            // spurious TS2304. Mirrors `check_type_node`'s function-type arm.
+            let fn_type_parameters = self
+                .ctx
+                .arena
+                .get_function_type(node)
+                .map(|ft| ft.type_parameters.clone());
+            let fn_type_param_updates = fn_type_parameters
+                .as_ref()
+                .map(|tps| self.push_type_parameters(tps).1);
             if let Some(func_type) = self.ctx.arena.get_function_type(node) {
                 // Check each parameter for parameter property modifiers
                 self.check_strict_mode_reserved_parameter_names(
@@ -842,7 +863,10 @@ impl<'a> CheckerState<'a> {
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     {
                         if param.type_annotation.is_some() {
-                            self.check_type_for_parameter_properties(param.type_annotation);
+                            self.check_type_param_props(
+                                param.type_annotation,
+                                include_indexed_access,
+                            );
                         }
                         self.maybe_report_implicit_any_parameter(param, false, pi);
                     }
@@ -880,7 +904,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Recursively check the return type
-                self.check_type_for_parameter_properties(func_type.type_annotation);
+                self.check_type_param_props(func_type.type_annotation, include_indexed_access);
+            }
+            if let Some(updates) = fn_type_param_updates {
+                self.pop_type_parameters(updates);
             }
         }
         // Check type literals (object types) for call/construct signatures and duplicate properties
@@ -921,40 +948,145 @@ impl<'a> CheckerState<'a> {
         // Recursively check array types, union types, intersection types, etc.
         else if node.kind == syntax_kind_ext::ARRAY_TYPE {
             if let Some(arr) = self.ctx.arena.get_array_type(node) {
-                self.check_type_for_parameter_properties(arr.element_type);
+                self.check_type_param_props(arr.element_type, include_indexed_access);
             }
         } else if node.kind == syntax_kind_ext::UNION_TYPE
             || node.kind == syntax_kind_ext::INTERSECTION_TYPE
         {
             if let Some(composite) = self.ctx.arena.get_composite_type(node) {
                 for &type_idx in &composite.types.nodes {
-                    self.check_type_for_parameter_properties(type_idx);
+                    self.check_type_param_props(type_idx, include_indexed_access);
                 }
             }
         } else if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
             if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
-                self.check_type_for_parameter_properties(cond.check_type);
-                self.check_type_for_parameter_properties(cond.extends_type);
-                self.check_type_for_parameter_properties(cond.true_type);
-                self.check_type_for_parameter_properties(cond.false_type);
+                self.check_type_param_props(cond.check_type, include_indexed_access);
+                self.check_type_param_props(cond.extends_type, include_indexed_access);
+                let infer_pushes = self.push_infer_bindings_from_extends(cond.extends_type);
+                self.check_type_param_props(cond.true_type, include_indexed_access);
+                self.pop_infer_bindings(infer_pushes);
+                self.check_type_param_props(cond.false_type, include_indexed_access);
             }
         } else if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                 && let Some(type_arguments) = &type_ref.type_arguments
             {
                 for &arg_idx in &type_arguments.nodes {
-                    self.check_type_for_parameter_properties(arg_idx);
+                    self.check_type_param_props(arg_idx, include_indexed_access);
                 }
+            }
+        } else if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            // TS4105 ("Private or protected member '{0}' cannot be accessed on a
+            // type parameter.") must also fire on indexed-access types in
+            // *signature* annotations — class method return/parameter types,
+            // class/function declaration signatures, function-type literals,
+            // constructor parameters, variable annotations, and `as` assertions.
+            // The recursive `check_type_node` pass only reaches type-alias bodies
+            // and interface members, so without this a `this["secret"]` return
+            // type on a class method silently passes where tsc reports TS4105.
+            //
+            // Scoped deliberately to the TS4105 check (private/protected member
+            // on a type parameter or `this`) rather than the full
+            // `check_indexed_access_type`: the latter also resolves keyof/index
+            // relations whose results vary with the surrounding resolution
+            // context (e.g. `(typeof Enum)[K]`), which would surface false
+            // positives in these newly-visited positions. The TS4105 helper
+            // self-guards to type-parameter-like / `this` objects, and
+            // `error_at_node` dedups by (start, code) so positions also reached
+            // by `check_type_node` do not double-report.
+            let indexed_nodes = self
+                .ctx
+                .arena
+                .get_indexed_access_type(node)
+                .map(|indexed| (indexed.object_type, indexed.index_type));
+            if let Some((object_node, index_node)) = indexed_nodes {
+                // Only resolve the object when the syntax matches the TS4105
+                // shape: a type-parameter/`this` candidate indexed by a literal
+                // property name. Generic/keyof/template index nodes can resolve
+                // differently depending on surrounding context; resolving them
+                // during this broad signature walk can poison the per-node type
+                // cache and produce spurious diagnostics. Skipping them keeps
+                // TS4105 precise and side-effect free.
+                if include_indexed_access
+                    && self.indexed_access_object_is_type_param_candidate(object_node)
+                    && let Some(property_name) =
+                        crate::types_domain::type_node_helpers::get_string_literal_from_type_index(
+                            self.ctx.arena,
+                            index_node,
+                        )
+                {
+                    let object_type = self.get_type_from_type_node(object_node);
+                    self.check_ts4105_private_on_type_parameter(
+                        type_idx,
+                        object_type,
+                        &property_name,
+                    );
+                }
+                // Recurse for nested indexed-access types (e.g. `T["a"]["b"]`).
+                self.check_type_param_props(object_node, include_indexed_access);
+                self.check_type_param_props(index_node, include_indexed_access);
             }
         } else if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
             && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
         {
-            self.check_type_for_parameter_properties(paren.type_node);
+            self.check_type_param_props(paren.type_node, include_indexed_access);
         } else if node.kind == syntax_kind_ext::TYPE_PREDICATE
             && let Some(pred) = self.ctx.arena.get_type_predicate(node)
             && pred.type_node.is_some()
         {
-            self.check_type_for_parameter_properties(pred.type_node);
+            self.check_type_param_props(pred.type_node, include_indexed_access);
+        }
+    }
+
+    /// Whether the object side of an indexed-access type could be a type
+    /// parameter or the polymorphic `this` type (the only objects for which
+    /// TS4105 applies). Used to gate the signature-position TS4105 check so we
+    /// never resolve concrete object forms such as `typeof X` — resolving those
+    /// out of order can poison the per-node type cache. Conservatively treats
+    /// `this` and bare type references already present in the active
+    /// `type_parameter_scope` as candidates (possibly wrapped in parens or
+    /// combined in a union/intersection); the resolved-type check in
+    /// `check_ts4105_private_on_type_parameter` makes the final decision.
+    fn indexed_access_object_is_type_param_candidate(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::THIS_TYPE => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                    return false;
+                };
+                if type_ref.type_arguments.is_some() {
+                    return false;
+                }
+                let Some(identifier) = self.ctx.arena.get_identifier_at(type_ref.type_name) else {
+                    return false;
+                };
+                !self.identifier_references_enclosing_infer_binding(
+                    type_ref.type_name,
+                    &identifier.escaped_text,
+                ) && self
+                    .ctx
+                    .type_parameter_scope
+                    .contains_key(&identifier.escaped_text)
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                self.ctx.arena.get_wrapped_type(node).is_some_and(|paren| {
+                    self.indexed_access_object_is_type_param_candidate(paren.type_node)
+                })
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                self.ctx
+                    .arena
+                    .get_composite_type(node)
+                    .is_some_and(|composite| {
+                        composite.types.nodes.iter().all(|&member| {
+                            self.indexed_access_object_is_type_param_candidate(member)
+                        })
+                    })
+            }
+            _ => false,
         }
     }
 

@@ -62,12 +62,44 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
             {
                 "crates/tsz-emitter/src/recovery.rs": (
                     'if source_text.contains("malformed emit shape") {}\n'
+                    "if source_text[start..end].contains(';') {}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("recovery.rs:1", hits[0])
+        self.assertIn("recovery.rs:2", hits[1])
+
+    def test_flags_recovered_variable_typeof_source_scanners(self):
+        pattern, _max_lines = self._check_by_name("recovered variable typeof")
+        root = self._make_tree(
+            {
+                "crates/tsz-emitter/src/emitter/statements/recovered_variable_statement.rs": (
+                    "self.find_source_pattern_outside_quoted_text(start, end, \".typeof(\");\n"
+                    "self.find_matching_source_paren(open, end);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("recovered_variable_statement.rs:1", hits[0])
+        self.assertIn("recovered_variable_statement.rs:2", hits[1])
+
+    def test_flags_async_yield_source_text_fallback(self):
+        pattern, _max_lines = self._check_by_name("async yield source-text")
+        root = self._make_tree(
+            {
+                "crates/tsz-emitter/src/transforms/async_es5_ir_discovery.rs": (
+                    "pub(super) fn node_text_contains_yield(&self, idx: NodeIndex) -> bool {\n"
+                    "    self.node_text_contains(idx, \"yield\")\n"
+                    "}\n"
                 ),
             }
         )
         hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
         self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
-        self.assertIn("recovery.rs:1", hits[0])
+        self.assertIn("async_es5_ir_discovery.rs:1", hits[0])
 
     def test_flags_file_name_and_path_substring_decisions(self):
         pattern, _max_lines = self._check_by_name("file-name/path")

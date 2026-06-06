@@ -257,3 +257,231 @@ fn condition_typeof_narrowing_uses_flow_query_boundary() {
         "condition narrowing should not call solver typeof narrowing directly"
     );
 }
+
+#[test]
+fn condition_guard_application_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_with_guard(")
+            && compact_boundary.contains("narrowing.narrow_type(type_id,guard,"),
+        "flow analysis boundary should own reusable solver guard application"
+    );
+    assert!(
+        compact_condition.contains("self.narrow_with_guard_via_flow_boundary("),
+        "condition guard application should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_type("),
+        "condition narrowing should not apply solver guards directly"
+    );
+}
+
+#[test]
+fn condition_property_truthiness_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_by_property_truthiness_in_context(")
+            && compact_boundary.contains("narrowing.narrow_by_property_truthiness("),
+        "flow analysis boundary should own property-truthiness narrowing"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_by_property_truthiness_in_context("),
+        "condition property truthiness should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_by_property_truthiness("),
+        "condition narrowing should not apply property-truthiness narrowing directly"
+    );
+}
+
+#[test]
+fn condition_batched_exclusions_use_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_excluding_types_in_context(")
+            && compact_boundary.contains("fnnarrow_by_excluding_discriminant_values_in_context("),
+        "flow analysis boundary should own batched exclusion narrowing helpers"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_excluding_types_in_context(")
+            && compact_condition
+                .contains("flow_query::narrow_by_excluding_discriminant_values_in_context("),
+        "condition batched exclusion narrowing should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains("narrowing.narrow_excluding_types(")
+            && !compact_condition.contains("narrowing.narrow_by_excluding_discriminant_values("),
+        "condition narrowing should not apply batched exclusion narrowing directly"
+    );
+}
+
+#[test]
+fn condition_equality_narrowing_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let core_source = fs::read_to_string("src/flow/control_flow/core.rs")
+        .expect("failed to read flow core source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_core: String = core_source.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_excluding_type_in_context(")
+            && compact_boundary.contains("fnnarrow_by_discriminant_for_type_in_context(")
+            && compact_boundary.contains("fnnarrow_to_type_in_context(")
+            && compact_boundary.contains("fnliteral_assignable_to_in_context("),
+        "flow analysis boundary should own equality/discriminant narrowing helpers"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_excluding_type_in_context(")
+            && compact_condition
+                .contains("flow_query::narrow_by_discriminant_for_type_in_context(")
+            && compact_condition.contains("flow_query::narrow_to_type_in_context(")
+            && compact_condition.contains("flow_query::literal_assignable_to_in_context("),
+        "condition equality narrowing should route semantic narrowing through the flow query boundary"
+    );
+    assert!(
+        compact_core.contains("query::narrow_by_discriminant_in_context(")
+            && compact_core.contains("query::narrow_with_guard_in_context("),
+        "assertion flow narrowing should route solver predicate application through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains("narrowing.narrow_excluding_type(")
+            && !compact_condition.contains("narrowing.narrow_by_discriminant_for_type(")
+            && !compact_condition.contains("narrowing.narrow_to_type(")
+            && !compact_condition.contains("narrowing.literal_assignable_to(")
+            && !compact_core.contains("narrowing.narrow_by_discriminant(")
+            && !compact_core.contains("narrowing.narrow_type("),
+        "flow orchestration should not call solver equality/discriminant narrowing directly"
+    );
+}
+
+#[test]
+fn predicate_payload_application_uses_flow_query_boundary() {
+    let narrowing_source = fs::read_to_string("src/flow/control_flow/narrowing.rs")
+        .expect("failed to read flow narrowing source");
+    let call_source = fs::read_to_string("src/flow/control_flow/call_condition_narrowing.rs")
+        .expect("failed to read call condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_narrowing: String = narrowing_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_call: String = call_source.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let predicate_fn = compact_narrowing
+        .split("fnnarrow_by_instanceof(")
+        .next()
+        .and_then(|before_instanceof| {
+            before_instanceof
+                .split("fnapply_type_predicate_narrowing(")
+                .nth(1)
+        })
+        .expect("failed to locate apply_type_predicate_narrowing body");
+
+    assert!(
+        compact_boundary.contains("fnnarrow_type_predicate(")
+            && compact_boundary.contains("&TypeGuard::Predicate{")
+            && compact_boundary.contains("fnnarrow_asserts_truthy(")
+            && compact_boundary.contains("&TypeGuard::Truthy")
+            && compact_boundary.contains("fnnarrow_property_type_by_predicate("),
+        "flow analysis boundary should own predicate payload construction"
+    );
+    assert!(
+        predicate_fn.contains("flow_query::narrow_type_predicate(")
+            && predicate_fn.contains("flow_query::narrow_asserts_truthy(")
+            && compact_call.contains("flow_query::narrow_property_type_by_predicate("),
+        "flow predicate callers should route predicate payload application through the flow query boundary"
+    );
+    assert!(
+        !predicate_fn.contains("TypeGuard::Predicate{")
+            && !predicate_fn.contains("&TypeGuard::Truthy")
+            && !compact_call.contains("letproperty_guard=TypeGuard::Predicate{"),
+        "flow predicate callers should not construct solver predicate payloads locally"
+    );
+}
+
+#[test]
+fn instanceof_guard_payload_uses_flow_query_boundary() {
+    let narrowing_source = fs::read_to_string("src/flow/control_flow/narrowing.rs")
+        .expect("failed to read flow narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_narrowing: String = narrowing_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let instanceof_fn = compact_narrowing
+        .split("fninstance_type_from_constructor(")
+        .next()
+        .and_then(|before_constructor| before_constructor.split("fnnarrow_by_instanceof(").nth(1))
+        .expect("failed to locate narrow_by_instanceof body");
+
+    assert!(
+        compact_boundary.contains("fnnarrow_by_instanceof_target(")
+            && compact_boundary.contains("TypeGuard::Predicate{")
+            && compact_boundary.contains("TypeGuard::Instanceof("),
+        "flow analysis boundary should own instanceof guard payload construction"
+    );
+    assert!(
+        instanceof_fn.contains("flow_query::narrow_by_instanceof_target("),
+        "instanceof flow narrowing should route guard payload application through the flow query boundary"
+    );
+    assert!(
+        !instanceof_fn.contains("TypeGuard::Predicate{")
+            && !instanceof_fn.contains("TypeGuard::Instanceof("),
+        "instanceof flow narrowing should not construct solver guard payloads locally"
+    );
+}

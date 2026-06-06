@@ -155,6 +155,10 @@ impl<'a> CheckerContext<'a> {
         self.base_constructor_expr_cache.borrow_mut().clear();
         self.base_instance_expr_cache.borrow_mut().clear();
         self.class_decl_miss_cache.borrow_mut().clear();
+        self.types_extending_array.clear();
+        self.abstract_constructor_types.clear();
+        self.protected_constructor_types.clear();
+        self.private_constructor_types.clear();
         self.jsx_intrinsic_props_cache.clear();
         self.jsx_namespace_symbol_cache = None;
         self.jsx_intrinsic_elements_symbol_cache = None;
@@ -236,6 +240,7 @@ impl<'a> CheckerContext<'a> {
         self.application_eval_set.clear();
         self.mapped_eval_set.clear();
         self.type_resolution_visiting.clear();
+        self.type_param_node_cache.clear();
         self.pruning_union_members = false;
         self.jsdoc_typedef_resolving.borrow_mut().clear();
         self.jsdoc_generic_typedef_resolving.borrow_mut().clear();
@@ -312,6 +317,7 @@ impl<'a> CheckerContext<'a> {
         self.preserve_logical_operand_literals = false;
         self.use_declared_type_for_identifier = false;
         self.skip_array_contextual_supertype_collapse = false;
+        self.in_satisfies_operand = false;
         self.generic_excess_skip = None;
         self.iteration_depth = 0;
         self.switch_depth = 0;
@@ -333,6 +339,27 @@ impl<'a> CheckerContext<'a> {
             .borrow_mut()
             .clear();
         self.emitted_ts2411_for_iface_prop.clear();
+
+        // File-local lookup caches that can hold active-binder `SymbolId`s,
+        // active-file `NodeIndex` values, or re-entrancy state. These are
+        // useful within one checker file session, but retaining them across a
+        // reused checker boundary lets JS/JSX/module diagnostics observe the
+        // prior file's identity.
+        self.namespace_member_resolution_cache.borrow_mut().clear();
+        self.export_equals_named_cache.borrow_mut().clear();
+        self.nested_namespace_candidates_cache.borrow_mut().clear();
+        self.nested_namespace_candidates_cache_complete.set(false);
+        self.jsdoc_global_typedef_lookup_cache
+            .miss_cache
+            .borrow_mut()
+            .clear();
+        self.jsdoc_global_typedef_lookup_cache
+            .in_progress
+            .borrow_mut()
+            .clear();
+        self.lib_heritage_in_progress.clear();
+        self.request_cache_counters = crate::context::RequestCacheCounters::default();
+        self.narrowing_cache = tsz_solver::narrowing::NarrowingCache::new();
 
         // Module-scoped thread-local memoisations that key by file-
         // local `NodeIndex`.
@@ -583,6 +610,78 @@ mod tests {
         ctx.reset_for_next_file();
 
         assert!(ctx.recovery_sites_snapshot().is_empty());
+    }
+
+    #[test]
+    fn reset_clears_file_local_lookup_caches_and_flags() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut ctx = fresh_ctx(&arena, &binder, &types);
+
+        ctx.types_extending_array.insert(tsz_solver::TypeId::NUMBER);
+        ctx.abstract_constructor_types
+            .insert(tsz_solver::TypeId::STRING);
+        ctx.protected_constructor_types
+            .insert(tsz_solver::TypeId::BOOLEAN);
+        ctx.private_constructor_types
+            .insert(tsz_solver::TypeId::UNKNOWN);
+        ctx.namespace_member_resolution_cache
+            .borrow_mut()
+            .entry("React".to_string())
+            .or_default()
+            .insert("Component".to_string(), Some(tsz_binder::SymbolId(1)));
+        ctx.export_equals_named_cache.borrow_mut().insert(
+            (0, "pkg".to_string(), "Thing".to_string(), Vec::new()),
+            Some(tsz_binder::SymbolId(2)),
+        );
+        ctx.nested_namespace_candidates_cache
+            .borrow_mut()
+            .insert("JSX".to_string(), vec![(0, tsz_binder::SymbolId(3))]);
+        ctx.nested_namespace_candidates_cache_complete.set(true);
+        ctx.jsdoc_global_typedef_lookup_cache
+            .miss_cache
+            .borrow_mut()
+            .insert("Callback".to_string());
+        ctx.jsdoc_global_typedef_lookup_cache
+            .in_progress
+            .borrow_mut()
+            .insert("Callback".to_string());
+        ctx.lib_heritage_in_progress
+            .insert("HTMLElement".to_string());
+        ctx.request_cache_counters.request_cache_hits = 1;
+        ctx.narrowing_cache
+            .resolve_cache
+            .borrow_mut()
+            .insert(tsz_solver::TypeId::STRING, tsz_solver::TypeId::NUMBER);
+        ctx.in_satisfies_operand = true;
+
+        ctx.reset_for_next_file();
+
+        assert!(ctx.types_extending_array.is_empty());
+        assert!(ctx.abstract_constructor_types.is_empty());
+        assert!(ctx.protected_constructor_types.is_empty());
+        assert!(ctx.private_constructor_types.is_empty());
+        assert!(ctx.namespace_member_resolution_cache.borrow().is_empty());
+        assert!(ctx.export_equals_named_cache.borrow().is_empty());
+        assert!(ctx.nested_namespace_candidates_cache.borrow().is_empty());
+        assert!(!ctx.nested_namespace_candidates_cache_complete.get());
+        assert!(
+            ctx.jsdoc_global_typedef_lookup_cache
+                .miss_cache
+                .borrow()
+                .is_empty()
+        );
+        assert!(
+            ctx.jsdoc_global_typedef_lookup_cache
+                .in_progress
+                .borrow()
+                .is_empty()
+        );
+        assert!(ctx.lib_heritage_in_progress.is_empty());
+        assert_eq!(ctx.request_cache_counters.request_cache_hits, 0);
+        assert!(ctx.narrowing_cache.resolve_cache.borrow().is_empty());
+        assert!(!ctx.in_satisfies_operand);
     }
 
     #[test]

@@ -5,6 +5,7 @@ use tsz_scanner::scanner_impl::TokenFlags;
 impl ParserState {
     pub fn parse_error_at_current_token(&mut self, message: &str, code: u32) {
         if code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+            && message == "')' expected."
             && self.is_token(SyntaxKind::CloseParenToken)
             && self.speculate(|parser| {
                 parser.next_token();

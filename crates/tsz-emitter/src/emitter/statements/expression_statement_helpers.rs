@@ -1,4 +1,5 @@
 use super::super::Printer;
+use crate::safe_slice;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -26,7 +27,7 @@ impl<'a> Printer<'a> {
         let end = node.end as usize;
         start < end
             && end <= source_text.len()
-            && source_text[start..end].contains('\\')
-            && source_text[start..end].contains(';')
+            && safe_slice::span_contains_byte(source_text, start, end, b'\\')
+            && safe_slice::span_contains_byte(source_text, start, end, b';')
     }
 }

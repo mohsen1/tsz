@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "assertion_source_literal_display_tests"
 path = "tests/assertion_source_literal_display_tests.rs"
 [[test]]
+name = "return_context_identity_wrapper_literal_tests"
+path = "tests/return_context_identity_wrapper_literal_tests.rs"
+[[test]]
 name = "nested_mapped_optional_modifier_inline_application_tests"
 path = "tests/nested_mapped_optional_modifier_inline_application_tests.rs"
 [[test]]
@@ -168,6 +171,9 @@ path = "tests/generator_annotation_mismatch_display_tests.rs"
 [[test]]
 name = "generator_return_type_widening_tests"
 path = "tests/generator_return_type_widening_tests.rs"
+[[test]]
+name = "function_terminal_return_flow_tests"
+path = "tests/function_terminal_return_flow_tests.rs"
 [[test]]
 name = "implicit_any_nullish_return_tests"
 path = "tests/implicit_any_nullish_return_tests.rs"
@@ -403,6 +409,9 @@ path = "tests/recursive_typeof_param_display_tests.rs"
 [[test]]
 name = "recursive_value_call_return_tests"
 path = "tests/recursive_value_call_return_tests.rs"
+[[test]]
+name = "literal_source_widening_position_parity_tests"
+path = "tests/literal_source_widening_position_parity_tests.rs"
 [[test]]
 name = "interface_call_signature_typeof_param_tests"
 path = "tests/interface_call_signature_typeof_param_tests.rs"
@@ -1210,6 +1219,10 @@ path = "tests/ts2322_indexed_access_type_param_tests.rs"
 [[test]]
 name = "ts4105_this_type_indexed_access_tests"
 path = "tests/ts4105_this_type_indexed_access_tests.rs"
+
+[[test]]
+name = "ts4105_signature_position_indexed_access_tests"
+path = "tests/ts4105_signature_position_indexed_access_tests.rs"
 
 [[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"

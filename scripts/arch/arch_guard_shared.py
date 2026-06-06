@@ -313,6 +313,22 @@ FILE_LINE_LIMIT_CHECKS = [
         / "resolve.rs",
         3413,
     ),
+    (
+        "Solver generic-call boundary: inference_helpers size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "inference_helpers.rs",
+        2065,
+    ),
+    (
+        "Solver inference boundary: infer_matching size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "inference" / "infer_matching.rs",
+        2002,
+    ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
     # as more phases (helper scheduling, temp/hoist planning, suspended
@@ -347,13 +363,13 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
         4281,
     ),
-    # LSP signature-help: the root provider has been split by concern. Existing
-    # TypeData/direct lookup() debt is isolated in signature_help/shapes.rs (see
-    # arch_guard_policy.toml exclusions) and should burn down separately.
+    # LSP signature-help root provider has been split into signature_help/.
+    # Keep the largest implementation shard pinned while the remaining
+    # TypeData/direct lookup() debt in shapes.rs burns down separately.
     (
-        "LSP boundary: signature_help monolith size ratchet",
-        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help.rs",
-        968,
+        "LSP boundary: signature_help contextual shard size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help" / "contextual.rs",
+        1309,
     ),
     # Scanner main loop: issue #9431 tracks splitting by token family.
     (
@@ -395,13 +411,6 @@ FILE_LINE_LIMIT_CHECKS = [
         "LSP boundary: module_specifiers monolith size ratchet",
         ROOT / "crates" / "tsz-lsp" / "src" / "project" / "module_specifiers.rs",
         3669,
-    ),
-    # LSP import candidate collection: issue #9420 tracks splitting collection
-    # from ranking and rendering.
-    (
-        "LSP boundary: project/imports monolith size ratchet (#9420)",
-        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "imports.rs",
-        3449,
     ),
     # Binder declaration binding: split by declaration family per §19.
     (
@@ -1249,7 +1258,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # as-written nominal reference. Removal condition remains #8225
         # narrowing these common-barrel calls behind a dedicated diagnostic
         # source-display query.
-        3213,
+        #
+        # Ratcheted 3213→3202 after current arch-smoke caught live-count slack.
+        3202,
     ),
 ]
 
@@ -1372,13 +1383,45 @@ REGEX_LINE_COUNT_CHECKS = [
         14,
     ),
     (
-        # Ratcheted from 3→1: two calls removed (bang-module and mixin-intersection
-        # decisions migrated to structured AST facts in #8406 / #8276 cycle).
-        # Remaining call: variable_decl.rs intersection-arm detection; issue #8276
-        # tracks migrating it to a structured declaration summary.
-        "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
+        # Broadens the previous direct-call guard to include sliced source-text
+        # recovery predicates such as `source_text[start..end].contains(...)`.
+        # The current baseline is pinned so each migration to structured emit
+        # facts can ratchet this count down in the same PR.
+        "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
-        re.compile(r"\bsource_text\.contains\s*\("),
+        re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
+        0,
+    ),
+    (
+        "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "emitter"
+            / "statements"
+            / "recovered_variable_statement.rs"
+        ],
+        re.compile(
+            r"\b(?:find_source_pattern_outside_quoted_text|find_matching_source_paren|skip_quoted_source_text)\b"
+        ),
+        0,
+    ),
+    (
+        # The async ES5 lowering path still has one source-text fallback for
+        # recovered `yield` detection. Keep it visible so the future parser- or
+        # lowering-owned fact can ratchet this to zero in the same PR.
+        "Emitter boundary: async yield source-text fallback (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "transforms"
+            / "async_es5_ir_discovery.rs"
+        ],
+        re.compile(r"\bfn\s+node_text_contains_yield\s*\("),
         1,
     ),
     (

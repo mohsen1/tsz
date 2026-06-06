@@ -50,6 +50,7 @@ use tsz_common::interner::Atom;
 
 mod closed_eval;
 mod display_alias;
+mod query_budget;
 mod support;
 
 /// Type evaluator for meta-types.
@@ -513,18 +514,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.mark_exceeded();
     }
 
-    /// Global thread-local depth counter for cross-evaluator stack overflow prevention.
-    ///
-    /// Each `SubtypeChecker::evaluate_type` creates a fresh `TypeEvaluator` with fresh
-    /// per-evaluator guards. But the OS stack accumulates across ALL of them. For example,
-    /// `Vector<T> implements Seq<T>` where `Opt<T>` has `toVector(): Vector<T>` and
-    /// `Vector` has `Exclude<T, U>` in an overload return type: each structural comparison
-    /// level creates ~8 evaluate calls, and the subtype checker recurses 10+ levels deep,
-    /// producing 100+ nested evaluate frames that overflow the 8MB default stack.
-    ///
-    /// This counter tracks cumulative `evaluate` frames across all `TypeEvaluator` instances
-    /// on the current thread's call stack. When it exceeds `MAX_GLOBAL_EVAL_DEPTH`, we
-    /// bail out with ERROR to prevent stack overflow.
+    /// Global thread-local depth counter for cross-evaluator stack overflow
+    /// prevention. Each `SubtypeChecker::evaluate_type` creates a fresh
+    /// `TypeEvaluator`, but the OS stack accumulates across ALL of them: deep
+    /// structural comparisons (e.g. `Vector<T> implements Seq<T>` with `Exclude`
+    /// in an overload return) produce 100+ nested evaluate frames that overflow
+    /// the 8MB default stack. This counter tracks cumulative `evaluate` frames
+    /// across every `TypeEvaluator` on the call stack and bails with ERROR once
+    /// it exceeds `MAX_GLOBAL_EVAL_DEPTH`.
     const MAX_GLOBAL_EVAL_DEPTH: u32 = 200;
 
     /// Evaluate a type, resolving any meta-types if possible.
@@ -553,6 +550,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if self.guard.is_exceeded() {
             return TypeId::ERROR;
         }
+        // Cross-instance per-query operation budget (see `query_budget`).
+        let Some(_query_frame) = self.enter_eval_query_budget() else {
+            return type_id;
+        };
 
         // Cross-evaluator stack overflow prevention.
         // Only check thread-local global depth when the local guard depth
