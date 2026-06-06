@@ -2,8 +2,10 @@
 
 use super::Server;
 use super::handlers_code_fixes_utils::{
-    extract_jsdoc_imported_names, extract_jsdoc_type_identifier_spans, extract_type_identifiers,
-    is_identifier, parse_bare_identifier_expression, parse_identifier_call_expression,
+    class_body_has_member, extract_jsdoc_imported_names, extract_jsdoc_type_identifier_spans,
+    extract_type_identifiers, find_first_implements_class, is_identifier,
+    parse_bare_identifier_expression, parse_identifier_call_expression, parse_interface_properties,
+    parse_named_import_map, resolve_module_path,
 };
 use tsz::checker::diagnostics::DiagnosticCategory;
 
@@ -654,5 +656,274 @@ impl Server {
         }
 
         false
+    }
+
+    /// Returns a synthetic `TS2420` diagnostic when a class in `content`
+    /// incorrectly implements an interface that is imported from a sibling
+    /// open file and has at least one missing member.
+    pub(super) fn synthetic_implements_interface_diagnostics(
+        &self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+        let Some((class_name, interface_name, class_open_brace, class_close_brace)) =
+            find_first_implements_class(content)
+        else {
+            return Vec::new();
+        };
+        let class_imports = parse_named_import_map(content);
+        let Some(interface_module_specifier) = class_imports.get(&interface_name) else {
+            return Vec::new();
+        };
+        let Some(interface_file_path) =
+            resolve_module_path(file_path, interface_module_specifier, &self.open_files)
+        else {
+            return Vec::new();
+        };
+        let Some(interface_content) = self
+            .open_files
+            .get(&interface_file_path)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&interface_file_path).ok())
+        else {
+            return Vec::new();
+        };
+        let Some(interface_properties) =
+            parse_interface_properties(&interface_content, &interface_name)
+        else {
+            return Vec::new();
+        };
+        if interface_properties.is_empty() {
+            return Vec::new();
+        }
+
+        let class_body = content
+            .get(class_open_brace + 1..class_close_brace)
+            .unwrap_or_default();
+        let has_missing_member = interface_properties
+            .iter()
+            .any(|m| !class_body_has_member(class_body, m.name()));
+        if !has_missing_member {
+            return Vec::new();
+        }
+
+        let class_name_offset = content
+            .find(&format!("class {class_name}"))
+            .map(|idx| idx as u32 + "class ".len() as u32)
+            .unwrap_or(0);
+        vec![tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Error,
+            code:
+                tsz_checker::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+            file: file_path.to_string(),
+            start: class_name_offset,
+            length: class_name.len() as u32,
+            message_text: format!(
+                "Class '{class_name}' incorrectly implements interface '{interface_name}'."
+            ),
+            related_information: Vec::new(),
+        }]
+    }
+
+    /// Returns a synthetic `TS1308` suggestion diagnostic when the source
+    /// text lacks an explicit `await` keyword but an async rewrite exists.
+    pub(super) fn synthetic_missing_async_suggestion_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        if content.contains("await") {
+            return None;
+        }
+        let _ = Self::apply_missing_async_fallback(content)?;
+        let start = content.find("=>").unwrap_or(0) as u32;
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Suggestion,
+            code: tsz_checker::diagnostics::diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text:
+                "'await' expressions are only allowed within async functions and at the top levels of modules."
+                    .to_string(),
+            related_information: Vec::new(),
+        })
+    }
+
+    /// Returns a synthetic `TS7006` suggestion diagnostic when the source
+    /// has nameless parameters that could be annotated.
+    pub(super) fn synthetic_add_parameter_names_suggestion_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let _ = Self::apply_add_names_to_nameless_parameters_fallback(content)?;
+        let start = content.find('(').unwrap_or(0) as u32;
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Suggestion,
+            code: tsz_checker::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text: "Parameter implicitly has an 'any' type.".to_string(),
+            related_information: Vec::new(),
+        })
+    }
+
+    /// Returns a synthetic `TS2739` suggestion diagnostic when the source
+    /// has JSX elements with missing attributes.
+    pub(super) fn synthetic_missing_attributes_suggestion_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let _ = Self::apply_missing_attributes_fallback(content)?;
+        let start = content.find('<').unwrap_or(0) as u32;
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Suggestion,
+            code: tsz_checker::diagnostics::diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text: "Type '{}' is missing the following properties.".to_string(),
+            related_information: Vec::new(),
+        })
+    }
+
+    /// Returns a synthetic `TS2348` error diagnostic when the source appears
+    /// to call a class constructor without the `new` keyword.
+    pub(super) fn synthetic_add_missing_new_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let _ = Self::apply_add_missing_new_fallback(content, None)?;
+        let class_names = Self::collect_class_names(content);
+        let mut start = 0u32;
+        for name in &class_names {
+            let pattern = format!("{name}(");
+            if let Some(pos) = content.find(&pattern) {
+                let prefix = content[..pos].trim_end();
+                if !prefix.ends_with("new") {
+                    start = pos as u32;
+                    break;
+                }
+            }
+        }
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Error,
+            code: 2348,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text: "Value of type is not callable. Did you mean to include 'new'?"
+                .to_string(),
+            related_information: Vec::new(),
+        })
+    }
+
+    /// Returns a synthetic `TS2304` (`cannotFindName`) error diagnostic when
+    /// the source has an unresolved binding assignment that the
+    /// `addMissingConst` fix could resolve.
+    pub(super) fn synthetic_add_missing_const_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let mut line_start = 0u32;
+        let mut enum_brace_depth = 0i32;
+        let lines: Vec<String> = content.lines().map(str::to_string).collect();
+        for (line_idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if enum_brace_depth == 0
+                && (trimmed.starts_with("enum ")
+                    || trimmed.starts_with("export enum ")
+                    || trimmed.starts_with("export const enum "))
+            {
+                enum_brace_depth += trimmed.chars().filter(|ch| *ch == '{').count() as i32;
+                enum_brace_depth -= trimmed.chars().filter(|ch| *ch == '}').count() as i32;
+                if enum_brace_depth <= 0 && trimmed.contains('{') {
+                    enum_brace_depth = 1;
+                }
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+            if enum_brace_depth > 0 {
+                enum_brace_depth += trimmed.chars().filter(|ch| *ch == '{').count() as i32;
+                enum_brace_depth -= trimmed.chars().filter(|ch| *ch == '}').count() as i32;
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+            if trimmed.is_empty()
+                || trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+                || trimmed.starts_with("import ")
+                || trimmed.starts_with("export ")
+                || trimmed.starts_with("function ")
+                || trimmed.starts_with("class ")
+            {
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+
+            if Self::is_comma_continuation_line(&lines, line_idx) {
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+
+            if trimmed.starts_with("for (")
+                && (trimmed.contains(" in ") || trimmed.contains(" of "))
+                && let Some(open_idx) = line.find('(')
+            {
+                let after = line[open_idx + 1..].trim_start();
+                let head_end_rel = after
+                    .find(" in ")
+                    .or_else(|| after.find(" of "))
+                    .unwrap_or(after.len());
+                let head = &after[..head_end_rel];
+                if let Some((name_rel, name_end, name)) = Self::find_first_binding_identifier(head)
+                {
+                    let prefix_ws = line.len().saturating_sub(trimmed.len());
+                    let after_ws = line[open_idx + 1..].len().saturating_sub(after.len());
+                    let name_start = prefix_ws + open_idx + 1 + after_ws + name_rel;
+                    return Some(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: line_start + name_start as u32,
+                        length: (name_end - name_rel) as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
+            let starts_with_target = trimmed
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$');
+            if starts_with_target && trimmed.contains('=') {
+                let lhs = trimmed
+                    .split_once('=')
+                    .map(|(l, _)| l.trim_end())
+                    .unwrap_or(trimmed);
+                if lhs.contains('(') {
+                    line_start = line_start.saturating_add(line.len() as u32 + 1);
+                    continue;
+                }
+                if let Some((name_rel, name_end, name)) = Self::find_first_binding_identifier(lhs) {
+                    let prefix_ws = line.len().saturating_sub(trimmed.len());
+                    return Some(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: line_start + (prefix_ws + name_rel) as u32,
+                        length: (name_end - name_rel) as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
+            line_start = line_start.saturating_add(line.len() as u32 + 1);
+        }
+
+        None
     }
 }

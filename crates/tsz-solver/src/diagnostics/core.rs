@@ -484,6 +484,38 @@ pub enum SubtypeFailureReason {
         /// Why the branch's relation failed.
         nested_reason: Box<Self>,
     },
+    /// A type-parameter source failed to relate to the target, and the failure
+    /// is explained through the parameter's declared (base) constraint.
+    ///
+    /// `tsc` elaborates `T <: X` (when `T` is a type parameter) by first
+    /// stating the top-level `Type 'T' is not assignable to type 'X'.` and then
+    /// recursing on the parameter's base constraint:
+    /// `Type '<constraint>' is not assignable to type 'X'.`, drilling further
+    /// into whatever structural reason that relation fails for. Without this
+    /// variant a type-parameter source matches none of the structural arms in
+    /// the explain path (it has no object/tuple/union/primitive shape of its
+    /// own) and collapses to a bare [`Self::TypeMismatch`], hiding the
+    /// constraint-level root that is the actual reason the relation fails.
+    ///
+    /// This mirrors `tsc`'s `getBaseConstraintOfType` elaboration and is
+    /// independent of the target shape: the target may be a primitive, an
+    /// object, a union, or an evaluated conditional/mapped/alias result. Nested
+    /// constraints (`U extends T`, `T extends string`) recurse naturally, each
+    /// adding one indent level.
+    TypeParameterConstraintMismatch {
+        /// The type-parameter source (rendered at the top, e.g. `T`).
+        source_type: TypeId,
+        /// The target the parameter failed to relate to, in its evaluated
+        /// (apparent) form so the displayed target matches `tsc` (e.g. the
+        /// concrete result of an instantiated conditional alias rather than the
+        /// unevaluated `Alias<Arg>` spelling).
+        target_type: TypeId,
+        /// The parameter's resolved base constraint — the source half of the
+        /// child relation (`<constraint> <: target_type`).
+        constraint_type: TypeId,
+        /// Why the constraint-level relation failed.
+        nested_reason: Box<Self>,
+    },
 }
 
 /// Diagnostic severity level.
@@ -835,6 +867,7 @@ impl SubtypeFailureReason {
             | Self::UnionSourceMismatch { .. }
             | Self::UnionTargetMismatch { .. }
             | Self::ConditionalBranchMismatch { .. }
+            | Self::TypeParameterConstraintMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::TupleArityMismatch(arity) => arity.diagnostic_code(),
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
@@ -1314,6 +1347,16 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             )
             .with_related(nested_reason.to_diagnostic(*branch_source, *branch_target)),
+            Self::TypeParameterConstraintMismatch {
+                source_type,
+                target_type,
+                constraint_type,
+                nested_reason,
+            } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![(*source_type).into(), (*target_type).into()],
+            )
+            .with_related(nested_reason.to_diagnostic(*constraint_type, *target_type)),
         }
     }
 }
