@@ -179,6 +179,25 @@ fn file_level_static_field_class_expr_temps_reserve_in_source_order_es2015() {
 }
 
 #[test]
+fn using_static_method_and_field_class_expr_temps_reserve_in_source_order() {
+    let source = "using C1 = class {\n    static [Symbol.dispose]() {}\n};\nusing C2 = class {\n    static x = 1;\n    static [Symbol.dispose]() {}\n};\n";
+    let output = emit(source, ScriptTarget::ES2018, false);
+
+    assert!(
+        output.contains(
+            "C1 = __addDisposableResource(env_1, (_a = class {\n            static [Symbol.dispose]() { }\n        },\n        __setFunctionName(_a, \"C1\"),\n        _a), false);"
+        ),
+        "A `using` class with only an inline computed static method should reserve the first file-level class-expression temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "C2 = __addDisposableResource(env_1, (_b = class {\n            static [Symbol.dispose]() { }\n        },\n        __setFunctionName(_b, \"C2\"),\n        _b.x = 1,\n        _b), false);"
+        ),
+        "A later `using` class with lowered static state should receive the next temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn binding_pattern_default_class_expr_uses_binding_name_es2015() {
     let source = "let { slot = class { static x = 1; } } = {};\nlet [item = class { static x = 2; }] = [];\n";
     let output = emit(source, ScriptTarget::ES2015, false);

@@ -95,12 +95,15 @@ impl<'a> Printer<'a> {
             });
 
         let mut same_location_ref_vars = file_level_class_temps;
-        same_location_ref_vars.extend(
-            self.hoisted_deferred_static_class_result_temps
-                .iter()
-                .cloned(),
-        );
         same_location_ref_vars.extend(trailing_ref_vars);
+        if !self.hoisted_deferred_static_class_result_temps.is_empty() {
+            let var_decl = format!(
+                "var {};",
+                self.hoisted_deferred_static_class_result_temps.join(", ")
+            );
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        }
         if !same_location_ref_vars.is_empty() {
             let var_decl = format!("var {};", same_location_ref_vars.join(", "));
             self.writer
