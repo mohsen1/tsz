@@ -66,6 +66,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         break;
                     }
                     let result = self.substitute_infer(cond_true, &bindings);
+                    let result = self.evaluate(result);
                     let result = self
                         .try_recover_application_from_display_alias(result)
                         .unwrap_or(result);
