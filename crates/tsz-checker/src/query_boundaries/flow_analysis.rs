@@ -580,6 +580,32 @@ pub(crate) fn narrow_to_objectish(
     narrowing.narrow_to_objectish(type_id)
 }
 
+/// Apply an `instanceof` target or `[Symbol.hasInstance]` predicate result.
+///
+/// The checker owns matching the binary expression and resolving the constructor
+/// to an instance target. This boundary owns the solver guard payload choice so
+/// `Symbol.hasInstance` predicates and normal `instanceof` guards stay behind
+/// the flow query boundary.
+pub(crate) fn narrow_by_instanceof_target(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    instance_type: TypeId,
+    use_predicate_guard: bool,
+    is_true_branch: bool,
+) -> TypeId {
+    let guard = if use_predicate_guard {
+        TypeGuard::Predicate {
+            type_id: Some(instance_type),
+            asserts: false,
+        }
+    } else {
+        TypeGuard::Instanceof(instance_type, false)
+    };
+
+    narrow_with_guard(db, env, type_id, &guard, is_true_branch)
+}
+
 /// Apply an inferred predicate guard to a parameter type.
 ///
 /// The checker owns recognizing an inferable predicate body and matching the

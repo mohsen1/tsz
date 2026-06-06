@@ -448,3 +448,40 @@ fn predicate_payload_application_uses_flow_query_boundary() {
         "flow predicate callers should not construct solver predicate payloads locally"
     );
 }
+
+#[test]
+fn instanceof_guard_payload_uses_flow_query_boundary() {
+    let narrowing_source = fs::read_to_string("src/flow/control_flow/narrowing.rs")
+        .expect("failed to read flow narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_narrowing: String = narrowing_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let instanceof_fn = compact_narrowing
+        .split("fninstance_type_from_constructor(")
+        .next()
+        .and_then(|before_constructor| before_constructor.split("fnnarrow_by_instanceof(").nth(1))
+        .expect("failed to locate narrow_by_instanceof body");
+
+    assert!(
+        compact_boundary.contains("fnnarrow_by_instanceof_target(")
+            && compact_boundary.contains("TypeGuard::Predicate{")
+            && compact_boundary.contains("TypeGuard::Instanceof("),
+        "flow analysis boundary should own instanceof guard payload construction"
+    );
+    assert!(
+        instanceof_fn.contains("flow_query::narrow_by_instanceof_target("),
+        "instanceof flow narrowing should route guard payload application through the flow query boundary"
+    );
+    assert!(
+        !instanceof_fn.contains("TypeGuard::Predicate{")
+            && !instanceof_fn.contains("TypeGuard::Instanceof("),
+        "instanceof flow narrowing should not construct solver guard payloads locally"
+    );
+}
