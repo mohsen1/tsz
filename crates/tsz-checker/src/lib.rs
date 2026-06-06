@@ -216,6 +216,9 @@ mod generic_callable_outer_type_param_mismatch_tests;
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
 #[cfg(test)]
+#[path = "tests/generic_method_member_variance_assignability_tests.rs"]
+mod generic_method_member_variance_assignability_tests;
+#[cfg(test)]
 #[path = "tests/generic_method_override_variance_tests.rs"]
 mod generic_method_override_variance_tests;
 #[cfg(test)]
