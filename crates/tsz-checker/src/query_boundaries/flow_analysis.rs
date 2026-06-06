@@ -10,13 +10,14 @@ use super::{
 };
 
 pub(crate) use super::common::{
-    LiteralValueKind, PredicateSignatureKind, TypeResolver,
+    LiteralValueKind, PredicateSignatureKind, TypeResolver, TypeSubstitution,
     array_element_type as get_array_element_type, call_signatures_for_type,
     classify_for_literal_value, classify_for_predicate_signature, construct_signatures_for_type,
-    contains_type_parameters, function_shape_for_type, is_keyof_type,
-    is_literal_type_through_type_constraints, is_narrowing_literal, is_type_parameter_like,
-    is_union_type, is_unit_type, is_unknown_narrowing_literal, object_shape_for_type,
-    stringify_literal_type, tuple_elements as tuple_elements_for_type, type_contains_undefined,
+    contains_type_parameter_named, contains_type_parameters, function_shape_for_type,
+    instantiate_type, is_keyof_type, is_literal_type_through_type_constraints,
+    is_narrowing_literal, is_type_parameter_like, is_union_type, is_unit_type,
+    is_unknown_narrowing_literal, object_shape_for_type, stringify_literal_type,
+    tuple_elements as tuple_elements_for_type, type_contains_undefined,
     union_members as union_members_for_type,
 };
 
