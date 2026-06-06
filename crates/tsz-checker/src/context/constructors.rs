@@ -80,6 +80,7 @@ impl<'a> CheckerContext<'a> {
             jsdoc_global_typedef_lookup_cache: crate::context::JSDocGlobalTypedefLookupCache {
                 miss_cache: RefCell::new(FxHashSet::default()),
                 in_progress: RefCell::new(FxHashSet::default()),
+                typedef_presence_by_file: Arc::new(dashmap::DashMap::new()),
             },
             nested_namespace_candidates_cache_complete: Cell::new(false),
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
@@ -678,6 +679,12 @@ impl<'a> CheckerContext<'a> {
                 *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent_cache.clone();
             }
         }
+        ctx.jsdoc_global_typedef_lookup_cache
+            .typedef_presence_by_file = Arc::clone(
+            &parent
+                .jsdoc_global_typedef_lookup_cache
+                .typedef_presence_by_file,
+        );
         ctx.skip_lib_type_resolution = parent.skip_lib_type_resolution;
 
         // CRITICAL: Propagate in-progress set from parent to prevent re-entrant

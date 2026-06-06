@@ -1,5 +1,6 @@
 //! Mapped-type helpers used by object literal excess property checking.
 
+use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use std::collections::HashSet;
 use tsz_common::interner::Atom;
@@ -8,6 +9,70 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn track_earliest_excess(
+        &self,
+        current: &mut Option<(Atom, NodeIndex, u32)>,
+        name: Atom,
+        report_idx: NodeIndex,
+    ) {
+        let pos = self.ctx.arena.get(report_idx).map_or(u32::MAX, |n| n.pos);
+        if current.is_none_or(|(_, _, best)| pos < best) {
+            *current = Some((name, report_idx, pos));
+        }
+    }
+
+    pub(super) fn report_concrete_mapped_target_excess_property(
+        &mut self,
+        target: TypeId,
+        evaluated_target: TypeId,
+        source_props: &[tsz_solver::PropertyInfo],
+        explicit_property_names: Option<&HashSet<Atom>>,
+        object_literal_idx: NodeIndex,
+    ) -> bool {
+        // A fully concrete homomorphic mapped target, e.g. `{ [K in keyof A]?: A[K] }`
+        // over non-generic `A`, stays deferred as `Mapped` in the declared type. Use
+        // the evaluated concrete object so TS2353 matches tsc's expanded target.
+        if evaluated_target == target
+            || crate::query_boundaries::common::mapped_type_id(self.ctx.types, target).is_none()
+            || tsz_solver::type_queries::mapped_type_is_deferred_generic(self.ctx.types, target)
+            || query::union_members(self.ctx.types, evaluated_target).is_some()
+            || query::intersection_members(self.ctx.types, evaluated_target).is_some()
+        {
+            return false;
+        }
+        let Some(shape) = query::object_shape(self.ctx.types, evaluated_target) else {
+            return false;
+        };
+        if shape.string_index.is_some() {
+            return false;
+        }
+
+        let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
+        for source_prop in source_props {
+            if explicit_property_names.is_some_and(|names| !names.contains(&source_prop.name)) {
+                continue;
+            }
+            let covered = shape
+                .properties
+                .iter()
+                .any(|prop| prop.name == source_prop.name)
+                || (shape.number_index.is_some() && {
+                    let name = self.ctx.types.resolve_atom(source_prop.name);
+                    tsz_solver::utils::is_numeric_literal_name(&name)
+                });
+            if !covered {
+                let report_idx = self
+                    .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                    .unwrap_or(object_literal_idx);
+                self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+            }
+        }
+
+        // Display the expanded object shape (matching tsc), not the deferred mapped form.
+        self.emit_tracked_excess_property(first_excess, evaluated_target);
+        true
+    }
+
     pub(crate) fn type_contains_invalid_mapped_key_type(&self, type_id: TypeId) -> bool {
         let mut visited = HashSet::new();
         self.type_contains_invalid_mapped_key_type_inner(type_id, &mut visited)
