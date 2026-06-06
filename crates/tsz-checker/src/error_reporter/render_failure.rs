@@ -692,6 +692,32 @@ impl<'a> CheckerState<'a> {
                 *branch_target,
                 nested_reason.as_ref(),
             ),
+            SubtypeFailureReason::TypeParameterConstraintMismatch {
+                source_type,
+                target_type,
+                constraint_type,
+                nested_reason,
+            } => {
+                // The reason carries the *evaluated* target so the top line
+                // matches tsc (e.g. the concrete result of an instantiated
+                // conditional alias, not the unevaluated `Alias<Arg>` spelling).
+                // The depth-0 outer line is built from `RenderContext::target`,
+                // so rebind it to the evaluated target before delegating to the
+                // shared parent-with-child renderer; the child relation is the
+                // constraint vs the same evaluated target.
+                let eval_rctx = RenderContext {
+                    target: *target_type,
+                    ..rctx
+                };
+                self.render_parent_with_child_relation(
+                    &eval_rctx,
+                    *source_type,
+                    *target_type,
+                    *constraint_type,
+                    *target_type,
+                    nested_reason.as_ref(),
+                )
+            }
             SubtypeFailureReason::TooManyParameters {
                 source_count,
                 target_count,
