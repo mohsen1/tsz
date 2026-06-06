@@ -14,6 +14,24 @@ function writeArtifact(name, generatedAt, results = [{ name: "row", tsz_ms: 1, t
   return file;
 }
 
+function projectRow(name, state = "green") {
+  const ok = state === "green";
+  return {
+    name,
+    tsz_ms: ok ? 10 : null,
+    tsgo_ms: ok ? 20 : null,
+    winner: ok ? "tsz" : "error",
+    status: ok ? null : "tsz error; tsc ok",
+    compatibility: {
+      state,
+      phase: "check",
+      last_successful_phase: ok ? "check" : null,
+      exit_class: ok ? "exit success" : "crash",
+      diagnostic_status: ok ? "none" : "compiler crashed",
+    },
+  };
+}
+
 try {
   const snapshot = writeArtifact("bench-snapshot.json", "2026-05-17T01:23:02.991Z");
   const github = writeArtifact("bench-vs-tsgo-github-latest.json", "2026-05-28T02:14:24.444Z");
@@ -34,6 +52,19 @@ try {
     selectLatestBenchmarkArtifact([empty, github])?.file,
     github,
     "empty benchmark JSON should not mask the latest usable artifact",
+  );
+  const goodProject = writeArtifact("good-project.json", "2026-05-30T00:00:00.000Z", [
+    projectRow("utility-types-project"),
+    { name: "micro", tsz_ms: 1, tsgo_ms: 2, winner: "tsz" },
+  ]);
+  const badProject = writeArtifact("bad-project.json", "2026-06-01T00:00:00.000Z", [
+    projectRow("utility-types-project", "red"),
+    { name: "micro", tsz_ms: 1, tsgo_ms: 2, winner: "tsz" },
+  ]);
+  assert.equal(
+    selectLatestBenchmarkArtifact([goodProject, badProject], { minimumProjectTimingPairs: 1 })?.file,
+    goodProject,
+    "a newer artifact with no successful project timings should not mask older public project timing data",
   );
   assert.equal(
     selectLatestBenchmarkArtifact([path.join(tempDir, "missing.json")]),
