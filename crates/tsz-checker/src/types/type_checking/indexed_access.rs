@@ -6,6 +6,7 @@ use tsz_solver::TypeId;
 
 mod indexed_access_helpers;
 mod mapped_key_check;
+mod object_format;
 
 use indexed_access_helpers::{
     generic_constrained_index, indexed_access_object_alias_application_exceeds_depth,
@@ -1568,7 +1569,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let obj_type_str = self.format_type(object_type);
+            let obj_type_str = self.format_ts2536_object_type(data.object_type, object_type);
             let evaluated_index_type = self.evaluate_type_for_assignability(index_type);
             let prefer_evaluated_index = (evaluated_index_type != TypeId::ERROR
                 && !crate::query_boundaries::common::contains_type_parameters(

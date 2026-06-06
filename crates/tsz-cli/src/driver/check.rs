@@ -4,6 +4,7 @@ use super::check_module_graph::*;
 use super::check_utils::*;
 use super::*;
 use tsz::checker::context::RequestCacheCounters;
+use tsz_common::checker_options::JsxMode;
 
 const fn checker_resolution_mode_override(
     mode: Option<tsz::module_resolver::ImportingModuleKind>,
@@ -118,6 +119,106 @@ pub(super) struct CollectDiagnosticsResult {
     pub module_dep_stats: Option<super::ModuleDependencyStats>,
 }
 
+/// Inputs for parse-only short-circuit paths that bypass the full checker
+/// pipeline (either `--noCheck` without `--declaration`, or `--noEmit
+/// --skipLibCheck` on a pure `.d.ts` project).
+struct ParseOnlyDiagnosticsInput<'a> {
+    program: &'a MergedProgram,
+    options: &'a ResolvedCompilerOptions,
+    program_has_real_syntax_errors: bool,
+    include_isolated_declaration_diagnostics: bool,
+    per_file_ts7016_diagnostics: &'a [Vec<Diagnostic>],
+    cache: Option<&'a mut CompilationCache>,
+    base_dir: &'a Path,
+    file_is_esm_map: &'a FxHashMap<String, bool>,
+    resolved_module_paths: &'a FxHashMap<(usize, String), usize>,
+    collect_compile_stats: bool,
+    request_cache_counters: RequestCacheCounters,
+}
+
+/// Collect parse-only diagnostics and return an early `CollectDiagnosticsResult`
+/// for paths that skip the full checker pipeline.
+///
+/// Used by two short-circuit arms in `collect_diagnostics_with_source_resolutions`:
+/// - `--noCheck` (without `--declaration`): collects parse + isolated-declarations
+///   diagnostics and returns before any checker binder or `ProgramContext` setup.
+/// - `--noEmit --skipLibCheck` on a pure `.d.ts` project: collects parse
+///   diagnostics only and returns before expensive checker infrastructure.
+///
+/// Both arms share the same post-collection steps: extend with per-file TS7016
+/// diagnostics, trim the `CompilationCache`, detect missing-tslib helpers, and
+/// build the optional module-dependency stats.
+fn collect_parse_only_diagnostics_result(
+    input: ParseOnlyDiagnosticsInput<'_>,
+) -> CollectDiagnosticsResult {
+    let ParseOnlyDiagnosticsInput {
+        program,
+        options,
+        program_has_real_syntax_errors,
+        include_isolated_declaration_diagnostics,
+        per_file_ts7016_diagnostics,
+        cache,
+        base_dir,
+        file_is_esm_map,
+        resolved_module_paths,
+        collect_compile_stats,
+        request_cache_counters,
+    } = input;
+
+    let all_file_indices: Vec<usize> = (0..program.files.len()).collect();
+
+    let mut diagnostics: Vec<Diagnostic> =
+        collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
+            files: &program.files,
+            file_indices: &all_file_indices,
+            options,
+            program_has_real_syntax_errors,
+            include_isolated_declaration_diagnostics,
+        })
+        .into_iter()
+        .flat_map(|file_diags| file_diags.diagnostics)
+        .collect();
+
+    let mut used_paths =
+        FxHashSet::with_capacity_and_hasher(program.files.len(), Default::default());
+    for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
+        diagnostics.extend(file_diags.iter().cloned());
+        if let Some(file) = program.files.get(file_idx) {
+            used_paths.insert(PathBuf::from(&file.file_name));
+        }
+    }
+
+    if let Some(c) = cache {
+        c.type_caches.retain(|path, _| used_paths.contains(path));
+        c.diagnostics.retain(|path, _| used_paths.contains(path));
+        c.export_hashes.retain(|path, _| used_paths.contains(path));
+    }
+
+    diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+        program,
+        options,
+        base_dir,
+        file_is_esm_map,
+    ));
+
+    let module_dep_stats = if collect_compile_stats {
+        Some(compute_module_dependency_stats(
+            program.files.len(),
+            resolved_module_paths,
+        ))
+    } else {
+        None
+    };
+
+    CollectDiagnosticsResult {
+        diagnostics,
+        request_cache_counters,
+        query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
+        def_store_stats: None,
+        module_dep_stats,
+    }
+}
+
 #[derive(Default)]
 pub(super) struct CheckerLibSet {
     pub(super) files: Vec<Arc<LibFile>>,
@@ -157,12 +258,13 @@ fn file_session_reuse_test_override() -> Option<bool> {
 //   5,251 files:  5.4x faster off (cross-pkg mapped types)
 //   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
 //
-// Tiny generated apps are a different regime where sequential fresh-checker
-// setup dominates, but the reuse path is still not byte-identical for every
-// conformance shape (alias display and checked-JS prototype evidence can
-// observe retained state). Keep reuse opt-in until that semantic gap closes.
+// Tiny no-emit TypeScript projects are a different regime where fresh-checker
+// construction and boxed-lib priming dominate the wall-clock floor. Route those
+// projects through the deterministic sequential reuse path by default; JS/JSX
+// and larger batches remain reuse-off unless explicitly opted in until the
+// scale-cliff and byte-identity gaps close.
 // Two env knobs remain:
-//   * `TSZ_FILE_SESSION_REUSE=1` opts back in (legacy explicit-opt-in knob
+//   * `TSZ_FILE_SESSION_REUSE=1` opts larger projects back in (legacy explicit-opt-in knob
 //     from the pre-#6870 era).
 //   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off, preserving
 //     scripts that already pin the off behaviour. Takes precedence over
@@ -188,7 +290,8 @@ const fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> boo
 const fn file_session_reuse_from_workload(
     disable_set: bool,
     enable_set: bool,
-    _work_item_count: usize,
+    work_item_count: usize,
+    has_js_or_jsx_workload: bool,
 ) -> bool {
     if disable_set {
         return false;
@@ -196,10 +299,13 @@ const fn file_session_reuse_from_workload(
     if enable_set {
         return true;
     }
-    false
+    if has_js_or_jsx_workload {
+        return false;
+    }
+    work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
 }
 
-fn file_session_reuse_requested(work_item_count: usize) -> bool {
+fn file_session_reuse_requested(work_item_count: usize, has_js_or_jsx_workload: bool) -> bool {
     #[cfg(test)]
     if let Some(enabled) = file_session_reuse_test_override() {
         return enabled;
@@ -209,6 +315,7 @@ fn file_session_reuse_requested(work_item_count: usize) -> bool {
         std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
         std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
         work_item_count,
+        has_js_or_jsx_workload,
     )
 }
 
@@ -462,56 +569,19 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // errors via the `if !no_check` guard around `check_source_file`); the
     // type_caches it produces feed declaration emit.
     if options.no_check && !options.emit_declarations {
-        let all_file_indices: Vec<usize> = (0..program.files.len()).collect();
-
-        let mut diagnostics: Vec<Diagnostic> =
-            collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
-                files: &program.files,
-                file_indices: &all_file_indices,
-                options,
-                program_has_real_syntax_errors,
-                include_isolated_declaration_diagnostics: true,
-            })
-            .into_iter()
-            .flat_map(|file_diags| file_diags.diagnostics)
-            .collect();
-
-        for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
-            diagnostics.extend(file_diags.iter().cloned());
-            if let Some(file) = program.files.get(file_idx) {
-                used_paths.insert(PathBuf::from(&file.file_name));
-            }
-        }
-
-        if let Some(c) = cache {
-            c.type_caches.retain(|path, _| used_paths.contains(path));
-            c.diagnostics.retain(|path, _| used_paths.contains(path));
-            c.export_hashes.retain(|path, _| used_paths.contains(path));
-        }
-
-        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+        return collect_parse_only_diagnostics_result(ParseOnlyDiagnosticsInput {
             program,
             options,
+            program_has_real_syntax_errors,
+            include_isolated_declaration_diagnostics: true,
+            per_file_ts7016_diagnostics: &per_file_ts7016_diagnostics,
+            cache,
             base_dir,
-            &file_is_esm_map,
-        ));
-
-        let module_dep_stats = if collect_compile_stats {
-            Some(compute_module_dependency_stats(
-                program.files.len(),
-                resolved_module_paths.as_ref(),
-            ))
-        } else {
-            None
-        };
-
-        return CollectDiagnosticsResult {
-            diagnostics,
+            file_is_esm_map: &file_is_esm_map,
+            resolved_module_paths: &resolved_module_paths,
+            collect_compile_stats,
             request_cache_counters,
-            query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
-            def_store_stats: None,
-            module_dep_stats,
-        };
+        });
     }
 
     // `skipLibCheck` skips semantic checking for declaration files, but the
@@ -530,56 +600,19 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             .iter()
             .all(|file| is_declaration_file(&file.file_name))
     {
-        let all_file_indices: Vec<usize> = (0..program.files.len()).collect();
-
-        let mut diagnostics: Vec<Diagnostic> =
-            collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
-                files: &program.files,
-                file_indices: &all_file_indices,
-                options,
-                program_has_real_syntax_errors,
-                include_isolated_declaration_diagnostics: false,
-            })
-            .into_iter()
-            .flat_map(|file_diags| file_diags.diagnostics)
-            .collect();
-
-        for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
-            diagnostics.extend(file_diags.iter().cloned());
-            if let Some(file) = program.files.get(file_idx) {
-                used_paths.insert(PathBuf::from(&file.file_name));
-            }
-        }
-
-        if let Some(c) = cache {
-            c.type_caches.retain(|path, _| used_paths.contains(path));
-            c.diagnostics.retain(|path, _| used_paths.contains(path));
-            c.export_hashes.retain(|path, _| used_paths.contains(path));
-        }
-
-        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+        return collect_parse_only_diagnostics_result(ParseOnlyDiagnosticsInput {
             program,
             options,
+            program_has_real_syntax_errors,
+            include_isolated_declaration_diagnostics: false,
+            per_file_ts7016_diagnostics: &per_file_ts7016_diagnostics,
+            cache,
             base_dir,
-            &file_is_esm_map,
-        ));
-
-        let module_dep_stats = if collect_compile_stats {
-            Some(compute_module_dependency_stats(
-                program.files.len(),
-                resolved_module_paths.as_ref(),
-            ))
-        } else {
-            None
-        };
-
-        return CollectDiagnosticsResult {
-            diagnostics,
+            file_is_esm_map: &file_is_esm_map,
+            resolved_module_paths: &resolved_module_paths,
+            collect_compile_stats,
             request_cache_counters,
-            query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
-            def_store_stats: None,
-            module_dep_stats,
-        };
+        });
     }
 
     // Pre-compute merged augmentations once for all binder reconstruction paths.
@@ -900,10 +933,15 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // file checks. Tiny no-emit batches use the sequential reused-checker
     // path; that real checker primes itself before checking the first file, so
     // a separate prime checker would duplicate the same setup.
+    let has_js_input = program
+        .files
+        .iter()
+        .any(|file| is_js_file(Path::new(&file.file_name)));
+    let has_js_or_jsx_workload = has_js_input || options.checker.jsx_mode != JsxMode::None;
     if needs_separate_boxed_prime_checker(
         options.no_emit,
         options.emit_declarations,
-        file_session_reuse_requested(program.files.len()),
+        file_session_reuse_requested(program.files.len(), has_js_or_jsx_workload),
         program.files.len(),
         !checker_libs.contexts.is_empty(),
     ) {
@@ -1132,7 +1170,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let reuse_requested = file_session_reuse_requested(work_items.len());
+            let reuse_requested =
+                file_session_reuse_requested(work_items.len(), has_js_or_jsx_workload);
             let parallel_reuse_requested = parallel_file_session_reuse_requested();
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);
@@ -1153,10 +1192,12 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // it across files via `CheckerContext::switch_to_file` instead
             // of constructing one per file. As of PR #7521 + the experiment
             // doc at `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`,
-            // this remains OPT-IN (`TSZ_FILE_SESSION_REUSE=1`) because the
-            // reuse path regresses wall time 4-14x at 1k+ files and is not yet
-            // byte-identical for all tiny conformance shapes. The fresh-checker
-            // branch below (`check_file_with_fresh_checker`) remains the default.
+            // this remains opt-in for larger projects (`TSZ_FILE_SESSION_REUSE=1`) because the
+            // reuse path regresses wall time 4-14x at 1k+ files. Tiny no-emit
+            // projects use it by default so a real checker covers boxed-lib priming
+            // and avoids paying fresh-checker setup twice. The fresh-checker
+            // branch below (`check_file_with_fresh_checker`) remains the default
+            // for larger projects.
             // This flag applies to the sequential branch here; the parallel
             // branch below has its own chunked worker-reuse path with the
             // same opt-in default.

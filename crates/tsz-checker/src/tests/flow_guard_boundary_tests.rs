@@ -257,3 +257,63 @@ fn condition_typeof_narrowing_uses_flow_query_boundary() {
         "condition narrowing should not call solver typeof narrowing directly"
     );
 }
+
+#[test]
+fn condition_guard_application_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_with_guard(")
+            && compact_boundary.contains("narrowing.narrow_type(type_id,guard,"),
+        "flow analysis boundary should own reusable solver guard application"
+    );
+    assert!(
+        compact_condition.contains("self.narrow_with_guard_via_flow_boundary("),
+        "condition guard application should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_type("),
+        "condition narrowing should not apply solver guards directly"
+    );
+}
+
+#[test]
+fn condition_property_truthiness_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_by_property_truthiness_in_context(")
+            && compact_boundary.contains("narrowing.narrow_by_property_truthiness("),
+        "flow analysis boundary should own property-truthiness narrowing"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_by_property_truthiness_in_context("),
+        "condition property truthiness should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains(".narrow_by_property_truthiness("),
+        "condition narrowing should not apply property-truthiness narrowing directly"
+    );
+}
