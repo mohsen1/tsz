@@ -652,22 +652,28 @@ const checked: boolean = Op.is(made);
     #[test]
     fn file_session_reuse_workload_policy_keeps_reuse_opt_in_for_tiny_batches() {
         assert!(
-            !file_session_reuse_from_workload(false, false, 10),
-            "tiny no-emit batches must not reuse by default until reuse is byte-identical"
+            file_session_reuse_from_workload(false, false, 10, false),
+            "non-JSX tiny no-emit batches may reuse by default"
         );
         assert!(
-            !file_session_reuse_from_workload(
+            file_session_reuse_from_workload(
                 false,
                 false,
-                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES,
+                false
             ),
-            "the documented tiny-project boundary is a reuse implementation limit, not a default-on policy"
+            "the documented tiny-project boundary is the default reuse limit for non-JSX workloads"
+        );
+        assert!(
+            !file_session_reuse_from_workload(false, false, 10, true),
+            "JSX tiny no-emit batches stay fresh by default to preserve diagnostic display identity"
         );
         assert!(
             !file_session_reuse_from_workload(
                 false,
                 false,
-                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1,
+                false
             ),
             "larger batch CLI projects must keep the post-#7521 reuse-off default"
         );
@@ -675,12 +681,13 @@ const checked: boolean = Op.is(made);
             file_session_reuse_from_workload(
                 false,
                 true,
-                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1,
+                true
             ),
-            "TSZ_FILE_SESSION_REUSE=1 must still opt larger projects into reuse"
+            "TSZ_FILE_SESSION_REUSE=1 must still opt larger and JSX projects into reuse"
         );
         assert!(
-            !file_session_reuse_from_workload(true, true, 10),
+            !file_session_reuse_from_workload(true, true, 10, false),
             "TSZ_DISABLE_FILE_SESSION_REUSE=1 must override tiny-project auto reuse"
         );
     }

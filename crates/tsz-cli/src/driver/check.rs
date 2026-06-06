@@ -4,6 +4,7 @@ use super::check_module_graph::*;
 use super::check_utils::*;
 use super::*;
 use tsz::checker::context::RequestCacheCounters;
+use tsz_common::checker_options::JsxMode;
 
 const fn checker_resolution_mode_override(
     mode: Option<tsz::module_resolver::ImportingModuleKind>,
@@ -190,6 +191,7 @@ const fn file_session_reuse_from_workload(
     disable_set: bool,
     enable_set: bool,
     work_item_count: usize,
+    has_jsx_mode: bool,
 ) -> bool {
     if disable_set {
         return false;
@@ -197,10 +199,13 @@ const fn file_session_reuse_from_workload(
     if enable_set {
         return true;
     }
+    if has_jsx_mode {
+        return false;
+    }
     work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
 }
 
-fn file_session_reuse_requested(work_item_count: usize) -> bool {
+fn file_session_reuse_requested(work_item_count: usize, has_jsx_mode: bool) -> bool {
     #[cfg(test)]
     if let Some(enabled) = file_session_reuse_test_override() {
         return enabled;
@@ -210,6 +215,7 @@ fn file_session_reuse_requested(work_item_count: usize) -> bool {
         std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
         std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
         work_item_count,
+        has_jsx_mode,
     )
 }
 
@@ -1041,10 +1047,11 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // file checks. Tiny no-emit batches use the sequential reused-checker
     // path; that real checker primes itself before checking the first file, so
     // a separate prime checker would duplicate the same setup.
+    let has_jsx_mode = options.checker.jsx_mode != JsxMode::None;
     if needs_separate_boxed_prime_checker(
         options.no_emit,
         options.emit_declarations,
-        file_session_reuse_requested(program.files.len()),
+        file_session_reuse_requested(program.files.len(), has_jsx_mode),
         program.files.len(),
         !checker_libs.contexts.is_empty(),
     ) {
@@ -1273,7 +1280,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let reuse_requested = file_session_reuse_requested(work_items.len());
+            let reuse_requested = file_session_reuse_requested(work_items.len(), has_jsx_mode);
             let parallel_reuse_requested = parallel_file_session_reuse_requested();
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);
