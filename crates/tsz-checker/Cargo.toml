@@ -414,6 +414,9 @@ path = "tests/readonly_tuple_source_display_tests.rs"
 name = "tuple_arity_elaboration_tests"
 path = "tests/tuple_arity_elaboration_tests.rs"
 [[test]]
+name = "tuple_variadic_position_elaboration_tests"
+path = "tests/tuple_variadic_position_elaboration_tests.rs"
+[[test]]
 name = "conditional_alias_source_display_tests"
 path = "tests/conditional_alias_source_display_tests.rs"
 [[test]]
