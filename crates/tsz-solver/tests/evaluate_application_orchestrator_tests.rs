@@ -120,6 +120,85 @@ fn evaluate_application_unknown_body_keeps_application_opaque() {
     );
 }
 
+fn tuple_elem(type_id: TypeId) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: false,
+    }
+}
+
+fn rest_tuple_elem(type_id: TypeId) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: true,
+    }
+}
+
+#[test]
+fn evaluate_application_variadic_prepend_flattens_tail_application() {
+    let interner = TypeInterner::new();
+
+    let head_param = unconstrained_param(&interner, "Head");
+    let tail_param = unconstrained_param(&interner, "Tail");
+    let source_param = unconstrained_param(&interner, "Source");
+    let ignored_head = interner.intern(TypeData::Infer(unconstrained_param(&interner, "Ignored")));
+    let rest = interner.intern(TypeData::Infer(unconstrained_param(&interner, "Rest")));
+
+    let head_type = interner.intern(TypeData::TypeParameter(head_param));
+    let tail_type = interner.intern(TypeData::TypeParameter(tail_param));
+    let source_type = interner.intern(TypeData::TypeParameter(source_param));
+
+    let prepend_body = interner.tuple(vec![tuple_elem(head_type), rest_tuple_elem(tail_type)]);
+    let tail_body = interner.conditional(ConditionalType {
+        check_type: source_type,
+        extends_type: interner.tuple(vec![tuple_elem(ignored_head), rest_tuple_elem(rest)]),
+        true_type: rest,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let mut env = TypeEnvironment::new();
+    let tail_source = interner.tuple(vec![
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+    ]);
+    let tail_app = alias_application(
+        &interner,
+        &mut env,
+        DefId(301),
+        DefKind::TypeAlias,
+        tail_body,
+        vec![source_param],
+        vec![tail_source],
+    );
+    let prepend_app = alias_application(
+        &interner,
+        &mut env,
+        DefId(302),
+        DefKind::TypeAlias,
+        prepend_body,
+        vec![head_param, tail_param],
+        vec![TypeId::STRING, tail_app],
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(prepend_app);
+    let expected = interner.tuple(vec![
+        tuple_elem(TypeId::STRING),
+        tuple_elem(TypeId::NUMBER),
+        tuple_elem(TypeId::BOOLEAN),
+    ]);
+
+    assert_eq!(
+        result, expected,
+        "Prepend<Head, Tail<Source>> must preserve exact tail arity through a rest Application"
+    );
+}
+
 /// Phase 5 — homomorphic mapped-type passthrough. `Box<number>` where
 /// `Box<T> = { [P in keyof T]: T[P] }` returns the primitive argument
 /// directly without expanding the mapped body, matching tsc.
