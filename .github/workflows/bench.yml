@@ -1378,7 +1378,8 @@ jobs:
           set -euo pipefail
           node scripts/bench/tsgo-winner-report.mjs \
             "$GITHUB_WORKSPACE/bench-results.json" \
-            "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json"
+            "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+            "$GITHUB_WORKSPACE/bench-results-missing-attribution.md"
 
       - name: Compare project winner regressions
         continue-on-error: true
@@ -1425,6 +1426,7 @@ jobs:
           path: |
             bench-results.json
             bench-results-tsgo-winners.json
+            bench-results-missing-attribution.md
             bench-results-project-winner-regressions.json
             bench-results-project-winner-regressions.md
             bench-results-readiness.json
@@ -1447,6 +1449,9 @@ jobs:
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.tsgo-winners.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.tsgo-winners.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-missing-attribution.md" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.missing-attribution.md"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.missing-attribution.md"
 
           if [[ -n "${MAIN_SHA}" && "${TARGET_SHA}" != "${MAIN_SHA}" ]]; then
             echo "Bench target ${TARGET_SHA} is behind current main ${MAIN_SHA}; publishing because active benchmark runs are intentionally allowed to finish."
@@ -1458,6 +1463,9 @@ jobs:
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-missing-attribution.md" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.missing-attribution.md"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.missing-attribution.md"
           echo "should_redeploy=true" >> "$GITHUB_OUTPUT"
 
       - name: Report severe benchmark gaps
