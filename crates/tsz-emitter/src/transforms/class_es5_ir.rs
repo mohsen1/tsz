@@ -670,7 +670,7 @@ impl<'a> ES5ClassTransformer<'a> {
         };
         let start = std::cmp::min(start as usize, source_text.len());
         let end = std::cmp::min(end as usize, source_text.len());
-        start < end && source_text[start..end].contains(';')
+        crate::safe_slice::span_contains_byte(source_text, start, end, b';')
     }
 
     /// Create a base `AstToIr` converter with shared temp var counter and transforms
