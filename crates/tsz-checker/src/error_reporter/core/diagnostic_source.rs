@@ -9,6 +9,7 @@ mod generic_source_display;
 mod literal_surface;
 mod literal_widening_helpers;
 mod literal_widening_policy;
+mod object_literal_anchors;
 mod object_literal_targets;
 mod recursive_alias_display;
 mod span_diagnostic_queries;
@@ -27,106 +28,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn object_literal_initializer_anchor_for_type(
-        &mut self,
-        object_idx: NodeIndex,
-        source_type: TypeId,
-    ) -> Option<(u32, u32)> {
-        let mut current = self.ctx.arena.skip_parenthesized_and_assertions(object_idx);
-        let mut guard = 0;
-
-        loop {
-            guard += 1;
-            if guard > 32 {
-                return None;
-            }
-
-            let node = self.ctx.arena.get(current)?;
-
-            let direct_initializer =
-                if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
-                    Some(prop.initializer)
-                } else {
-                    self.ctx
-                        .arena
-                        .get_shorthand_property(node)
-                        .map(|prop| prop.name)
-                };
-
-            if let Some(initializer_idx) = direct_initializer {
-                if let Some(anchor) = self.resolve_diagnostic_anchor(
-                    initializer_idx,
-                    crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind::Exact,
-                ) {
-                    return Some((anchor.start, anchor.length));
-                }
-
-                let (pos, end) = self.get_node_span(initializer_idx)?;
-                return Some(self.normalized_anchor_span(
-                    initializer_idx,
-                    pos,
-                    end.saturating_sub(pos),
-                ));
-            }
-
-            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                let literal = self.ctx.arena.get_literal_expr(node)?;
-                let source_display = self.format_type_for_assignability_message(
-                    self.widen_type_for_display(source_type),
-                );
-
-                for child_idx in literal.elements.nodes.iter().copied() {
-                    let Some(child) = self.ctx.arena.get(child_idx) else {
-                        continue;
-                    };
-
-                    let candidate_idx =
-                        if let Some(prop) = self.ctx.arena.get_property_assignment(child) {
-                            prop.initializer
-                        } else if let Some(prop) = self.ctx.arena.get_shorthand_property(child) {
-                            prop.name
-                        } else {
-                            continue;
-                        };
-
-                    let candidate_type = self.get_type_of_node(candidate_idx);
-                    if matches!(candidate_type, TypeId::ERROR | TypeId::UNKNOWN) {
-                        continue;
-                    }
-
-                    let candidate_display = self.format_type_for_assignability_message(
-                        self.widen_type_for_display(candidate_type),
-                    );
-                    if candidate_type != source_type && candidate_display != source_display {
-                        continue;
-                    }
-
-                    if let Some(anchor) = self.resolve_diagnostic_anchor(
-                        candidate_idx,
-                        crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind::Exact,
-                    ) {
-                        return Some((anchor.start, anchor.length));
-                    }
-
-                    let (pos, end) = self.get_node_span(candidate_idx)?;
-                    return Some(self.normalized_anchor_span(
-                        candidate_idx,
-                        pos,
-                        end.saturating_sub(pos),
-                    ));
-                }
-
-                return None;
-            }
-
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = self.ctx.arena.skip_parenthesized_and_assertions(ext.parent);
-        }
-    }
-
     pub(in crate::error_reporter) fn direct_diagnostic_source_expression(
         &self,
         anchor_idx: NodeIndex,
@@ -1191,12 +1092,14 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            // tsc preserves literal types in fresh object literal error messages
-            // when the target property type accepts literals (e.g., discriminated
-            // unions: `tag: "A" | "B" | "C"`). Otherwise it widens (e.g., `string`).
-            // Check the target property type to decide.
-            // When the target is a union (e.g., discriminated union ADT), check
-            // each union member's properties for literal acceptance.
+            // tsc preserves a fresh literal property only when the contextual
+            // (target) property type carries a literal of the *same* primitive
+            // base (mirroring `getWidenedLiteralLikeTypeForContextualType`); the
+            // base must match so a numeric source against a string-literal target
+            // still widens. The former check recognized string literals only, so
+            // numeric/boolean/bigint properties were wrongly widened.
+            let source_literal_base =
+                diagnostic_query::widen_literal_to_primitive(self.ctx.types, value_type);
             let target_accepts_literal = property_name
                 .and_then(|name| {
                     // First try the direct object shape
@@ -1205,12 +1108,19 @@ impl<'a> CheckerState<'a> {
                             .properties
                             .iter()
                             .find(|p| p.name == name)
+                            .filter(|p| {
+                                self.type_contains_literal_of_primitive_base(
+                                    p.type_id,
+                                    source_literal_base,
+                                )
+                            })
                             .map(|p| p.type_id);
                     }
-                    // For union targets, check each member's properties
+                    // For union targets, check each member's properties. The
+                    // per-member gate already enforces the base match, so the
+                    // returned type needs no re-check below.
                     let target = target?;
-                    let members =
-                        crate::query_boundaries::common::union_members(self.ctx.types, target)?;
+                    let members = diagnostic_query::union_members(self.ctx.types, target)?;
                     for member in &members {
                         if let Some(member_shape) =
                             crate::query_boundaries::common::object_shape_for_type(
@@ -1219,16 +1129,17 @@ impl<'a> CheckerState<'a> {
                             )
                             && let Some(prop) =
                                 member_shape.properties.iter().find(|p| p.name == name)
-                            && self.type_contains_string_literal(prop.type_id)
+                            && self.type_contains_literal_of_primitive_base(
+                                prop.type_id,
+                                source_literal_base,
+                            )
                         {
                             return Some(prop.type_id);
                         }
                     }
                     None
                 })
-                .is_some_and(|target_prop_type| {
-                    self.type_contains_string_literal(target_prop_type)
-                });
+                .is_some();
             if let Some(literal_display) = self.literal_expression_display(value_idx) {
                 let preserve_normalized_union_boolean = preserve_literal_source_for_normalized_union
                     && matches!(literal_display.as_str(), "true" | "false");

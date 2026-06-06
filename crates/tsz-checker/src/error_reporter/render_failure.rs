@@ -840,6 +840,26 @@ impl<'a> CheckerState<'a> {
                 *multi_element,
             ),
 
+            SubtypeFailureReason::TupleVariadicPositionMismatch {
+                source_start,
+                source_end,
+                target_position,
+                source_element,
+                target_element,
+                nested_reason,
+            } => {
+                let (detail, detail_code) =
+                    Self::variadic_positional_detail(*source_start, *source_end, *target_position);
+                self.render_tuple_positional_chain(
+                    &rctx,
+                    detail,
+                    detail_code,
+                    *source_element,
+                    *target_element,
+                    nested_reason.as_deref(),
+                )
+            }
+
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
                 target_element,

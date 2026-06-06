@@ -210,6 +210,9 @@ mod generator_union_return_type_tests;
 #[path = "tests/generator_yield_identity_tests.rs"]
 mod generator_yield_identity_tests;
 #[cfg(test)]
+#[path = "tests/generic_callable_outer_type_param_mismatch_tests.rs"]
+mod generic_callable_outer_type_param_mismatch_tests;
+#[cfg(test)]
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
 #[cfg(test)]
@@ -731,6 +734,9 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
 mod fresh_const_array_mutable_assignment_tests;
+#[cfg(test)]
+#[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
+mod fresh_object_literal_union_literal_kind_display_tests;
 #[cfg(test)]
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;

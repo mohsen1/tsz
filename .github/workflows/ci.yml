@@ -1108,6 +1108,9 @@ jobs:
           python3 scripts/conformance/check-snapshot-regression.py \
             --base-ref FETCH_HEAD \
             --head-ref HEAD
+          python3 scripts/conformance/check-accepted-regression-growth.py \
+            --base-ref FETCH_HEAD \
+            --head-ref HEAD
       - name: Skip snapshot comparison
         if: github.event_name != 'pull_request'
         run: echo "Conformance snapshot gate is enforced for pull_request events."
