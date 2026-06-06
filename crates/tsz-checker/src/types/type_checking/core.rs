@@ -821,6 +821,14 @@ impl<'a> CheckerState<'a> {
     /// - Checks type literals for call/construct signatures with parameter properties
     /// - Recursively checks nested types (arrays, unions, intersections, etc.)
     pub(crate) fn check_type_for_parameter_properties(&mut self, type_idx: NodeIndex) {
+        self.check_type_param_props(type_idx, true);
+    }
+
+    pub(crate) fn check_type_alias_body_for_parameter_properties(&mut self, type_idx: NodeIndex) {
+        self.check_type_param_props(type_idx, false);
+    }
+
+    fn check_type_param_props(&mut self, type_idx: NodeIndex, include_indexed_access: bool) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
@@ -855,7 +863,10 @@ impl<'a> CheckerState<'a> {
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     {
                         if param.type_annotation.is_some() {
-                            self.check_type_for_parameter_properties(param.type_annotation);
+                            self.check_type_param_props(
+                                param.type_annotation,
+                                include_indexed_access,
+                            );
                         }
                         self.maybe_report_implicit_any_parameter(param, false, pi);
                     }
@@ -893,7 +904,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Recursively check the return type
-                self.check_type_for_parameter_properties(func_type.type_annotation);
+                self.check_type_param_props(func_type.type_annotation, include_indexed_access);
             }
             if let Some(updates) = fn_type_param_updates {
                 self.pop_type_parameters(updates);
@@ -937,29 +948,31 @@ impl<'a> CheckerState<'a> {
         // Recursively check array types, union types, intersection types, etc.
         else if node.kind == syntax_kind_ext::ARRAY_TYPE {
             if let Some(arr) = self.ctx.arena.get_array_type(node) {
-                self.check_type_for_parameter_properties(arr.element_type);
+                self.check_type_param_props(arr.element_type, include_indexed_access);
             }
         } else if node.kind == syntax_kind_ext::UNION_TYPE
             || node.kind == syntax_kind_ext::INTERSECTION_TYPE
         {
             if let Some(composite) = self.ctx.arena.get_composite_type(node) {
                 for &type_idx in &composite.types.nodes {
-                    self.check_type_for_parameter_properties(type_idx);
+                    self.check_type_param_props(type_idx, include_indexed_access);
                 }
             }
         } else if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
             if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
-                self.check_type_for_parameter_properties(cond.check_type);
-                self.check_type_for_parameter_properties(cond.extends_type);
-                self.check_type_for_parameter_properties(cond.true_type);
-                self.check_type_for_parameter_properties(cond.false_type);
+                self.check_type_param_props(cond.check_type, include_indexed_access);
+                self.check_type_param_props(cond.extends_type, include_indexed_access);
+                let infer_pushes = self.push_infer_bindings_from_extends(cond.extends_type);
+                self.check_type_param_props(cond.true_type, include_indexed_access);
+                self.pop_infer_bindings(infer_pushes);
+                self.check_type_param_props(cond.false_type, include_indexed_access);
             }
         } else if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                 && let Some(type_arguments) = &type_ref.type_arguments
             {
                 for &arg_idx in &type_arguments.nodes {
-                    self.check_type_for_parameter_properties(arg_idx);
+                    self.check_type_param_props(arg_idx, include_indexed_access);
                 }
             }
         } else if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
@@ -994,7 +1007,8 @@ impl<'a> CheckerState<'a> {
                 // during this broad signature walk can poison the per-node type
                 // cache and produce spurious diagnostics. Skipping them keeps
                 // TS4105 precise and side-effect free.
-                if self.indexed_access_object_is_type_param_candidate(object_node)
+                if include_indexed_access
+                    && self.indexed_access_object_is_type_param_candidate(object_node)
                     && let Some(property_name) =
                         crate::types_domain::type_node_helpers::get_string_literal_from_type_index(
                             self.ctx.arena,
@@ -1009,18 +1023,18 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 // Recurse for nested indexed-access types (e.g. `T["a"]["b"]`).
-                self.check_type_for_parameter_properties(object_node);
-                self.check_type_for_parameter_properties(index_node);
+                self.check_type_param_props(object_node, include_indexed_access);
+                self.check_type_param_props(index_node, include_indexed_access);
             }
         } else if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
             && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
         {
-            self.check_type_for_parameter_properties(paren.type_node);
+            self.check_type_param_props(paren.type_node, include_indexed_access);
         } else if node.kind == syntax_kind_ext::TYPE_PREDICATE
             && let Some(pred) = self.ctx.arena.get_type_predicate(node)
             && pred.type_node.is_some()
         {
-            self.check_type_for_parameter_properties(pred.type_node);
+            self.check_type_param_props(pred.type_node, include_indexed_access);
         }
     }
 
@@ -1038,11 +1052,24 @@ impl<'a> CheckerState<'a> {
         };
         match node.kind {
             k if k == syntax_kind_ext::THIS_TYPE => true,
-            k if k == syntax_kind_ext::TYPE_REFERENCE => self
-                .ctx
-                .arena
-                .get_type_ref(node)
-                .is_some_and(|type_ref| type_ref.type_arguments.is_none()),
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                    return false;
+                };
+                if type_ref.type_arguments.is_some() {
+                    return false;
+                }
+                let Some(identifier) = self.ctx.arena.get_identifier_at(type_ref.type_name) else {
+                    return false;
+                };
+                !self.identifier_references_enclosing_infer_binding(
+                    type_ref.type_name,
+                    &identifier.escaped_text,
+                ) && self
+                    .ctx
+                    .type_parameter_scope
+                    .contains_key(&identifier.escaped_text)
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
                 self.ctx.arena.get_wrapped_type(node).is_some_and(|paren| {
                     self.indexed_access_object_is_type_param_candidate(paren.type_node)
