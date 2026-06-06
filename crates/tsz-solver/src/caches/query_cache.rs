@@ -427,6 +427,12 @@ pub struct QueryCache<'a> {
     shared: Option<&'a SharedQueryCache>,
 }
 
+/// A `query_db`-backed evaluator: a `TypeEvaluator` with the `NoopResolver`
+/// (matching `evaluate_type_with_options`) whose cross-call caches are wired to
+/// a `QueryCache`. See [`QueryCache::query_backed_evaluator`].
+type QueryBackedEvaluator<'a> =
+    crate::evaluation::evaluate::TypeEvaluator<'a, crate::def::resolver::NoopResolver>;
+
 impl<'a> QueryCache<'a> {
     pub fn new(interner: &'a TypeInterner) -> Self {
         Self::with_optional_shared(interner, None)
@@ -439,6 +445,23 @@ impl<'a> QueryCache<'a> {
     /// to both local and shared caches for cross-file benefit.
     pub fn new_with_shared(interner: &'a TypeInterner, shared: &'a SharedQueryCache) -> Self {
         Self::with_optional_shared(interner, Some(shared))
+    }
+
+    /// Build a `TypeEvaluator` wired to this cache's cross-call instantiation
+    /// and application-eval caches.
+    ///
+    /// The sub-evaluation entry points (`evaluate_conditional`, `evaluate_keyof`,
+    /// `evaluate_mapped`, `evaluate_index_access_with_options`) otherwise fall
+    /// through to the `QueryDatabase` trait defaults, which construct a fresh
+    /// `TypeEvaluator` with `query_db = None`. That strips the cross-call
+    /// instantiation cache (`#12019`) at the entry boundary, so recursive
+    /// utility expansion re-walks the same `(body, substitution)` pairs on every
+    /// call. Threading `self` as the `query_db` lets those entry points share the
+    /// same memoized walks the top-level `evaluate_type_with_options` path
+    /// already uses. The resolver stays `Noop` to match that path exactly; only
+    /// caching behavior changes, never the computed result.
+    fn query_backed_evaluator(&self) -> QueryBackedEvaluator<'_> {
+        crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database()).with_query_db(self)
     }
 
     fn with_optional_shared(
@@ -1666,9 +1689,7 @@ impl QueryDatabase for QueryCache<'_> {
             query_id
         });
 
-        let mut evaluator =
-            crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
-        evaluator = evaluator.with_query_db(self);
+        let mut evaluator = self.query_backed_evaluator();
         let result = evaluator.evaluate_request_result(request).into_type_id();
 
         // PERF: Persist intermediate evaluation results from this session into
@@ -1699,6 +1720,31 @@ impl QueryDatabase for QueryCache<'_> {
             query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
         }
         result
+    }
+
+    /// Cache-aware override of the `QueryDatabase` default, which would build a
+    /// `query_db = None` evaluator and bypass the cross-call instantiation cache.
+    fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
+        self.query_backed_evaluator().evaluate_conditional(cond)
+    }
+
+    fn evaluate_index_access_with_options(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        let mut evaluator = self.query_backed_evaluator();
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.evaluate_index_access(object_type, index_type)
+    }
+
+    fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+        self.query_backed_evaluator().evaluate_keyof(operand)
+    }
+
+    fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+        self.query_backed_evaluator().evaluate_mapped(mapped)
     }
 
     /// Look up a cross-call `instantiate_type` result.
