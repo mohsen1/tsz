@@ -1399,6 +1399,34 @@ fn reserved_word_tail_after_missing_comma_in_type_annotation_stops_after_ts1389(
 }
 
 #[test]
+fn recovered_typeof_member_tail_records_argument_span_on_variable_list() {
+    let source = "const x: \"\".typeof(/* keep */ this.foo);";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+    let stmt = arena
+        .get(sf.statements.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("variable statement");
+    let decl_list = arena
+        .get(stmt.declarations.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("declaration list");
+
+    assert_eq!(
+        decl_list.recovered_typeof_member_calls.len(),
+        1,
+        "parser should expose the recovered typeof tail as structured data"
+    );
+    let recovered = &decl_list.recovered_typeof_member_calls[0];
+    assert_eq!(
+        &source[recovered.argument_pos as usize..recovered.argument_end as usize],
+        "/* keep */ this.foo",
+        "recorded span should cover only the recovered typeof argument"
+    );
+}
+
+#[test]
 fn member_call_tail_after_missing_comma_in_type_annotation_emits_second_comma_error() {
     let source = "declare const x: \"foo\".charCodeAt(0);";
     let (parser, _root) = parse_source(source);
