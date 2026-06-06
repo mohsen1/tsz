@@ -132,6 +132,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.depth_exceeded.set(false);
         crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
         crate::checkers_domain::reset_stack_overflow_flag();
+        // Defensive backstop for the solver's RAII-balanced cross-operation
+        // frame breaker (issue #7574): clear any residue left by a panic that
+        // was caught and swallowed mid-recursion on a previous file.
+        tsz_solver::recursion::reset_solver_stack_frames();
 
         // Mark that we're now in the checking phase. During build_type_environment,
         // closures may be type-checked without contextual types, which would cause

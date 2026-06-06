@@ -689,6 +689,148 @@ impl Drop for DepthCounter {
 }
 
 // ---------------------------------------------------------------------------
+// Cross-operation stack-frame breaker
+// ---------------------------------------------------------------------------
+
+/// Maximum number of *simultaneously active* solver recursion frames on a
+/// single thread, summed across every recursive solver operation.
+///
+/// # Why a shared counter is needed
+///
+/// Every recursive solver operation already carries its own per-instance logical
+/// guard: evaluation uses [`RecursionProfile::TypeEvaluation`] (depth 100) plus a
+/// thread-local `GLOBAL_EVAL_DEPTH` cap of 200, subtyping uses
+/// `MAX_SUBTYPE_DEPTH` (100), and instantiation uses `MAX_INSTANTIATION_DEPTH`
+/// (100). Each of those guards lives on the *evaluator / checker / instantiator
+/// instance*, so it is reset to zero whenever a fresh instance is constructed.
+///
+/// The hot solver path does exactly that: `SubtypeChecker::evaluate_type`
+/// builds a fresh `TypeEvaluator`, evaluation of an `Application` builds a fresh
+/// `TypeInstantiator`, instantiated members are then subtyped through a fresh
+/// `SubtypeChecker`, and so on. The cross-operation cycle
+/// `evaluate -> subtype -> instantiate -> evaluate -> ...` therefore accumulates
+/// real call-stack frames that *no single per-instance guard ever counts*. On a
+/// pathological type shape this recursion is bounded only by the OS thread stack
+/// and aborts the process with a stack overflow (issue #7574: ~10k-file repo
+/// overflows even a 4 GB worker stack — recursion depth in the millions).
+///
+/// This counter closes that gap: every major recursive solver entry point enters
+/// a [`SolverStackFrame`] on the way in (RAII-decremented on the way out), so the
+/// *combined* depth of the whole cross-operation cycle is bounded regardless of
+/// how many fresh instances are spun up along the way.
+///
+/// # Calibration
+///
+/// The cap sits an order of magnitude above the per-instance logical caps
+/// (100-200), so it never trips on the finite-but-deep recursion those guards
+/// already bound — a successfully-checked 1.47 M LOC corpus peaks far below it.
+/// It sits well *below* the frame count that overflows the solver's 128 MB
+/// worker stack ([`tsz_common::limits::THREAD_STACK_SIZE_BYTES`]), leaving a
+/// comfortable margin even when individual frames carry large stack locals.
+pub const MAX_SOLVER_STACK_FRAMES: u32 = 2_000;
+
+thread_local! {
+    static SOLVER_STACK_FRAMES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII guard representing one active solver recursion frame.
+///
+/// Obtained from [`try_enter_solver_frame`]. While held, it keeps the
+/// thread-local frame count incremented; dropping it (including during a panic
+/// unwind) decrements the count, so the budget can never leak across a normal
+/// or panicking return.
+#[derive(Debug)]
+#[must_use = "the frame budget is only held while this guard is alive"]
+pub struct SolverStackFrame {
+    // Private field keeps construction restricted to `try_enter_solver_frame`.
+    _private: (),
+}
+
+impl Drop for SolverStackFrame {
+    #[inline]
+    fn drop(&mut self) {
+        SOLVER_STACK_FRAMES.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+}
+
+/// Try to enter one solver recursion frame.
+///
+/// Returns `Some(guard)` when the thread-local frame budget still has headroom;
+/// the caller should proceed with its recursive work and let the returned guard
+/// drop at the end of the frame. Returns `None` when
+/// [`MAX_SOLVER_STACK_FRAMES`] active frames are already on the stack; the
+/// caller must then bail out with a safe, relation-preserving default (e.g.
+/// `SubtypeResult::DepthExceeded`, an opaque/un-instantiated type) instead of
+/// recursing deeper and overflowing the OS stack.
+///
+/// Most call sites should prefer [`with_solver_frame`], which couples this
+/// budget check with the shared `stacker::maybe_grow` segment sizing.
+#[inline]
+pub fn try_enter_solver_frame() -> Option<SolverStackFrame> {
+    SOLVER_STACK_FRAMES.with(|c| {
+        let depth = c.get();
+        if depth >= MAX_SOLVER_STACK_FRAMES {
+            None
+        } else {
+            c.set(depth + 1);
+            Some(SolverStackFrame { _private: () })
+        }
+    })
+}
+
+/// `stacker::maybe_grow` red-zone size shared by every guarded solver recursion
+/// site: grow the stack once free headroom drops below this many bytes.
+const STACK_RED_ZONE_BYTES: usize = 256 * 1024;
+/// `stacker::maybe_grow` new-segment size: how many bytes each fresh stack
+/// segment adds when the red zone is reached.
+const STACK_GROW_BYTES: usize = 2 * 1024 * 1024;
+
+/// Run `body` on a (possibly freshly grown) stack while accounting for one
+/// cross-operation solver recursion frame.
+///
+/// This is the ergonomic wrapper every recursive solver entry point should use.
+/// It pairs [`try_enter_solver_frame`] with a `stacker::maybe_grow` so the two
+/// stack-safety mechanisms — the logical frame budget and dynamic stack growth —
+/// stay in lockstep with one shared set of segment sizes.
+///
+/// Returns `Some(body())` when the frame budget had headroom, or `None` when
+/// [`MAX_SOLVER_STACK_FRAMES`] frames are already active. On `None`, `body` is
+/// **not** run; the caller substitutes a safe, relation-preserving default with
+/// `.unwrap_or(...)` / `.unwrap_or_else(...)`. The held frame guard is dropped
+/// before the value is returned, so a bail closure can freely re-borrow the same
+/// `&mut self` that `body` captured.
+#[inline]
+pub fn with_solver_frame<T>(body: impl FnOnce() -> T) -> Option<T> {
+    let _frame = try_enter_solver_frame()?;
+    Some(stacker::maybe_grow(
+        STACK_RED_ZONE_BYTES,
+        STACK_GROW_BYTES,
+        body,
+    ))
+}
+
+/// Current number of active solver recursion frames on this thread.
+///
+/// Exposed for tests and diagnostics; normal callers use
+/// [`try_enter_solver_frame`].
+#[inline]
+pub fn solver_stack_frame_depth() -> u32 {
+    SOLVER_STACK_FRAMES.with(std::cell::Cell::get)
+}
+
+/// Reset the thread-local solver frame counter to zero.
+///
+/// The counter is RAII-balanced, so it returns to zero on its own after any
+/// well-behaved recursion. This reset is a defensive backstop against drift
+/// from a panic that was caught and swallowed mid-recursion; call it at the
+/// same per-file / per-compilation boundaries that reset the checker and binder
+/// stack-overflow breakers.
+#[inline]
+pub fn reset_solver_stack_frames() {
+    SOLVER_STACK_FRAMES.with(|c| c.set(0));
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

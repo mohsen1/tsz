@@ -27,9 +27,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 _ => break current,
             }
 
-            let step = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            // Shared cross-operation stack-frame breaker (issue #7574): bound
+            // the combined recursion even when this constraint chain re-enters
+            // fresh evaluators. On exhaustion leave the current type opaque.
+            let Some(step) = crate::recursion::with_solver_frame(|| {
                 self.evaluate_keyof_or_constraint_inner(current)
-            });
+            }) else {
+                break current;
+            };
 
             if step != current
                 && matches!(
