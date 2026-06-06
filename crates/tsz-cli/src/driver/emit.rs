@@ -189,7 +189,7 @@ pub(crate) fn emit_outputs(
     let root_file_paths: FxHashSet<String> = context
         .root_file_paths
         .iter()
-        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        .map(|path| canonicalize_or_owned(path.as_path()))
         .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect();
     let file_lookup = build_program_file_lookup(context.program);

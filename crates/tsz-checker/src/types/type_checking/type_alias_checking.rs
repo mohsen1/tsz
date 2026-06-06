@@ -1372,11 +1372,6 @@ impl<'a> CheckerState<'a> {
                             type_ref.type_arguments.as_ref(),
                         );
                     if !is_bare_scoped_type_parameter {
-                        if let Some(type_arguments) = &type_ref.type_arguments {
-                            for &arg_idx in &type_arguments.nodes {
-                                check_child_type_node!(self, arg_idx);
-                            }
-                        }
                         if let Some(sym_id) = self
                             .resolve_type_symbol_for_lowering(type_ref.type_name)
                             .map(tsz_binder::SymbolId)
@@ -1384,6 +1379,11 @@ impl<'a> CheckerState<'a> {
                                 || self.type_alias_reaches_resolving_alias(sym_id))
                         {
                             return;
+                        }
+                        if let Some(type_arguments) = &type_ref.type_arguments {
+                            for &arg_idx in &type_arguments.nodes {
+                                check_child_type_node!(self, arg_idx);
+                            }
                         }
                         if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
                             let _ = if nested_in_type_literal {
@@ -1537,20 +1537,24 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|n| n.kind == syntax_kind_ext::MAPPED_TYPE);
                     let true_needs_direct_type_ref_validation =
                         self.conditional_branch_needs_direct_type_ref_validation(cond.true_type);
-                    if true_is_mapped || true_needs_direct_type_ref_validation {
+                    if true_needs_direct_type_ref_validation {
+                        let infer_pushes = self.push_infer_bindings_from_extends(cond.extends_type);
+                        check_child_type_node_in_current_scope!(self, cond.true_type);
+                        self.pop_infer_bindings(infer_pushes);
+                    } else if true_is_mapped {
                         // Check if the check type resolves to a type parameter.
                         // If so, mapped true branches benefit from narrowing and
                         // we skip them. Direct type-reference branches still need
                         // their generic constraints checked under the conditional
-                        // `infer` bindings; that validation is definition-time
-                        // syntax/diagnostic work, not eager alias body lowering.
+                        // `infer` bindings, but they do not need this potentially
+                        // expensive check-type resolution.
                         let check_type = self.get_type_from_type_node(cond.check_type);
                         let check_is_type_param =
                             crate::query_boundaries::common::is_type_parameter_like(
                                 self.ctx.types,
                                 check_type,
                             );
-                        if !check_is_type_param || true_needs_direct_type_ref_validation {
+                        if !check_is_type_param {
                             let infer_pushes =
                                 self.push_infer_bindings_from_extends(cond.extends_type);
                             check_child_type_node_in_current_scope!(self, cond.true_type);

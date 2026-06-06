@@ -163,19 +163,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn track_earliest_excess(
-        &self,
-        current: &mut Option<(Atom, NodeIndex, u32)>,
-        name: Atom,
-        report_idx: NodeIndex,
-    ) {
-        let pos = self.ctx.arena.get(report_idx).map_or(u32::MAX, |n| n.pos);
-        if current.is_none_or(|(_, _, best)| pos < best) {
-            *current = Some((name, report_idx, pos));
-        }
-    }
-
-    fn emit_tracked_excess_property(
+    pub(super) fn emit_tracked_excess_property(
         &mut self,
         tracked: Option<(Atom, NodeIndex, u32)>,
         target: TypeId,
@@ -378,6 +366,16 @@ impl<'a> CheckerState<'a> {
         }
         if generic_mapped_excess.is_some() {
             self.emit_tracked_excess_property(generic_mapped_excess, target);
+            return;
+        }
+
+        if self.report_concrete_mapped_target_excess_property(
+            target,
+            evaluated_target,
+            source_props,
+            explicit_property_names.as_ref(),
+            object_literal_idx,
+        ) {
             return;
         }
 

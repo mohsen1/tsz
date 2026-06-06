@@ -39,6 +39,18 @@ thread_local! {
     // an undetermined type and must NOT be cached as definitive, or it poisons
     // every later structural check that shares the same member type.
     static LAZY_RESOLVE_FAILURES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    // Monotonic counter bumped whenever a structural comparison hits the
+    // weak-type (TS2559) trigger: a non-empty, non-weak source compared against
+    // a weak-type target with no common property names. Such a pair yields
+    // DIFFERENT results depending on whether weak-type enforcement is active
+    // (`SubtypeChecker::enforce_weak_types` plus the `in_property_check` /
+    // `in_intersection_member_check` gating context). That enforcement state is
+    // operation-local and is NOT encoded in the flag-agnostic
+    // `RelationCacheKey`, so a result computed while this counter changed must
+    // NOT be memoized in the shared relation cache or it poisons a sibling
+    // check that runs under a different enforcement state. Mirrors the
+    // unresolved-`Lazy` snapshot mechanism above.
+    static WEAK_TYPE_SENSITIVITY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Record that a `Lazy(DefId)` failed to resolve during a relation check.
@@ -53,6 +65,23 @@ pub(crate) fn note_lazy_resolve_failure() {
 #[inline]
 pub(crate) fn lazy_resolve_failure_count() -> u64 {
     LAZY_RESOLVE_FAILURES.with(std::cell::Cell::get)
+}
+
+/// Record that a structural comparison reached the weak-type (TS2559) trigger,
+/// making the in-flight result sensitive to the active weak-type enforcement
+/// state. See [`WEAK_TYPE_SENSITIVITY`].
+#[inline]
+pub(crate) fn note_weak_type_sensitivity() {
+    WEAK_TYPE_SENSITIVITY.with(|c| c.set(c.get().wrapping_add(1)));
+}
+
+/// Current value of the weak-type-sensitivity counter; compare a snapshot taken
+/// before computing a result with the value after to detect whether the
+/// computation depended on weak-type enforcement state (which the relation
+/// cache key does not encode).
+#[inline]
+pub(crate) fn weak_type_sensitivity_count() -> u64 {
+    WEAK_TYPE_SENSITIVITY.with(std::cell::Cell::get)
 }
 
 /// Pack depth (low 32) and fuel (high 32) into a single u64.
@@ -79,6 +108,7 @@ const fn unpack_fuel(state: u64) -> u32 {
 pub fn reset_subtype_thread_local_state() {
     GLOBAL_SUBTYPE_STATE.with(|s| s.set(0));
     LAZY_RESOLVE_FAILURES.with(|c| c.set(0));
+    WEAK_TYPE_SENSITIVITY.with(|c| c.set(0));
 }
 
 // Maximum number of non-trivial subtype checks per top-level call chain.
@@ -388,6 +418,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // yet registered, so a `False` is undetermined and must not be cached.
         let lazy_failures_at_entry = lazy_resolve_failure_count();
 
+        // Snapshot the weak-type-sensitivity counter. If it changes while
+        // computing this pair's result, the result depended on weak-type
+        // enforcement state (TS2559), which the flag-agnostic `RelationCacheKey`
+        // does not encode. Caching it would let a result computed under one
+        // enforcement state be served to a sibling check under another.
+        let weak_sensitivity_at_entry = weak_type_sensitivity_count();
+
         // Helper macro to decrement global depth and optionally reset fuel on early returns.
         macro_rules! leave_global {
             () => {
@@ -408,16 +445,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // computation did not depend on a `Lazy` whose body was unresolved
         // (which would make the result undetermined and poison the cache).
         //
-        // This is best-effort and intentionally conservative: the snapshot is
-        // process-wide (thread-local), so *any* unresolved-`Lazy` event anywhere
-        // in this top-level call's subtree — even in a branch whose result did
-        // not feed the final answer — suppresses the write. That only ever skips
-        // a cache write (correctness-preserving: the result is recomputed later,
-        // when the body is registered), never produces a wrong answer. Captures
-        // `lazy_failures_at_entry` from the enclosing scope by name.
+        // This is best-effort and intentionally conservative: the snapshots are
+        // process-wide (thread-local), so *any* unresolved-`Lazy` event or
+        // weak-type-sensitivity event anywhere in this top-level call's subtree
+        // — even in a branch whose result did not feed the final answer —
+        // suppresses the write. That only ever skips a cache write
+        // (correctness-preserving: the result is recomputed later), never
+        // produces a wrong answer. Captures `lazy_failures_at_entry` and
+        // `weak_sensitivity_at_entry` from the enclosing scope by name.
         macro_rules! cache_definitive {
             ($db:expr, $key:expr, $result:expr) => {
-                if lazy_resolve_failure_count() == lazy_failures_at_entry {
+                if lazy_resolve_failure_count() == lazy_failures_at_entry
+                    && weak_type_sensitivity_count() == weak_sensitivity_at_entry
+                {
                     match $result {
                         SubtypeResult::True => $db.insert_subtype_cache($key, true),
                         SubtypeResult::False => $db.insert_subtype_cache($key, false),

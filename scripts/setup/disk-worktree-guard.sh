@@ -91,6 +91,7 @@ pruned=""
 disk_free_gb_after=""
 disk_free_mb_after=""
 disk_shortfall_mb_after=""
+cache_pressure_candidates=""
 
 prune_incremental() {
   local pruned=0
@@ -182,8 +183,64 @@ else
   echo "  none"
 fi
 
+emit_cache_candidate() {
+  local scope="$1"
+  local wt="$2"
+  local branch="$3"
+  local cache_name
+  local tdir
+  local size_kb
+  local size_mb
+
+  for cache_name in target .target .target-bench; do
+    tdir="$wt/$cache_name"
+    [[ -d "$tdir" ]] || continue
+    size_kb="$(du -sk "$tdir" 2>/dev/null | awk 'NR==1 {print $1}')"
+    [[ -n "$size_kb" ]] || continue
+    (( size_kb > 0 )) || continue
+    size_mb=$(( (size_kb + 1023) / 1024 ))
+    printf '%012d\tsize_mb=%s path=%s cache=%s scope=%s branch=%s\n' \
+      "$size_kb" "$size_mb" "$tdir" "$cache_name" "$scope" "${branch:-unknown}"
+  done
+}
+
+if [[ "$disk_status" == "low" ]]; then
+  echo "cache_pressure_candidates:"
+  cache_pressure_candidates="$(
+    {
+      current_branch="$(
+        git -C "$REPO_ROOT" symbolic-ref --short -q HEAD \
+          || git -C "$REPO_ROOT" rev-parse --short=12 HEAD
+      )"
+      emit_cache_candidate current "$REPO_ROOT" "$current_branch"
+
+      if [[ -n "$reuse_candidates" ]]; then
+        while IFS= read -r line; do
+          line="${line#  }"
+          [[ -n "$line" ]] || continue
+          [[ "$line" != "none" ]] || continue
+          wt="${line%% branch=*}"
+          rest="${line#* branch=}"
+          branch="${rest%% inactive_hours>=*}"
+          [[ -n "$wt" && "$wt" != "$line" ]] || continue
+          emit_cache_candidate inactive-clean "$wt" "$branch"
+        done <<< "$reuse_candidates"
+      fi
+    } | sort -rn | head -8 | cut -f2-
+  )"
+
+  if [[ -n "$cache_pressure_candidates" ]]; then
+    while IFS= read -r line; do
+      printf '  %s\n' "$line"
+    done <<< "$cache_pressure_candidates"
+  else
+    echo "  none"
+  fi
+fi
+
 if [[ -n "$JSON_REPORT" ]]; then
   REUSE_CANDIDATES="$reuse_candidates" \
+  CACHE_PRESSURE_CANDIDATES="$cache_pressure_candidates" \
   JSON_REPORT="$JSON_REPORT" \
   WORKTREE_PARENT="$WORKTREE_PARENT" \
   REPO_ROOT="$REPO_ROOT" \
@@ -222,6 +279,22 @@ const candidates = (process.env.REUSE_CANDIDATES ?? "")
     };
   });
 
+const cachePressureCandidates = (process.env.CACHE_PRESSURE_CANDIDATES ?? "")
+  .split(/\n/)
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .map((line) => {
+    const match = /^size_mb=(\d+) path=(.*?) cache=(\S+) scope=(\S+) branch=(.*)$/.exec(line);
+    if (!match) return { raw: line };
+    return {
+      size_mb: Number(match[1]),
+      path: match[2],
+      cache: match[3],
+      scope: match[4],
+      branch: match[5],
+    };
+  });
+
 const report = {
   ok: process.env.DISK_STATUS === "ok",
   status: process.env.DISK_STATUS,
@@ -244,6 +317,8 @@ const report = {
     : null,
   reuse_candidate_count: candidates.length,
   reuse_candidates: candidates,
+  cache_pressure_candidate_count: cachePressureCandidates.length,
+  cache_pressure_candidates: cachePressureCandidates,
 };
 
 fs.mkdirSync(path.dirname(process.env.JSON_REPORT), { recursive: true });

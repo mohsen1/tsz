@@ -1,7 +1,29 @@
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::Cell;
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_solver::{TypeId, TypeParamInfo};
+
+/// File-local synthetic type-node surface caches.
+#[derive(Debug, Default)]
+pub struct TypeNodeSurfaceCaches {
+    /// Cached synthetic `typeof globalThis` surface for this checker file.
+    ///
+    /// The surface is derived from current-file and lib value globals, so it is
+    /// checker-local rather than `ProgramContext`-shared. The in-progress bit
+    /// breaks nested `typeof globalThis` annotations while the surface itself is
+    /// being built; those recursive self-edges use `unknown`, matching the
+    /// explicit `globalThis` self-property fallback.
+    pub global_this_type: Cell<Option<TypeId>>,
+    pub global_this_type_in_progress: Cell<bool>,
+}
+
+impl TypeNodeSurfaceCaches {
+    pub fn clear(&self) {
+        self.global_this_type.set(None);
+        self.global_this_type_in_progress.set(false);
+    }
+}
 
 /// Checker-local memos for type-reference argument validation.
 #[derive(Debug, Default)]
@@ -29,6 +51,11 @@ pub struct TypeReferenceValidationCaches {
     /// underneath `conditional_branch_constraint` because different conditional
     /// aliases can expose the same mapped-object branch/value constraint pair.
     pub indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    /// Type-parameter default/constraint validations that completed without
+    /// diagnostics for the active checker file.
+    pub type_param_default_constraint: FxHashSet<(u32, TypeId, TypeId)>,
+    /// Synthetic type-node surfaces cached for the active checker file.
+    pub type_node_surface: TypeNodeSurfaceCaches,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
