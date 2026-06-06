@@ -23,6 +23,24 @@ pub(crate) fn type_alias_displayed_as_underlying(
     tsz_solver::type_alias_displayed_as_underlying(db, definitions, def_id)
 }
 
+/// As [`type_alias_displayed_as_underlying`], but accepts a `TypeId` instead of
+/// a `DefId`: resolves `ty` to the non-generic type alias it references — either
+/// a `Lazy(DefId)` alias reference or the already-resolved structural result
+/// that still maps back to the alias `DefId` via the def store — then applies
+/// the shared underlying-display policy. Returns the underlying `TypeId` to
+/// display in place of the alias name, or `None` when `ty` is not such an alias.
+///
+/// Keeping the `Lazy` resolution here (rather than at the checker call site)
+/// avoids growing the `query_boundaries::common` quarantine in checker modules.
+pub(crate) fn type_displayed_as_underlying(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    ty: TypeId,
+) -> Option<TypeId> {
+    let def_id = common::lazy_def_id(db, ty).or_else(|| definitions.find_def_for_type(ty))?;
+    type_alias_displayed_as_underlying(db, definitions, def_id)
+}
+
 pub(crate) fn source_preserves_declared_generic_alias_display(
     db: &dyn TypeDatabase,
     source: TypeId,
