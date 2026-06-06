@@ -1107,6 +1107,9 @@ mod recursive_generic_arrow_tests;
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;
 #[cfg(test)]
+#[path = "tests/recursive_tuple_alias_diagnostic_display_tests.rs"]
+mod recursive_tuple_alias_diagnostic_display_tests;
+#[cfg(test)]
 #[path = "tests/ref_type_params_cache_tests.rs"]
 mod ref_type_params_cache_tests;
 #[cfg(test)]

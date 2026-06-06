@@ -95,6 +95,31 @@ impl<'a> CheckerState<'a> {
             }
             _ => ty,
         };
+        // A recursive generic type-alias application (e.g. `T2<U>` for
+        // `type T2<T> = [42, T2<{ x: T }>]`) can never be expanded structurally
+        // in a diagnostic: the alias body refers back to itself, so any
+        // structural rendering is unbounded (`[42, [42, [..., ...]]]`). tsc
+        // keeps the alias form (`T2<U>`) in every assignability role. Render the
+        // application name here, before the role-specific structural/raw-tuple
+        // fallbacks below evaluate the application into its self-referential
+        // body. This shared guard extends the same rule the assignment-target
+        // path already applied to the call-argument, call-parameter, and bare
+        // assignability roles, which previously expanded the body.
+        if matches!(
+            role,
+            DiagnosticTypeDisplayRole::Assignability
+                | DiagnosticTypeDisplayRole::AssignmentSource { .. }
+                | DiagnosticTypeDisplayRole::AssignmentTarget { .. }
+                | DiagnosticTypeDisplayRole::CallArgument { .. }
+                | DiagnosticTypeDisplayRole::CallParameter { .. }
+                | DiagnosticTypeDisplayRole::WeakCallParameter { .. }
+        ) && crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            ty,
+        ) {
+            return self.format_type_diagnostic(ty);
+        }
         match role {
             DiagnosticTypeDisplayRole::DefaultDiagnostic => self.format_type_diagnostic(ty),
             DiagnosticTypeDisplayRole::WidenedDiagnostic => self.format_type_diagnostic_widened(ty),
