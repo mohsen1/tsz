@@ -406,6 +406,20 @@ pub(crate) fn narrow_to_falsy(
     narrowing.narrow_to_falsy(type_id)
 }
 
+/// Narrow a union by whether a property path is truthy/falsy.
+///
+/// The checker owns extracting the property path from syntax and deciding
+/// whether a `never` result is admissible for a non-union source. The solver
+/// owns evaluating property truthiness across the type.
+pub(crate) fn narrow_by_property_truthiness_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_by_property_truthiness(type_id, property_path, is_true_branch)
+}
+
 /// Narrow a value to the object-like branch of an `instanceof`-style check.
 pub(crate) fn narrow_to_objectish(
     db: &dyn QueryDatabase,
