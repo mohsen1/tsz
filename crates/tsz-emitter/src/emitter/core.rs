@@ -992,6 +992,11 @@ pub struct Printer<'a> {
     /// as a destructuring assignment target and should become a writable setter.
     pub(crate) scoped_static_super_assignment_target: bool,
 
+    /// When true, value-producing scoped static `super` writes in lowered static
+    /// field initializers use tsc's hoisted-temp comma expression form instead
+    /// of the decorator/static-block IIFE form.
+    pub(crate) scoped_static_super_value_write_as_comma: bool,
+
     /// Temporary alias for named class expressions that are wrapped in a comma
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
