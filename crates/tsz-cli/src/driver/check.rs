@@ -4,6 +4,7 @@ use super::check_module_graph::*;
 use super::check_utils::*;
 use super::*;
 use tsz::checker::context::RequestCacheCounters;
+use tsz_common::checker_options::JsxMode;
 
 const fn checker_resolution_mode_override(
     mode: Option<tsz::module_resolver::ImportingModuleKind>,
@@ -257,12 +258,13 @@ fn file_session_reuse_test_override() -> Option<bool> {
 //   5,251 files:  5.4x faster off (cross-pkg mapped types)
 //   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
 //
-// Tiny generated apps are a different regime where sequential fresh-checker
-// setup dominates, but the reuse path is still not byte-identical for every
-// conformance shape (alias display and checked-JS prototype evidence can
-// observe retained state). Keep reuse opt-in until that semantic gap closes.
+// Tiny no-emit TypeScript projects are a different regime where fresh-checker
+// construction and boxed-lib priming dominate the wall-clock floor. Route those
+// projects through the deterministic sequential reuse path by default; JS/JSX
+// and larger batches remain reuse-off unless explicitly opted in until the
+// scale-cliff and byte-identity gaps close.
 // Two env knobs remain:
-//   * `TSZ_FILE_SESSION_REUSE=1` opts back in (legacy explicit-opt-in knob
+//   * `TSZ_FILE_SESSION_REUSE=1` opts larger projects back in (legacy explicit-opt-in knob
 //     from the pre-#6870 era).
 //   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off, preserving
 //     scripts that already pin the off behaviour. Takes precedence over
@@ -288,7 +290,8 @@ const fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> boo
 const fn file_session_reuse_from_workload(
     disable_set: bool,
     enable_set: bool,
-    _work_item_count: usize,
+    work_item_count: usize,
+    has_js_or_jsx_workload: bool,
 ) -> bool {
     if disable_set {
         return false;
@@ -296,10 +299,13 @@ const fn file_session_reuse_from_workload(
     if enable_set {
         return true;
     }
-    false
+    if has_js_or_jsx_workload {
+        return false;
+    }
+    work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
 }
 
-fn file_session_reuse_requested(work_item_count: usize) -> bool {
+fn file_session_reuse_requested(work_item_count: usize, has_js_or_jsx_workload: bool) -> bool {
     #[cfg(test)]
     if let Some(enabled) = file_session_reuse_test_override() {
         return enabled;
@@ -309,6 +315,7 @@ fn file_session_reuse_requested(work_item_count: usize) -> bool {
         std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
         std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
         work_item_count,
+        has_js_or_jsx_workload,
     )
 }
 
@@ -926,10 +933,15 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // file checks. Tiny no-emit batches use the sequential reused-checker
     // path; that real checker primes itself before checking the first file, so
     // a separate prime checker would duplicate the same setup.
+    let has_js_input = program
+        .files
+        .iter()
+        .any(|file| is_js_file(Path::new(&file.file_name)));
+    let has_js_or_jsx_workload = has_js_input || options.checker.jsx_mode != JsxMode::None;
     if needs_separate_boxed_prime_checker(
         options.no_emit,
         options.emit_declarations,
-        file_session_reuse_requested(program.files.len()),
+        file_session_reuse_requested(program.files.len(), has_js_or_jsx_workload),
         program.files.len(),
         !checker_libs.contexts.is_empty(),
     ) {
@@ -1158,7 +1170,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let reuse_requested = file_session_reuse_requested(work_items.len());
+            let reuse_requested =
+                file_session_reuse_requested(work_items.len(), has_js_or_jsx_workload);
             let parallel_reuse_requested = parallel_file_session_reuse_requested();
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);
@@ -1179,10 +1192,12 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             // it across files via `CheckerContext::switch_to_file` instead
             // of constructing one per file. As of PR #7521 + the experiment
             // doc at `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`,
-            // this remains OPT-IN (`TSZ_FILE_SESSION_REUSE=1`) because the
-            // reuse path regresses wall time 4-14x at 1k+ files and is not yet
-            // byte-identical for all tiny conformance shapes. The fresh-checker
-            // branch below (`check_file_with_fresh_checker`) remains the default.
+            // this remains opt-in for larger projects (`TSZ_FILE_SESSION_REUSE=1`) because the
+            // reuse path regresses wall time 4-14x at 1k+ files. Tiny no-emit
+            // projects use it by default so a real checker covers boxed-lib priming
+            // and avoids paying fresh-checker setup twice. The fresh-checker
+            // branch below (`check_file_with_fresh_checker`) remains the default
+            // for larger projects.
             // This flag applies to the sequential branch here; the parallel
             // branch below has its own chunked worker-reuse path with the
             // same opt-in default.
