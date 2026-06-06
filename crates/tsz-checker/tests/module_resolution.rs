@@ -468,7 +468,7 @@ fn test_resolution_maps_bare_specifier_not_registered_for_nested() {
     // external package bare specifiers like `lodash` are not in the map.
     let files = vec!["/proj/src/main.ts".to_string()];
     let (paths, _) = build_module_resolution_maps(&files);
-    assert!(paths.get(&(0, "lodash".to_string())).is_none());
+    assert!(!paths.contains_key(&(0, "lodash".to_string())));
 }
 
 // ===========================================================================
