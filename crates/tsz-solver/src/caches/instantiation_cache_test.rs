@@ -695,3 +695,75 @@ fn cache_clear_drops_all_instantiation_entries() {
     db.clear();
     assert_eq!(db.statistics().instantiation_cache_entries, 0);
 }
+
+#[test]
+fn query_database_evaluate_entry_points_preserve_results() {
+    // #12021: `QueryCache` overrides `evaluate_conditional` / `evaluate_keyof` /
+    // `evaluate_mapped` / `evaluate_index_access_with_options` to thread `self`
+    // as the `query_db` so recursive utility expansion through those entry
+    // points reaches the cross-call instantiation cache (instead of the
+    // trait-default `query_db = None` evaluator built by the free functions).
+    // The override must change ONLY caching behavior — never the computed type.
+    use crate::caches::db::QueryDatabase;
+    use crate::types::{ConditionalType, MappedType};
+
+    let interner = TypeInterner::new();
+    let qc = QueryCache::new(&interner);
+
+    // keyof { a: string; b: number }
+    let source = object_with_pair(&interner, TypeId::STRING, TypeId::NUMBER);
+    let keyof_src = interner.keyof(source);
+    assert_eq!(
+        QueryDatabase::evaluate_keyof(&qc, source),
+        crate::evaluation::evaluate::evaluate_keyof(&interner, source),
+        "evaluate_keyof override must match the uncached result",
+    );
+
+    // { a: string; b: number }["a"]
+    let key_a = interner.literal_string("a");
+    assert_eq!(
+        QueryDatabase::evaluate_index_access_with_options(&qc, source, key_a, false),
+        crate::evaluation::evaluate::evaluate_index_access_with_options(
+            &interner, source, key_a, false,
+        ),
+        "evaluate_index_access override must match the uncached result",
+    );
+
+    // string extends string ? number : boolean
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: false,
+    };
+    assert_eq!(
+        QueryDatabase::evaluate_conditional(&qc, &cond),
+        crate::evaluation::evaluate::evaluate_conditional(&interner, &cond),
+        "evaluate_conditional override must match the uncached result",
+    );
+
+    // Homomorphic `{ [P in keyof T]: T[P] }` instantiated with T = source.
+    let iter_atom = interner.intern_string("P");
+    let outer_t = interner.type_param(param_info(interner.intern_string("T")));
+    let iter_param = interner.type_param(param_info(iter_atom));
+    let template = interner.index_access(source, iter_param);
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(interner.keyof(outer_t)),
+            default: None,
+            is_const: false,
+        },
+        constraint: keyof_src,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+    assert_eq!(
+        QueryDatabase::evaluate_mapped(&qc, &mapped),
+        crate::evaluation::evaluate::evaluate_mapped(&interner, &mapped),
+        "evaluate_mapped override must match the uncached result",
+    );
+}
