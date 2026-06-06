@@ -200,16 +200,18 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .get(&html_div_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("HTMLDivElement should have a delegate arena");
+    let (html_div_ty, html_div_params) = state
+        .direct_value_merged_builtin_lib_interface_symbol_type(
+            html_div_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(html_div_arena),
+            false,
+        )
+        .expect("value-merged DOM interfaces with only void-return own methods should stay lazy");
+    assert!(html_div_params.is_empty());
     assert!(
-        state
-            .direct_value_merged_builtin_lib_interface_symbol_type(
-                html_div_sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                Some(html_div_arena),
-                false,
-            )
-            .is_none(),
-        "heritage-bearing value-merged DOM interfaces need full materialization for relation checks",
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, html_div_ty).is_some(),
+        "HTMLDivElement should use a type-position Lazy ref",
     );
 }
 
@@ -528,16 +530,18 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
         .get(&html_div_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("HTMLDivElement should have a delegate arena");
+    let (html_div, html_div_params) = state
+        .direct_value_merged_builtin_lib_interface_symbol_type(
+            html_div_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(html_div_arena),
+            false,
+        )
+        .expect("value-merged DOM interfaces whose declared methods return void should stay lazy");
+    assert!(html_div_params.is_empty());
     assert!(
-        state
-            .direct_value_merged_builtin_lib_interface_symbol_type(
-                html_div_sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                Some(html_div_arena),
-                false,
-            )
-            .is_none(),
-        "HTMLDivElement has DOM heritage and should fall back until relation checks are heritage-aware",
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, html_div).is_some(),
+        "HTMLDivElement should return a type-position Lazy ref",
     );
     let inner_html = state
         .resolve_simple_lib_interface_own_property("HTMLDivElement", "innerHTML")
@@ -567,7 +571,7 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
                 false,
             )
             .is_none(),
-        "Document has DOM heritage and should fall back until relation checks are heritage-aware",
+        "value-merged DOM interfaces with non-void method returns should stay on the existing child/interface path",
     );
     let query_selector = state
         .resolve_simple_lib_interface_own_property("Document", "querySelector")

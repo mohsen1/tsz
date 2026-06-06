@@ -4,6 +4,7 @@ use tsz_common::perf_counters::CrossArenaSymbolMissSource;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 use super::cross_file_direct::{
@@ -54,7 +55,7 @@ pub(super) fn iterator_object_has_global_augmentations(
 }
 
 impl<'a> CheckerState<'a> {
-    fn value_merged_dom_interface_can_stay_type_position_lazy(
+    fn value_merged_dom_interface_has_only_lazy_safe_methods(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -71,14 +72,6 @@ impl<'a> CheckerState<'a> {
                 return true;
             };
 
-            if interface
-                .heritage_clauses
-                .as_ref()
-                .is_some_and(|clauses| !clauses.nodes.is_empty())
-            {
-                return false;
-            }
-
             interface.members.nodes.iter().all(|&member_idx| {
                 let Some(member) = arena.get(member_idx) else {
                     return false;
@@ -93,7 +86,12 @@ impl<'a> CheckerState<'a> {
                         let Some(signature) = arena.get_signature(member) else {
                             return false;
                         };
-                        signature.type_annotation != NodeIndex::NONE
+                        if signature.type_annotation == NodeIndex::NONE {
+                            return false;
+                        }
+                        arena
+                            .get(signature.type_annotation)
+                            .is_some_and(|node| node.kind == SyntaxKind::VoidKeyword as u16)
                     }
                     _ => true,
                 }
@@ -211,15 +209,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         // DOM value/interface pairs used in type position can stay as lazy lib
-        // identities only when their own member surface is resolvable by the
-        // lazy member gateway and the interface has no heritage. Method
-        // signatures are safe for member reads because
-        // `resolve_simple_lib_interface_own_property` lowers unambiguous method
-        // groups through `TypeLowering`, but relation checks for a type-position
-        // `Lazy(DefId)` still need the full inherited DOM base closure. Until
-        // that relation/materialization story is heritage-aware, inherited DOM
-        // interfaces fall back to the existing full child/interface path.
-        if !self.value_merged_dom_interface_can_stay_type_position_lazy(sym_id, &symbol) {
+        // identities when their own method surface cannot contribute a
+        // non-void result shape. Method-heavy interfaces such as `Document`
+        // still need the child/interface path so overload return types and
+        // contextual callback parameters are fully materialized on demand.
+        if !self.value_merged_dom_interface_has_only_lazy_safe_methods(sym_id, &symbol) {
             return None;
         }
 
