@@ -321,9 +321,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Compatibility shim for callers that still construct only an
     /// `ExportSurface`.
     pub fn set_export_surface(&mut self, surface: tsz_binder::ExportSurface) {
-        self.set_declaration_summary(tsz_binder::DeclarationSummary {
-            export_surface: surface,
-        });
+        self.set_declaration_summary(tsz_binder::DeclarationSummary::from_export_surface(surface));
     }
 
     /// Set the current file's arena and path for distinguishing local vs foreign symbols.
