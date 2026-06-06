@@ -1,6 +1,6 @@
 //! Module resolution and query helpers for `DeclarationChecker`.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -249,26 +249,17 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             && let Some(parent) = Path::new(&self.ctx.file_name).parent()
         {
             let joined = parent.join(name);
-            let normalized = Self::normalize_path(&joined);
+            // Share the resolver/driver canonical-identity normalizer so a
+            // relative `declare module "..."` augmentation key collapses to the
+            // same spelling the module graph uses. The previous local copy
+            // popped past the filesystem root and silently dropped a leading
+            // `..` (`../foo` -> `foo`), which merged augmentations targeting
+            // distinct files under one key.
+            let normalized =
+                tsz_common::module_resolution::path_identity::normalize_segments(&joined);
             return normalized.to_string_lossy().to_string();
         }
         name.to_string()
-    }
-
-    pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-        let mut normalized = PathBuf::new();
-        for component in path.components() {
-            match component {
-                Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-                Component::RootDir => normalized.push(component.as_os_str()),
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    normalized.pop();
-                }
-                Component::Normal(part) => normalized.push(part),
-            }
-        }
-        normalized
     }
 
     /// Check if a node is inside a namespace/module declaration.
