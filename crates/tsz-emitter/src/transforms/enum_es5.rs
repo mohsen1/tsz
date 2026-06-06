@@ -450,7 +450,11 @@ impl<'a> EnumES5Transformer<'a> {
             if range.end > member_pos {
                 break;
             }
-            if !source_text[scan_start as usize..range.pos as usize].contains('\n') {
+            if !crate::safe_slice::span_contains_line_break(
+                source_text,
+                scan_start as usize,
+                range.pos as usize,
+            ) {
                 continue;
             }
             let text = &source_text[range.pos as usize..range.end as usize];

@@ -110,3 +110,20 @@ fn explicit_empty_fallback_still_available_via_unwrap_or() {
     assert_eq!(slice(s, 100, 200).unwrap_or(""), "");
     assert_eq!(slice(s, 5, 3).unwrap_or(""), "");
 }
+
+#[test]
+fn span_contains_line_break_reports_newline_or_carriage_return() {
+    let s = "same line\nnext\r\nlast";
+    assert!(!span_contains_line_break(s, 0, 9));
+    assert!(span_contains_line_break(s, 0, 10));
+    assert!(span_contains_line_break(s, 14, 15));
+    assert!(span_contains_line_break(s, 14, 16));
+}
+
+#[test]
+fn span_contains_line_break_returns_false_for_invalid_spans() {
+    let s = "hello 🦀 world";
+    assert!(!span_contains_line_break(s, 10, 6));
+    assert!(!span_contains_line_break(s, 0, 100));
+    assert!(!span_contains_line_break(s, 7, 10));
+}
