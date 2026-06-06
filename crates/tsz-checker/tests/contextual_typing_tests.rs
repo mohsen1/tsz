@@ -43,3 +43,4 @@ fn check_with_libs(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
 
 include!("contextual_typing_tests_parts/part_00.rs");
 include!("contextual_typing_tests_parts/part_01.rs");
+include!("contextual_typing_tests_parts/part_02.rs");

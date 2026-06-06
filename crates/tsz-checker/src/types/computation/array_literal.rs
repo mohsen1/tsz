@@ -337,7 +337,7 @@ impl<'a> CheckerState<'a> {
     /// correctly — also lets closure elements pick the matching function arm (or
     /// fall back to implicit-any TS7006 when the arms genuinely conflict), matching
     /// tsc in both directions.
-    fn ambiguous_union_element_context(&mut self, resolved: Option<TypeId>) -> Option<TypeId> {
+    fn ambiguous_union_element_context(&self, resolved: Option<TypeId>) -> Option<TypeId> {
         let resolved = resolved?;
         // Strip a `readonly`/`NoInfer` wrapper around the whole contextual type,
         // then take each union arm's array element type — looking through per-arm
@@ -810,6 +810,17 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
         });
 
+        // Per-element contextual type for an ambiguous union of array shapes. This
+        // depends only on the (loop-invariant) resolved contextual type, so compute
+        // it once instead of per element.
+        let ambiguous_union_elem_context =
+            if union_array_context_is_ambiguous && !force_tuple_for_union_context {
+                self.ambiguous_union_element_context(resolved_contextual_type)
+                    .map(|ty| query_common::no_infer_inner_type(self.ctx.types, ty).unwrap_or(ty))
+            } else {
+                None
+            };
+
         // Get types of all elements, applying contextual typing when available.
         // Track (type, node_index) pairs for excess property checking on array elements.
         let mut element_types = Vec::new();
@@ -894,10 +905,8 @@ impl<'a> CheckerState<'a> {
                 // resolve correctly because the contextual-parameter logic handles a
                 // union contextual type — picking the matching function arm, or
                 // emitting implicit-any (TS7006) when the arms genuinely conflict.
-                match self.ambiguous_union_element_context(resolved_contextual_type) {
-                    Some(ty) => request.read().contextual(
-                        query_common::no_infer_inner_type(self.ctx.types, ty).unwrap_or(ty),
-                    ),
+                match ambiguous_union_elem_context {
+                    Some(ty) => request.read().contextual(ty),
                     None => crate::context::TypingRequest::NONE,
                 }
             } else if let Some(ref helper) = ctx_helper {
