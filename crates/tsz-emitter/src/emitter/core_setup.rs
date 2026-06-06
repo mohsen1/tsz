@@ -724,6 +724,10 @@ impl<'a> Printer<'a> {
         {
             let start = std::cmp::min(n1.end as usize, text.len());
             let end = std::cmp::min(n2.pos as usize, text.len());
+            if end <= start {
+                let overlap_start = std::cmp::min(n2.pos as usize, text.len());
+                return !text[overlap_start..start].contains('\n');
+            }
             if start < end {
                 // Check if there's a newline between the two nodes
                 return !text[start..end].contains('\n');
