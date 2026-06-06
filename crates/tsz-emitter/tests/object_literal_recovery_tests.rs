@@ -117,6 +117,21 @@ fn missing_object_literal_separator_after_get_set_shorthand_is_emitted() {
 }
 
 #[test]
+fn get_set_shorthand_before_generator_is_split_even_on_same_line() {
+    let source = "const c = { get, *x() {} };\nconst d = { set, *x() {} };\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("const c = {\n    get,\n    *x() { }\n};"),
+        "get shorthand should not stay on the generator method line; output:\n{output}"
+    );
+    assert!(
+        output.contains("const d = {\n    set,\n    *x() { }\n};"),
+        "set shorthand should not stay on the generator method line; output:\n{output}"
+    );
+}
+
+#[test]
 fn object_binding_reserved_shorthand_emits_empty_property_assignment() {
     let source = "var { while } = { while: 1 };\n";
     let output = print_es2015(source);

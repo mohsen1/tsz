@@ -9,6 +9,17 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::is_private_identifier;
 use tsz_scanner::SyntaxKind;
 
+fn top_level_using_temp_name_rank(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix('_')?;
+    if rest.len() == 1 {
+        let byte = rest.as_bytes()[0];
+        if byte.is_ascii_lowercase() {
+            return Some((byte - b'a') as u32);
+        }
+    }
+    rest.parse::<u32>().ok().map(|index| index + 26)
+}
+
 impl<'a> Printer<'a> {
     fn top_level_using_export_binding_stmt(&self, export_name: &str, local_name: &str) -> String {
         if self.in_system_execute_body {
@@ -372,6 +383,7 @@ impl<'a> Printer<'a> {
         }
 
         let mut temps = Vec::new();
+        let mut class_exprs = Vec::new();
         for &stmt_idx in &statements.nodes[start_idx..] {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -388,28 +400,98 @@ impl<'a> Printer<'a> {
             } else {
                 None
             };
-            let Some(class_idx) = class_idx else {
-                continue;
-            };
-            let Some(class_node) = self.arena.get(class_idx) else {
-                continue;
-            };
-            let Some(class) = self.arena.get_class(class_node) else {
-                continue;
-            };
-            if !self.top_level_using_es5_class_has_deferred_static_blocks(class) {
+            if let Some(class_idx) = class_idx {
+                let Some(class_node) = self.arena.get(class_idx) else {
+                    continue;
+                };
+                let Some(class) = self.arena.get_class(class_node) else {
+                    continue;
+                };
+                if !self.top_level_using_es5_class_has_deferred_static_blocks(class) {
+                    continue;
+                }
+
+                let temp = self.make_unique_name_fresh();
+                self.reserved_top_level_using_class_result_temps
+                    .insert(class_idx, temp.clone());
+                self.hoisted_deferred_static_class_result_temps
+                    .push(temp.clone());
+                temps.push(temp);
                 continue;
             }
-
-            let temp = self.make_unique_name_fresh();
-            self.reserved_top_level_using_class_result_temps
-                .insert(class_idx, temp.clone());
-            self.hoisted_deferred_static_class_result_temps
-                .push(temp.clone());
-            temps.push(temp);
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let flags = decl_list_node.flags as u32;
+                if (flags & tsz_parser::parser::node_flags::USING) == 0
+                    && !tsz_parser::parser::node_flags::is_await_using(flags)
+                {
+                    continue;
+                }
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let Some(init_node) = self.arena.get(decl.initializer) else {
+                        continue;
+                    };
+                    if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+                        continue;
+                    }
+                    let Some(class) = self.arena.get_class(init_node) else {
+                        continue;
+                    };
+                    if self.class_has_static_computed_method_or_accessor_comma_expr(
+                        class,
+                        decl.initializer,
+                        true,
+                    ) || self.top_level_using_es5_class_has_deferred_static_blocks(class)
+                    {
+                        class_exprs.push(decl.initializer);
+                    }
+                }
+            }
         }
 
+        let mut class_expr_temps: Vec<String> = class_exprs
+            .iter()
+            .filter_map(|idx| self.file_level_class_temp_reservations.get(idx))
+            .filter_map(|names| names.front().cloned())
+            .collect();
+        class_expr_temps
+            .sort_by_key(|name| top_level_using_temp_name_rank(name).unwrap_or(u32::MAX));
+        for (class_idx, temp) in class_exprs
+            .into_iter()
+            .zip(class_expr_temps.iter().cloned())
+        {
+            if let Some(names) = self.file_level_class_temp_reservations.get_mut(&class_idx)
+                && let Some(slot) = names.front_mut()
+            {
+                *slot = temp.clone();
+            }
+        }
+        temps.extend(class_expr_temps);
         temps
+    }
+
+    fn make_top_level_using_deferred_static_class_result_temp(&mut self) -> String {
+        let temp = self.make_unique_name();
+        self.hoisted_deferred_static_class_result_temps
+            .push(temp.clone());
+        temp
     }
 
     pub(in crate::emitter) fn emit_top_level_using_class_assignment(
@@ -742,7 +824,7 @@ impl<'a> Printer<'a> {
                 .reserved_top_level_using_class_result_temps
                 .get(&idx)
                 .cloned()
-                .unwrap_or_else(|| self.make_unique_name_file_hoisted());
+                .unwrap_or_else(|| self.make_top_level_using_deferred_static_class_result_temp());
             let mut es5_emitter = ClassES5Emitter::new(self.arena);
             es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
             es5_emitter.set_async_generator_inner_name_counts(

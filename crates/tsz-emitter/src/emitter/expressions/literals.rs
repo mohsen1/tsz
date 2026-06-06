@@ -703,7 +703,11 @@ impl<'a> Printer<'a> {
             }
         }
 
-        let should_emit_single_line = source_single_line && !has_multiline_object_member;
+        let has_shorthand_before_generator = emitted_properties.windows(2).any(|pair| {
+            self.object_literal_needs_newline_after_shorthand_before_generator(pair[0], pair[1])
+        });
+        let should_emit_single_line =
+            source_single_line && !has_multiline_object_member && !has_shorthand_before_generator;
         if should_emit_single_line {
             self.write("{ ");
             let mut i = 0;
@@ -863,10 +867,15 @@ impl<'a> Printer<'a> {
                         }
                     });
                     let same_line = self.are_on_same_line_in_source(unit_end_prop, next_prop);
+                    let needs_token_break = self
+                        .object_literal_needs_newline_after_shorthand_before_generator(
+                            unit_end_prop,
+                            next_prop,
+                        );
                     if has_same_line_comment {
                         // Same-line trailing comment after comma: space before comment
                         self.write(" ");
-                    } else if !same_line {
+                    } else if !same_line || needs_token_break {
                         // Properties are on different lines and any comment is on
                         // a subsequent line — write a newline first so the comment
                         // appears on its own line (matching tsc).
@@ -875,7 +884,7 @@ impl<'a> Printer<'a> {
                     let wrote_newline = self.emit_unemitted_comments_between(token_end, next_pos);
                     if wrote_newline {
                         // Comment emission already wrote the trailing newline
-                    } else if same_line {
+                    } else if same_line && !needs_token_break {
                         // Keep on same line
                         self.write(" ");
                     } else if !has_same_line_comment {

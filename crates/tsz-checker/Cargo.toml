@@ -169,6 +169,9 @@ path = "tests/generator_annotation_mismatch_display_tests.rs"
 name = "generator_return_type_widening_tests"
 path = "tests/generator_return_type_widening_tests.rs"
 [[test]]
+name = "function_terminal_return_flow_tests"
+path = "tests/function_terminal_return_flow_tests.rs"
+[[test]]
 name = "implicit_any_nullish_return_tests"
 path = "tests/implicit_any_nullish_return_tests.rs"
 [[test]]
