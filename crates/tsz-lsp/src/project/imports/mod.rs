@@ -15,9 +15,15 @@ mod position;
 
 use rustc_hash::FxHashSet;
 
-use crate::code_actions::{ImportCandidate, ImportCandidateKind};
+use crate::code_actions::ImportCandidate;
 use crate::diagnostics::LspDiagnostic;
-use tsz_common::position::{Location, Position, Range};
+use tsz_common::position::{Location, Position};
+
+// Brought into scope for `use super::*` in the test module.
+#[cfg(test)]
+use crate::code_actions::ImportCandidateKind;
+#[cfg(test)]
+use tsz_common::position::Range;
 
 use super::import_collect::{
     AutoImportCandidateContext, ImportCandidateCollectionMode, ImportCandidateKey,
