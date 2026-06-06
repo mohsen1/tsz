@@ -855,7 +855,7 @@ function loadBenchmarks() {
   const selectedArtifact = selectLatestBenchmarkArtifact([
     ...benchmarkArtifactFiles(),
     snapshotPath,
-  ]);
+  ], { minimumProjectTimingPairs: 1 });
   if (selectedArtifact) {
     return sanitizeLegacyBenchmarkData(selectedArtifact.data);
   }
