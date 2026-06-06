@@ -270,6 +270,46 @@ declare function setup<TActors extends Record<string, unknown>>(_: {
 }
 
 #[test]
+fn object_constraint_accepts_object_producing_alias_application() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Pickish<O extends object, K extends keyof O> = { [P in K]: O[P] } & {};
+type Wrapper<O extends object> = Pickish<O, keyof O>;
+type NeedsObject<T extends object> = T;
+
+type Use<Source extends object> = NeedsObject<Wrapper<Source>>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Object-producing alias applications should satisfy lowercase object constraints. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn object_constraint_rejects_primitive_producing_alias_application() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type RenamedText<Value> = string;
+type NeedsObject<T extends object> = T;
+
+type Use<Source extends object> = NeedsObject<RenamedText<Source>>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Primitive-producing alias applications must still fail object constraints. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn generic_ref_with_tuple_constraint_defers_mapped_tuple_result() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

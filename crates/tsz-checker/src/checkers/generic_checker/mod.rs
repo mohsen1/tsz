@@ -1447,6 +1447,7 @@ mod infer_conditional_helpers;
 mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;
 mod merged_interface_constraints;
+mod object_alias_constraint_helpers;
 mod recursive_heritage_constraint;
 mod symbol_declaration_helpers;
 mod union_constraint_helpers;
