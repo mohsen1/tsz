@@ -224,15 +224,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   { x: { c: string } } <: { x: { a?: string } }
         // The inner `{ c: string } <: { a?: string }` must fail because `{ a?: string }`
         // is a weak type and `{ c: string }` has no common properties with it.
-        if self.enforce_weak_types
-            && (!self.in_intersection_member_check || self.in_property_check)
-            && !source.properties.is_empty()
+        //
+        // The structural trigger (non-empty non-weak source vs weak-type target
+        // with no common property names) is evaluated independently of the
+        // enforcement flags. Whenever it holds, the relation result is
+        // weak-enforcement-sensitive: a checker with weak checks active returns
+        // `False` here while one with weak checks suppressed continues and may
+        // return `True`. That enforcement state is operation-local and is NOT
+        // part of the `RelationCacheKey`, so we record the sensitivity to keep
+        // such results out of the shared relation cache (see
+        // `note_weak_type_sensitivity`), preventing one enforcement state from
+        // poisoning another via a stale cache entry.
+        if !source.properties.is_empty()
             && Self::is_weak_type_shape(target)
             && !Self::is_weak_type_shape(source)
             && !self.is_global_object_shape(source)
             && !crate::utils::has_common_property_name(&source.properties, &target.properties)
         {
-            return SubtypeResult::False;
+            crate::relations::subtype::cache::note_weak_type_sensitivity();
+            if self.enforce_weak_types
+                && (!self.in_intersection_member_check || self.in_property_check)
+            {
+                return SubtypeResult::False;
+            }
         }
 
         // Fast fail for private/protected members: check these first so unrelated
