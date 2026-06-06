@@ -976,15 +976,14 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             // Truthiness check: if (x)
-            // Use Solver-First architecture: delegate to TypeGuard::Truthy
+            // Use Solver-First architecture: delegate truthiness to the flow boundary.
             _ => {
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
                 let matches = self.is_matching_reference(condition_ref, target);
                 if matches {
-                    return self.narrow_with_guard_via_flow_boundary(
+                    return flow_query::narrow_to_truthy_in_context(
                         &narrowing,
                         type_id,
-                        &TypeGuard::Truthy,
                         is_true_branch,
                     );
                 }
@@ -1929,10 +1928,9 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     self.make_narrowing_context()
                 };
-                return Some(self.narrow_with_guard_via_flow_boundary(
+                return Some(flow_query::narrow_to_truthy_in_context(
                     &narrowing,
                     type_id,
-                    &TypeGuard::Truthy,
                     is_true_branch,
                 ));
             }
