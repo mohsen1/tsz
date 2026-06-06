@@ -80,6 +80,35 @@ impl<'a> CheckerState<'a> {
                     self.type_alias_body_allows_lazy_generic_semantic_body_inner(op.type_node)
                 })
             }
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) else {
+                    return false;
+                };
+                self.type_alias_body_allows_lazy_generic_semantic_body_inner(indexed.object_type)
+                    && self
+                        .type_alias_body_allows_lazy_generic_semantic_body_inner(indexed.index_type)
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                let Some(type_lit) = self.ctx.arena.get_type_literal(node) else {
+                    return false;
+                };
+                type_lit.members.nodes.iter().copied().all(|member_idx| {
+                    self.ctx.arena.get(member_idx).is_some_and(|member| {
+                        if member.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                            return false;
+                        }
+                        self.ctx
+                            .arena
+                            .get_property_decl(member)
+                            .is_some_and(|property| {
+                                property.type_annotation.is_some()
+                                    && self.type_alias_body_allows_lazy_generic_semantic_body_inner(
+                                        property.type_annotation,
+                                    )
+                            })
+                    })
+                })
+            }
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
                 let Some(template) = self.ctx.arena.get_template_literal_type(node) else {
                     return false;
@@ -903,7 +932,10 @@ impl<'a> CheckerState<'a> {
                 .map(tsz_binder::SymbolId)
             && self.ctx.symbol_resolution_set.contains(&sym_id)
         {
-            self.check_type_alias_body_type_reference_args(type_arguments.as_ref());
+            self.check_type_alias_body_type_reference_args(
+                type_arguments.as_ref(),
+                defer_scoped_type_arg_constraints,
+            );
             return;
         }
 
@@ -935,7 +967,10 @@ impl<'a> CheckerState<'a> {
         if (tsz_solver::is_compiler_managed_type(name.as_str()) || primitive_type)
             && !shadows_managed_array
         {
-            self.check_type_alias_body_type_reference_args(type_arguments.as_ref());
+            self.check_type_alias_body_type_reference_args(
+                type_arguments.as_ref(),
+                defer_scoped_type_arg_constraints,
+            );
             return;
         }
 
@@ -970,17 +1005,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.check_type_alias_body_type_reference_args(type_arguments.as_ref());
+        self.check_type_alias_body_type_reference_args(
+            type_arguments.as_ref(),
+            defer_scoped_type_arg_constraints,
+        );
     }
 
     fn check_type_alias_body_type_reference_args(
         &mut self,
         args: Option<&tsz_parser::parser::base::NodeList>,
+        defer_scoped_type_arg_constraints: bool,
     ) {
         if let Some(args) = args {
             let arg_nodes = args.nodes.clone();
             for arg_idx in arg_nodes {
-                self.check_type_alias_body_for_missing_names_after_type_node_check(arg_idx);
+                self.check_type_alias_body_for_missing_names_after_type_node_check_inner(
+                    arg_idx,
+                    defer_scoped_type_arg_constraints,
+                );
             }
         }
     }

@@ -62,6 +62,37 @@ type Alias<Value> = NeedsString<number>;
 }
 
 #[test]
+fn lazy_lookup_table_alias_defers_scoped_constraints_but_checks_concrete_arguments() {
+    let scoped_codes = diagnostic_codes(
+        r#"
+type NeedsString<T extends string> = T;
+type PickTable<Value extends string, Which extends 'left' | 'right'> = {
+  left: NeedsString<Value>;
+  right: NeedsString<Value>;
+}[Which];
+"#,
+    );
+    assert!(
+        !scoped_codes.contains(&2344),
+        "lookup-table aliases should defer scoped generic constraints: {scoped_codes:?}"
+    );
+
+    let concrete_codes = diagnostic_codes(
+        r#"
+type NeedsString<T extends string> = T;
+type PickTable<Value, Which extends 'left' | 'right'> = {
+  left: NeedsString<number>;
+  right: NeedsString<Value>;
+}[Which];
+"#,
+    );
+    assert!(
+        concrete_codes.contains(&2344),
+        "lookup-table aliases must still validate concrete bad arguments: {concrete_codes:?}"
+    );
+}
+
+#[test]
 fn generic_alias_use_site_still_resolves_body_after_lazy_declaration_check() {
     for (alias, param) in [("Identity", "T"), ("Project", "Value")] {
         let source = format!(
