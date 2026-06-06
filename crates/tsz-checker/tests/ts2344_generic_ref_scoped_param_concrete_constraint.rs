@@ -142,6 +142,29 @@ type BadArrayQ<Q> = Box<Array<Q>>;
 }
 
 #[test]
+fn bare_type_params_with_matching_constraints_are_accepted() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Pair<Left extends string, Right extends string> = [Left, Right];
+type Forward<Name extends string, Delimiter extends string> = Pair<Name, Delimiter>;
+
+type List<T> = T[];
+type Box<Value extends List<string>> = Value;
+type ForwardList<Items extends List<string>> = Box<Items>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344.is_empty(),
+        "Expected bare type params whose declared constraints satisfy the target constraints to pass, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn explicit_type_alias_args_violating_callable_constraint_emit_ts2344() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
