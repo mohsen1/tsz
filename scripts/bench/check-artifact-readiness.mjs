@@ -32,6 +32,7 @@ import {
   hasCompletePhaseMetadata,
   isGreen,
 } from "./row-utils.mjs";
+import { measurementProfileStatus } from "./measurement-profile.mjs";
 
 const args = process.argv.slice(2);
 
@@ -122,57 +123,6 @@ function rowState(row, duplicate = false) {
 }
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
-
-function analyzeMeasurementProfile(artifact) {
-  const profile = artifact?.measurement_profile;
-  if (!profile || typeof profile !== "object") {
-    return {
-      present: false,
-      mode: null,
-      tsz_binary_source: null,
-      pgo_requested: null,
-      pgo_required: null,
-      pgo_optimized: null,
-      profile_fingerprint: null,
-      training_fingerprint: null,
-      training_input_count: null,
-      training_failure_count: null,
-      warning: "measurement_profile missing",
-    };
-  }
-
-  const pgo = profile.profile_guided_optimization && typeof profile.profile_guided_optimization === "object"
-    ? profile.profile_guided_optimization
-    : {};
-  const mode = typeof profile.mode === "string" && profile.mode.trim()
-    ? profile.mode.trim()
-    : null;
-  const warning = (() => {
-    if (!mode) return "measurement_profile.mode missing";
-    if (mode === "release-pgo") {
-      const missing = [];
-      if (pgo.optimized !== true) missing.push("pgo optimized flag");
-      if (!pgo.profile_fingerprint) missing.push("profile fingerprint");
-      if (!pgo.training_fingerprint) missing.push("training fingerprint");
-      if (missing.length) return `release-pgo metadata missing ${missing.join(", ")}`;
-    }
-    return null;
-  })();
-
-  return {
-    present: true,
-    mode,
-    tsz_binary_source: profile.tsz_binary_source ?? null,
-    pgo_requested: pgo.requested ?? null,
-    pgo_required: pgo.required ?? null,
-    pgo_optimized: pgo.optimized ?? null,
-    profile_fingerprint: pgo.profile_fingerprint ?? null,
-    training_fingerprint: pgo.training_fingerprint ?? null,
-    training_input_count: pgo.training_input_count ?? null,
-    training_failure_count: pgo.training_failure_count ?? null,
-    warning,
-  };
-}
 
 function cleanValidationWarnings(warnings) {
   if (!Array.isArray(warnings)) return [];
@@ -304,7 +254,7 @@ function analyzeArtifact(artifact, expectedCommit) {
   });
 
   return {
-    measurementProfile: analyzeMeasurementProfile(artifact),
+    measurementProfile: measurementProfileStatus(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
     sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
     rows,
@@ -471,7 +421,7 @@ function buildReport({ artifact, measurementProfile, validationWarnings, sourceF
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
-  const profile = measurementProfile ?? analyzeMeasurementProfile(artifact);
+  const profile = measurementProfile ?? measurementProfileStatus(artifact);
   const profileLabel = profile.present
     ? `${profile.mode ?? "unknown"}${profile.warning ? ` (${profile.warning})` : ""}`
     : profile.warning;
