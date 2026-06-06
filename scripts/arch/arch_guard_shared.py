@@ -1390,7 +1390,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
-        3,
+        1,
     ),
     (
         "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
