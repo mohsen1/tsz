@@ -181,6 +181,8 @@ pub(crate) enum RelationKind {
     PrivateMemberAccess,
     /// Function type contextual/recovery compatibility probe.
     FunctionTypeCompatibility,
+    /// Namespace-module property mismatch downgrade compatibility probe.
+    NamespacePropertyMismatch,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -621,6 +623,10 @@ impl RelationRequest {
 
     pub(crate) const fn function_type_compatibility(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::FunctionTypeCompatibility)
+    }
+
+    pub(crate) const fn namespace_property_mismatch(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::NamespacePropertyMismatch)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
