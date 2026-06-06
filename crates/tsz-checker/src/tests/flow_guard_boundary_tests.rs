@@ -350,3 +350,52 @@ fn condition_batched_exclusions_use_flow_query_boundary() {
         "condition narrowing should not apply batched exclusion narrowing directly"
     );
 }
+
+#[test]
+fn condition_equality_narrowing_uses_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let core_source = fs::read_to_string("src/flow/control_flow/core.rs")
+        .expect("failed to read flow core source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_core: String = core_source.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_excluding_type_in_context(")
+            && compact_boundary.contains("fnnarrow_by_discriminant_for_type_in_context(")
+            && compact_boundary.contains("fnnarrow_to_type_in_context(")
+            && compact_boundary.contains("fnliteral_assignable_to_in_context("),
+        "flow analysis boundary should own equality/discriminant narrowing helpers"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_excluding_type_in_context(")
+            && compact_condition
+                .contains("flow_query::narrow_by_discriminant_for_type_in_context(")
+            && compact_condition.contains("flow_query::narrow_to_type_in_context(")
+            && compact_condition.contains("flow_query::literal_assignable_to_in_context("),
+        "condition equality narrowing should route semantic narrowing through the flow query boundary"
+    );
+    assert!(
+        compact_core.contains("query::narrow_by_discriminant_in_context(")
+            && compact_core.contains("query::narrow_with_guard_in_context("),
+        "assertion flow narrowing should route solver predicate application through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains("narrowing.narrow_excluding_type(")
+            && !compact_condition.contains("narrowing.narrow_by_discriminant_for_type(")
+            && !compact_condition.contains("narrowing.narrow_to_type(")
+            && !compact_condition.contains("narrowing.literal_assignable_to(")
+            && !compact_core.contains("narrowing.narrow_by_discriminant(")
+            && !compact_core.contains("narrowing.narrow_type("),
+        "flow orchestration should not call solver equality/discriminant narrowing directly"
+    );
+}
