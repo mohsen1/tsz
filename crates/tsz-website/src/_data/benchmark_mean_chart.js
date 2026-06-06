@@ -73,7 +73,7 @@ function loadBenchmarks() {
   const selectedArtifact = selectLatestBenchmarkArtifact([
     ...artifactFiles,
     path.join(ROOT, "crates/tsz-website/bench-snapshot.json"),
-  ]);
+  ], { minimumProjectTimingPairs: 1 });
   if (selectedArtifact) {
     return sanitizeLegacyBenchmarkResults(selectedArtifact.data);
   }

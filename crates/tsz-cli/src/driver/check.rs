@@ -439,6 +439,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         resolved_module_errors,
         resolved_module_request_errors,
         resolved_modules_per_file,
+        per_file_ts7016_diagnostics,
+        file_is_esm_map,
     } = prepare_source_resolution_setup(SourceResolutionSetupInput {
         program,
         options,
@@ -448,148 +450,6 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         program_paths: &program_paths,
         package_redirects: &package_redirects,
         resolution_cache: &mut resolution_cache,
-    });
-
-    // Pre-compute per-file TS7016 diagnostics for CJS require() calls.
-    // The driver's resolution pass detects untyped JS modules (TS7016) but the
-    // checker's module-not-found path skips them because the module DID resolve.
-    // For CJS require() calls (not import declarations), we emit TS7016 directly.
-    //
-    // Pure read-only per-file work (arena + pre-computed maps), so Rayon can
-    // spread the scan across cores. On large repos this turns an N-file
-    // sequential post-pass into an N-way parallel pass.
-    let per_file_ts7016_diagnostics: Vec<Vec<Diagnostic>> = {
-        use rayon::prelude::*;
-        let _span = tracing::info_span!("per_file_ts7016_diagnostics", files = program.files.len())
-            .entered();
-        let has_cjs_require_specifier = cached_module_specifiers.iter().any(|specifiers| {
-            specifiers.iter().any(|(_, _, import_kind, _)| {
-                matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire)
-            })
-        });
-        if !has_cjs_require_specifier {
-            vec![Vec::new(); program.files.len()]
-        } else {
-            program
-                .files
-                .par_iter()
-                .enumerate()
-                .map(|(file_idx, file)| {
-                    let mut diags = Vec::new();
-                    for (specifier, spec_node, import_kind, _) in
-                        &cached_module_specifiers[file_idx]
-                    {
-                        if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
-                            continue;
-                        }
-                        if let Some(error) =
-                            resolved_module_errors.get(&(file_idx, specifier.clone()))
-                        {
-                            if error.code != 7016 {
-                                continue;
-                            }
-                            // Find the string literal argument of the require() call for the span.
-                            let (start, length) = if let Some(node) = file.arena.get(*spec_node)
-                                && let Some(call) = file.arena.get_call_expr(node)
-                                && let Some(args) = call.arguments.as_ref()
-                                && let Some(&arg_idx) = args.nodes.first()
-                                && let Some(arg_node) = file.arena.get(arg_idx)
-                            {
-                                (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
-                            } else if let Some(node) = file.arena.get(*spec_node) {
-                                (node.pos, node.end.saturating_sub(node.pos))
-                            } else {
-                                continue;
-                            };
-                            diags.push(Diagnostic::error(
-                                &file.file_name,
-                                start,
-                                length,
-                                &error.message,
-                                error.code,
-                            ));
-                        }
-                    }
-                    diags
-                })
-                .collect()
-        }
-    };
-    let per_file_ts7016_diagnostics = Arc::new(per_file_ts7016_diagnostics);
-
-    // Pre-compute per-file ESM/CJS module kind for resolution modes that honor
-    // package.json "type" semantics. The checker uses this shared map for
-    // ESM-vs-CJS-sensitive diagnostics such as TS1479 and TS1192 suppression.
-    let file_is_esm_map: Arc<FxHashMap<String, bool>> = Arc::new({
-        let resolution_kind = options.effective_module_resolution();
-        let uses_package_type_module_kind = matches!(
-            resolution_kind,
-            crate::config::ModuleResolutionKind::Bundler
-                | crate::config::ModuleResolutionKind::Node16
-                | crate::config::ModuleResolutionKind::NodeNext
-        );
-        if uses_package_type_module_kind {
-            let program_package_types: FxHashMap<PathBuf, bool> = program
-                .files
-                .iter()
-                .filter_map(|file| {
-                    let file_path = Path::new(&file.file_name);
-                    if file_path.file_name().and_then(|name| name.to_str()) != Some("package.json")
-                    {
-                        return None;
-                    }
-                    let package_dir = file_path.parent()?.to_path_buf();
-                    let text = file
-                        .arena
-                        .source_files
-                        .first()
-                        .map(|source_file| source_file.text.as_ref())?;
-                    let package_type = serde_json::from_str::<serde_json::Value>(text)
-                        .ok()
-                        .and_then(|value| {
-                            value
-                                .get("type")
-                                .and_then(serde_json::Value::as_str)
-                                .map(|value| value == "module")
-                        })
-                        .unwrap_or(false);
-                    Some((package_dir, package_type))
-                })
-                .collect();
-            let mut package_type_cache = ModuleResolutionCache::default();
-            program
-                .files
-                .iter()
-                .map(|file| {
-                    let file_path = Path::new(&file.file_name);
-                    let file_is_esm = match file_path.extension().and_then(|ext| ext.to_str()) {
-                        Some("mts" | "mjs") => true,
-                        Some("cts" | "cjs") => false,
-                        _ => {
-                            let mut current = file_path.parent();
-                            let mut from_program_package_json = None;
-                            while let Some(dir) = current {
-                                if let Some(&is_esm) = program_package_types.get(dir) {
-                                    from_program_package_json = Some(is_esm);
-                                    break;
-                                }
-                                current = dir.parent();
-                            }
-                            from_program_package_json.unwrap_or_else(|| {
-                                implied_resolution_mode_for_file_with_cache(
-                                    file_path,
-                                    base_dir,
-                                    &mut package_type_cache,
-                                ) == "import"
-                            })
-                        }
-                    };
-                    (file.file_name.replace('\\', "/"), file_is_esm)
-                })
-                .collect()
-        } else {
-            FxHashMap::default()
-        }
     });
 
     // The `--noCheck` short-circuit returns parse-only diagnostics and skips
