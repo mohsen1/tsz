@@ -16,9 +16,10 @@ WASM, conformance, emit, fourslash, and snapshot gates.
 
 When a ready PR's exact head has passed the PR-head gates (`CI Summary`,
 and any review/body checks), the merge manager
-queues it with GitHub's native merge queue (`gh pr merge --queue`). The native
-queue creates a `merge_group` run that keeps the required queue summary check
-on the synthetic merge before merging.
+queues it with GitHub's native merge queue
+(`gh pr merge <pr> --match-head-commit <sha>`). The native queue creates a
+`merge_group` run that keeps the required queue summary check on the synthetic
+merge before merging.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
 
@@ -67,8 +68,9 @@ python3 scripts/conformance/query-conformance.py --dashboard
 7. **Push updates to the draft PR** — let CI run build, lint, and unit tests; do not wait idle
 8. **Mark ready for review** — triggers conformance, emit, fourslash, WASM, and snapshot gates
 9. **Hand off to the merge queue** — after exact-head PR-head gates pass,
-   the manager queues the PR with `gh pr merge --queue`; native queue admission
-   and summary validation run through the `merge_group` CI event
+   the manager queues the PR with
+   `gh pr merge <pr> --match-head-commit <sha>`; native queue admission and
+   summary validation run through the `merge_group` CI event
 
 Include your stable `AgentName` in every PR body and substantive PR comment.
 Use the draft PR body for scope, invariants, findings, verification, and
