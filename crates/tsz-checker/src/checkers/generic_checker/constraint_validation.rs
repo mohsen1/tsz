@@ -364,6 +364,18 @@ impl<'a> CheckerState<'a> {
                 if type_arg_contains_type_parameters
                     && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
                 {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let inst_constraint = self.instantiate_constraint_with_type_args(
+                        constraint_resolved,
+                        type_params,
+                        &type_args,
+                    );
+                    if self.generic_alias_application_satisfies_object_constraint(
+                        type_arg,
+                        inst_constraint,
+                    ) {
+                        continue;
+                    }
                     let evaluated_arg = self.evaluate_type_for_assignability(type_arg);
                     if evaluated_arg != type_arg
                         && !matches!(
@@ -372,12 +384,6 @@ impl<'a> CheckerState<'a> {
                         )
                         && !query::contains_type_parameters(self.ctx.types, evaluated_arg)
                     {
-                        let constraint_resolved = self.resolve_lazy_type(constraint);
-                        let inst_constraint = self.instantiate_constraint_with_type_args(
-                            constraint_resolved,
-                            type_params,
-                            &type_args,
-                        );
                         if self.conditional_result_branches_satisfy_constraint(
                             type_arg,
                             inst_constraint,
