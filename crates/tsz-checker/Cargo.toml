@@ -390,6 +390,9 @@ path = "tests/destructuring_spread_rest_tuple_source_display_tests.rs"
 name = "destructuring_default_flow_assignment_tests"
 path = "tests/destructuring_default_flow_assignment_tests.rs"
 [[test]]
+name = "generic_callback_local_literal_widening_tests"
+path = "tests/generic_callback_local_literal_widening_tests.rs"
+[[test]]
 name = "merged_namespace_typeof_display_tests"
 path = "tests/merged_namespace_typeof_display_tests.rs"
 [[test]]
