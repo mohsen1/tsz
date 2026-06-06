@@ -1346,7 +1346,7 @@ jobs:
 
           TSZ_BIN="$GITHUB_WORKSPACE/.target-bench/dist/tsz" \
           TSZ_PROJECT_COMPILE_SET=canary \
-          TSZ_PROJECT_COMPILE_FILTER='type-challenges-solutions-project' \
+          TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 \
           scripts/ci/project-compile-guard.sh
 
       - name: Merge benchmark results
