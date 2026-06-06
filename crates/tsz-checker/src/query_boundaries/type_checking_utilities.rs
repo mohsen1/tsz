@@ -1,4 +1,4 @@
-use tsz_solver::construction::TypeDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{TupleListId, TypeId};
 
 /// Returns `true` when `type_id`'s outer shape performs fresh tuple synthesis
@@ -32,6 +32,38 @@ pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> L
 
 pub(crate) fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeKind {
     tsz_solver::type_queries::classify_array_like(db, type_id)
+}
+
+/// Outcome-shaped relation for rest tuple element array-like probes.
+///
+/// `TypeNodeChecker` does not own a full checker state, so it cannot call the
+/// checker-state rest-parameter relation helper directly. Keep the database
+/// relation inside this boundary while exposing the same [`RelationOutcome`]
+/// shape that checker-state relation helpers use.
+///
+/// [`RelationOutcome`]: super::assignability::RelationOutcome
+pub(crate) fn rest_element_array_like_relation_outcome(
+    db: &dyn QueryDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> super::assignability::RelationOutcome {
+    let result = tsz_solver::relations::relation_queries::query_relation(
+        db.as_type_database(),
+        source,
+        target,
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::unflagged_compatibility(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
+    );
+
+    super::assignability::RelationOutcome {
+        related: result.related,
+        depth_exceeded: result.depth_exceeded,
+        iteration_exceeded: result.iteration_exceeded,
+        failure: None,
+        weak_union_violation: false,
+        property_classification: None,
+    }
 }
 
 pub(crate) use super::common::unwrap_readonly as unwrap_readonly_for_lookup;
