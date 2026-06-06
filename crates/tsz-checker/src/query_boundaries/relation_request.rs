@@ -101,6 +101,10 @@ pub(crate) enum RelationKind {
     DiagnosticSourceNarrowing,
     /// Diagnostic overlap/comparability probes.
     DiagnosticOverlap,
+    /// Broad mapped index-signature display suppression probes.
+    BroadMappedIndexSignatureDisplay,
+    /// Mapped object-literal excess-property value classification probes.
+    MappedObjectLiteralExcessValue,
     /// Polymorphic `this` receiver/member compatibility probes for diagnostics.
     PolymorphicThisReceiver,
     /// Class extends index-signature value compatibility probes.
@@ -181,6 +185,8 @@ pub(crate) enum RelationKind {
     PrivateMemberAccess,
     /// Function type contextual/recovery compatibility probe.
     FunctionTypeCompatibility,
+    /// Namespace-module property mismatch downgrade compatibility probe.
+    NamespacePropertyMismatch,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -431,6 +437,21 @@ impl RelationRequest {
         Self::new(source, target, RelationKind::DiagnosticOverlap)
     }
 
+    pub(crate) const fn broad_mapped_index_signature_display(
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::BroadMappedIndexSignatureDisplay,
+        )
+    }
+
+    pub(crate) const fn mapped_object_literal_excess_value(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::MappedObjectLiteralExcessValue)
+    }
+
     pub(crate) const fn polymorphic_this_receiver(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::PolymorphicThisReceiver)
     }
@@ -621,6 +642,10 @@ impl RelationRequest {
 
     pub(crate) const fn function_type_compatibility(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::FunctionTypeCompatibility)
+    }
+
+    pub(crate) const fn namespace_property_mismatch(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::NamespacePropertyMismatch)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

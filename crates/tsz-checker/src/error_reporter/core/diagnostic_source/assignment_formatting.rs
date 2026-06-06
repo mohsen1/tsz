@@ -1812,7 +1812,10 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
-        if self.assign_relation_outcome(source, target).related {
+        if self
+            .broad_mapped_index_signature_display_relation_outcome(source, target)
+            .related
+        {
             return None;
         }
 
