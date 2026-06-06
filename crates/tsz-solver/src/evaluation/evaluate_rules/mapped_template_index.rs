@@ -2,7 +2,7 @@
 
 use super::mapped::MappedKeys;
 use crate::evaluation::evaluate::TypeEvaluator;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{MappedModifier, MappedType, TypeData, TypeId};
 use smallvec::SmallVec;
@@ -31,7 +31,12 @@ pub(super) fn try_evaluate_mapped_template_per_concrete_key<R: TypeResolver>(
         .iter()
         .filter_map(|mapped_key| {
             let subst = TypeSubstitution::single(mapped.type_param.name, mapped_key.key_literal);
-            let instantiated = instantiate_type(evaluator.interner(), mapped.template, &subst);
+            let instantiated = instantiate_type_cached(
+                evaluator.interner(),
+                evaluator.query_db(),
+                mapped.template,
+                &subst,
+            );
             let evaluated = evaluator.evaluate(instantiated);
             (evaluated != TypeId::NEVER).then_some(evaluated)
         })
@@ -88,7 +93,12 @@ pub(super) fn try_evaluate_remapped_mapped_template_for_index<R: TypeResolver>(
         }
 
         let subst = TypeSubstitution::single(mapped.type_param.name, mapped_key.key_literal);
-        let instantiated = instantiate_type(evaluator.interner(), mapped.template, &subst);
+        let instantiated = instantiate_type_cached(
+            evaluator.interner(),
+            evaluator.query_db(),
+            mapped.template,
+            &subst,
+        );
         let mut evaluated = evaluator.evaluate(instantiated);
         if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
             evaluated = evaluator.interner().union2(evaluated, TypeId::UNDEFINED);
