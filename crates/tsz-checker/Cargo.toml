@@ -14,6 +14,9 @@ categories.workspace = true
 [features]
 default = []
 
+[lib]
+doctest = false
+
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
@@ -86,7 +89,9 @@ path = "tests/tuple_element_mismatch_tests.rs"
 [[test]]
 name = "tuple_argument_mismatch_elaboration_tests"
 path = "tests/tuple_argument_mismatch_elaboration_tests.rs"
-
+[[test]]
+name = "tuple_call_argument_elaboration_tests"
+path = "tests/tuple_call_argument_elaboration_tests.rs"
 [[test]]
 name = "for_await_type_parameter_iterability_tests"
 path = "tests/for_await_type_parameter_iterability_tests.rs"
@@ -413,6 +418,9 @@ path = "tests/readonly_tuple_source_display_tests.rs"
 [[test]]
 name = "tuple_arity_elaboration_tests"
 path = "tests/tuple_arity_elaboration_tests.rs"
+[[test]]
+name = "tuple_variadic_position_elaboration_tests"
+path = "tests/tuple_variadic_position_elaboration_tests.rs"
 [[test]]
 name = "conditional_alias_source_display_tests"
 path = "tests/conditional_alias_source_display_tests.rs"

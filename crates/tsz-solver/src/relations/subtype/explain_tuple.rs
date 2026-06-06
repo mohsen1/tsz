@@ -188,6 +188,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some(variadic) = expansion.variadic {
                     let variadic_is_type_param = is_type_parameter(self.interner, variadic);
                     let variadic_array = self.interner.array(variadic);
+                    // The source positions aligned to this single target rest slot
+                    // span `[variadic_start ..= variadic_end]`: everything after the
+                    // expansion's leading fixed elements and before the trailing
+                    // suffix that `source_end` already excluded. tsc reports this
+                    // full span (even passing positions) against the rest slot
+                    // index `i`, so a failure carries the span, not the single
+                    // failing index.
+                    let variadic_start = i + expansion.fixed.len();
+                    let variadic_end = source_end.saturating_sub(1);
                     for (j, s_elem) in source_iter {
                         if s_elem.rest {
                             if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
@@ -204,12 +213,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 target_type: variadic,
                             });
                         } else if !self.check_subtype(s_elem.type_id, variadic).is_true() {
-                            return Some(self.tuple_element_type_mismatch(
-                                j,
-                                s_elem.type_id,
-                                variadic,
-                                true,
-                            ));
+                            return Some(SubtypeFailureReason::TupleVariadicPositionMismatch {
+                                source_start: variadic_start,
+                                source_end: variadic_end,
+                                target_position: i,
+                                source_element: s_elem.type_id,
+                                target_element: variadic,
+                                nested_reason: self
+                                    .explain_failure(s_elem.type_id, variadic)
+                                    .map(Box::new),
+                            });
                         }
                     }
                     return None;

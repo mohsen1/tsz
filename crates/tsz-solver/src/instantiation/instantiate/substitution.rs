@@ -72,13 +72,23 @@ impl TypeSubstitution {
         // explicitly provided args, already-resolved defaults, and `any` for
         // not-yet-resolved params). This means a forward reference like `U = V`
         // where V hasn't been processed yet resolves to an any-like type.
+        //
+        // The working map is wrapped in a `TypeSubstitution` up front so each
+        // default is instantiated against the substitution built so far without
+        // cloning the entire map per parameter. `instantiate_type` borrows the
+        // substitution immutably and does not retain it, so the in-place
+        // `insert`/`remove` that follows each call observes exactly the same map
+        // state a fresh per-iteration clone did — only the per-default
+        // allocation churn is removed. This matters for deeply-defaulted generic
+        // and recursive utility shapes, where the previous clone was O(map) work
+        // repeated once for every defaulted parameter.
+        let mut subst = Self { map };
         for (i, param) in type_params.iter().enumerate() {
             if i < type_args.len() {
                 continue; // already provided explicitly
             }
             match param.default {
                 Some(default) => {
-                    let subst = Self { map: map.clone() };
                     let resolved = instantiate_type(interner, default, &subst);
                     // When the instantiated default is a conditional type whose check_type
                     // and extends_type are both concrete (no remaining type parameters),
@@ -96,17 +106,17 @@ impl TypeSubstitution {
                     } else {
                         resolved
                     };
-                    map.insert(param.name, final_type);
+                    subst.insert(param.name, final_type);
                 }
                 None => {
                     // No default and no argument - remove the error placeholder
                     // so this parameter remains unsubstituted.
-                    map.remove(&param.name);
+                    subst.remove(param.name);
                 }
             }
         }
 
-        Self { map }
+        subst
     }
 
     /// Add a single substitution.
@@ -188,5 +198,136 @@ impl TypeSubstitution {
         // enough to canonicalize. `Atom` is `Ord` (u32 newtype).
         pairs.sort_unstable_by_key(|(name, _)| *name);
         pairs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TypeSubstitution;
+    use crate::TypeInterner;
+    use crate::types::{TypeId, TypeParamInfo};
+    use tsz_common::interner::Atom;
+
+    fn param(name: Atom, default: Option<TypeId>) -> TypeParamInfo {
+        TypeParamInfo {
+            is_const: false,
+            name,
+            constraint: None,
+            default,
+        }
+    }
+
+    /// When every type parameter has a corresponding argument, `from_args`
+    /// must map each name to the supplied argument and never enter the
+    /// default-resolution phase.
+    #[test]
+    fn from_args_all_supplied_maps_directly() {
+        let interner = TypeInterner::new();
+        let t = interner.intern_string("T");
+        let u = interner.intern_string("U");
+        let params = vec![param(t, None), param(u, None)];
+
+        let subst =
+            TypeSubstitution::from_args(&interner, &params, &[TypeId::NUMBER, TypeId::STRING]);
+
+        assert_eq!(subst.get(t), Some(TypeId::NUMBER));
+        assert_eq!(subst.get(u), Some(TypeId::STRING));
+        assert_eq!(subst.len(), 2);
+    }
+
+    /// A parameter with neither an argument nor a default must be left
+    /// unsubstituted: the `any` placeholder seeded in phase 2 is removed in
+    /// phase 3 so the body keeps the raw parameter.
+    #[test]
+    fn from_args_unsupplied_without_default_is_removed() {
+        let interner = TypeInterner::new();
+        let t = interner.intern_string("T");
+        let params = vec![param(t, None)];
+
+        let subst = TypeSubstitution::from_args(&interner, &params, &[]);
+
+        assert_eq!(subst.get(t), None);
+        assert!(subst.is_empty());
+    }
+
+    /// A default that references an earlier parameter must be instantiated
+    /// against the argument supplied for that earlier parameter. This is the
+    /// case the in-place (clone-free) accumulation must preserve.
+    #[test]
+    fn from_args_default_references_earlier_supplied_param() {
+        let interner = TypeInterner::new();
+        let t = interner.intern_string("T");
+        let u = interner.intern_string("U");
+        // U defaults to the type parameter `T`.
+        let t_param_ty = interner.type_param(param(t, None));
+        let params = vec![param(t, None), param(u, Some(t_param_ty))];
+
+        let subst = TypeSubstitution::from_args(&interner, &params, &[TypeId::NUMBER]);
+
+        assert_eq!(subst.get(t), Some(TypeId::NUMBER));
+        // U's default `T` resolves through the substitution built so far.
+        assert_eq!(subst.get(u), Some(TypeId::NUMBER));
+    }
+
+    /// A chain of defaults (`U = T`, `V = U`) must propagate the supplied
+    /// argument all the way down. This exercises the in-place accumulation
+    /// across multiple iterations: each default observes the resolved value of
+    /// the previous one, exactly as the prior per-iteration map clone did.
+    #[test]
+    fn from_args_default_chain_propagates_through_in_place_map() {
+        let interner = TypeInterner::new();
+        let t = interner.intern_string("T");
+        let u = interner.intern_string("U");
+        let v = interner.intern_string("V");
+        let t_param_ty = interner.type_param(param(t, None));
+        let u_param_ty = interner.type_param(param(u, None));
+        let params = vec![
+            param(t, None),
+            param(u, Some(t_param_ty)),
+            param(v, Some(u_param_ty)),
+        ];
+
+        let subst = TypeSubstitution::from_args(&interner, &params, &[TypeId::BOOLEAN]);
+
+        assert_eq!(subst.get(t), Some(TypeId::BOOLEAN));
+        assert_eq!(subst.get(u), Some(TypeId::BOOLEAN));
+        assert_eq!(subst.get(v), Some(TypeId::BOOLEAN));
+    }
+
+    /// A self-referential default (`X = X`) resolves to `any`: phase 2 seeds
+    /// `X -> any`, and instantiating the default against that map substitutes
+    /// the self-reference away, matching tsc's any-fallback for circular
+    /// defaults.
+    #[test]
+    fn from_args_self_referential_default_falls_back_to_any() {
+        let interner = TypeInterner::new();
+        let x = interner.intern_string("X");
+        let x_param_ty = interner.type_param(param(x, None));
+        let params = vec![param(x, Some(x_param_ty))];
+
+        let subst = TypeSubstitution::from_args(&interner, &params, &[]);
+
+        assert_eq!(subst.get(x), Some(TypeId::ANY));
+    }
+
+    /// A forward reference (`U = V` where `V` is a later, unsupplied parameter)
+    /// must resolve to an any-like type rather than leaking an unresolved
+    /// placeholder, because phase 2 pre-seeds every unsupplied parameter with
+    /// `any` before defaults are processed in declaration order.
+    #[test]
+    fn from_args_forward_reference_default_is_any_like() {
+        let interner = TypeInterner::new();
+        let u = interner.intern_string("U");
+        let v = interner.intern_string("V");
+        let v_param_ty = interner.type_param(param(v, None));
+        // U defaults to the *later* parameter V; V has no default/arg.
+        let params = vec![param(u, Some(v_param_ty)), param(v, None)];
+
+        let subst = TypeSubstitution::from_args(&interner, &params, &[]);
+
+        // U sees V's phase-2 `any` seed.
+        assert_eq!(subst.get(u), Some(TypeId::ANY));
+        // V itself has no default and no arg, so it is removed.
+        assert_eq!(subst.get(v), None);
     }
 }
