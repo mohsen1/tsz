@@ -317,3 +317,36 @@ fn condition_property_truthiness_uses_flow_query_boundary() {
         "condition narrowing should not apply property-truthiness narrowing directly"
     );
 }
+
+#[test]
+fn condition_batched_exclusions_use_flow_query_boundary() {
+    let condition_source = fs::read_to_string("src/flow/control_flow/condition_narrowing.rs")
+        .expect("failed to read condition narrowing source");
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_condition: String = condition_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary.contains("fnnarrow_excluding_types_in_context(")
+            && compact_boundary.contains("fnnarrow_by_excluding_discriminant_values_in_context("),
+        "flow analysis boundary should own batched exclusion narrowing helpers"
+    );
+    assert!(
+        compact_condition.contains("flow_query::narrow_excluding_types_in_context(")
+            && compact_condition
+                .contains("flow_query::narrow_by_excluding_discriminant_values_in_context("),
+        "condition batched exclusion narrowing should route through the flow query boundary"
+    );
+    assert!(
+        !compact_condition.contains("narrowing.narrow_excluding_types(")
+            && !compact_condition.contains("narrowing.narrow_by_excluding_discriminant_values("),
+        "condition narrowing should not apply batched exclusion narrowing directly"
+    );
+}
