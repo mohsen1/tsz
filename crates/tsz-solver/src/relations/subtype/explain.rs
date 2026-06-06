@@ -373,6 +373,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Application expansion may produce a Mapped type (e.g., Required<Foo> →
         // { [K in keyof Foo]-?: Foo[K] }) which needs further evaluation to a concrete
         // object type so property enumeration can generate TS2739/TS2741 diagnostics.
+        //
+        // Preserve the pre-evaluation source union for member elaboration. tsc
+        // applies `UnionReduction.Literal` to written/annotation unions: it absorbs
+        // literals into their primitive but never drops a member merely because it
+        // is a structural subtype of a sibling. `evaluate_type` re-normalizes via
+        // the default (subtype-reducing) union path, so a written union like
+        // `string[] | [string, string]` collapses to `string[]` here even though
+        // tsc keeps both members. Capture the member-preserving union so the
+        // union-source elaboration below can still drill into the failing member.
+        let pre_eval_source = resolved_source;
         let eval_source = self.evaluate_type(resolved_source);
         if eval_source != resolved_source {
             resolved_source = eval_source;
@@ -970,10 +980,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // assignable to type 'T'.`). Without this, the chain stops at the bare
         // union line and hides why the assignment fails (e.g. the `undefined`
         // member contributed by an optional property).
-        if let Some(member_list) = union_list_id(self.interner, resolved_source) {
+        //
+        // Prefer the evaluated `resolved_source` when it is still a union (e.g. a
+        // conditional/mapped type that evaluates *into* a union). Otherwise fall
+        // back to `pre_eval_source`: when subtype reduction during `evaluate_type`
+        // collapsed a written union of structurally-related members (e.g.
+        // `string[] | [string, string]` -> `string[]`), the member elaboration
+        // must still walk the members tsc preserves under `UnionReduction.Literal`.
+        let (union_member_source, union_member_list) =
+            match union_list_id(self.interner, resolved_source) {
+                Some(list) => (resolved_source, Some(list)),
+                None => (
+                    pre_eval_source,
+                    union_list_id(self.interner, pre_eval_source),
+                ),
+            };
+        if let Some(member_list) = union_member_list {
             let members = self.interner.type_list(member_list);
             for &member in members.iter() {
-                if member == source || member == resolved_source {
+                if member == source || member == union_member_source {
                     // Defensive: avoid self-recursion on a degenerate union.
                     continue;
                 }

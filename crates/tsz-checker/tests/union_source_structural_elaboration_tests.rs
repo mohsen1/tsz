@@ -583,3 +583,59 @@ const t: Target = s;
         );
     }
 }
+
+/// Subtype-reducible written union: when a union annotation contains a member
+/// that is a structural subtype of a sibling (`[string, string]` is assignable
+/// to `string[]`), tsc keeps *both* members under `UnionReduction.Literal` and
+/// elaborates the first failing member when the whole union is rejected. tsz
+/// previously subtype-reduced the *resolved* source to the single widest member
+/// (`string[]`) while still displaying the full union, which silently dropped
+/// the union-member elaboration line entirely.
+///
+/// Structural rule: union-source member elaboration must walk the members the
+/// printer displays (the literal-reduced annotation union), not a
+/// subtype-reduced collapse of it.
+#[test]
+fn union_member_subtype_reducible_keeps_member_elaboration() {
+    let diags = diagnostics(
+        r#"
+type Source = string[] | [string, string];
+declare const s: Source;
+const n: 1 = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("string[]")
+            && m.contains("is not assignable to type")
+            && m.contains("'1'")),
+        "subtype-reducible union must still drill into the failing member; got {chain:?}"
+    );
+}
+
+/// Renamed binders + a flipped declaration order for the same subtype-reducible
+/// union family: the member elaboration must not depend on alias spelling or on
+/// which member is written first (the widest member `string[]` is the failing
+/// member either way).
+#[test]
+fn union_member_subtype_reducible_renamed_and_reordered() {
+    for source in [
+        r#"
+type Listish = string[] | [string, string];
+declare const v: Listish;
+const m: 0 = v;
+"#,
+        r#"
+type Collection = [string, string] | string[];
+declare const c: Collection;
+const k: 0 = c;
+"#,
+    ] {
+        let chain = ts2322_chain(&diagnostics(source));
+        assert!(
+            chain_has(&chain, 0, |m| m.contains("string[]")
+                && m.contains("is not assignable to type")),
+            "renamed/reordered subtype-reducible union must still drill the member; got {chain:?}"
+        );
+    }
+}
