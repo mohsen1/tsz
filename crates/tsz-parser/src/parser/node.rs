@@ -314,11 +314,19 @@ pub struct ExpressionStatementData {
     pub expression: NodeIndex,
 }
 
+/// Parser-owned recovery fact for malformed `''.typeof(expr)` declaration tails.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecoveredTypeofMemberCallData {
+    pub argument_pos: u32,
+    pub argument_end: u32,
+}
+
 /// Data for variable declarations
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VariableData {
     pub modifiers: Option<NodeList>,
     pub declarations: NodeList,
+    pub recovered_typeof_member_calls: Vec<RecoveredTypeofMemberCallData>,
 }
 
 /// Data for type references
