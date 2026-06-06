@@ -238,7 +238,7 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/state/type_resolution/module.rs",
+            # (empty — all files are now under the 2000-line limit)
         },
     ),
     (
@@ -262,7 +262,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1924,
+        1901,
     ),
     (
         "Emitter transform boundary: class_es5_ir.rs must not grow",
@@ -313,6 +313,22 @@ FILE_LINE_LIMIT_CHECKS = [
         / "resolve.rs",
         3413,
     ),
+    (
+        "Solver generic-call boundary: inference_helpers size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "inference_helpers.rs",
+        2065,
+    ),
+    (
+        "Solver inference boundary: infer_matching size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "inference" / "infer_matching.rs",
+        2002,
+    ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
     # as more phases (helper scheduling, temp/hoist planning, suspended
@@ -347,13 +363,13 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
         4281,
     ),
-    # LSP signature-help: the root provider has been split by concern. Existing
-    # TypeData/direct lookup() debt is isolated in signature_help/shapes.rs (see
-    # arch_guard_policy.toml exclusions) and should burn down separately.
+    # LSP signature-help root provider has been split into signature_help/.
+    # Keep the largest implementation shard pinned while the remaining
+    # TypeData/direct lookup() debt in shapes.rs burns down separately.
     (
-        "LSP boundary: signature_help monolith size ratchet",
-        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help.rs",
-        968,
+        "LSP boundary: signature_help contextual shard size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help" / "contextual.rs",
+        1309,
     ),
     # Scanner main loop: issue #9431 tracks splitting by token family.
     (
@@ -395,13 +411,6 @@ FILE_LINE_LIMIT_CHECKS = [
         "LSP boundary: module_specifiers monolith size ratchet",
         ROOT / "crates" / "tsz-lsp" / "src" / "project" / "module_specifiers.rs",
         3669,
-    ),
-    # LSP import candidate collection: issue #9420 tracks splitting collection
-    # from ranking and rendering.
-    (
-        "LSP boundary: project/imports monolith size ratchet (#9420)",
-        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "imports.rs",
-        3449,
     ),
     # Binder declaration binding: split by declaration family per §19.
     (
@@ -734,7 +743,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_resolution"
         / "module.rs",
-        2596,
+        1953,
     ),
     (
         "Parser boundary: parser/state_statements_class_members.rs size ratchet",
@@ -1234,7 +1243,24 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # rather than direct `query_boundaries::common` access.
         #
         # Ratcheted down after arch-smoke caught current stacked-branch slack.
-        3211,
+        # Ratcheted 3211→3208 after guard tests caught slack in the live count,
+        # then bumped to 3209 for the `keyof T` TS2322 diagnostic-display fix
+        # (#12549). Owner: M1-A diagnostic hardcoding debt. Removal condition:
+        # ratchet this back down when `core_formatting.rs` gets a focused
+        # formatting/query-boundary helper for type-parameter `keyof` display,
+        # so `format_type_for_assignability_message` no longer needs a direct
+        # `type_param_info(keyof_inner)` quarantine read to short-circuit the
+        # anonymous-constraint evaluation path for free type parameters.
+        #
+        # Bumped by 4 for #10867 generic interface/class diagnostic source
+        # display: the display-only source formatter needs application base,
+        # lazy definition, and free-type-parameter checks before preserving the
+        # as-written nominal reference. Removal condition remains #8225
+        # narrowing these common-barrel calls behind a dedicated diagnostic
+        # source-display query.
+        #
+        # Ratcheted 3213→3202 after current arch-smoke caught live-count slack.
+        3202,
     ),
 ]
 
@@ -1357,14 +1383,30 @@ REGEX_LINE_COUNT_CHECKS = [
         14,
     ),
     (
-        # Ratcheted from 3→1: two calls removed (bang-module and mixin-intersection
-        # decisions migrated to structured AST facts in #8406 / #8276 cycle).
-        # Remaining call: variable_decl.rs intersection-arm detection; issue #8276
-        # tracks migrating it to a structured declaration summary.
-        "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
+        # Broadens the previous direct-call guard to include sliced source-text
+        # recovery predicates such as `source_text[start..end].contains(...)`.
+        # The current baseline is pinned so each migration to structured emit
+        # facts can ratchet this count down in the same PR.
+        "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
-        re.compile(r"\bsource_text\.contains\s*\("),
+        re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
         1,
+    ),
+    (
+        "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "emitter"
+            / "statements"
+            / "recovered_variable_statement.rs"
+        ],
+        re.compile(
+            r"\b(?:find_source_pattern_outside_quoted_text|find_matching_source_paren|skip_quoted_source_text)\b"
+        ),
+        0,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",

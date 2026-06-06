@@ -6,13 +6,7 @@ impl<'a> TypeFormatter<'a> {
         let mut has_null = false;
         let mut has_undefined = false;
         for &m in members {
-            if m == TypeId::NULL {
-                has_null = true;
-            } else if m == TypeId::UNDEFINED {
-                has_undefined = true;
-            } else {
-                ordered.push(m);
-            }
+            self.collect_union_member_for_display(m, &mut ordered, &mut has_null, &mut has_undefined);
         }
         // Sort non-nullish members by source position to match tsc's display order.
         // The interner sorts Lazy types by DefId.0 (allocation order), which doesn't
@@ -83,6 +77,75 @@ impl<'a> TypeFormatter<'a> {
 
         self.format_ordered_union_members(ordered)
     }
+
+    /// Partition a single union member into the non-nullish display list plus
+    /// the trailing `null`/`undefined` flags that [`format_union`] appends at
+    /// the canonical tail.
+    ///
+    /// tsc flattens unions structurally, so `null`/`undefined` always render
+    /// last regardless of how the union was constructed. Our diagnostic
+    /// `union_origin` side-table can preserve a nested *anonymous* sub-union
+    /// (e.g. the `number | undefined` produced by `T[K]` inside a homomorphic
+    /// mapped template `{ [K in keyof T]: T[K] | null }`), and the resulting
+    /// origin `[number | undefined, null]` would otherwise leak the nested
+    /// `undefined` ahead of `null` — `number | undefined | null` instead of
+    /// tsc's `number | null | undefined`.
+    ///
+    /// To match tsc we descend into nested unions that carry no preserved
+    /// display name (no `display_alias`) and no `union_origin` of their own,
+    /// hoisting their `null`/`undefined` to the tail while keeping the
+    /// remaining members cohesive so non-nullish ordering is unchanged.
+    /// Unions that *do* carry a display name or origin are left intact so the
+    /// alias/source-order they were preserved for is not lost.
+    fn collect_union_member_for_display(
+        &self,
+        member: TypeId,
+        ordered: &mut Vec<TypeId>,
+        has_null: &mut bool,
+        has_undefined: &mut bool,
+    ) {
+        if member == TypeId::NULL {
+            *has_null = true;
+            return;
+        }
+        if member == TypeId::UNDEFINED {
+            *has_undefined = true;
+            return;
+        }
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(member)
+            && self.interner.get_display_alias(member).is_none()
+            && self.interner.get_union_origin(member).is_none()
+            && self
+                .def_store
+                .and_then(|ds| ds.find_def_for_type(member))
+                .is_none()
+        {
+            let inner = self.interner.type_list(list_id);
+            let has_nested_nullish = inner
+                .iter()
+                .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED);
+            if has_nested_nullish {
+                let mut remaining: Vec<TypeId> = Vec::with_capacity(inner.len());
+                for &m in inner.iter() {
+                    if m == TypeId::NULL {
+                        *has_null = true;
+                    } else if m == TypeId::UNDEFINED {
+                        *has_undefined = true;
+                    } else {
+                        remaining.push(m);
+                    }
+                }
+                match remaining.len() {
+                    0 => {}
+                    1 => ordered.push(remaining[0]),
+                    _ => ordered.push(self.interner.union_preserve_members(remaining)),
+                }
+                return;
+            }
+        }
+        ordered.push(member);
+    }
+
     pub(super) fn format_union_preserving_member_order(&mut self, members: &[TypeId]) -> String {
         self.format_ordered_union_members(members.to_vec())
     }

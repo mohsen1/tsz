@@ -124,7 +124,12 @@ impl TypeCache {
             .extend(other.well_known_symbol_names);
         self.boxed_types.extend(other.boxed_types);
         for (kind, def_ids) in other.boxed_def_ids {
-            self.boxed_def_ids.entry(kind).or_default().extend(def_ids);
+            let target = self.boxed_def_ids.entry(kind).or_default();
+            for def_id in def_ids {
+                if !target.contains(&def_id) {
+                    target.push(def_id);
+                }
+            }
         }
     }
 }
@@ -1762,6 +1767,27 @@ mod tests {
         assert_eq!(
             cache.def_to_name.get(&def_id).map(String::as_str),
             Some("ConcatArray")
+        );
+    }
+
+    #[test]
+    fn type_cache_merge_dedupes_boxed_def_ids() {
+        let mut lhs = empty_cache();
+        let mut rhs = empty_cache();
+        let def_id = tsz_solver::DefId(42);
+
+        lhs.boxed_def_ids
+            .insert(tsz_solver::IntrinsicKind::Function, vec![def_id]);
+        rhs.boxed_def_ids
+            .insert(tsz_solver::IntrinsicKind::Function, vec![def_id]);
+
+        lhs.merge(rhs);
+
+        assert_eq!(
+            lhs.boxed_def_ids
+                .get(&tsz_solver::IntrinsicKind::Function)
+                .map(Vec::as_slice),
+            Some(&[def_id][..])
         );
     }
 }

@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { measurementProfileStatus } from "./measurement-profile.mjs";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
@@ -21,6 +22,19 @@ function asNumber(value) {
 }
 
 const LOSS_CLOSURE_BY_ROW = new Map([
+  [
+    "utility-types-project",
+    {
+      owner: "Track 1/2/5 utility type key-space and mapped type evaluation",
+      operation: "utility-type mapped/key-space workload with cross-file helper imports",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^utility-types-project$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.utility-types-project.perf.json --noEmit -p .target-bench/external/utility-types/tsconfig.flat.json",
+      issue: 7378,
+      url: "https://github.com/tsz-org/tsz/issues/7378",
+    },
+  ],
   [
     "ts-toolbelt-project",
     {
@@ -60,6 +74,58 @@ const LOSS_CLOSURE_BY_ROW = new Map([
     },
   ],
   [
+    "ts-essentials/xor.ts",
+    {
+      owner: "Track 1/2/5 utility type key-space and union exclusion evaluation",
+      operation: "large XOR helper with repeated Exclude/keyof intersections and union normalization",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^ts-essentials/xor\\.ts$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-essentials-xor.perf.json --noEmit --lib es2018 .target-bench/external/ts-essentials/lib/xor/index.ts",
+      issue: 7378,
+      url: "https://github.com/tsz-org/tsz/issues/7378",
+    },
+  ],
+  [
+    "ts-essentials/paths.ts",
+    {
+      owner: "Track 1/2/5 recursive path utility and cross-file helper evaluation",
+      operation: "recursive path/key utility expansion with imported helper aliases",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^ts-essentials/paths\\.ts$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-essentials-paths.perf.json --noEmit --lib es2018 .target-bench/external/ts-essentials/lib/paths/index.ts",
+      issue: 7378,
+      url: "https://github.com/tsz-org/tsz/issues/7378",
+    },
+  ],
+  [
+    "ts-essentials/deep-pick.ts",
+    {
+      owner: "Track 1/2/5 recursive key-path mapped type evaluation",
+      operation: "deep-pick recursive mapped/key-path helper expansion",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^ts-essentials/deep-pick\\.ts$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-essentials-deep-pick.perf.json --noEmit --lib es2018 .target-bench/external/ts-essentials/lib/deep-pick/index.ts",
+      issue: 7378,
+      url: "https://github.com/tsz-org/tsz/issues/7378",
+    },
+  ],
+  [
+    "ts-essentials/deep-readonly.ts",
+    {
+      owner: "Track 1/2/5 recursive mapped readonly evaluation",
+      operation: "deep-readonly recursive mapped helper expansion over imported utility aliases",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^ts-essentials/deep-readonly\\.ts$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-essentials-deep-readonly.perf.json --noEmit --lib es2018 .target-bench/external/ts-essentials/lib/deep-readonly/index.ts",
+      issue: 7378,
+      url: "https://github.com/tsz-org/tsz/issues/7378",
+    },
+  ],
+  [
     "nextjs-fresh-app",
     {
       owner: "Track 7/9 generated app dependency graph",
@@ -68,6 +134,19 @@ const LOSS_CLOSURE_BY_ROW = new Map([
         "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^nextjs-fresh-app$' --json-file <artifact>.json",
       attribution_command:
         "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.nextjs-fresh-app.perf.json --noEmit -p .target-bench/external/next-app-live/tsconfig.json",
+      issue: 7378,
+      url: "https://github.com/tsz-org/tsz/issues/7378",
+    },
+  ],
+  [
+    "nextjs",
+    {
+      owner: "Track 7/9 large app module graph and lib identity",
+      operation: "Next.js package graph checking, module resolution, and lib/global symbol residency",
+      command:
+        "NEXTJS_BENCHMARK_ENABLED=1 scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^nextjs$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.nextjs.perf.json --noEmit -p .target-bench/external/nextjs/packages/next/tsconfig.tsz-bench.json",
       issue: 7378,
       url: "https://github.com/tsz-org/tsz/issues/7378",
     },
@@ -98,6 +177,73 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       url: "https://github.com/tsz-org/tsz/issues/8858",
     },
   ],
+  [
+    "100 generic functions",
+    {
+      owner: "Track 10 generic function scaling guard",
+      operation:
+        "generic async function checking with recursive DeepPartial option types and Promise<Result<T>> return construction",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^100 generic functions$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-100-generic-functions>.ts",
+      issue: 12271,
+      url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
+  [
+    "200 generic functions",
+    {
+      owner: "Track 10 generic function scaling guard",
+      operation:
+        "generic async function checking with recursive DeepPartial option types and Promise<Result<T>> return construction",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^200 generic functions$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-200-generic-functions>.ts",
+      issue: 12271,
+      url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
+  [
+    "CFA branches=100",
+    {
+      owner: "Track 10 control-flow analysis scaling guard",
+      operation: "control-flow narrowing across many generated branch joins",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^CFA branches=100$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-cfa-branches-100>.ts",
+      issue: 12271,
+      url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
+  [
+    "CFA branches=150",
+    {
+      owner: "Track 10 control-flow analysis scaling guard",
+      operation: "control-flow narrowing across many generated branch joins",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^CFA branches=150$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-cfa-branches-150>.ts",
+      issue: 12271,
+      url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
+  [
+    "Template literal N=45",
+    {
+      owner: "Track 10 template literal expansion scaling guard",
+      operation: "template literal Cartesian-product expansion and string manipulation helper evaluation",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^Template literal N=45$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-template-literal-45>.ts",
+      issue: 12271,
+      url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
 ]);
 
 function lossClosureForRow(row) {
@@ -116,24 +262,6 @@ function tszSpeedupVsTsgo(row) {
   if (row?.winner === "tsz") return factor;
   if (row?.winner === "tsgo") return 1 / factor;
   return null;
-}
-
-function measurementProfileStatus(input) {
-  const profile = input?.measurement_profile;
-  if (!profile || typeof profile !== "object") {
-    return {
-      present: false,
-      mode: null,
-      warning: "measurement_profile missing",
-    };
-  }
-
-  const mode = typeof profile.mode === "string" && profile.mode ? profile.mode : null;
-  return {
-    present: true,
-    mode,
-    warning: mode ? null : "measurement_profile.mode missing",
-  };
 }
 
 function inferDominantSubsystemFromPerfSnapshot(snapshot) {
@@ -325,6 +453,22 @@ function hasCompleteAttribution(status) {
   return Boolean(status?.present && status?.dominant_subsystem && !status?.warning);
 }
 
+function missingAttributionPlanForRow(row) {
+  const closure = row?.loss_closure ?? null;
+  return {
+    name: row.name,
+    target_gap_factor: row.target_gap_factor,
+    tsz_speedup_vs_tsgo: row.tsz_speedup_vs_tsgo,
+    semantic_owner_family: row.semantic_owner_family ?? null,
+    owner: closure?.owner ?? null,
+    issue: closure?.issue ?? null,
+    url: closure?.url ?? null,
+    attribution_command: closure?.attribution_command ?? null,
+    timing_command: closure?.command ?? null,
+    attribution_warning: row.attribution_status?.warning ?? null,
+  };
+}
+
 function targetGapFactor(speedup) {
   if (speedup == null || speedup <= 0) return null;
   return TARGET_TSZ_SPEEDUP / speedup;
@@ -413,6 +557,11 @@ export function createTsgoWinnerReport(input, inputPath) {
     .filter((row) => !hasCompleteAttribution(row.attribution_status))
     .map((row) => row.name)
     .sort();
+  const missingTargetGapAttributionPlan = targetGapRows
+    .filter((row) => !hasCompleteAttribution(row.attribution_status))
+    .map(missingAttributionPlanForRow);
+  const targetGapRowsWithAttributionCommand = missingTargetGapAttributionPlan
+    .filter((row) => row.attribution_command).length;
 
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row) && !duplicateNames.has(row?.name))
@@ -485,6 +634,8 @@ export function createTsgoWinnerReport(input, inputPath) {
       project_rows_below_target: targetGapRows.filter((row) => row.semantic_owner_family).length,
       rows_with_attribution: targetGapRows.length - missingTargetGapAttributionRows.length,
       missing_attribution_rows: missingTargetGapAttributionRows,
+      rows_with_attribution_command: targetGapRowsWithAttributionCommand,
+      missing_attribution_plan: missingTargetGapAttributionPlan,
       worst_gap: targetGapRows[0] ?? null,
     },
     measurement_profile: measurementProfileStatus(input),
@@ -518,6 +669,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       `project green tsgo winners: ${report.totals.project_green_tsgo_winners}`,
       `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
       `2x target gaps with attribution: ${report.two_x_target.rows_with_attribution}/${report.two_x_target.rows_below_target}`,
+      `2x target gaps with attribution commands: ${report.two_x_target.rows_with_attribution_command}/${report.two_x_target.rows_below_target}`,
       `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
     ].join("\n"),
   );

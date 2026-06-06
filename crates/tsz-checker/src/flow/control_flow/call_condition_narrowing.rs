@@ -1,11 +1,10 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as flow_query;
-use smallvec::SmallVec;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{AccessExprData, Node};
 use tsz_solver::TypeId;
-use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
+use tsz_solver::narrowing::{NarrowingContext, TypeGuard};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn narrow_call_expression_condition(
@@ -57,7 +56,6 @@ impl<'a> FlowAnalyzer<'a> {
                 guard_target,
                 target,
                 is_true_branch,
-                narrowing,
                 &guard,
             ) {
                 return Some(narrowed);
@@ -98,7 +96,6 @@ impl<'a> FlowAnalyzer<'a> {
         guard_target: NodeIndex,
         target: NodeIndex,
         is_true_branch: bool,
-        narrowing: &NarrowingContext,
         guard: &TypeGuard,
     ) -> Option<TypeId> {
         if !is_true_branch {
@@ -129,11 +126,13 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        let property_guard = TypeGuard::Predicate {
-            type_id: Some(predicate_property_type),
-            asserts: false,
-        };
-        let narrowed = narrowing.narrow_type(type_id, &property_guard, GuardSense::Positive);
+        let env = self.type_environment.map(std::cell::RefCell::borrow);
+        let narrowed = flow_query::narrow_property_type_by_predicate(
+            self.interner,
+            env.as_deref(),
+            type_id,
+            predicate_property_type,
+        );
         (narrowed != type_id).then_some(narrowed)
     }
 
@@ -154,52 +153,17 @@ impl<'a> FlowAnalyzer<'a> {
             ?is_true_branch,
             "Applying guard from call expression"
         );
-        let guard_sense = match guard {
-            TypeGuard::Predicate { asserts: true, .. } => GuardSense::Positive,
-            _ => GuardSense::from(is_true_branch),
-        };
-        let result = narrowing.narrow_type(type_id, &guard, guard_sense);
+        let env = self.type_environment.map(std::cell::RefCell::borrow);
+        let result = flow_query::narrow_call_predicate_guard(
+            self.interner,
+            env.as_deref(),
+            self.concrete_this_type,
+            narrowing,
+            type_id,
+            &guard,
+            is_true_branch,
+        );
         trace!(?result, "Guard application result");
-        if !is_true_branch
-            && result == type_id
-            && let TypeGuard::Predicate {
-                type_id: Some(predicate_type),
-                ..
-            } = guard
-        {
-            let positive = narrowing.narrow_type(type_id, &guard, GuardSense::Positive);
-            if positive != type_id && positive != TypeId::NEVER {
-                let excluded = narrowing.narrow_excluding_type(type_id, positive);
-                if excluded != type_id {
-                    return excluded;
-                }
-            }
-
-            let members = flow_query::union_members_for_type(self.interner, type_id)
-                .unwrap_or_else(|| vec![type_id].into());
-            let env = self.type_environment.map(std::cell::RefCell::borrow);
-            let excluded_members: SmallVec<[TypeId; 4]> = members
-                .iter()
-                .copied()
-                .filter(|member| {
-                    flow_query::flow_assignability_outcome(
-                        self.interner,
-                        env.as_deref(),
-                        self.concrete_this_type,
-                        *member,
-                        predicate_type,
-                        false,
-                    )
-                    .related
-                })
-                .collect();
-            if !excluded_members.is_empty() {
-                let excluded = narrowing.narrow_excluding_types(type_id, &excluded_members);
-                if excluded != type_id {
-                    return excluded;
-                }
-            }
-        }
         if result == type_id
             && let Some(call) = self.arena.get_call_expr(cond_node)
             && let Some(retry) =

@@ -1,4 +1,7 @@
-use tsz_checker::test_utils::check_source_code_messages;
+use tsz_checker::test_utils::{
+    check_js_source_code_messages, check_source_code_messages, check_with_options_code_messages,
+};
+use tsz_common::CheckerOptions;
 
 #[test]
 fn class_reserved_word_diagnostics_match_strict_class_context() {
@@ -61,5 +64,124 @@ class H extends package.A { }
     assert!(
         diagnostics.iter().all(|(code, _)| *code != 7051),
         "did not expect TS7051 for class-context reserved parameters; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn strict_let_named_lexical_declaration_emits_ts1212_and_ts2480() {
+    let diagnostics = check_with_options_code_messages(
+        r#"
+"use strict";
+let let = 1;
+function f() {
+    let let = 2;
+}
+"#,
+        CheckerOptions {
+            always_strict: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts1212_let_count = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 1212 && message.contains("'let'"))
+        .count();
+    let ts2480_let_count = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2480 && message.contains("'let'"))
+        .count();
+
+    assert_eq!(
+        ts1212_let_count, 2,
+        "expected TS1212 for each strict lexical `let` binding named `let`; got {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2480_let_count, 2,
+        "expected TS2480 for each lexical `let` binding named `let`; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn non_strict_let_named_lexical_declaration_keeps_only_ts2480() {
+    let diagnostics = check_with_options_code_messages(
+        "let let = 1;",
+        CheckerOptions {
+            always_strict: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2480 && message.contains("'let'")),
+        "expected TS2480 for `let` as a lexical binding name; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, message)| *code != 1212 || !message.contains("'let'")),
+        "did not expect TS1212 for sloppy `let` as a lexical binding name; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn js_module_let_named_lexical_declaration_uses_ts1214_and_ts2480() {
+    let diagnostics = check_js_source_code_messages(
+        r#"
+export const marker = 0;
+let let = 1;
+const yield = 2;
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2480 && message.contains("'let'")),
+        "expected TS2480 for `let` as a lexical binding name; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 1214 && message.contains("'let'")),
+        "expected TS1214 for `let` as a JS module lexical binding name; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 1214 && message.contains("'yield'")),
+        "expected adjacent JS module `yield` binding to keep TS1214; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_with_grammar_errors_suppresses_strict_let_noise() {
+    let diagnostics = check_js_source_code_messages(
+        r#"
+class C {
+    const x = 1
+}
+export const marker = 0;
+let let = 1;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 8009),
+        "expected JS grammar diagnostic for class field `const`; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2480 && message.contains("'let'")),
+        "expected TS2480 for `let` as a lexical binding name; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, message)| *code != 1214 || !message.contains("'let'")),
+        "did not expect TS1214 noise for checked JS after grammar errors; got {diagnostics:#?}"
     );
 }

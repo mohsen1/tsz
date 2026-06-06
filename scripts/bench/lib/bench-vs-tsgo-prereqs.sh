@@ -29,6 +29,7 @@ pgo_profile_fingerprint() {
         printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         printf 'UTILITY_TYPES_REF=%s\n' "$UTILITY_TYPES_REF"
         printf 'TS_TOOLBELT_REF=%s\n' "$TS_TOOLBELT_REF"
         printf 'TS_ESSENTIALS_REF=%s\n' "$TS_ESSENTIALS_REF"
@@ -63,6 +64,7 @@ pgo_training_fingerprint() {
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
         printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         local label
         for label in "${BENCH_PGO_TRAINING_INPUTS[@]}"; do
             printf 'training_input=%s\n' "$label"
@@ -90,6 +92,7 @@ write_pgo_training_metadata() {
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
         printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         printf 'training_input_count=%s\n' "${#BENCH_PGO_TRAINING_INPUTS[@]}"
         printf 'training_failure_count=%s\n' "${#BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"
         local label
@@ -117,6 +120,7 @@ write_pgo_training_unavailable_metadata() {
         printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
         printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
         printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'BENCH_RUST_TARGET_CPU=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         printf 'training_input_count=0\n'
         printf 'training_failure_count=0\n'
     } > "$out_file"
@@ -433,6 +437,18 @@ exit_codes_from_status() {
 /g' | sed '/^$/d'
 }
 
+# Resolve the directory backing the project-file-stats cache. That cache only
+# avoids re-line-counting unchanged fixture sources when it OUTLIVES a single
+# bench invocation; a previous default placed it under the per-run `$TEMP_DIR`,
+# which the harness `rm -rf`s on EXIT, so the persistence machinery was dead and
+# every row re-read every fixture from cold (issue #10923). Anchor the default
+# to the run-surviving, gitignored `$BENCH_TARGET_DIR` (alongside the cached
+# binary and external fixtures). An explicit `TSZ_PROJECT_FILE_STATS_CACHE_DIR`
+# always wins; `$TMPDIR` is only the last resort when no persistent dir is known.
+bench_project_file_stats_cache_dir() {
+    printf '%s\n' "${TSZ_PROJECT_FILE_STATS_CACHE_DIR:-${BENCH_TARGET_DIR:-${TMPDIR:-/tmp}}/project-file-stats-cache}"
+}
+
 # Single-pass aggregate of (lines, bytes, files) under a TypeScript source
 # tree. Used as the offline fallback when `project-file-stats.mjs` cannot load
 # the TypeScript package (e.g. tsc tooling not yet installed). Walks the tree
@@ -464,9 +480,11 @@ project_tsconfig_stats() {
     local tsconfig="$1"
     local fallback_src_dir="$2"
     local stats
+    local cache_dir
+    cache_dir="$(bench_project_file_stats_cache_dir)"
 
     if stats="$(TSC_TOOL_DIR_VALUE="$TSC_TOOL_DIR" TSC_BIN_VALUE="$TSC" \
-        TSZ_PROJECT_FILE_STATS_CACHE_DIR="${TSZ_PROJECT_FILE_STATS_CACHE_DIR:-${TEMP_DIR:-${TMPDIR:-/tmp}}/tsz-project-file-stats}" \
+        TSZ_PROJECT_FILE_STATS_CACHE_DIR="$cache_dir" \
         node "$SCRIPT_DIR/project-file-stats.mjs" "$tsconfig" 2>/dev/null)"; then
         echo "$stats"
         return
@@ -843,6 +861,8 @@ check_prerequisites() {
         local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
         local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
         local pgo_cache_metadata="$pgo_cache_dir/profile.metadata"
+        local bench_rust_target_cpu="${BENCH_RUST_TARGET_CPU:-native}"
+        local bench_rust_target_flags="-Ctarget-cpu=${bench_rust_target_cpu}"
         local pgo_target_dir
         local optimized_target_dir
         local pgo_profile_data_source="fresh"
@@ -891,7 +911,7 @@ check_prerequisites() {
                 # CFG hash mismatches during profile-use. BENCH_PGO_PANIC_UNWIND=1
                 # is still useful when deliberately training on crashy inputs,
                 # because panic=abort can skip LLVM's profiling atexit flush.
-                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir -Ctarget-cpu=native"
+                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir ${bench_rust_target_flags}"
                 if [[ "${BENCH_PGO_PANIC_UNWIND:-0}" == "1" ]]; then
                     pgo_generate_rustflags="$pgo_generate_rustflags -Cpanic=unwind"
                 fi
@@ -950,7 +970,7 @@ check_prerequisites() {
                     "PGO Step 3/3: optimized binary build" \
                     CARGO_TARGET_DIR="$optimized_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged ${bench_rust_target_flags}" \
                     cargo build --profile dist -p tsz-cli --bin tsz; then
                     if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
                         echo -e "${RED}✗ PGO dist build failed and BENCH_REQUIRE_PGO=1${NC}"
@@ -965,7 +985,7 @@ check_prerequisites() {
                         "PGO Step 3 fallback: standard dist build" \
                         CARGO_TARGET_DIR="$optimized_target_dir" \
                         CARGO_INCREMENTAL=0 \
-                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        RUSTFLAGS="$bench_rust_target_flags" \
                         cargo build --profile dist -p tsz-cli --bin tsz
                 else
                     pgo_optimized=true
@@ -982,7 +1002,7 @@ check_prerequisites() {
                     "PGO Step 3: standard dist build" \
                     CARGO_TARGET_DIR="$optimized_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Ctarget-cpu=native" \
+                    RUSTFLAGS="$bench_rust_target_flags" \
                     cargo build --profile dist -p tsz-cli --bin tsz
             fi
             mkdir -p "$TSZ_OUTPUT_DIR"
@@ -1008,7 +1028,7 @@ check_prerequisites() {
                 "Standard dist build" \
                 CARGO_TARGET_DIR="$optimized_target_dir" \
                 CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Ctarget-cpu=native" \
+                RUSTFLAGS="$bench_rust_target_flags" \
                 cargo build --profile dist -p tsz-cli --bin tsz
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"

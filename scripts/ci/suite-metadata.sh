@@ -7,6 +7,7 @@ _TSZ_CI_GITHUB_SUITES=(
   node-harness-prep
   lint
   unit
+  checker-integration
   unit-shard
   lsp-e2e
   wasm
@@ -88,7 +89,7 @@ ci_suite_needs_group() {
       [[ "$suite" == "lint" ]]
       ;;
     unit)
-      [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
+      [[ "$suite" == "unit" || "$suite" == "checker-integration" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
       ;;
     wasm)
       [[ "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" ]]
@@ -107,7 +108,7 @@ ci_suite_needs_group() {
 
 ci_suite_needs_rust_compile() {
   case "$1" in
-    all|full|bench|build|lint|unit|wasm|wasm-web|wasm-all|dist-binaries|unit-archive)
+    all|full|bench|build|lint|unit|checker-integration|wasm|wasm-web|wasm-all|dist-binaries|unit-archive)
       return 0
       ;;
     *)
@@ -142,7 +143,7 @@ ci_suite_caches() {
       # It does not read the TypeScript corpus or install npm packages.
       echo "cargo-home"
       ;;
-    build|unit)
+    build|unit|checker-integration)
       # Full local build/unit flows may run tests that reference
       # TypeScript/src/lib and tests/cases at runtime.
       echo "cargo-home typescript-source"
@@ -219,7 +220,7 @@ ci_suite_target_caches() {
     dist-binaries)
       echo "cargo-target-deps"
       ;;
-    unit-archive|unit)
+    unit-archive|unit|checker-integration)
       echo "cargo-target-unit"
       ;;
     lint)

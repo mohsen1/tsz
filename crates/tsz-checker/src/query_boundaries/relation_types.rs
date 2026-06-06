@@ -290,6 +290,15 @@ impl RelationFailure {
                 source_type,
                 target_type,
                 ..
+            }
+            // A type-parameter source failure: the checker-facing classification
+            // keeps the parameter/target pair; the constraint-level reason is
+            // rendered from the solver reason's structured chain via
+            // `render_failure_reason`.
+            | SubtypeFailureReason::TypeParameterConstraintMismatch {
+                source_type,
+                target_type,
+                ..
             } => Self::TypeMismatch {
                 source_type,
                 target_type,
@@ -300,6 +309,11 @@ impl RelationFailure {
                 ..
             }
             | SubtypeFailureReason::TupleElementTypeMismatch {
+                source_element,
+                target_element,
+                ..
+            }
+            | SubtypeFailureReason::TupleVariadicPositionMismatch {
                 source_element,
                 target_element,
                 ..

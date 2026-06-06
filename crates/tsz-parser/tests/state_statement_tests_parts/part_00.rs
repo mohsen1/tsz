@@ -641,6 +641,10 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
         .find("await v);")
         .expect("source contains call semicolon") as u32
         + "await v)".len() as u32;
+    let call_argument = source
+        .find("await v")
+        .expect("source contains recovered call argument") as u32
+        + "await ".len() as u32;
     let final_close_brace = source
         .rfind('}')
         .expect("source contains final close brace") as u32;
@@ -694,6 +698,98 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
     ] {
         expect_diag(expected.0, expected.1, expected.2);
     }
+    assert!(
+        !has_diag(diagnostic_codes::EXPECTED, for_open_paren_tail, "',' expected."),
+        "recovered for-await header should not also report a comma at `const`; got {diags:?}"
+    );
+    assert!(
+        !has_diag(diagnostic_codes::EXPECTED, call_semicolon - 1, "',' expected."),
+        "recovered dot-call tail should not report a comma at `)`; got {diags:?}"
+    );
+    assert!(
+        !has_diag(diagnostic_codes::EXPECTED, call_argument, "',' expected."),
+        "recovered dot-call tail should not report a method-parameter comma at `v`; got {diags:?}"
+    );
+    assert!(
+        !has_diag(diagnostic_codes::EXPECTED, call_semicolon, "'{' expected."),
+        "recovered dot-call tail should not require an object-method body at `;`; got {diags:?}"
+    );
+}
+
+#[test]
+fn definite_assignment_generic_tail_leaves_greater_than_for_statement_recovery() {
+    let source = "export async function arrayFromAsync<T>(asyncIterable!: AsyncIterable<T>): Promise<T[]> {\n    const out = [];\n    for await (const v of asyncIterable) {\n        out.push(await v);\n    }\n    return out;\n}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).expect("source file");
+
+    assert!(
+        source_file.statements.nodes.len() >= 3,
+        "tsc leaves the malformed return-type tail as statements; got {:?}",
+        source_file.statements.nodes
+    );
+
+    let function = arena
+        .nodes
+        .iter()
+        .find(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+        .and_then(|node| arena.get_function(node))
+        .expect("recovered function declaration data");
+    assert!(
+        function.body.is_none(),
+        "generic `!:` parameter recovery must stop before `>` and leave the function body missing"
+    );
+
+    let greater_than_stmt = arena
+        .get(source_file.statements.nodes[1])
+        .expect("greater-than expression statement");
+    assert_eq!(
+        greater_than_stmt.kind,
+        syntax_kind_ext::EXPRESSION_STATEMENT,
+        "`>` should be parsed as the next recovered expression statement"
+    );
+    assert_eq!(
+        greater_than_stmt.pos,
+        source
+            .find(">):")
+            .expect("source contains generic tail close") as u32,
+        "`>` statement should start at the generic tail close"
+    );
+    let greater_than_expr = arena
+        .get_expression_statement(greater_than_stmt)
+        .and_then(|stmt| arena.get(stmt.expression))
+        .expect("greater-than expression");
+    assert_eq!(
+        greater_than_expr.end,
+        greater_than_stmt.pos + 1,
+        "`>` expression should not absorb the recovered `):` return-type delimiter"
+    );
+    assert_eq!(
+        greater_than_stmt.end,
+        source
+            .find(": Promise")
+            .expect("source contains return type colon") as u32
+            + 1,
+        "`>` statement span should own the recovered `):` delimiter gap"
+    );
+
+    let return_type_stmt = arena
+        .get(source_file.statements.nodes[2])
+        .expect("return type expression statement");
+    let return_type_expr = arena
+        .get_expression_statement(return_type_stmt)
+        .and_then(|stmt| arena.get(stmt.expression))
+        .expect("return type expression");
+    assert_eq!(
+        return_type_stmt.pos,
+        source.find("Promise").expect("source contains return type") as u32,
+        "return type recovery should start at `Promise`, not at `):`"
+    );
+    assert_eq!(
+        return_type_expr.pos,
+        source.find("Promise").expect("source contains return type") as u32,
+        "return type expression should start at `Promise`, not at `):`"
+    );
 }
 
 #[test]
@@ -1299,6 +1395,34 @@ fn reserved_word_tail_after_missing_comma_in_type_annotation_stops_after_ts1389(
                 && diag.message == "';' expected."
         }),
         "Recovery should skip the typeof call tail instead of emitting a stray ';' expected at `(`: {diags:?}"
+    );
+}
+
+#[test]
+fn recovered_typeof_member_tail_records_argument_span_on_variable_list() {
+    let source = "const x: \"\".typeof(/* keep */ this.foo);";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+    let stmt = arena
+        .get(sf.statements.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("variable statement");
+    let decl_list = arena
+        .get(stmt.declarations.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("declaration list");
+
+    assert_eq!(
+        decl_list.recovered_typeof_member_calls.len(),
+        1,
+        "parser should expose the recovered typeof tail as structured data"
+    );
+    let recovered = &decl_list.recovered_typeof_member_calls[0];
+    assert_eq!(
+        &source[recovered.argument_pos as usize..recovered.argument_end as usize],
+        "/* keep */ this.foo",
+        "recorded span should cover only the recovered typeof argument"
     );
 }
 

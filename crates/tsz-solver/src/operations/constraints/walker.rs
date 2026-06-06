@@ -1088,9 +1088,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     for tp in &s_fn.type_params {
                         let var = ctx.fresh_var();
                         let placeholder_id = self.checker.next_inference_placeholder_id();
+                        let origin_name = self.interner.resolve_atom_ref(tp.name);
                         crate::operations::generic_call::write_src_placeholder_name(
                             &mut src_placeholder_buf,
                             placeholder_id,
+                            &origin_name,
                         );
                         let placeholder_atom = self.interner.intern_string(&src_placeholder_buf);
                         ctx.register_type_param(placeholder_atom, var, tp.is_const);

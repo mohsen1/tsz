@@ -76,6 +76,46 @@ impl<'a> Printer<'a> {
         self.prepare_file_level_class_temp_reservations(statements);
     }
 
+    pub(in crate::emitter) fn insert_nonlegacy_same_location_hoists(
+        &mut self,
+        hoist_byte_offset: usize,
+        hoist_line: u32,
+        file_level_class_temps: Vec<String>,
+        ref_vars: Vec<String>,
+    ) {
+        let first_class_temp_rank = file_level_class_temps
+            .iter()
+            .filter_map(|name| temp_name_rank(name))
+            .min();
+        let (early_ref_vars, trailing_ref_vars): (Vec<_>, Vec<_>) =
+            ref_vars.into_iter().partition(|name| {
+                first_class_temp_rank.is_some_and(|rank| {
+                    temp_name_rank(name).is_some_and(|name_rank| name_rank < rank)
+                })
+            });
+
+        let mut same_location_ref_vars = file_level_class_temps;
+        same_location_ref_vars.extend(trailing_ref_vars);
+        if !self.hoisted_deferred_static_class_result_temps.is_empty() {
+            let var_decl = format!(
+                "var {};",
+                self.hoisted_deferred_static_class_result_temps.join(", ")
+            );
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        }
+        if !same_location_ref_vars.is_empty() {
+            let var_decl = format!("var {};", same_location_ref_vars.join(", "));
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        }
+        if !early_ref_vars.is_empty() {
+            let var_decl = format!("var {};", early_ref_vars.join(", "));
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        }
+    }
+
     pub(in crate::emitter) fn prepare_source_file_comments(
         &mut self,
         statements: &NodeList,
@@ -279,10 +319,10 @@ impl<'a> Printer<'a> {
             }
             // Check the literal text
             let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
-                lit.text == "use strict"
+                tsz_common::directives::is_use_strict_directive(lit.raw_text.as_deref(), &lit.text)
             } else if let Some(text) = self.source_text {
                 crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
-                    .is_ok_and(|s| s == "\"use strict\"" || s == "'use strict'")
+                    .is_ok_and(tsz_common::directives::is_use_strict_directive_raw_text)
             } else {
                 false
             };
@@ -377,10 +417,9 @@ impl<'a> Printer<'a> {
             if !expr_node.is_string_literal() {
                 return None;
             }
-            let is_use_strict = self
-                .arena
-                .get_literal(expr_node)
-                .is_some_and(|lit| lit.text == "use strict");
+            let is_use_strict = self.arena.get_literal(expr_node).is_some_and(|lit| {
+                tsz_common::directives::is_use_strict_directive(lit.raw_text.as_deref(), &lit.text)
+            });
             if !is_use_strict {
                 return None;
             }
@@ -491,6 +530,15 @@ impl<'a> Printer<'a> {
                 .as_ref()
                 .is_some_and(|args| args.nodes.len() >= 2)
     }
+}
+
+fn temp_name_rank(name: &str) -> Option<u32> {
+    let tail = name.strip_prefix('_')?;
+    let bytes = tail.as_bytes();
+    if bytes.len() == 1 && bytes[0].is_ascii_lowercase() {
+        return Some(u32::from(bytes[0] - b'a'));
+    }
+    tail.parse::<u32>().ok().map(|rank| rank + 26)
 }
 
 pub(in crate::emitter) fn jsx_dev_file_name(file_name: &str) -> String {

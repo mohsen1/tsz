@@ -13,30 +13,56 @@
 #   current-main row, keyofIsLiteralContexualType.ts.
 # - PR #12495 run 26941560765 at faec9f5e found four additional current-head
 #   rows after #12491 landed the partial ledger restoration.
+# - PR #12549 run 26999422323 at 148eafc38007 removed
+#   keyofIsLiteralContexualType.ts from exact-head aggregate output and found
+#   seven additional current-head rows after the stale type-query-flow module
+#   deletion made the checker buildable again.
+# - PR #12649 run 27008940643 at f2db335b3d found five rows returned and five
+#   previous accepted rows resolved after exact-head shard rerun.
+# - PR #12649 run 27013631682 at synthetic merge 9a9f5fb46f found four rows
+#   returned and twelve previous accepted rows resolved after merging main.
+# - PR #12649 run 27015324920 attempt 2 at synthetic merge 2f1ff2f987 found
+#   three rows returned and ten previous accepted rows resolved after cancelled
+#   shard rerun.
+# - PR #12649 run 27016857260 attempt 2 at synthetic merge 3d599062d3 found
+#   thirteen rows returned and no previous accepted rows resolved after the
+#   exact-head cancelled shard rerun.
+# - PR #12659 run 27032877016 at synthetic merge c42c6ba96f found one returned
+#   row and sixteen previous accepted rows resolved after exact-head aggregate.
+# - PR #12660 run 27037607717 at synthetic merge 854e089920 found seven rows
+#   returned and two previous accepted rows resolved after exact-head aggregate.
+# - PR #12702 run 27037509191 at exact head 591b1dee210f found six rows
+#   unlisted and eleven previous accepted rows resolved after the recovered
+#   generic-parameter-tail parser fix.
+# - PR #12748 run 27057787055 at synthetic merge bf33f5f1ef found four
+#   current-main rows still failing on exact-head aggregate after rebasing on
+#   current main.
+# - PR #12544 run 27062518424 at synthetic merge for head 87bacd18a4 found
+#   circularReference.ts resolved after rebasing on current main. It also found
+#   privateNamesAndIndexedAccess.ts as a new unlisted row; that row is tracked
+#   in an issue instead of growing this ledger.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
-TypeScript/tests/cases/compiler/declarationsIndirectGeneratedAliasReference.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
-TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
-TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
+TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
+TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
-TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
-TypeScript/tests/cases/compiler/promisesWithConstraints.ts
+TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
-TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
-TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
-TypeScript/tests/cases/conformance/externalModules/circularReference.ts
+TypeScript/tests/cases/compiler/promisesWithConstraints.ts
+TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
+TypeScript/tests/cases/conformance/importDefer/dynamicImportDeferInvalidStandalone.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
-TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit6.ts
-TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit7.ts
+TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts
+TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
@@ -45,4 +71,10 @@ TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varia
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
 # covariant TS2322 again. Removed from this ledger; covered by
 # nullable_union_callback_variance_tests.
-TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation.ts
+# infiniteExpansionThroughInstantiation.ts: RESOLVED. The TS2322 source type
+# `OwnerList<T>` was over-instantiated to `OwnerList<List<T>>` because the
+# eagerly-evaluated generic interface instance dropped its Application display
+# provenance whenever an argument carried a free type parameter
+# (store_parametric_structural_back_reference). Provenance is now recorded for
+# those instances, so display matches tsc. Covered by
+# recursive_generic_interface_application_display_tests.

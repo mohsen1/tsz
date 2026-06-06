@@ -1,7 +1,7 @@
 use super::*;
 use crate::construction::TypeInterner;
 use crate::recursion::RecursionResult;
-use crate::types::{PropertyInfo, TupleElement, TypeParamInfo};
+use crate::types::{MappedModifier, PropertyInfo, TupleElement, TypeParamInfo};
 
 #[test]
 fn evaluate_keyof_or_constraint_preserves_reentrant_constraint() {
@@ -904,5 +904,158 @@ fn identity_as_clause_with_renamed_iter_var_is_name_agnostic() {
             prop.readonly,
             "iter `{iter_name}`: property 'x' must remain readonly through identity as-clause"
         );
+    }
+}
+
+/// Build `{ a: number } & { b: string }` and return the intersection source
+/// plus the two disjoint key atoms, the shared setup for the distribution tests
+/// below.
+fn build_disjoint_object_intersection(interner: &TypeInterner) -> (TypeId, Atom, Atom) {
+    let a_atom = interner.intern_string("a");
+    let b_atom = interner.intern_string("b");
+    let obj_a = interner.object(vec![PropertyInfo::new(a_atom, TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(b_atom, TypeId::STRING)]);
+    (interner.intersection(vec![obj_a, obj_b]), a_atom, b_atom)
+}
+
+/// Intersection sources are distributed by `try_distribute_mapped_over_composite_source`
+/// → `distribute_mapped_over_members`: a generic homomorphic `M<A & B>` becomes
+/// `M<A> & M<B>`. The distributed result must carry every key contributed by
+/// each member object (here `a` from `A` and `b` from `B`), proving the
+/// distribution iterated both members rather than collapsing the intersection.
+#[test]
+fn instantiated_homomorphic_mapped_distributes_over_object_intersection() {
+    let interner = TypeInterner::new();
+    let (source, a_atom, b_atom) = build_disjoint_object_intersection(&interner);
+
+    // Constant `boolean` template: every produced property is `boolean`, so we
+    // can assert purely on the *key set* surviving distribution.
+    let mapped = build_instantiated_homomorphic_mapped(&interner, "P", source, TypeId::BOOLEAN);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate(interner.mapped(mapped));
+
+    // Collect the keys reachable on the distributed result.
+    let mut names = std::collections::BTreeSet::new();
+    let collect = |obj: TypeId, names: &mut std::collections::BTreeSet<Atom>| {
+        if let Some(TypeData::Object(shape_id)) = interner.lookup(obj) {
+            for prop in &interner.object_shape(shape_id).properties {
+                names.insert(prop.name);
+                assert_eq!(
+                    prop.type_id,
+                    TypeId::BOOLEAN,
+                    "distributed property must carry the mapped template"
+                );
+            }
+        }
+    };
+    match interner.lookup(result) {
+        Some(TypeData::Intersection(list_id)) => {
+            for member in interner.type_list(list_id).to_vec() {
+                collect(member, &mut names);
+            }
+        }
+        Some(TypeData::Object(_)) => collect(result, &mut names),
+        other => panic!("expected object/intersection result, got {other:?}"),
+    }
+    assert!(
+        names.contains(&a_atom) && names.contains(&b_atom),
+        "distributed result must keep keys from every intersection member, got {names:?}"
+    );
+}
+
+/// Routing distribution through the cached `evaluate` makes evaluation
+/// idempotent: re-evaluating the same interned mapped id returns the identical
+/// `TypeId` (the evaluator memo / interner collapse repeats). This guards the
+/// over-instantiation fix — structurally-identical member instantiations must
+/// not produce divergent fresh ids on re-evaluation.
+#[test]
+fn distributed_mapped_over_intersection_is_idempotent() {
+    let interner = TypeInterner::new();
+    let (source, _a, _b) = build_disjoint_object_intersection(&interner);
+    let mapped = build_instantiated_homomorphic_mapped(&interner, "P", source, TypeId::BOOLEAN);
+    let mapped_id = interner.mapped(mapped);
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let first = evaluator.evaluate(mapped_id);
+    let second = evaluator.evaluate(mapped_id);
+    assert_eq!(
+        first, second,
+        "re-evaluating the same distributed mapped id must be stable (cached)"
+    );
+}
+
+/// Build the identity homomorphic mapped `{ [K in keyof T]: T[K] }` over
+/// `source`, optionally adding an identity `as K` remap and a readonly modifier.
+/// Reuses [`build_identity_homomorphic_mapped`] for the shared base shape.
+fn build_homomorphic_mapped_over(
+    interner: &TypeInterner,
+    iter_name: &str,
+    source: TypeId,
+    as_clause: bool,
+    readonly_modifier: Option<MappedModifier>,
+) -> MappedType {
+    let mut mapped = build_identity_homomorphic_mapped(interner, iter_name, source);
+    if as_clause {
+        let iter_atom = interner.intern_string(iter_name);
+        mapped.name_type = Some(interner.type_param(TypeParamInfo::simple(iter_atom)));
+    }
+    mapped.readonly_modifier = readonly_modifier;
+    mapped
+}
+
+/// A homomorphic mapped type over `readonly T[]` / `ReadonlyArray<T>` must
+/// preserve the readonly array shape rather than collapsing to a plain object
+/// (which dropped the `readonly` modifier and synthesized mutable-array methods
+/// like `push`). Readonly is kept for a plain `{ [K in keyof T]: T[K] }`, an
+/// identity `as K` remap, and an explicit `+readonly`; a no-`as` `-readonly`
+/// yields a mutable array, matching tsc's `instantiateMappedArrayType`.
+#[test]
+fn homomorphic_mapped_over_readonly_array_preserves_readonly() {
+    let interner = TypeInterner::new();
+    // source: readonly number[]
+    let source = interner.readonly_type(interner.array(TypeId::NUMBER));
+
+    // (as_clause, readonly_modifier, expect_readonly_result, label)
+    let cases = [
+        (false, None, true, "plain identity"),
+        (true, None, true, "identity as K"),
+        (false, Some(MappedModifier::Add), true, "+readonly"),
+        (
+            false,
+            Some(MappedModifier::Remove),
+            false,
+            "-readonly (no as)",
+        ),
+    ];
+
+    for iter_name in ["K", "P", "Item"] {
+        for &(as_clause, readonly_modifier, expect_readonly, label) in &cases {
+            let mapped = build_homomorphic_mapped_over(
+                &interner,
+                iter_name,
+                source,
+                as_clause,
+                readonly_modifier,
+            );
+            let mut evaluator = TypeEvaluator::new(&interner);
+            let result = evaluator.evaluate_mapped(&mapped);
+            let inner = match interner.lookup(result) {
+                Some(TypeData::ReadonlyType(inner)) if expect_readonly => inner,
+                Some(TypeData::Array(_)) if !expect_readonly => result,
+                other => panic!(
+                    "iter `{iter_name}`: {label}: expected a {} array, got {other:?}",
+                    if expect_readonly {
+                        "readonly"
+                    } else {
+                        "mutable"
+                    }
+                ),
+            };
+            assert!(
+                matches!(interner.lookup(inner), Some(TypeData::Array(_))),
+                "iter `{iter_name}`: {label}: result must wrap an Array, inner was {:?}",
+                interner.lookup(inner)
+            );
+        }
     }
 }

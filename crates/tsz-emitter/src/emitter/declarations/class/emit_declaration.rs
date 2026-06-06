@@ -1056,13 +1056,6 @@ impl<'a> Printer<'a> {
                 .pending_commonjs_class_export_name
                 .as_ref()
                 .is_some_and(|(_, local_name, _)| local_name == class_name);
-        if !self.ctx.outer_module_kind().is_commonjs()
-            || !is_commonjs_exported_class
-            || self.ctx.module_state.has_export_assignment
-        {
-            return Vec::new();
-        }
-
         let has_static_runtime_computed_key = class_data.members.nodes.iter().any(|&member_idx| {
             let Some(member_node) = self.arena.get(member_idx) else {
                 return false;
@@ -1085,7 +1078,14 @@ impl<'a> Printer<'a> {
             return Vec::new();
         }
 
-        let mut decls = self.es5_class_private_storage_decls(class_idx, class_name, class_data);
+        let can_externalize_private_storage = self.ctx.outer_module_kind().is_commonjs()
+            && is_commonjs_exported_class
+            && !self.ctx.module_state.has_export_assignment;
+        let mut decls = if can_externalize_private_storage {
+            self.es5_class_private_storage_decls(class_idx, class_name, class_data)
+        } else {
+            Vec::new()
+        };
 
         let mut temp_name_index = self.ctx.destructuring_state.temp_var_counter;
         let mut auto_accessor_storage_reserved = false;

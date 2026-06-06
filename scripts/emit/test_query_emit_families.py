@@ -126,6 +126,9 @@ after
 
         self.assertEqual(report["state"], "stale")
         self.assertFalse(report["detailIsCurrent"])
+        self.assertFalse(report["detailAggregateMatchesPublic"])
+        self.assertFalse(report["rowFreshnessProven"])
+        self.assertEqual(report["rowFreshnessEvidence"], "stale")
         self.assertEqual(report["jsPassDelta"], 365)
         self.assertEqual(report["dtsPassDelta"], 38)
         self.assertEqual(report["detailSummary"]["jsPass"], 13094)
@@ -158,8 +161,162 @@ after
         parsed = json.loads(out.getvalue())
         self.assertEqual(parsed["state"], "stale")
         self.assertFalse(parsed["detailIsCurrent"])
+        self.assertFalse(parsed["detailAggregateMatchesPublic"])
+        self.assertFalse(parsed["rowFreshnessProven"])
         self.assertEqual(parsed["jsPassDelta"], 365)
         self.assertEqual(parsed["dtsPassDelta"], 38)
+
+    def test_freshness_report_marks_aggregate_match_as_aggregate_only(self):
+        summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+
+        report = self.mod.emit_freshness_report(summary, dict(summary))
+
+        self.assertEqual(report["state"], "aggregate-match")
+        self.assertTrue(report["detailIsCurrent"])
+        self.assertTrue(report["detailAggregateMatchesPublic"])
+        self.assertFalse(report["rowFreshnessProven"])
+        self.assertEqual(report["rowFreshnessEvidence"], "aggregate-only")
+
+    def test_freshness_report_marks_matching_snapshot_fingerprint_as_row_proven(self):
+        data = {
+            "summary": {
+                "jsPass": 1,
+                "jsFail": 1,
+                "jsSkip": 1,
+                "jsTimeout": 0,
+                "jsTotal": 2,
+                "dtsPass": 2,
+                "dtsFail": 1,
+                "dtsSkip": 0,
+                "dtsTotal": 3,
+            },
+            "results": [
+                {
+                    "name": "alpha",
+                    "baselineFile": "alpha.js",
+                    "testPath": "tests/cases/compiler/alpha.ts",
+                    "jsStatus": "pass",
+                    "dtsStatus": "pass",
+                },
+                {
+                    "name": "beta",
+                    "baselineFile": "beta.js",
+                    "testPath": "tests/cases/compiler/beta.ts",
+                    "jsStatus": "fail",
+                    "dtsStatus": "pass",
+                    "jsError": "+1/-1 lines",
+                },
+                {
+                    "name": "gamma",
+                    "baselineFile": "gamma.js",
+                    "testPath": "tests/cases/compiler/gamma.ts",
+                    "jsStatus": "skip",
+                    "dtsStatus": "fail",
+                    "dtsError": "+1/-1 lines",
+                },
+            ],
+        }
+        public_summary = self.mod.emit_summary(data)
+        fingerprint = self.mod.emit_detail_row_fingerprint(data)
+        original = self.mod.load_emit_snapshot
+        self.mod.load_emit_snapshot = lambda: {
+            "detailFingerprint": fingerprint,
+            "detailResultCount": 3,
+            "summary": dict(data["summary"]),
+        }
+        try:
+            report = self.mod.emit_freshness_report(
+                self.mod.emit_summary(data),
+                public_summary,
+                data,
+            )
+        finally:
+            self.mod.load_emit_snapshot = original
+
+        self.assertTrue(report["rowFreshnessProven"])
+        self.assertEqual(
+            report["rowFreshnessEvidence"],
+            "emit-snapshot-detail-fingerprint",
+        )
+        self.assertTrue(report["rowFreshness"]["detailRowsMatchSummary"])
+        self.assertIn("row-proven", report["message"])
+
+    def test_freshness_report_rejects_snapshot_fingerprint_mismatch(self):
+        data = {
+            "summary": {
+                "jsPass": 1,
+                "jsFail": 0,
+                "jsSkip": 0,
+                "jsTimeout": 0,
+                "jsTotal": 1,
+                "dtsPass": 1,
+                "dtsFail": 0,
+                "dtsSkip": 0,
+                "dtsTotal": 1,
+            },
+            "results": [
+                {
+                    "name": "alpha",
+                    "baselineFile": "alpha.js",
+                    "testPath": "tests/cases/compiler/alpha.ts",
+                    "jsStatus": "pass",
+                    "dtsStatus": "pass",
+                },
+            ],
+        }
+        original = self.mod.load_emit_snapshot
+        self.mod.load_emit_snapshot = lambda: {
+            "detailFingerprint": "sha256:not-the-detail",
+            "detailResultCount": 1,
+            "summary": dict(data["summary"]),
+        }
+        try:
+            report = self.mod.emit_freshness_report(
+                self.mod.emit_summary(data),
+                self.mod.emit_summary(data),
+                data,
+            )
+        finally:
+            self.mod.load_emit_snapshot = original
+
+        self.assertFalse(report["rowFreshnessProven"])
+        self.assertEqual(
+            report["rowFreshnessEvidence"],
+            "snapshot-fingerprint-mismatch",
+        )
+
+    def test_detail_row_summary_counts_dts_timeout_as_failure(self):
+        data = {
+            "summary": {
+                "jsPass": 1,
+                "jsFail": 0,
+                "jsSkip": 0,
+                "jsTimeout": 0,
+                "jsTotal": 1,
+                "dtsPass": 0,
+                "dtsFail": 1,
+                "dtsSkip": 0,
+                "dtsTotal": 1,
+            },
+            "results": [
+                {
+                    "name": "alpha",
+                    "baselineFile": "alpha.js",
+                    "testPath": "tests/cases/compiler/alpha.ts",
+                    "jsStatus": "pass",
+                    "dtsStatus": "timeout",
+                    "dtsError": "TIMEOUT",
+                },
+            ],
+        }
+
+        self.assertEqual(self.mod.emit_detail_row_summary(data), data["summary"])
+        self.assertTrue(self.mod.emit_detail_rows_match_summary(data))
 
     def test_freshness_note_ignores_different_emit_domains(self):
         note = self.mod.emit_freshness_note(
@@ -462,6 +619,102 @@ after
         )
 
         self.assertEqual(heading, "Declaration: 25 failures/timeouts")
+
+    def test_aggregate_match_failure_families_warn_row_freshness_unproven(self):
+        summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        data = {
+            "summary": dict(summary),
+            "results": [
+                make_result("typeGuardsInFunction", js_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: dict(summary)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_failure_families(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("Emit detail freshness: aggregate-match", text)
+        self.assertIn("per-row freshness is not proven", text)
+        self.assertIn("JavaScript: 1 failures/timeouts", text)
+
+    def test_filtered_family_json_uses_full_detail_for_row_freshness(self):
+        data = {
+            "summary": {
+                "jsPass": 1,
+                "jsFail": 1,
+                "jsSkip": 0,
+                "jsTimeout": 0,
+                "jsTotal": 2,
+                "dtsPass": 2,
+                "dtsFail": 0,
+                "dtsSkip": 0,
+                "dtsTotal": 2,
+            },
+            "results": [
+                {
+                    **make_result("classUsedBeforeInitializedVariables", js_error="+1/-1 lines"),
+                    "dtsStatus": "pass",
+                },
+                {
+                    **make_result("mappedTypeProperties"),
+                    "jsStatus": "pass",
+                    "dtsStatus": "pass",
+                    "jsError": "",
+                    "dtsError": "",
+                },
+            ],
+        }
+        fingerprint = self.mod.emit_detail_row_fingerprint(data)
+        original_argv = sys.argv
+        original_load_detail = self.mod.load_detail
+        original_readme = self.mod.emit_summary_from_readme
+        original_snapshot = self.mod.load_emit_snapshot
+        self.mod.load_detail = lambda: data
+        self.mod.emit_summary_from_readme = lambda: self.mod.emit_summary(data)
+        self.mod.load_emit_snapshot = lambda: {
+            "detailFingerprint": fingerprint,
+            "detailResultCount": 2,
+            "summary": dict(data["summary"]),
+        }
+        sys.argv = [
+            "query-emit.py",
+            "--families-json",
+            "--filter",
+            "class",
+        ]
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = self.mod.main()
+        finally:
+            sys.argv = original_argv
+            self.mod.load_detail = original_load_detail
+            self.mod.emit_summary_from_readme = original_readme
+            self.mod.load_emit_snapshot = original_snapshot
+
+        self.assertEqual(rc, 0)
+        report = json.loads(out.getvalue())
+        self.assertTrue(report["freshness"]["rowFreshnessProven"])
+        self.assertEqual(
+            report["freshness"]["rowFreshnessEvidence"],
+            "emit-snapshot-detail-fingerprint",
+        )
+        self.assertEqual(report["freshness"]["rowFreshness"]["detailResultCount"], 2)
+        self.assertEqual(report["surfaces"][0]["checkedDetailFailures"], 1)
+        self.assertEqual(
+            report["surfaces"][0]["families"][0]["examples"],
+            ["classUsedBeforeInitializedVariables"],
+        )
 
     def test_stale_headline_summary_uses_public_aggregate(self):
         detail_summary = {

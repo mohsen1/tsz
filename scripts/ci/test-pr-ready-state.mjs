@@ -139,8 +139,35 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
-  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?required_summary=false[\s\S]+?compiler_checks_required=false/,
-  "edited PR events should refresh body/ready-state gates without publishing protected CI Summary",
+  /if \[\[ "\$\{\{ github\.event\.action \}\}" == "edited" \]\]; then[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?metadata_only_skip=true[\s\S]+?compiler_checks_required=false[\s\S]+?fi/,
+  "edited PR events should refresh body/ready-state gates without heavy CI",
+);
+assert.match(
+  ciWorkflow,
+  /accepted_summary_names = \("CI Summary",\) if required_summary else \("CI Summary", "CI Light Summary"\)[\s\S]+?job\.get\("name"\) in accepted_summary_names[\s\S]+?Metadata-only CI mirrors successful \{summary_name\}/,
+  "metadata-only edited runs should require prior full summaries when publishing protected CI Summary",
+);
+assert.match(
+  ciWorkflow,
+  /id: metadata-active-suite[\s\S]+?if: github\.event_name == 'pull_request' && github\.event\.action == 'edited'[\s\S]+?actions\/workflows\/ci\.yml\/runs\?head_sha=\$\{PR_HEAD_SHA\}&event=pull_request[\s\S]+?\.status == "queued"[\s\S]+?\.status == "in_progress"[\s\S]+?\.id != \$current_run_id[\s\S]+?active_suite_found=true[\s\S]+?metadata CI will publish CI Light Summary[\s\S]+?METADATA_ACTIVE_SUITE_FOUND: \$\{\{ steps\.metadata-active-suite\.outputs\.active_suite_found \}\}[\s\S]+?PR metadata edited[\s\S]+?required_summary=false/,
+  "metadata-only edited runs should publish CI Light Summary while the exact-head real suite is active",
+);
+assert.match(
+  ciWorkflow,
+  /accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"[\s\S]+?previous \{accepted_summary_label\}/,
+  "metadata-only edited runs should report the accepted prior summary class when no mirror exists",
+);
+
+assert.match(
+  ciWorkflow,
+  /scripts\/ci\/\(ci-resources\|gcp-full-ci\|github-suite\|gcp-cache\|suite-metadata\|build-dist\|dist\|wasm\)/,
+  "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",
+);
+
+assert.match(
+  ciWorkflow,
+  /\\.github\/workflows\/\(ci\|bench\)\\.yml/,
+  "CI workflow changes must require compiler CI because they route native merge queue and Cloud Run jobs",
 );
 
 assert.doesNotMatch(
@@ -155,6 +182,12 @@ assert.doesNotMatch(
   "CI Summary must not treat cancelled required jobs as a neutral protected check",
 );
 
+assert.match(
+  ciWorkflow,
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- project-compile-guard\s*\n\s+- project-compile-canary[\s\S]+?"project-compile-guard",\s*\n\s+"project-compile-canary",/,
+  "CI Summary must wait for the project compile canary before reporting required full-run success",
+);
+
 for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
   assert.match(
     ciWorkflow,
@@ -162,3 +195,33 @@ for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
     `${job} should run on hosted Ubuntu so cheap gates are not blocked by the self-hosted pool`,
   );
 }
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}unit:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION: "1"[\s\S]+?Run unit suite on Cloud Run runner[\s\S]+?scripts\/ci\/github-suite\.sh unit/,
+  "unit should run the Cloud Run-safe unit slice directly on the Cloud Run runner",
+);
+
+assert.doesNotMatch(
+  ciWorkflow,
+  /\n\s{2}unit:\n[\s\S]+?gcloud builds submit[\s\S]+?cloudbuild-unit\.yaml/,
+  "unit should not submit to Cloud Build",
+);
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}unit-checker-integration:\n[\s\S]+?Submit checker integration suite to Cloud Build pool[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-checker-integration\.yaml/,
+  "checker integration linking should stay on Cloud Build as the heavy unit exception",
+);
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}unit-cloudbuild:\n[\s\S]+?needs: \[gate, unit-checker-integration\][\s\S]+?UNIT_RESULT: \$\{\{ needs\.unit-checker-integration\.result \}\}[\s\S]+?Required Cloud Build checker integration job did not pass/,
+  "legacy unit-cloudbuild context should mirror the required checker integration Cloud Build job",
+);
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- unit\s*\n\s+- unit-checker-integration[\s\S]+?required\.update\(\{"dist-binaries", "unit", "unit-checker-integration"\}\)/,
+  "CI Summary should require both the Cloud Run unit slice and checker integration heavy slice",
+);

@@ -8,6 +8,104 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn type_alias_body_allows_lazy_generic_semantic_body(
+        &self,
+        root: NodeIndex,
+    ) -> bool {
+        self.type_alias_body_allows_lazy_generic_semantic_body_inner(root)
+    }
+
+    fn type_alias_body_allows_lazy_generic_semantic_body_inner(&self, node_idx: NodeIndex) -> bool {
+        if node_idx == NodeIndex::NONE {
+            return true;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                    return false;
+                };
+                type_ref.type_arguments.as_ref().is_none_or(|args| {
+                    args.nodes.iter().copied().all(|arg_idx| {
+                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(arg_idx)
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                let Some(composite) = self.ctx.arena.get_composite_type(node) else {
+                    return false;
+                };
+                composite.types.nodes.iter().copied().all(|member_idx| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(member_idx)
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                self.ctx.arena.get_array_type(node).is_some_and(|array| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(array.element_type)
+                })
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
+                    return false;
+                };
+                tuple.elements.nodes.iter().copied().all(|element_idx| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(element_idx)
+                })
+            }
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => self
+                .ctx
+                .arena
+                .get_named_tuple_member(node)
+                .is_some_and(|member| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(member.type_node)
+                }),
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                self.ctx
+                    .arena
+                    .get_wrapped_type(node)
+                    .is_some_and(|wrapped| {
+                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(
+                            wrapped.type_node,
+                        )
+                    })
+            }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                self.ctx.arena.get_type_operator(node).is_some_and(|op| {
+                    self.type_alias_body_allows_lazy_generic_semantic_body_inner(op.type_node)
+                })
+            }
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                let Some(template) = self.ctx.arena.get_template_literal_type(node) else {
+                    return false;
+                };
+                template
+                    .template_spans
+                    .nodes
+                    .iter()
+                    .copied()
+                    .all(|span_idx| {
+                        let Some(span_node) = self.ctx.arena.get(span_idx) else {
+                            return false;
+                        };
+                        let Some(span) = self.ctx.arena.get_template_span(span_node) else {
+                            return false;
+                        };
+                        self.type_alias_body_allows_lazy_generic_semantic_body_inner(
+                            span.expression,
+                        )
+                    })
+            }
+            k if Self::primitive_or_literal_type_kind_is_covered(k) => true,
+            _ => false,
+        }
+    }
+
     pub(crate) fn type_alias_body_missing_names_covered_by_type_node_checking(
         &self,
         root: NodeIndex,
@@ -690,14 +788,6 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
-                    if self.ctx.no_implicit_any() && mapped.type_node.is_none() {
-                        self.ctx.error(
-                            node.pos,
-                            node.end.saturating_sub(node.pos),
-                            "Mapped object type implicitly has an 'any' template type.".to_string(),
-                            7039,
-                        );
-                    }
                     let param_binding =
                         self.push_mapped_type_param_provisional(mapped.type_parameter);
                     self.check_type_parameter_node_for_missing_names(mapped.type_parameter);
@@ -711,12 +801,7 @@ impl<'a> CheckerState<'a> {
                             mapped.type_node,
                         );
                     } else if self.ctx.no_implicit_any() {
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.error_at_node(
-                            type_idx,
-                            diagnostic_messages::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
-                            diagnostic_codes::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
-                        );
+                        self.ctx.report_mapped_type_missing_template(type_idx);
                     }
                     if let Some(ref members) = mapped.members {
                         let member_nodes = members.nodes.clone();

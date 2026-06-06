@@ -206,6 +206,72 @@ let badCtor: typeof Token = Token.create();
         );
     }
 
+    // Regression: a cross-file named import of a *type alias* whose body is a
+    // union containing `null` must resolve to the full union, not collapse to
+    // `null`. A named type reference routed through the value-in-type-position
+    // "instance type" extraction (`instance_type_from_constructor_type`) used
+    // to partially extract instance types from union members: `null` maps to
+    // itself while a sibling primitive such as `string` is `NotConstructor`
+    // and was silently dropped, leaving the alias as bare `null`. That produced
+    // false TS2322 on valid values and false TS2344 ("does not satisfy the
+    // constraint 'null'") in constraint position for any imported union alias
+    // with a `null` member (e.g. type-fest's `Primitive`). Renamed binders and
+    // varied null positions prove the rule is structural, not name-keyed.
+    #[test]
+    fn project_mode_cross_file_null_union_alias_import_does_not_collapse_to_null() {
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/scalars.ts",
+                    r#"
+export type Scalarish = null | string;            // null first
+export type Tailable = boolean | null;            // null last
+export type Mixed = null | string | number | boolean;
+"#,
+                ),
+                (
+                    "/p/consumer.ts",
+                    r#"
+import { Scalarish, Tailable, Mixed } from "./scalars";
+
+// Valid values for the union members must be accepted (these previously
+// failed because the alias collapsed to bare `null`).
+const a: Scalarish = "ok";
+const b: Tailable = true;
+const c: Mixed = 42;
+const d: Scalarish = null;
+
+// Constraint position must accept a union member (previously false TS2344
+// "does not satisfy the constraint 'null'").
+type Constrain<Q extends Mixed> = Q;
+type Probe = Constrain<string>;
+
+// A genuine non-member value must still be rejected.
+const bad: Scalarish = 123;
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diagnostic| diagnostic.code != 2344),
+            "imported union alias constraints must not collapse to `null` (no false TS2344), got: {diagnostics:?}"
+        );
+        let assignment_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2322)
+            .collect();
+        assert_eq!(
+            assignment_errors.len(),
+            1,
+            "only `const bad: Scalarish = 123` should fail; valid union values must be accepted, got: {diagnostics:?}"
+        );
+    }
+
     // Kysely-shape regression coverage for the cross-file class instance-type
     // resolution fixed by #10686. These tests pin down adjacent shapes from
     // issue #10672 (Readonly mapped-type members, PromiseLike conformance via
@@ -586,22 +652,28 @@ const checked: boolean = Op.is(made);
     #[test]
     fn file_session_reuse_workload_policy_keeps_reuse_opt_in_for_tiny_batches() {
         assert!(
-            !file_session_reuse_from_workload(false, false, 10),
-            "tiny no-emit batches must not reuse by default until reuse is byte-identical"
+            file_session_reuse_from_workload(false, false, 10, false),
+            "non-JS/JSX tiny no-emit batches may reuse by default"
         );
         assert!(
-            !file_session_reuse_from_workload(
+            file_session_reuse_from_workload(
                 false,
                 false,
-                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES,
+                false
             ),
-            "the documented tiny-project boundary is a reuse implementation limit, not a default-on policy"
+            "the documented tiny-project boundary is the default reuse limit for non-JS/JSX workloads"
+        );
+        assert!(
+            !file_session_reuse_from_workload(false, false, 10, true),
+            "JS/JSX tiny no-emit batches stay fresh by default to preserve diagnostic identity"
         );
         assert!(
             !file_session_reuse_from_workload(
                 false,
                 false,
-                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1,
+                false
             ),
             "larger batch CLI projects must keep the post-#7521 reuse-off default"
         );
@@ -609,15 +681,38 @@ const checked: boolean = Op.is(made);
             file_session_reuse_from_workload(
                 false,
                 true,
-                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1,
+                true
             ),
-            "TSZ_FILE_SESSION_REUSE=1 must still opt larger projects into reuse"
+            "TSZ_FILE_SESSION_REUSE=1 must still opt larger and JSX projects into reuse"
         );
         assert!(
-            !file_session_reuse_from_workload(true, true, 10),
+            !file_session_reuse_from_workload(true, true, 10, false),
             "TSZ_DISABLE_FILE_SESSION_REUSE=1 must override tiny-project auto reuse"
         );
     }
+
+#[test]
+fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
+    let large_project = FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1;
+
+    assert!(
+        !should_use_sequential_fresh_checking(large_project, false, false),
+        "large fresh-checker batches should stay parallel-eligible even when session reuse is off"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(10, false, false),
+        "tiny batches stay sequential for deterministic cross-file behavior"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(large_project, true, false),
+        "large wildcard barrels stay on the deterministic sequential fallback"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(large_project, false, true),
+        "order-sensitive global libraries stay on the deterministic sequential fallback"
+    );
+}
 
     #[test]
     fn tiny_no_emit_reuse_path_covers_boxed_prime_checker() {
@@ -627,7 +722,7 @@ const checked: boolean = Op.is(made);
         );
         assert!(
             needs_separate_boxed_prime_checker(true, false, false, 10, true),
-            "fresh-checker tiny runs still need the separate prime checker"
+            "fresh-checker tiny runs still need the separate prime checker when reuse is forced off"
         );
         assert!(
             needs_separate_boxed_prime_checker(

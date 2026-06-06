@@ -41,7 +41,8 @@ class DiskWorktreeGuardTests(unittest.TestCase):
         self.run_git(["config", "user.name", "Studio F"], fake_repo)
         self.run_git(["config", "commit.gpgsign", "false"], fake_repo)
         (fake_repo / "README.md").write_text("# fake repo\n", encoding="utf-8")
-        self.run_git(["add", "README.md"], fake_repo)
+        (fake_repo / ".gitignore").write_text(".target/\ntarget/\n", encoding="utf-8")
+        self.run_git(["add", ".gitignore", "README.md"], fake_repo)
         self.run_git(["commit", "-m", "initial"], fake_repo)
         return fake_repo, fake_script
 
@@ -117,6 +118,32 @@ class DiskWorktreeGuardTests(unittest.TestCase):
             self.assertIn("disk_status=low", result.stdout)
             self.assertRegex(result.stdout, r"disk_shortfall_mb=\d+")
 
+    def test_low_disk_reports_cache_pressure_for_clean_inactive_worktrees(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+            clean_worktree, dirty_worktree = self.add_clean_and_dirty_worktrees(
+                fake_repo, temp_root
+            )
+            (clean_worktree / ".target").mkdir()
+            (clean_worktree / ".target" / "cache.bin").write_bytes(b"x" * 1024)
+            (dirty_worktree / ".target").mkdir()
+            (dirty_worktree / ".target" / "cache.bin").write_bytes(b"x" * 1024)
+            old_timestamp = time.time() - 7200
+            self.age_worktree_files(clean_worktree, old_timestamp)
+            self.age_worktree_files(dirty_worktree, old_timestamp)
+
+            result = self.run_guard(
+                fake_repo,
+                fake_script,
+                env_overrides={"TSZ_DISK_MIN_FREE_GB": "9999999"},
+            )
+
+            self.assertIn("cache_pressure_candidates:", result.stdout)
+            self.assertIn(f"path={clean_worktree / '.target'}", result.stdout)
+            self.assertIn("scope=inactive-clean", result.stdout)
+            self.assertNotIn(f"path={dirty_worktree / '.target'}", result.stdout)
+
     def test_json_report_records_disk_status_and_reuse_candidates(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = pathlib.Path(temp_dir).resolve()
@@ -141,6 +168,8 @@ class DiskWorktreeGuardTests(unittest.TestCase):
             self.assertIsNone(report["pruned"])
             self.assertIsNone(report["disk_after_auto_prune"])
             self.assertEqual(1, report["reuse_candidate_count"])
+            self.assertIsInstance(report["cache_pressure_candidate_count"], int)
+            self.assertIsInstance(report["cache_pressure_candidates"], list)
             self.assertEqual(
                 {
                     "path": str(clean_worktree),

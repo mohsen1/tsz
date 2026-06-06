@@ -276,3 +276,45 @@ type UseResult<P> =
         "infer R in direct constrained position (no function wrapper) must not produce TS2344; got: {diags:?}"
     );
 }
+
+/// Direct conditional true branch alias applications are still checked against
+/// the positional infer constraint. A matching constraint stays valid.
+#[test]
+fn direct_true_branch_alias_matching_positional_constraint_no_ts2344() {
+    let diags = compile(
+        r#"
+type TextBox<V extends string> = { value: V };
+
+type ExtractText<T> =
+    T extends TextBox<infer Value>
+        ? TextBox<Value>
+        : never;
+"#,
+    );
+    assert!(
+        ts2344(&diags).is_empty(),
+        "matching positional infer constraint must not produce TS2344; got: {diags:?}"
+    );
+}
+
+/// When the conditional pattern infers from a differently constrained alias,
+/// reusing that inferred variable in a direct true-branch alias application
+/// must report TS2344, matching `inferTypes1`.
+#[test]
+fn direct_true_branch_alias_mismatched_positional_constraint_emits_ts2344() {
+    let diags = compile(
+        r#"
+type TextBox<V extends string> = { value: V };
+type CountBox<N extends number> = { count: N };
+
+type ExtractCount<T> =
+    T extends CountBox<infer Count>
+        ? TextBox<Count>
+        : never;
+"#,
+    );
+    assert!(
+        !ts2344(&diags).is_empty(),
+        "mismatched positional infer constraint must emit TS2344; got: {diags:?}"
+    );
+}

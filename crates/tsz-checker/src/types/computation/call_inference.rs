@@ -539,6 +539,50 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Recover the canonical `Application(base, args)` for a type used during
+    /// return-context inference.
+    ///
+    /// A contextual return type such as `Readonly<WithNode>` can exist in the
+    /// interner in two shapes: the as-written `Application(Readonly, [WithNode])`
+    /// and the *baked* (already-evaluated) structural object that merely displays
+    /// as `Readonly<WithNode>`. The baked form has no `TypeData::Application`, so
+    /// the application-aware matchers below cannot decompose it and any tracked
+    /// type parameter on the source side is left unbound — the inner generic
+    /// call's fresh object literal then widens (e.g. `kind: 'WithNode'` becomes
+    /// `string`), yielding a spurious `TS2322`/`TS2345`.
+    ///
+    /// The evaluator records a display-alias back-reference from the baked form
+    /// to its originating application, so consult it (in addition to a fresh
+    /// evaluation) to restore the structural decomposition through the validated
+    /// Application↔Application path instead of relying on rendered type text.
+    pub(crate) fn return_context_application_info(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        if let Some(info) = common::application_info(self.ctx.types, type_id) {
+            return Some(info);
+        }
+        if let Some(info) = self
+            .ctx
+            .types
+            .get_display_alias(type_id)
+            .and_then(|alias| common::application_info(self.ctx.types, alias))
+        {
+            return Some(info);
+        }
+        let evaluated = self.evaluate_for_return_context_substitution(type_id);
+        if evaluated == type_id {
+            return None;
+        }
+        if let Some(info) = common::application_info(self.ctx.types, evaluated) {
+            return Some(info);
+        }
+        self.ctx
+            .types
+            .get_display_alias(evaluated)
+            .and_then(|alias| common::application_info(self.ctx.types, alias))
+    }
+
     pub(crate) fn instantiate_generic_function_argument_against_target_for_refinement(
         &mut self,
         source_ty: TypeId,

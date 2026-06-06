@@ -529,7 +529,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // including missing-name resolution. Re-running that here after the
                 // circular-alias marker is popped can re-enter recursive alias graphs.
                 let _ = body_is_intrinsic_keyword;
-                self.check_type_for_parameter_properties(type_alias.type_node);
+                self.check_type_alias_body_for_parameter_properties(type_alias.type_node);
                 self.pop_type_parameters(updates);
             }
         }

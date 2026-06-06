@@ -1717,6 +1717,57 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
             return self.interner.function(erased);
         }
+
+        // Case 1b: naked source type params against a pure higher-order
+        // inference target. TypeScript 3.4 higher-order function type inference
+        // propagates the free type parameters of a generic function argument
+        // through the wrapper instead of collapsing them. When the contextual
+        // target is built entirely from outer inference placeholders (the
+        // `pipe`/`compose`/`makeGetter` family), instantiating the naked source
+        // param against that placeholder unifies the source type parameter with
+        // an outer placeholder that no concrete argument can pin, so it later
+        // resolves to `unknown` and the return-flow link is lost.
+        //
+        // Routing such arguments through the constraint walker's generic source
+        // branch (`return source_ty`) instead creates fresh `__infer_src_*`
+        // placeholders for the source type parameters. Those survive into the
+        // call result and are re-generalized by
+        // `hoist_source_placeholders_into_return_type`, reproducing tsc's
+        // `<T>(a: T) => { value: T[] }` shape. When an outer argument *does*
+        // pin the parameter, the source placeholder simply unifies with the
+        // concrete evidence and resolves normally, so this path stays correct
+        // for the determined case as well.
+        if source_type_params_are_naked
+            && target_params_need_hofi
+            && target_fn.type_params.is_empty()
+        {
+            // Every contextual placeholder of this argument (its parameters and
+            // its return) must be a bare outer inference placeholder for the
+            // pure higher-order shape to hold; `collect` into an `Option` so a
+            // single non-placeholder position short-circuits to `None`.
+            let placeholder_atoms: Option<Vec<_>> = target_param_types
+                .iter()
+                .chain(std::iter::once(&target_fn.return_type))
+                .map(|&pt| self.outer_inference_placeholder_atom(pt))
+                .collect();
+            // Fail closed: only re-generalize when the placeholders belong to the
+            // call currently being resolved (guards against nested/stale state).
+            // Shared placeholders are allowed here: in pure higher-order wrappers
+            // like `pipe`, the shared middle type is exactly how tsc carries a
+            // source placeholder from one generic function argument's return into
+            // the next generic function argument's parameter before the final
+            // result is re-generalized.
+            let safe_to_regeneralize = placeholder_atoms.as_ref().is_some_and(|atoms| {
+                !atoms.is_empty()
+                    && atoms
+                        .iter()
+                        .all(|atom| self.current_call_inference_placeholders.contains(atom))
+            });
+            if safe_to_regeneralize {
+                return source_ty;
+            }
+        }
+
         // Case 1: naked type params — fall through to instantiation
 
         let prev_contextual_type = self.contextual_type;
@@ -1798,6 +1849,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         result
+    }
+
+    /// Returns the placeholder name atom when `ty` is a bare inference
+    /// placeholder (`__infer_*`) introduced by an enclosing generic call.
+    /// Used to detect pure higher-order inference targets where a generic
+    /// function argument's free type parameters must be propagated rather than
+    /// instantiated against the placeholder.
+    fn outer_inference_placeholder_atom(&self, ty: TypeId) -> Option<tsz_common::Atom> {
+        match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info))
+                if self
+                    .interner
+                    .resolve_atom_ref(info.name)
+                    .starts_with("__infer_") =>
+            {
+                Some(info.name)
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn single_concrete_upper_bound(

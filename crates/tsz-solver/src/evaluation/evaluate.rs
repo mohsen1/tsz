@@ -49,6 +49,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 mod closed_eval;
+mod display_alias;
+mod query_budget;
 mod support;
 
 /// Type evaluator for meta-types.
@@ -483,6 +485,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.silent_depth_bailed
     }
 
+    /// Whether this run hit any recursion / depth / iteration limit.
+    ///
+    /// Single source of truth for the three flags that mark a result as a
+    /// *stack-context artifact* rather than a stable, key-determined answer:
+    ///
+    /// - `guard.is_exceeded()` — a genuine `MAX_DEF_DEPTH` / divergent-growth /
+    ///   mapped-key bail; while set, `evaluate` returns `ERROR` for every node.
+    /// - `silent_depth_bailed` — the structural stack-protection bail that
+    ///   `clear_exceeded`s the guard and leaves the type opaque (unexpanded).
+    /// - `deep_recursion_seen` — a cycle/iteration bail returned an opaque
+    ///   cycle-breaker, or a `DefId` crossed the real-instantiation threshold.
+    ///
+    /// A run in any of these states must not persist results to caches whose
+    /// key does not capture the ambient stack depth (`closed_eval_cache`,
+    /// `application_eval_cache`); see the respective limit gates.
+    #[inline]
+    const fn recursion_limit_hit(&self) -> bool {
+        self.guard.is_exceeded() || self.silent_depth_bailed || self.deep_recursion_seen
+    }
+
     /// Mark the guard as exceeded, causing subsequent evaluations to bail out.
     ///
     /// Used when an external condition (e.g. mapped key count or distribution
@@ -492,18 +514,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.mark_exceeded();
     }
 
-    /// Global thread-local depth counter for cross-evaluator stack overflow prevention.
-    ///
-    /// Each `SubtypeChecker::evaluate_type` creates a fresh `TypeEvaluator` with fresh
-    /// per-evaluator guards. But the OS stack accumulates across ALL of them. For example,
-    /// `Vector<T> implements Seq<T>` where `Opt<T>` has `toVector(): Vector<T>` and
-    /// `Vector` has `Exclude<T, U>` in an overload return type: each structural comparison
-    /// level creates ~8 evaluate calls, and the subtype checker recurses 10+ levels deep,
-    /// producing 100+ nested evaluate frames that overflow the 8MB default stack.
-    ///
-    /// This counter tracks cumulative `evaluate` frames across all `TypeEvaluator` instances
-    /// on the current thread's call stack. When it exceeds `MAX_GLOBAL_EVAL_DEPTH`, we
-    /// bail out with ERROR to prevent stack overflow.
+    /// Global thread-local depth counter for cross-evaluator stack overflow
+    /// prevention. Each `SubtypeChecker::evaluate_type` creates a fresh
+    /// `TypeEvaluator`, but the OS stack accumulates across ALL of them: deep
+    /// structural comparisons (e.g. `Vector<T> implements Seq<T>` with `Exclude`
+    /// in an overload return) produce 100+ nested evaluate frames that overflow
+    /// the 8MB default stack. This counter tracks cumulative `evaluate` frames
+    /// across every `TypeEvaluator` on the call stack and bails with ERROR once
+    /// it exceeds `MAX_GLOBAL_EVAL_DEPTH`.
     const MAX_GLOBAL_EVAL_DEPTH: u32 = 200;
 
     /// Evaluate a type, resolving any meta-types if possible.
@@ -532,6 +550,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if self.guard.is_exceeded() {
             return TypeId::ERROR;
         }
+        // Cross-instance per-query operation budget (see `query_budget`).
+        let Some(_query_frame) = self.enter_eval_query_budget() else {
+            return type_id;
+        };
 
         // Cross-evaluator stack overflow prevention.
         // Only check thread-local global depth when the local guard depth
@@ -1352,7 +1374,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         })
     }
 
-    /// Insert into the application-eval cache iff `query_db` is connected.
+    /// Whether an application-eval result produced by this run may be persisted
+    /// to the cross-evaluator `application_eval_cache`.
+    ///
+    /// The cache key is `(DefId, expanded_args, no_unchecked)` — it is
+    /// *resolver-* and *substitution-independent*, but it is NOT independent of
+    /// the ambient stack depth at the use site. When a recursive alias bails
+    /// because the surrounding evaluation was already deep (see
+    /// [`recursion_limit_hit`](Self::recursion_limit_hit)), the result is a
+    /// stack-context artifact. Persisting it poisons every *other* use site of
+    /// the same alias application — the "alias fan-out regression": one deep use
+    /// contaminating all of its siblings, which would each converge on their own
+    /// shallower stack. Recomputing (a cache miss) always re-derives the
+    /// correct, stack-local answer, so skipping the write only ever costs work,
+    /// never correctness. Termination is owned by the recursion guards and fuel,
+    /// not by this cache, so a skipped write cannot reintroduce a hang. Mirrors
+    /// the limit gate the `closed_eval_cache` already enforces.
+    #[inline]
+    const fn application_eval_result_cacheable(&self) -> bool {
+        !self.recursion_limit_hit()
+    }
+
+    /// Insert into the application-eval cache iff `query_db` is connected and the
+    /// current run has not hit any recursion/depth limit.
+    ///
     /// Folds the two-line `if let Some(db) = self.query_db { … }` idiom
     /// repeated in every body-aware shortcut and finalize helper.
     ///
@@ -1360,7 +1405,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// context: a limited resolver could otherwise store an under-resolved
     /// result under the resolver-independent `(DefId, args)` key and poison
     /// sibling reads. Reads use the same explicit `query_db` gate for the same
-    /// reason.
+    /// reason. They are additionally gated on
+    /// [`application_eval_result_cacheable`](Self::application_eval_result_cacheable)
+    /// so a depth-bounded run never persists a stack-context artifact.
     fn insert_application_eval_cache_if_some(
         &self,
         def_id: DefId,
@@ -1368,6 +1415,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         no_unchecked_indexed_access: bool,
         evaluated: TypeId,
     ) {
+        if !self.application_eval_result_cacheable() {
+            return;
+        }
         if let Some(db) = self.query_db {
             db.insert_application_eval_cache(
                 def_id,
@@ -1677,7 +1727,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::Application(_))
             )
             && display_provenance::display_alias(self.interner, result).is_some();
-        if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
+        if self.should_record_application_alias(
+            result,
+            display_origin,
+            skip_type_alias_repaint,
+            keep_existing_conditional_branch_alias,
+        ) {
             let priority = if prefer_application_display_alias
                 || (self.expand_application_display_alias_args
                     && matches!(
@@ -1799,8 +1854,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 //    alias lets diagnostics show e.g. `Mapped2<K>` instead of the
                 //    expanded `{ [P in K as \`get${P}\`]: ... }` form, matching tsc.
                 if evaluated_is_fresh
-                    && (evaluated_is_mapped
-                        || self.is_recursive_type_alias_application(original_type_id))
+                    && self.should_store_structural_display_alias(
+                        evaluated,
+                        original_type_id,
+                        evaluated_is_mapped,
+                    )
                 {
                     self.interner
                         .store_display_alias_preferring_application(evaluated, original_type_id);
@@ -1831,59 +1889,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             },
             AliasApplicationPriority::PreferApplication,
         );
-    }
-
-    fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
-        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
-            return false;
-        };
-        let app = self.interner.type_application(app_id);
-        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
-            return false;
-        };
-        if self.resolver.get_def_kind(def_id) != Some(DefKind::TypeAlias) {
-            return false;
-        }
-        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
-            return false;
-        };
-        let mut visited = FxHashSet::default();
-        self.type_reaches_alias_def(body, def_id, &mut visited)
-    }
-
-    fn type_reaches_alias_def(
-        &self,
-        type_id: TypeId,
-        target_def_id: DefId,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        if type_id.is_intrinsic() || !visited.insert(type_id) {
-            return false;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Lazy(def_id))
-                if self.resolver.defs_are_equivalent(def_id, target_def_id) =>
-            {
-                return true;
-            }
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner.type_application(app_id);
-                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
-                    && self.resolver.defs_are_equivalent(def_id, target_def_id)
-                {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-
-        let mut found = false;
-        crate::visitor::for_each_child_by_id(self.interner, type_id, |child| {
-            if !found {
-                found = self.type_reaches_alias_def(child, target_def_id, visited);
-            }
-        });
-        found
     }
 
     /// Record a back-reference from an evaluated structural form to its
@@ -1943,17 +1948,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if app.args.contains(&evaluated) {
             return;
         }
-        // Fast path: all-intrinsic args trivially have no free type
-        // parameters; skip the recursive `contains_generic_type_parameters_db`
-        // traversal that fires on every parametric application evaluation.
-        let all_intrinsic = app.args.iter().all(|a| a.is_intrinsic());
-        if !all_intrinsic
-            && app.args.iter().any(|&arg| {
-                crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
-            })
-        {
-            return;
-        }
+        // Args that carry free type parameters (e.g. `OwnerList<T>` inside a
+        // generic function) must still record provenance: `tsc` displays the
+        // nominal reference `OwnerList<T>`, not a structurally-recovered form.
+        // The downstream `store_display_alias_preferring_application` already
+        // applies precise gates (alloc-order, self-reference, bare type
+        // parameter, intrinsic) that reject the genuinely unsafe cases, so a
+        // blunt skip here would only drop legitimate generic-instance aliases
+        // and force the fragile property-based recovery in the checker.
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }

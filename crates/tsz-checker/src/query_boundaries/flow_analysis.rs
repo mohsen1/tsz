@@ -1,6 +1,8 @@
+use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::narrowing::{GuardSense, TypeGuard};
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
 
 use super::{
     assignability::{RelationFlags, RelationOutcome},
@@ -14,7 +16,7 @@ pub(crate) use super::common::{
     contains_type_parameters, function_shape_for_type, is_keyof_type,
     is_literal_type_through_type_constraints, is_narrowing_literal, is_type_parameter_like,
     is_union_type, is_unit_type, is_unknown_narrowing_literal, object_shape_for_type,
-    stringify_literal_type, tuple_elements as tuple_elements_for_type,
+    stringify_literal_type, tuple_elements as tuple_elements_for_type, type_contains_undefined,
     union_members as union_members_for_type,
 };
 
@@ -77,6 +79,14 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
     tsz_solver::visitor::enum_components(db, type_id)
         .map(|(_def_id, members)| members)
         .unwrap_or(type_id)
+}
+
+/// Return whether a type carries enum component identity.
+///
+/// The checker owns deciding which flow assignments get enum-specific
+/// reduction. This boundary owns the reusable semantic enum-domain query.
+pub(crate) fn has_enum_components(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::enum_components(db, type_id).is_some()
 }
 
 pub(crate) fn enum_member_union_domain(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
@@ -195,11 +205,49 @@ pub(crate) fn cases_exhaust_type(
         return false;
     }
 
+    if case_types_exactly_cover_switch_domain(db.as_type_database(), switch_type, case_types) {
+        return true;
+    }
+
     let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
     if let Some(environment) = env {
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+}
+
+fn case_type_domain(db: &dyn TypeDatabase, case_type: TypeId) -> TypeId {
+    enum_member_domain(db, case_type)
+}
+
+fn case_types_exactly_cover_switch_domain(
+    db: &dyn TypeDatabase,
+    switch_type: TypeId,
+    case_types: &[TypeId],
+) -> bool {
+    let Some(members) = union_members_for_type(db, switch_type) else {
+        return case_types
+            .iter()
+            .any(|&case_type| case_type_domain(db, case_type) == switch_type);
+    };
+
+    let mut remaining: FxHashSet<TypeId> = FxHashSet::default();
+    remaining.reserve(members.len());
+    remaining.extend(
+        members
+            .iter()
+            .copied()
+            .map(|member| enum_member_domain(db, member)),
+    );
+
+    for &case_type in case_types {
+        remaining.remove(&case_type_domain(db, case_type));
+        if remaining.is_empty() {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Apply a solver-owned type guard to a flow type.
@@ -219,6 +267,106 @@ pub(crate) fn narrow_with_guard(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
+}
+
+/// Apply a solver-owned type guard using the caller's active flow narrowing
+/// context. This preserves the flow pass's resolver and shared narrowing cache
+/// while keeping the guard application behind the query boundary.
+pub(crate) fn narrow_with_guard_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    guard: &TypeGuard,
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
+}
+
+/// Apply a runtime `typeof` result to a flow type.
+///
+/// The checker owns recognizing `typeof x === "..."` or switch-case syntax and
+/// extracting the string result. This boundary owns the semantic narrowing for
+/// both positive and negative branches.
+pub(crate) fn narrow_by_typeof_result(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    typeof_result: &str,
+    is_true_branch: bool,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    if is_true_branch {
+        narrowing.narrow_by_typeof(type_id, typeof_result)
+    } else {
+        narrowing.narrow_by_typeof_negation(type_id, typeof_result)
+    }
+}
+
+/// Apply a type predicate discovered from a call-expression condition.
+///
+/// The checker owns matching the callee, call target, optional-chain shape, and
+/// branch. This boundary owns the solver narrowing operation plus the
+/// tsc-compatible false-branch exclusion fallback: first try the solver's
+/// predicate guard directly, then exclude the positive result or assignable
+/// union members when the direct negative guard cannot reduce the input.
+pub(crate) fn narrow_call_predicate_guard(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    concrete_this_type: Option<TypeId>,
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    guard: &TypeGuard,
+    is_true_branch: bool,
+) -> TypeId {
+    let guard_sense = match guard {
+        TypeGuard::Predicate { asserts: true, .. } => GuardSense::Positive,
+        _ => GuardSense::from(is_true_branch),
+    };
+    let result = narrowing.narrow_type(type_id, guard, guard_sense);
+
+    if !is_true_branch
+        && result == type_id
+        && let TypeGuard::Predicate {
+            type_id: Some(predicate_type),
+            ..
+        } = *guard
+    {
+        let positive = narrowing.narrow_type(type_id, guard, GuardSense::Positive);
+        if positive != type_id && positive != TypeId::NEVER {
+            let excluded = narrowing.narrow_excluding_type(type_id, positive);
+            if excluded != type_id {
+                return excluded;
+            }
+        }
+
+        let members = union_members_for_type(db.as_type_database(), type_id)
+            .unwrap_or_else(|| vec![type_id].into());
+        let excluded_members: SmallVec<[TypeId; 4]> = members
+            .iter()
+            .copied()
+            .filter(|member| {
+                flow_assignability_outcome(
+                    db,
+                    env,
+                    concrete_this_type,
+                    *member,
+                    predicate_type,
+                    false,
+                )
+                .related
+            })
+            .collect();
+        if !excluded_members.is_empty() {
+            let excluded = narrowing.narrow_excluding_types(type_id, &excluded_members);
+            if excluded != type_id {
+                return excluded;
+            }
+        }
+    }
+
+    result
 }
 
 /// Apply `prop in value` flow narrowing through the solver-owned guard path.
@@ -258,6 +406,167 @@ pub(crate) fn narrow_to_falsy(
     narrowing.narrow_to_falsy(type_id)
 }
 
+/// Narrow a union by whether a property path is truthy/falsy.
+///
+/// The checker owns extracting the property path from syntax and deciding
+/// whether a `never` result is admissible for a non-union source. The solver
+/// owns evaluating property truthiness across the type.
+pub(crate) fn narrow_by_property_truthiness_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_by_property_truthiness(type_id, property_path, is_true_branch)
+}
+
+/// Exclude known values from a flow type using the caller's active flow
+/// narrowing context.
+///
+/// The checker owns discovering the control-flow fact and deciding when a broad
+/// primitive source should remain unchanged. The solver owns the set algebra
+/// used to subtract those values.
+pub(crate) fn narrow_excluding_types_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    excluded_types: &[TypeId],
+) -> TypeId {
+    narrowing.narrow_excluding_types(type_id, excluded_types)
+}
+
+/// Exclude one known value from a flow type using the caller's active flow
+/// narrowing context.
+///
+/// The checker owns discovering the equality/nullish fact. The solver owns the
+/// semantic set subtraction.
+pub(crate) fn narrow_excluding_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    excluded_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_excluding_type(type_id, excluded_type)
+}
+
+/// Exclude known values from a discriminant-property flow fact using the
+/// caller's active flow narrowing context.
+///
+/// The checker owns syntax/path discovery and optional-chain guard rails. The
+/// solver owns filtering union members by discriminant value.
+pub(crate) fn narrow_by_excluding_discriminant_values_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    excluded_types: &[TypeId],
+) -> TypeId {
+    narrowing.narrow_by_excluding_discriminant_values(type_id, property_path, excluded_types)
+}
+
+/// Narrow a flow type by a discriminant equality fact using the caller's active
+/// flow narrowing context.
+///
+/// The checker owns property-path discovery and branch selection. The solver
+/// owns filtering by discriminant value, including constraint and intersection
+/// handling.
+pub(crate) fn narrow_by_discriminant_for_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    literal_type: TypeId,
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_by_discriminant_for_type(type_id, property_path, literal_type, is_true_branch)
+}
+
+/// Narrow a union-like assertion target by a discriminant equality fact.
+///
+/// Assertion handling owns recognizing the predicate target. The solver owns
+/// the discriminant filter itself.
+pub(crate) fn narrow_by_discriminant_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    literal_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_by_discriminant(type_id, property_path, literal_type)
+}
+
+/// Keep only values compatible with a literal equality fact.
+pub(crate) fn narrow_to_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    literal_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_to_type(type_id, literal_type)
+}
+
+/// Return whether a literal comparison target is assignable to the flow type.
+pub(crate) fn literal_assignable_to_in_context(
+    narrowing: &NarrowingContext<'_>,
+    literal_type: TypeId,
+    type_id: TypeId,
+) -> bool {
+    narrowing.literal_assignable_to(literal_type, type_id)
+}
+
+/// Apply a function type-predicate fact to a flow type.
+///
+/// The checker owns resolving the called signature, target expression, and
+/// branch sense. The boundary owns constructing the solver predicate payload
+/// and applying it through the semantic narrowing engine.
+pub(crate) fn narrow_type_predicate(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    predicate_type: TypeId,
+    asserts: bool,
+    is_true_branch: bool,
+) -> TypeId {
+    narrow_with_guard(
+        db,
+        env,
+        type_id,
+        &TypeGuard::Predicate {
+            type_id: Some(predicate_type),
+            asserts,
+        },
+        asserts || is_true_branch,
+    )
+}
+
+/// Apply an assertion predicate without an explicit type (`asserts value`).
+///
+/// The checker owns recognizing that the asserted value is known true after the
+/// call. The solver owns truthiness narrowing beyond plain nullish removal.
+pub(crate) fn narrow_asserts_truthy(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+) -> TypeId {
+    narrow_with_guard(db, env, type_id, &TypeGuard::Truthy, true)
+}
+
+/// Apply a receiver-property predicate to the property flow type.
+///
+/// The checker owns identifying the receiver property and extracting its
+/// contextual predicate type. The solver owns the predicate guard semantics for
+/// the property value.
+pub(crate) fn narrow_property_type_by_predicate(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    predicate_property_type: TypeId,
+) -> TypeId {
+    narrow_inferred_predicate_guard(
+        db,
+        env,
+        type_id,
+        &TypeGuard::Predicate {
+            type_id: Some(predicate_property_type),
+            asserts: false,
+        },
+    )
+}
+
 /// Narrow a value to the object-like branch of an `instanceof`-style check.
 pub(crate) fn narrow_to_objectish(
     db: &dyn QueryDatabase,
@@ -269,6 +578,32 @@ pub(crate) fn narrow_to_objectish(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_to_objectish(type_id)
+}
+
+/// Apply an `instanceof` target or `[Symbol.hasInstance]` predicate result.
+///
+/// The checker owns matching the binary expression and resolving the constructor
+/// to an instance target. This boundary owns the solver guard payload choice so
+/// `Symbol.hasInstance` predicates and normal `instanceof` guards stay behind
+/// the flow query boundary.
+pub(crate) fn narrow_by_instanceof_target(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    instance_type: TypeId,
+    use_predicate_guard: bool,
+    is_true_branch: bool,
+) -> TypeId {
+    let guard = if use_predicate_guard {
+        TypeGuard::Predicate {
+            type_id: Some(instance_type),
+            asserts: false,
+        }
+    } else {
+        TypeGuard::Instanceof(instance_type, false)
+    };
+
+    narrow_with_guard(db, env, type_id, &guard, is_true_branch)
 }
 
 /// Apply an inferred predicate guard to a parameter type.
@@ -1016,6 +1351,41 @@ mod tests {
     }
 
     #[test]
+    fn narrow_by_typeof_result_routes_positive_and_negative_branches() {
+        let db = TypeInterner::new();
+        let source = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+        assert_eq!(
+            narrow_by_typeof_result(&db, None, source, "string", true),
+            TypeId::STRING
+        );
+
+        let negative = narrow_by_typeof_result(&db, None, source, "string", false);
+        let members =
+            union_members_for_type(&db, negative).unwrap_or_else(|| vec![negative].into());
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&TypeId::NUMBER));
+        assert!(members.contains(&TypeId::BOOLEAN));
+    }
+
+    #[test]
+    fn cases_exhaust_type_uses_exact_literal_union_coverage() {
+        let db = TypeInterner::new();
+        let first = db.literal_string("first");
+        let second = db.literal_string("second");
+        let third = db.literal_string("third");
+        let switch_type = db.union(vec![first, second, third]);
+
+        assert!(cases_exhaust_type(
+            &db,
+            None,
+            switch_type,
+            &[second, first, third],
+        ));
+        assert!(!cases_exhaust_type(&db, None, switch_type, &[first, third]));
+    }
+
+    #[test]
     fn enum_member_union_domain_keeps_plain_union_identity() {
         let db = TypeInterner::new();
         let union = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -1037,6 +1407,17 @@ mod tests {
         assert!(members.contains(&literal));
         assert!(members.contains(&TypeId::NUMBER));
         assert!(!members.contains(&enum_member));
+    }
+
+    #[test]
+    fn has_enum_components_tracks_enum_identity() {
+        let db = TypeInterner::new();
+        let literal = db.literal_string("ready");
+        let enum_member = db.enum_type(tsz_solver::def::DefId(702), literal);
+
+        assert!(has_enum_components(&db, enum_member));
+        assert!(!has_enum_components(&db, literal));
+        assert!(!has_enum_components(&db, TypeId::NUMBER));
     }
 
     #[test]

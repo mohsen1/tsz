@@ -721,7 +721,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         type_id: tsz_solver::TypeId,
         depth: u32,
     ) -> bool {
-        use crate::query_boundaries::common as q;
+        use crate::query_boundaries::{common as q, type_checking_utilities as type_utils};
         // Bound the constraint/wrapper/union recursion; an undecided type is not
         // "definitely" non-array-like, so give up in the legal direction.
         if depth > 8 {
@@ -794,7 +794,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let factory = self.ctx.types.factory();
             factory.readonly_type(factory.array(TypeId::ANY))
         };
-        !self.ctx.types.is_assignable_to(t, readonly_any_array)
+        !type_utils::rest_element_array_like_relation_outcome(self.ctx.types, t, readonly_any_array)
+            .related
     }
 
     /// Resolve a rest-element type to its inspectable shape for the TS2574

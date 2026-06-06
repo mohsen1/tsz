@@ -18,6 +18,15 @@ pub(crate) fn widen_type_for_inference(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::operations::widening::widen_type_for_inference(db, type_id)
 }
 
+/// Widen a type for diagnostic display while preserving literal property types
+/// of non-fresh objects. Fresh object literals still widen.
+pub(crate) fn widen_type_for_display_preserving_non_fresh(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::operations::widening::widen_type_for_display_preserving_non_fresh(db, type_id)
+}
+
 /// Apply a `const` assertion to a type, recursively converting mutable literals
 /// to their `readonly` / literal-preserving forms.
 pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {

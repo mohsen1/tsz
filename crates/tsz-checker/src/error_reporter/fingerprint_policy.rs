@@ -488,6 +488,28 @@ impl<'a> CheckerState<'a> {
                 target_property_type,
                 nested_reason,
             } => {
+                // When the property relation fails through its own *structural*
+                // drill (a nested tuple position, array element, deeper-property
+                // chain, index signature, missing property, …), the hand-rolled
+                // two-line `Types of property 'p' … / Type 'sp' … 'tp'.` shape
+                // below truncates the chain: it stops at the property leaf and
+                // never surfaces the inner cause, diverging from the
+                // direct-assignment (TS2322) elaboration tsc uses for both
+                // surfaces. Delegate the whole reason to that single source of
+                // truth (`render_failure_reason`) so the call-argument (TS2345)
+                // chain carries the same dotted-path collapse, tuple positions,
+                // and array/index drill. Scalar and union-member property
+                // failures keep the established hand-rolled shape below (no
+                // structural drill to recover), so those high-traffic chains are
+                // byte-identical to today.
+                if nested_reason
+                    .as_deref()
+                    .is_some_and(Self::property_nested_reason_needs_full_drill)
+                {
+                    return Some(self.reanchored_container_related(
+                        reason, source, target, anchor_idx, start, length,
+                    ));
+                }
                 let target_property_type = if self.should_strip_nullish_for_property_display(target)
                 {
                     self.strip_nullish_for_assignability_display(
@@ -694,18 +716,26 @@ impl<'a> CheckerState<'a> {
                 ]
             }
             SubtypeFailureReason::ArrayElementMismatch { .. }
-            | SubtypeFailureReason::TypeArgumentMismatch { .. } => {
-                // Both reasons relate same-shaped containers whose differing
-                // *component* is the cause (array element types, or same-generic
-                // type arguments). tsc names both containers in the head — which
+            | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+            | SubtypeFailureReason::TypeArgumentMismatch { .. }
+            | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+            | SubtypeFailureReason::TupleElementMismatch { .. }
+            | SubtypeFailureReason::TupleArityMismatch(_) => {
+                // These reasons relate same-shaped containers whose differing
+                // *component* is the cause (array element types, same-generic type
+                // arguments, a fixed tuple slot, a variadic span, or a tuple
+                // arity/length gap). tsc names both containers in the head — which
                 // the call's TS2345 line already does — then relates the failing
-                // component directly beneath it, with no intermediate
-                // `array element` / `Types of property 'x' are incompatible.`
-                // wrapper. Reuse the TS2322 elaboration (`render_failure_reason`)
-                // as the single source of truth: its child lines already carry
-                // the right `code`, `message_text`, `depth`, and `file`, so only
-                // the category and the call-site anchor (`start`/`length`) need
-                // rewriting for the TS2345 surface.
+                // component directly beneath it (for tuples: the positional `Type
+                // at position N …` disambiguator, variadic position range, or the
+                // `Source has N element(s) …` length line).
+                // Reuse the TS2322 elaboration (`render_failure_reason`) as the
+                // single source of truth: its child lines already carry the right
+                // `code`, `message_text`, `depth`, and `file`, so only the category
+                // and the call-site anchor (`start`/`length`) need rewriting for
+                // the TS2345 surface. Without this arm, tuple-argument mismatches
+                // fall through to `_ => return None` and drop the entire
+                // elaboration chain, unlike the object/array argument paths.
                 self.reanchored_container_related(reason, source, target, anchor_idx, start, length)
             }
             SubtypeFailureReason::MissingIndexSignature { index_kind } => {
@@ -741,7 +771,8 @@ impl<'a> CheckerState<'a> {
                 }]
             }
             SubtypeFailureReason::UnionSourceMismatch { .. }
-            | SubtypeFailureReason::ConditionalBranchMismatch { .. } => {
+            | SubtypeFailureReason::ConditionalBranchMismatch { .. }
+            | SubtypeFailureReason::TypeParameterConstraintMismatch { .. } => {
                 vec![self.union_member_related_line(Some(reason), start, length, 0)?]
             }
             SubtypeFailureReason::UnionTargetMismatch { .. } => {
@@ -790,8 +821,8 @@ impl<'a> CheckerState<'a> {
     /// only the reason's `related_information` is carried over — with its
     /// category reset to `Message` and its anchor rewritten to the call site
     /// (`start`/`length`). Reason variants whose `TS2322` elaboration is reused
-    /// verbatim (array element, type-argument, union-target, function parameter)
-    /// share this transform.
+    /// verbatim (array element, type-argument, tuple element/arity, union-target,
+    /// function parameter) share this transform.
     fn reanchored_container_related(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
@@ -811,6 +842,43 @@ impl<'a> CheckerState<'a> {
                 rel
             })
             .collect()
+    }
+
+    /// Whether a [`PropertyTypeMismatch`]'s nested reason carries a structural
+    /// drill that the hand-rolled `Types of property 'p' … / Type 'sp' … 'tp'.`
+    /// pair cannot represent, so the call-argument (`TS2345`) elaboration must
+    /// fall back to the direct-assignment (`TS2322`) renderer to stay faithful
+    /// to tsc.
+    ///
+    /// Returns `true` for reasons whose `TS2322` rendering produces a chain
+    /// *deeper or differently shaped* than a single property leaf — nested
+    /// property chains (dotted-path collapse), tuple positions, array/index
+    /// drill, and missing-property frames. Returns `false` for self-heading
+    /// leaves (scalar/literal/intrinsic mismatches) and for union/conditional
+    /// members, which the surrounding arm already surfaces via
+    /// [`Self::union_member_related_line`]; those keep their established shape.
+    const fn property_nested_reason_needs_full_drill(
+        reason: &tsz_solver::SubtypeFailureReason,
+    ) -> bool {
+        use tsz_solver::SubtypeFailureReason as R;
+        matches!(
+            reason,
+            R::PropertyTypeMismatch { .. }
+                | R::MissingProperty { .. }
+                | R::MissingProperties { .. }
+                | R::OptionalPropertyRequired { .. }
+                | R::TupleElementTypeMismatch { .. }
+                | R::TupleElementMismatch { .. }
+                | R::TupleArityMismatch(_)
+                | R::ArrayElementMismatch { .. }
+                | R::IndexSignatureMismatch { .. }
+                | R::ReturnTypeMismatch { .. }
+                | R::ParameterTypeMismatch { .. }
+        )
+        // Scalar/intrinsic/literal leaves self-head with the same
+        // `Type 'sp' … 'tp'.` line the hand-rolled pair already emits, and
+        // union/conditional members are handled by the surrounding arm's
+        // `union_member_related_line`; those stay on the hand-rolled path.
     }
 
     /// Build the child-relation elaboration line (`Type 'C' is not assignable
@@ -838,6 +906,11 @@ impl<'a> CheckerState<'a> {
                 branch_target,
                 ..
             } => (*branch_source, *branch_target),
+            tsz_solver::SubtypeFailureReason::TypeParameterConstraintMismatch {
+                constraint_type,
+                target_type,
+                ..
+            } => (*constraint_type, *target_type),
             _ => return None,
         };
         let member_str = self.format_type_for_diagnostic_role(

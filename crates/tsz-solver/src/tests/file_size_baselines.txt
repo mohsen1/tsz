@@ -27,12 +27,12 @@ solver_file_narrowing_core 2718
 solver_file_relations_compat 2950
 solver_file_constraints_walker 2348
 solver_file_diag_format_mod 2318
-solver_file_eval_mapped 1963
+solver_file_eval_mapped 1982
 solver_file_subtype_generics 2217
 solver_file_call_args 2097
 solver_file_eval_index_access 2226
 solver_file_def_core 2244
-solver_file_visitor_predicates 2162
+solver_file_visitor_predicates 742
 solver_file_types 2018
 
 binder_max_loc        2890

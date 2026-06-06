@@ -36,10 +36,13 @@ mod state_diagnostics;
 mod state_exports_recovery;
 mod state_expressions;
 mod state_expressions_arrow;
+mod state_expressions_binary;
+mod state_expressions_call_member;
 mod state_expressions_literals;
 mod state_expressions_literals_object;
 mod state_expressions_literals_regex;
 mod state_expressions_tail;
+mod state_expressions_unary;
 mod state_import_attributes;
 mod state_recovery_helpers;
 mod state_statements;
@@ -176,6 +179,10 @@ mod base_tests;
 #[cfg(test)]
 #[path = "../../tests/trailing_comma_tests.rs"]
 mod trailing_comma_tests;
+
+#[cfg(test)]
+#[path = "../../tests/rest_param_trailing_comma_tests.rs"]
+mod rest_param_trailing_comma_tests;
 
 #[cfg(test)]
 #[path = "../../tests/spelling_integration_tests.rs"]

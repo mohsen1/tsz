@@ -928,17 +928,17 @@ impl<'a> CheckerState<'a> {
         name_idx: NodeIndex,
         message: &str,
         code: u32,
-    ) {
+    ) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return;
+            return false;
         };
 
         if name_node.kind != tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return;
+            return false;
         }
 
         let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
-            return;
+            return false;
         };
 
         let is_class_property_literal_check = code
@@ -952,7 +952,7 @@ impl<'a> CheckerState<'a> {
                 || expr_node.kind == tsz_parser::parser::syntax_kind_ext::SATISFIES_EXPRESSION)
         {
             self.error_at_node(name_idx, message, code);
-            return;
+            return true;
         }
 
         let is_entity_name = self.is_entity_name_expression(computed.expression);
@@ -965,14 +965,14 @@ impl<'a> CheckerState<'a> {
                 || kind == SyntaxKind::NumericLiteral as u16
                 || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
             {
-                return;
+                return false;
             }
         }
 
         // Entity name expressions (identifiers, property access chains) are always
         // structurally OK for computed property names — skip the TS1166/TS1169 error.
         if is_entity_name {
-            return;
+            return false;
         }
 
         // Assignment expressions (e.g., `x = ''`, `x = 0`) are never allowed as computed
@@ -985,7 +985,7 @@ impl<'a> CheckerState<'a> {
             && binary.operator_token == SyntaxKind::EqualsToken as u16
         {
             self.error_at_node(name_idx, message, code);
-            return;
+            return true;
         }
 
         // Always evaluate the expression to trigger side-effect diagnostics (e.g., TS2585
@@ -1000,6 +1000,7 @@ impl<'a> CheckerState<'a> {
         // matters. This catches parenthesized entity-name access (which breaks the
         // entity-name chain), conditionals, calls, computed access, etc.
         self.error_at_node(name_idx, message, code);
+        true
     }
 
     /// Check a computed property name for type errors (TS2464).

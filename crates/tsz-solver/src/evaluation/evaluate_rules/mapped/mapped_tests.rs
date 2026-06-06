@@ -1,4 +1,5 @@
 use super::*;
+use crate::caches::query_cache::QueryCache;
 use crate::construction::TypeInterner;
 use crate::recursion::RecursionResult;
 use crate::types::TypeParamInfo;
@@ -47,6 +48,178 @@ fn build_instantiated_homomorphic_mapped(
         readonly_modifier: None,
         optional_modifier: None,
     }
+}
+
+#[test]
+fn mapped_property_template_uses_preserving_instantiation_cache() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+
+    let key_atom = interner.intern_string("K");
+    let key_param = interner.type_param(TypeParamInfo::simple(key_atom));
+    let wrapped_prop = PropertyInfo {
+        name: interner.intern_string("value"),
+        type_id: key_param,
+        write_type: key_param,
+        is_string_named: true,
+        ..Default::default()
+    };
+    let template = interner.object(vec![wrapped_prop]);
+    let constraint = interner.literal_string("same");
+
+    let mapped = |readonly_modifier| MappedType {
+        type_param: TypeParamInfo {
+            name: key_atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: None,
+        template,
+        readonly_modifier,
+        optional_modifier: None,
+    };
+
+    let first = interner.mapped(mapped(None));
+    let second = interner.mapped(mapped(Some(MappedModifier::Add)));
+    assert_ne!(
+        first, second,
+        "distinct mapped types keep the evaluator cache from hiding instantiation reuse"
+    );
+
+    let before = query_cache.statistics();
+    let mut first_eval = TypeEvaluator::new(&interner).with_query_db(&query_cache);
+    let first_result = first_eval.evaluate(first);
+    let after_first = query_cache.statistics();
+
+    let mut second_eval = TypeEvaluator::new(&interner).with_query_db(&query_cache);
+    let second_result = second_eval.evaluate(second);
+    let after_second = query_cache.statistics();
+
+    assert_ne!(first_result, TypeId::ERROR);
+    assert_ne!(second_result, TypeId::ERROR);
+    assert!(
+        after_first.instantiation_cache_misses > before.instantiation_cache_misses,
+        "first mapped property template instantiation should populate the cache"
+    );
+    assert!(
+        after_second.instantiation_cache_hits > after_first.instantiation_cache_hits,
+        "second mapped property template instantiation should reuse the preserving cache slot"
+    );
+}
+
+#[test]
+fn remapped_key_type_uses_preserving_instantiation_cache() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+
+    let key_atom = interner.intern_string("K");
+    let key_param = interner.type_param(TypeParamInfo::simple(key_atom));
+    let name_type = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("key"),
+        type_id: key_param,
+        write_type: key_param,
+        is_string_named: true,
+        ..Default::default()
+    }]);
+    let constraint = interner.literal_string("same");
+
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: key_atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: Some(name_type),
+        template: TypeId::BOOLEAN,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let before = query_cache.statistics();
+    let mut first_eval = TypeEvaluator::new(&interner).with_query_db(&query_cache);
+    let first_result = first_eval.remap_key_type_for_mapped(&mapped, constraint);
+    let after_first = query_cache.statistics();
+
+    let mut second_eval = TypeEvaluator::new(&interner).with_query_db(&query_cache);
+    let second_result = second_eval.remap_key_type_for_mapped(&mapped, constraint);
+    let after_second = query_cache.statistics();
+
+    assert!(first_result.is_ok());
+    assert!(second_result.is_ok());
+    assert!(
+        after_first.instantiation_cache_misses > before.instantiation_cache_misses,
+        "first remapped-key instantiation should populate the preserving cache"
+    );
+    assert!(
+        after_second.instantiation_cache_hits > after_first.instantiation_cache_hits,
+        "second remapped-key instantiation should reuse the preserving cache slot"
+    );
+}
+
+#[test]
+fn mapped_index_template_uses_instantiation_cache_per_concrete_key() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+
+    let key_atom = interner.intern_string("K");
+    let key_param = interner.type_param(TypeParamInfo::simple(key_atom));
+    let wrapped_prop = PropertyInfo {
+        name: interner.intern_string("value"),
+        type_id: key_param,
+        write_type: key_param,
+        is_string_named: true,
+        ..Default::default()
+    };
+    let template = interner.object(vec![wrapped_prop]);
+    let constraint = interner.union(vec![
+        interner.literal_string("first"),
+        interner.literal_string("second"),
+    ]);
+
+    let mapped = |readonly_modifier| MappedType {
+        type_param: TypeParamInfo {
+            name: key_atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: None,
+        template,
+        readonly_modifier,
+        optional_modifier: None,
+    };
+
+    let first = interner.mapped(mapped(None));
+    let second = interner.mapped(mapped(Some(MappedModifier::Add)));
+    assert_ne!(
+        first, second,
+        "distinct mapped types keep the evaluator cache from hiding per-key instantiation reuse"
+    );
+
+    let before = query_cache.statistics();
+    let mut first_eval = TypeEvaluator::new(&interner).with_query_db(&query_cache);
+    let first_result = first_eval.evaluate(interner.index_access(first, constraint));
+    let after_first = query_cache.statistics();
+
+    let mut second_eval = TypeEvaluator::new(&interner).with_query_db(&query_cache);
+    let second_result = second_eval.evaluate(interner.index_access(second, constraint));
+    let after_second = query_cache.statistics();
+
+    assert_ne!(first_result, TypeId::ERROR);
+    assert_ne!(second_result, TypeId::ERROR);
+    assert!(
+        after_first.instantiation_cache_misses > before.instantiation_cache_misses,
+        "first mapped[index] per-key template instantiation should populate the cache"
+    );
+    assert!(
+        after_second.instantiation_cache_hits > after_first.instantiation_cache_hits,
+        "second mapped[index] per-key template instantiation should reuse cached template instantiations"
+    );
 }
 
 /// tsc's `instantiateMappedType` reduces a generic homomorphic mapped

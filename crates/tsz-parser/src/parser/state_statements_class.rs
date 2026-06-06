@@ -53,13 +53,20 @@ impl ParserState {
     fn report_definite_assignment_parameter_tail_recovery(&mut self) {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        if !self.is_token(SyntaxKind::CloseParenToken) {
-            return;
-        }
-
         let snapshot = self.scanner.save_state();
         let saved_token = self.current_token;
         let saved_scanner_diagnostics_high_water_mark = self.scanner_diagnostics_high_water_mark;
+
+        if self.is_token(SyntaxKind::GreaterThanToken) {
+            self.next_token();
+        }
+        if !self.is_token(SyntaxKind::CloseParenToken) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+            self.scanner_diagnostics_high_water_mark = saved_scanner_diagnostics_high_water_mark;
+            return;
+        }
+
         let close_start = self.token_pos();
         let close_length = self.token_end().saturating_sub(close_start);
 
@@ -262,9 +269,11 @@ impl ParserState {
             diagnostic_messages::EXPRESSION_EXPECTED,
             diagnostic_codes::EXPRESSION_EXPECTED,
         );
+        self.recovered_definite_assignment_empty_statement_close_brace_pos = last_close_brace_pos;
 
         self.scanner.restore_state(snapshot);
         self.current_token = saved_token;
+        self.last_error_pos = self.token_pos();
         self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
     }
 
@@ -436,20 +445,28 @@ impl ParserState {
                 break;
             }
 
+            let comma_pos = self.token_pos();
             let has_comma = self.parse_optional(SyntaxKind::CommaToken);
 
+            // TS1013: A rest parameter or binding pattern may not have a trailing comma.
+            // tsc's grammar check (`checkGrammarParameterList`) skips this diagnostic when
+            // the rest parameter is in an ambient context — i.e. it carries `NodeFlags.Ambient`
+            // (a `declare` declaration or anywhere in a `.d.ts` file). There tsc tolerates a
+            // trailing comma after the rest element to keep formatters and idiomatic multi-line
+            // signatures valid (e.g. `@types/node`'s `pipeline` overloads).
             if is_rest_param
                 && has_comma
                 && (self.is_token(SyntaxKind::CloseParenToken)
                     || self.is_token(SyntaxKind::EndOfFileToken))
+                && !self.in_ambient_declaration()
             {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
-                        self.token_pos() - 1, // approximate comma position
-                        1,
-                        "A rest parameter or binding pattern may not have a trailing comma.",
-                        diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
-                    );
+                    comma_pos,
+                    1,
+                    "A rest parameter or binding pattern may not have a trailing comma.",
+                    diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+                );
             }
 
             if !has_comma {
@@ -504,6 +521,12 @@ impl ParserState {
                             "',' expected.",
                             tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                         );
+                        if self.is_token(SyntaxKind::GreaterThanToken) {
+                            self.report_definite_assignment_parameter_tail_recovery();
+                            self.abort_function_signature_after_definite_assignment_tail_once =
+                                true;
+                            break;
+                        }
                     } else {
                         self.error_comma_expected();
                     }

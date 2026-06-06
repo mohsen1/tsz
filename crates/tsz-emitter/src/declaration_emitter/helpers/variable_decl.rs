@@ -537,6 +537,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && !self.call_expression_declared_return_has_source_conditional_alias(initializer)
                 && let Some(type_text) =
                     self.call_expression_reused_type_text(initializer)
                         .filter(|text| {
@@ -552,6 +553,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && !self.call_expression_declared_return_has_source_conditional_alias(initializer)
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
             {
                 let reused_type_text = self.call_expression_reused_type_text(initializer);

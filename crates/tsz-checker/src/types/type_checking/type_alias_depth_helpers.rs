@@ -591,7 +591,7 @@ impl<'a> CheckerState<'a> {
                 .identifier_references_enclosing_infer_binding(name_idx, &identifier.escaped_text)
     }
 
-    fn identifier_references_enclosing_infer_binding(
+    pub(crate) fn identifier_references_enclosing_infer_binding(
         &self,
         node_idx: NodeIndex,
         name: &str,
@@ -619,7 +619,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn type_node_contains_infer_binding_named(&self, node_idx: NodeIndex, name: &str) -> bool {
+    pub(crate) fn type_node_contains_infer_binding_named(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };

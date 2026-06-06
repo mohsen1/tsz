@@ -347,6 +347,36 @@ impl<'a> FlowAnalyzer<'a> {
         decl_id: NodeIndex,
         reference: NodeIndex,
     ) -> bool {
+        // The result depends only on the symbol's declaration and the set of
+        // assignment flow nodes, not on the particular `reference` (all plain
+        // identifier references to the same symbol match the same assignments).
+        // Memoize per symbol so this full flow-node scan runs once per symbol
+        // instead of once per reference — otherwise N captured references in a
+        // large function body each pay an O(flow_nodes) scan, i.e. O(n²).
+        if let Some(cache) = &self.shared_symbol_nested_closure_assignment
+            && let Some(&cached) = cache.borrow().get(&symbol_id)
+        {
+            return cached;
+        }
+
+        let result = self.compute_has_assignment_in_nested_closure(symbol_id, decl_id, reference);
+
+        if let Some(cache) = &self.shared_symbol_nested_closure_assignment {
+            cache.borrow_mut().insert(symbol_id, result);
+        }
+
+        result
+    }
+
+    /// Internal: walk all flow nodes to determine whether any non-initialization
+    /// reassignment to `symbol_id` lives in a nested closure relative to the
+    /// declaration's enclosing function.
+    fn compute_has_assignment_in_nested_closure(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        decl_id: NodeIndex,
+        reference: NodeIndex,
+    ) -> bool {
         use tsz_binder::flow_flags;
 
         // Find the function node that encloses the declaration (and therefore the
