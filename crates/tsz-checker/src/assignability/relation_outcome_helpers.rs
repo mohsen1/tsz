@@ -658,6 +658,32 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    pub(crate) fn broad_mapped_index_signature_display_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::broad_mapped_index_signature_display(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    pub(crate) fn mapped_object_literal_excess_value_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::mapped_object_literal_excess_value(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing polymorphic `this` receiver relation for raw
     /// checker types, preserving the canonical receiver request shape.
     pub(crate) fn polymorphic_this_receiver_relation_outcome(

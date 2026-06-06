@@ -92,6 +92,27 @@ fn assign_relation_outcome_fast_path_uses_named_diagnostic_guard() {
 }
 
 #[test]
+fn relation_outcome_with_env_fast_path_uses_named_diagnostic_guard() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read assignability relation source");
+    let body = function_body_between(
+        &source,
+        "fn relation_outcome_with_env(",
+        "pub(crate) fn assign_relation_outcome_with_env(",
+    );
+    let compact: String = body.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    assert!(
+        compact.contains("self.diagnostic_relation_boolean_guard_with_env(source,target)"),
+        "relation_outcome_with_env should name its env-aware boolean fast path as a diagnostic guard"
+    );
+    assert!(
+        !compact.contains("self.is_assignable_to_with_env(source,target)"),
+        "relation_outcome_with_env should not embed a raw env-aware assignability fast path"
+    );
+}
+
+#[test]
 fn production_checker_relation_truth_uses_outcome_boundaries() {
     let mut violations = Vec::new();
 

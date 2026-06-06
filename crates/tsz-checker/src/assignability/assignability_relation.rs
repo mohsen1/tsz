@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
             property_classification: None,
         };
 
-        if source == target || self.is_assignable_to_with_env(source, target) {
+        if source == target || self.diagnostic_relation_boolean_guard_with_env(source, target) {
             return outcome(true);
         }
 
