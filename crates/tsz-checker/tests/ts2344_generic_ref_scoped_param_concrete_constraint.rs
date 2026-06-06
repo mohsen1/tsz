@@ -371,3 +371,24 @@ type Use<A> = Box<ExecPath<A>>;
         "Conditional filters like Select<..., string> should satisfy string constraints. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn nested_generic_alias_filtering_to_string_satisfies_string_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Box<T extends string> = T;
+type DropStrings<T> = T extends string ? never : T;
+type Values<T> = T[keyof T];
+type KeepMatching<U, M> = U extends M ? U : never;
+type NextText<OP> = KeepMatching<Values<DropStrings<OP> & {}>, string>;
+type ExecText<A> = NextText<{ value: string; next: A }>;
+
+type Use<A> = Box<ExecText<A>>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Nested conditional filters should satisfy string constraints through their extends branch. Got: {diagnostics:?}"
+    );
+}
