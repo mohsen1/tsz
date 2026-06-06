@@ -41,6 +41,7 @@ TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
+TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts

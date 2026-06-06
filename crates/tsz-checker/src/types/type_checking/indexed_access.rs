@@ -64,6 +64,25 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn format_ts2536_object_type(&self, object_node_idx: NodeIndex, object_type: TypeId) -> String {
+        if let Some(node) = self.ctx.arena.get(object_node_idx)
+            && matches!(
+                node.kind,
+                k if k == syntax_kind_ext::TYPE_REFERENCE
+                    || k == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            )
+            && let Some(text) = self.node_text(object_node_idx)
+        {
+            let text = text.trim();
+            let text = text.strip_prefix('(').unwrap_or(text);
+            let text = text.strip_suffix(')').unwrap_or(text).trim();
+            if !text.is_empty() {
+                return text.to_string();
+            }
+        }
+        self.format_type(object_type)
+    }
+
     fn typeof_global_this_indexed_key_is_missing(&self, key: &str) -> bool {
         if key == "globalThis" {
             return false;
@@ -1568,7 +1587,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let obj_type_str = self.format_type(object_type);
+            let obj_type_str = self.format_ts2536_object_type(data.object_type, object_type);
             let evaluated_index_type = self.evaluate_type_for_assignability(index_type);
             let prefer_evaluated_index = (evaluated_index_type != TypeId::ERROR
                 && !crate::query_boundaries::common::contains_type_parameters(
