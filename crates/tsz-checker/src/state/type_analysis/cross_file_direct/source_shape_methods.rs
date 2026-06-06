@@ -780,7 +780,12 @@ impl<'a> CheckerState<'a> {
             }
 
             seen_type_names.push(interface_name);
-            let result = interface.members.nodes.iter().copied().all(|member_idx| {
+            let result = Self::source_file_interface_heritage_is_direct_lowerable(
+                arena,
+                delegate_binder,
+                interface,
+                seen_type_names,
+            ) && interface.members.nodes.iter().copied().all(|member_idx| {
                 let Some(member_node) = arena.get(member_idx) else {
                     return false;
                 };
@@ -808,6 +813,179 @@ impl<'a> CheckerState<'a> {
             seen_type_names.pop();
             result
         })
+    }
+
+    fn source_file_interface_heritage_is_direct_lowerable<'b>(
+        arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        interface: &tsz_parser::parser::node::InterfaceData,
+        seen_type_names: &mut Vec<&'b str>,
+    ) -> bool {
+        let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+            return true;
+        };
+
+        heritage_clauses.nodes.iter().copied().all(|clause_idx| {
+            let Some(heritage) = arena.get_heritage_clause_at(clause_idx) else {
+                return false;
+            };
+            heritage.types.nodes.iter().copied().all(|heritage_type_idx| {
+                let Some(base_name) =
+                    Self::source_file_simple_heritage_identifier(arena, heritage_type_idx)
+                else {
+                    return false;
+                };
+                let Some(base_decl_idx) = Self::source_file_direct_heritage_base_decl(
+                    arena,
+                    delegate_binder,
+                    base_name,
+                    seen_type_names,
+                ) else {
+                    return false;
+                };
+                Self::source_file_interface_declarations_are_direct_lowerable_with_seen(
+                    &[(base_decl_idx, arena)],
+                    delegate_binder,
+                    seen_type_names,
+                )
+            })
+        })
+    }
+
+    fn source_file_simple_heritage_identifier(
+        arena: &NodeArena,
+        heritage_type_idx: NodeIndex,
+    ) -> Option<&str> {
+        let heritage_node = arena.get(heritage_type_idx)?;
+        if let Some(identifier) = arena.get_identifier(heritage_node) {
+            return Some(identifier.escaped_text.as_str());
+        }
+        if let Some(expr_type_args) = arena.get_expr_type_args(heritage_node) {
+            if expr_type_args
+                .type_arguments
+                .as_ref()
+                .is_some_and(|args| !args.nodes.is_empty())
+            {
+                return None;
+            }
+            return arena
+                .get(expr_type_args.expression)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.as_str());
+        }
+
+        let type_ref = arena.get_type_ref(heritage_node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())
+    }
+
+    fn source_file_direct_heritage_base_decl<'b>(
+        arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        base_name: &'b str,
+        seen_type_names: &[&'b str],
+    ) -> Option<NodeIndex> {
+        if seen_type_names.contains(&base_name) {
+            return None;
+        }
+        let base_sym_id = delegate_binder.file_locals.get(base_name)?;
+        let base_symbol = delegate_binder.get_symbol(base_sym_id)?;
+        if base_symbol.flags & symbol_flags::INTERFACE == 0
+            || base_symbol.flags
+                & (symbol_flags::VALUE
+                    | symbol_flags::CLASS
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE)
+                != 0
+            || base_symbol.declarations.len() != 1
+        {
+            return None;
+        }
+        let base_decl_idx = base_symbol.declarations[0];
+        if !Self::lib_declaration_name_matches(arena, base_decl_idx, base_name) {
+            return None;
+        }
+        let base_node = arena.get(base_decl_idx)?;
+        arena.get_interface(base_node)?;
+        Some(base_decl_idx)
+    }
+
+    pub(super) fn source_file_expand_direct_lowerable_interface_heritage<'b>(
+        declarations: &[(NodeIndex, &'b NodeArena)],
+        delegate_binder: &BinderState,
+    ) -> Option<Vec<(NodeIndex, &'b NodeArena)>> {
+        fn append_bases<'b>(
+            arena: &'b NodeArena,
+            delegate_binder: &BinderState,
+            interface: &tsz_parser::parser::node::InterfaceData,
+            seen_type_names: &mut Vec<&'b str>,
+            expanded: &mut Vec<(NodeIndex, &'b NodeArena)>,
+        ) -> Option<()> {
+            let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+                return Some(());
+            };
+            for clause_idx in heritage_clauses.nodes.iter().copied() {
+                let heritage = arena.get_heritage_clause_at(clause_idx)?;
+                for heritage_type_idx in heritage.types.nodes.iter().copied() {
+                    let base_name =
+                        CheckerState::source_file_simple_heritage_identifier(
+                            arena,
+                            heritage_type_idx,
+                        )?;
+                    let base_decl_idx = CheckerState::source_file_direct_heritage_base_decl(
+                        arena,
+                        delegate_binder,
+                        base_name,
+                        seen_type_names,
+                    )?;
+                    let base_node = arena.get(base_decl_idx)?;
+                    let base_interface = arena.get_interface(base_node)?;
+                    seen_type_names.push(base_name);
+                    append_bases(
+                        arena,
+                        delegate_binder,
+                        base_interface,
+                        seen_type_names,
+                        expanded,
+                    )?;
+                    seen_type_names.pop();
+                    expanded.push((base_decl_idx, arena));
+                }
+            }
+            Some(())
+        }
+
+        let mut expanded = Vec::new();
+        let mut seen_type_names = Vec::new();
+        for (decl_idx, arena) in declarations.iter().copied() {
+            let node = arena.get(decl_idx)?;
+            let interface = arena.get_interface(node)?;
+            let interface_name = arena
+                .get(interface.name)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.as_str())?;
+            seen_type_names.push(interface_name);
+            append_bases(
+                arena,
+                delegate_binder,
+                interface,
+                &mut seen_type_names,
+                &mut expanded,
+            )?;
+            seen_type_names.pop();
+            expanded.push((decl_idx, arena));
+        }
+        Some(expanded)
     }
 
     fn source_file_interface_declarations_are_direct_lowerable(

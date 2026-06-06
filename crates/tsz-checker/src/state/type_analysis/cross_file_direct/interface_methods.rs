@@ -61,8 +61,8 @@ impl<'a> CheckerState<'a> {
             };
             record_complex_reason(reason);
         };
-        if direct_source_file_arena {
-            if has_heritage || has_computed_names {
+        let declarations = if direct_source_file_arena {
+            if has_computed_names {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 heritage_or_computed_reason();
                 return None;
@@ -75,11 +75,17 @@ impl<'a> CheckerState<'a> {
                 record_complex_reason(DirectCrossFileInterfaceComplexReason::SourceFileShape);
                 return None;
             }
+            Self::source_file_expand_direct_lowerable_interface_heritage(
+                &declarations,
+                delegate_binder,
+            )?
         } else if !allow_complex_declarations && (has_heritage || has_computed_names) {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
             heritage_or_computed_reason();
             return None;
-        }
+        } else {
+            declarations
+        };
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
