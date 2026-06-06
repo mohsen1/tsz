@@ -38,28 +38,29 @@
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
-TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
-TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/letInConstDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
 TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
+TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/strictModeReservedWord.ts
-TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
+TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
-TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
 TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
+TypeScript/tests/cases/conformance/importDefer/dynamicImportDeferInvalidStandalone.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
-TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
+TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts
+TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
