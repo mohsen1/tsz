@@ -250,8 +250,12 @@ impl<'a> Printer<'a> {
                     member.kind == super::syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
                 })
             });
+        let has_static_computed_method_or_accessor =
+            self.class_has_static_computed_method_or_accessor_comma_expr(class, class_idx, true);
 
-        has_static_field_comma_expr || has_static_block_comma_expr
+        has_static_field_comma_expr
+            || has_static_block_comma_expr
+            || has_static_computed_method_or_accessor
     }
 
     fn estimate_class_expression_static_comma_computed_temp_count(

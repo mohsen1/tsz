@@ -84,6 +84,10 @@ name = "recursive_defaulted_template_accumulator_tests"
 path = "tests/recursive_defaulted_template_accumulator_tests.rs"
 
 [[test]]
+name = "recursive_conditional_infer_termination_tests"
+path = "tests/recursive_conditional_infer_termination_tests.rs"
+
+[[test]]
 name = "recursive_const_arrow_dts_emit_tests"
 path = "tests/recursive_const_arrow_dts_emit_tests.rs"
 

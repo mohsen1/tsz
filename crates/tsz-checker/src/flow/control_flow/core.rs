@@ -13,7 +13,7 @@ use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::computation::TypeEnvironment;
-use tsz_solver::narrowing::{GuardSense, NarrowingCache, NarrowingContext};
+use tsz_solver::narrowing::{NarrowingCache, NarrowingContext};
 use tsz_solver::{ParamInfo, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
@@ -1550,7 +1550,8 @@ impl<'a> FlowAnalyzer<'a> {
                 env_borrow = env.borrow();
                 narrowing = narrowing.with_resolver(&*env_borrow);
             }
-            return narrowing.narrow_by_discriminant(
+            return query::narrow_by_discriminant_in_context(
+                &narrowing,
                 narrowed_pre_type,
                 &property_path,
                 predicate_type,
@@ -1585,9 +1586,13 @@ impl<'a> FlowAnalyzer<'a> {
                     } else {
                         self.make_narrowing_context()
                     };
-                    // Apply the guard with NEGATIVE sense (because of the !)
-                    let narrowed =
-                        narrowing.narrow_type(narrowed_pre_type, &guard, GuardSense::Negative);
+                    // Apply the guard with negative sense because of the `!`.
+                    let narrowed = query::narrow_with_guard_in_context(
+                        &narrowing,
+                        narrowed_pre_type,
+                        &guard,
+                        false,
+                    );
                     if narrowed != narrowed_pre_type {
                         return narrowed;
                     }

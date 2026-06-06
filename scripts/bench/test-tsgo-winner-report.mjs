@@ -12,6 +12,7 @@ const SCRIPT = path.join(ROOT, "scripts", "bench", "tsgo-winner-report.mjs");
 const BENCH_WORKFLOW = path.join(ROOT, ".github", "workflows", "bench.yml");
 const GH_PAGES_WORKFLOW = path.join(ROOT, ".github", "workflows", "gh-pages.yml");
 const WEBSITE_ELEVENTY = path.join(ROOT, "crates", "tsz-website", ".eleventy.js");
+const WEBSITE_BENCH_SNAPSHOT = path.join(ROOT, "crates", "tsz-website", "bench-snapshot.json");
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-tsgo-winner-report-"));
@@ -28,6 +29,24 @@ function writeJson(file, value) {
 }
 
 const { createTsgoWinnerReport } = await import(pathToFileURL(SCRIPT));
+
+{
+  const report = createTsgoWinnerReport(
+    JSON.parse(fs.readFileSync(WEBSITE_BENCH_SNAPSHOT, "utf8")),
+    WEBSITE_BENCH_SNAPSHOT,
+  );
+  assert.equal(report.two_x_target.rows_below_target, 15);
+  assert.equal(
+    report.two_x_target.rows_with_attribution_command,
+    report.two_x_target.rows_below_target,
+  );
+  assert.deepEqual(
+    report.two_x_target.missing_attribution_plan
+      .filter((row) => !row.attribution_command)
+      .map((row) => row.name),
+    [],
+  );
+}
 
 withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
@@ -360,6 +379,15 @@ withTempDir((dir) => {
         factor: 1.06,
       },
       {
+        name: "100 generic functions",
+        lines: 2200,
+        kb: 70,
+        tsz_ms: 190,
+        tsgo_ms: 160,
+        winner: "tsgo",
+        factor: 1.19,
+      },
+      {
         name: "200 generic functions",
         lines: 4200,
         kb: 120,
@@ -367,6 +395,33 @@ withTempDir((dir) => {
         tsgo_ms: 404.57,
         winner: "tsz",
         factor: 1.02,
+      },
+      {
+        name: "CFA branches=100",
+        lines: 900,
+        kb: 28,
+        tsz_ms: 180,
+        tsgo_ms: 150,
+        winner: "tsgo",
+        factor: 1.2,
+      },
+      {
+        name: "CFA branches=150",
+        lines: 1200,
+        kb: 38,
+        tsz_ms: 220,
+        tsgo_ms: 170,
+        winner: "tsgo",
+        factor: 1.29,
+      },
+      {
+        name: "Template literal N=45",
+        lines: 420,
+        kb: 18,
+        tsz_ms: 205,
+        tsgo_ms: 200,
+        winner: "tsgo",
+        factor: 1.03,
       },
     ],
   });
@@ -382,25 +437,58 @@ withTempDir((dir) => {
     /TSZ_PERF_COUNTERS=1 .*<generated-200-classes>\.ts/,
   );
   assert.match(
+    byName.get("100 generic functions").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-100-generic-functions>\.ts/,
+  );
+  assert.match(
     report.target_gaps
       .find((row) => row.name === "200 generic functions")
       .loss_closure.attribution_command,
     /TSZ_PERF_COUNTERS=1 .*<generated-200-generic-functions>\.ts/,
   );
+  assert.match(
+    byName.get("CFA branches=100").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-cfa-branches-100>\.ts/,
+  );
+  assert.match(
+    byName.get("CFA branches=150").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-cfa-branches-150>\.ts/,
+  );
+  assert.match(
+    byName.get("Template literal N=45").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-template-literal-45>\.ts/,
+  );
   assert.deepEqual(report.totals.missing_attribution_rows, [
+    "100 generic functions",
     "200 classes",
     "BCT candidates=200",
+    "CFA branches=100",
+    "CFA branches=150",
+    "Template literal N=45",
   ]);
   assert.deepEqual(
     report.target_gaps.map((row) => row.name),
-    ["BCT candidates=200", "200 classes", "200 generic functions"],
+    [
+      "CFA branches=150",
+      "CFA branches=100",
+      "100 generic functions",
+      "BCT candidates=200",
+      "200 classes",
+      "Template literal N=45",
+      "200 generic functions",
+    ],
   );
-  assert.equal(report.two_x_target.rows_below_target, 3);
+  assert.equal(report.two_x_target.rows_below_target, 7);
   assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.equal(report.two_x_target.rows_with_attribution_command, 7);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, [
+    "100 generic functions",
     "200 classes",
     "200 generic functions",
     "BCT candidates=200",
+    "CFA branches=100",
+    "CFA branches=150",
+    "Template literal N=45",
   ]);
 });
 
@@ -408,6 +496,21 @@ withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
   writeJson(input, {
     results: [
+      {
+        name: "utility-types-project",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "baseline utility mapped/conditional surface",
+        },
+      },
       {
         name: "ts-essentials-project",
         tsz_ms: 100,
@@ -438,11 +541,58 @@ withTempDir((dir) => {
           semantic_owner_family: "generated app dependency graph",
         },
       },
+      {
+        name: "nextjs",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "Next.js full project module graph",
+        },
+      },
+      {
+        name: "ts-essentials/xor.ts",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+      },
+      {
+        name: "ts-essentials/paths.ts",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+      },
+      {
+        name: "ts-essentials/deep-pick.ts",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+      },
+      {
+        name: "ts-essentials/deep-readonly.ts",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+      },
     ],
   });
 
   const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
   const byName = new Map(report.rows.map((row) => [row.name, row]));
+  assert.match(
+    byName.get("utility-types-project").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.utility-types-project\.perf\.json --noEmit -p .*utility-types\/tsconfig\.flat\.json/,
+  );
   assert.match(
     byName.get("ts-essentials-project").loss_closure.attribution_command,
     /--perf-counters-json <artifact>\.ts-essentials-project\.perf\.json --noEmit -p .*ts-essentials\/tsconfig\.flat\.json/,
@@ -451,6 +601,27 @@ withTempDir((dir) => {
     byName.get("nextjs-fresh-app").loss_closure.attribution_command,
     /--perf-counters-json <artifact>\.nextjs-fresh-app\.perf\.json --noEmit -p .*next-app-live\/tsconfig\.json/,
   );
+  assert.match(
+    byName.get("nextjs").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.nextjs\.perf\.json --noEmit -p .*nextjs\/packages\/next\/tsconfig\.tsz-bench\.json/,
+  );
+  assert.match(
+    byName.get("ts-essentials/xor.ts").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.ts-essentials-xor\.perf\.json --noEmit --lib es2018 .*ts-essentials\/lib\/xor\/index\.ts/,
+  );
+  assert.match(
+    byName.get("ts-essentials/paths.ts").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.ts-essentials-paths\.perf\.json --noEmit --lib es2018 .*ts-essentials\/lib\/paths\/index\.ts/,
+  );
+  assert.match(
+    byName.get("ts-essentials/deep-pick.ts").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.ts-essentials-deep-pick\.perf\.json --noEmit --lib es2018 .*ts-essentials\/lib\/deep-pick\/index\.ts/,
+  );
+  assert.match(
+    byName.get("ts-essentials/deep-readonly.ts").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.ts-essentials-deep-readonly\.perf\.json --noEmit --lib es2018 .*ts-essentials\/lib\/deep-readonly\/index\.ts/,
+  );
+  assert.equal(report.two_x_target.rows_with_attribution_command, 8);
 });
 
 // Duplicate known project rows make the green-tsgo-winner summary non-authoritative.

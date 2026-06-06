@@ -346,9 +346,14 @@ impl<'a> FlowAnalyzer<'a> {
                 let narrowed = if excluded_types.is_empty() {
                     type_id
                 } else if target_is_switch_expr {
-                    narrowing.narrow_excluding_types(type_id, &excluded_types)
+                    flow_query::narrow_excluding_types_in_context(
+                        narrowing,
+                        type_id,
+                        &excluded_types,
+                    )
                 } else if let Some((ref path, _, _)) = discriminant_info {
-                    narrowing.narrow_by_excluding_discriminant_values(
+                    flow_query::narrow_by_excluding_discriminant_values_in_context(
+                        narrowing,
                         type_id,
                         path,
                         &excluded_types,
@@ -561,13 +566,18 @@ impl<'a> FlowAnalyzer<'a> {
             if !excluded_types.is_empty() {
                 if target_is_switch_expr {
                     // Use batched narrowing for O(N) instead of O(N²)
-                    return narrowing.narrow_excluding_types(type_id, &excluded_types);
+                    return flow_query::narrow_excluding_types_in_context(
+                        narrowing,
+                        type_id,
+                        &excluded_types,
+                    );
                 } else if let Some((path, is_optional, _)) = discriminant_info {
                     if is_optional && excluded_types.contains(&TypeId::UNDEFINED) {
                         return type_id;
                     }
                     // Use batched discriminant narrowing
-                    return narrowing.narrow_by_excluding_discriminant_values(
+                    return flow_query::narrow_by_excluding_discriminant_values_in_context(
+                        narrowing,
                         type_id,
                         &path,
                         &excluded_types,
@@ -817,7 +827,11 @@ impl<'a> FlowAnalyzer<'a> {
                                     target,
                                 )
                             {
-                                return narrowing.narrow_excluding_type(result, TypeId::NULL);
+                                return flow_query::narrow_excluding_type_in_context(
+                                    &narrowing,
+                                    result,
+                                    TypeId::NULL,
+                                );
                             }
                             return result;
                         }
@@ -931,7 +945,8 @@ impl<'a> FlowAnalyzer<'a> {
                 // `{flag: "hello"; data: string} | {flag: ""; data: number}`,
                 // narrow x based on whether `flag` is truthy or falsy.
                 if let Some(property_path) = self.discriminant_property(condition_idx, target) {
-                    let narrowed = narrowing.narrow_by_property_truthiness(
+                    let narrowed = flow_query::narrow_by_property_truthiness_in_context(
+                        &narrowing,
                         type_id,
                         &property_path,
                         is_true_branch,
@@ -980,7 +995,8 @@ impl<'a> FlowAnalyzer<'a> {
                         self.binder.resolve_identifier(self.arena, condition_ref)
                     && !self.is_alias_reference_mutated(alias_sym_id, target, antecedent_id)
                 {
-                    let narrowed = narrowing.narrow_by_property_truthiness(
+                    let narrowed = flow_query::narrow_by_property_truthiness_in_context(
+                        &narrowing,
                         type_id,
                         &prop_names,
                         is_true_branch,
@@ -1317,7 +1333,11 @@ impl<'a> FlowAnalyzer<'a> {
                     && typeof_kind == TypeofKind::Object
                     && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
                 {
-                    return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
+                    return flow_query::narrow_excluding_type_in_context(
+                        narrowing,
+                        narrowed,
+                        TypeId::NULL,
+                    );
                 }
                 return narrowed;
             }
@@ -1329,7 +1349,8 @@ impl<'a> FlowAnalyzer<'a> {
             //     return standard strings at runtime, so the condition is always
             //     false; the complement narrows to primitives)
             if effective_truth {
-                return narrowing.narrow_excluding_types(
+                return flow_query::narrow_excluding_types_in_context(
+                    narrowing,
                     type_id,
                     &[TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN],
                 );
@@ -1381,7 +1402,8 @@ impl<'a> FlowAnalyzer<'a> {
                 if is_optional && discriminant_type == TypeId::UNDEFINED && effective_truth {
                     return type_id;
                 }
-                return narrowing.narrow_by_discriminant_for_type(
+                return flow_query::narrow_by_discriminant_for_type_in_context(
+                    narrowing,
                     type_id,
                     &property_path,
                     discriminant_type,
@@ -1395,7 +1417,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if effective_truth {
                     return nullish;
                 }
-                return narrowing.narrow_excluding_type(type_id, nullish);
+                return flow_query::narrow_excluding_type_in_context(narrowing, type_id, nullish);
             }
 
             let nullish_union = self.interner.union2(TypeId::NULL, TypeId::UNDEFINED);
@@ -1448,7 +1470,8 @@ impl<'a> FlowAnalyzer<'a> {
                             base_type,
                         );
                     }
-                    let narrowed = narrowing.narrow_by_discriminant_for_type(
+                    let narrowed = flow_query::narrow_by_discriminant_for_type_in_context(
+                        narrowing,
                         base_type,
                         &property_path,
                         literal_type,
@@ -1469,11 +1492,16 @@ impl<'a> FlowAnalyzer<'a> {
                 && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
             {
                 if effective_truth {
-                    let narrowed = narrowing.narrow_to_type(type_id, literal_type);
+                    let narrowed =
+                        flow_query::narrow_to_type_in_context(narrowing, type_id, literal_type);
                     if narrowed != TypeId::NEVER {
                         return narrowed;
                     }
-                    if narrowing.literal_assignable_to(literal_type, type_id) {
+                    if flow_query::literal_assignable_to_in_context(
+                        narrowing,
+                        literal_type,
+                        type_id,
+                    ) {
                         return literal_type;
                     }
                     return TypeId::NEVER;
@@ -1481,7 +1509,11 @@ impl<'a> FlowAnalyzer<'a> {
                 if !is_unit_type(self.interner, literal_type) {
                     return type_id;
                 }
-                return narrowing.narrow_excluding_type(type_id, literal_type);
+                return flow_query::narrow_excluding_type_in_context(
+                    narrowing,
+                    type_id,
+                    literal_type,
+                );
             }
 
             // Equality narrowing of `unknown` / `any` against a primitive-
@@ -1501,7 +1533,7 @@ impl<'a> FlowAnalyzer<'a> {
                     self.literal_comparison_for_unknown_target(bin.left, bin.right, target)
             {
                 if effective_truth {
-                    return narrowing.narrow_to_type(type_id, literal_type);
+                    return flow_query::narrow_to_type_in_context(narrowing, type_id, literal_type);
                 }
                 return type_id;
             }
