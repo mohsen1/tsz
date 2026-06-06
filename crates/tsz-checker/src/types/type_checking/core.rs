@@ -987,27 +987,26 @@ impl<'a> CheckerState<'a> {
                 .get_indexed_access_type(node)
                 .map(|indexed| (indexed.object_type, indexed.index_type));
             if let Some((object_node, index_node)) = indexed_nodes {
-                // Only resolve the object/index when the object could be a type
-                // parameter or `this`. A `typeof X` object (e.g. `(typeof Enum)[K]`)
-                // is never a type parameter, so resolving it here is both
-                // unnecessary and harmful: evaluating it out of its normal order
-                // can poison the per-node type cache and produce spurious
-                // diagnostics. Skipping it keeps TS4105 precise and side-effect
-                // free.
-                if self.indexed_access_object_is_type_param_candidate(object_node) {
+                // Only resolve the object when the syntax matches the TS4105
+                // shape: a type-parameter/`this` candidate indexed by a literal
+                // property name. Generic/keyof/template index nodes can resolve
+                // differently depending on surrounding context; resolving them
+                // during this broad signature walk can poison the per-node type
+                // cache and produce spurious diagnostics. Skipping them keeps
+                // TS4105 precise and side-effect free.
+                if self.indexed_access_object_is_type_param_candidate(object_node)
+                    && let Some(property_name) =
+                        crate::types_domain::type_node_helpers::get_string_literal_from_type_index(
+                            self.ctx.arena,
+                            index_node,
+                        )
+                {
                     let object_type = self.get_type_from_type_node(object_node);
-                    let index_type = self.get_type_from_type_node(index_node);
-                    if let Some(prop_atom) = crate::query_boundaries::common::string_literal_value(
-                        self.ctx.types,
-                        index_type,
-                    ) {
-                        let property_name = self.ctx.types.resolve_atom(prop_atom);
-                        self.check_ts4105_private_on_type_parameter(
-                            type_idx,
-                            object_type,
-                            &property_name,
-                        );
-                    }
+                    self.check_ts4105_private_on_type_parameter(
+                        type_idx,
+                        object_type,
+                        &property_name,
+                    );
                 }
                 // Recurse for nested indexed-access types (e.g. `T["a"]["b"]`).
                 self.check_type_for_parameter_properties(object_node);
@@ -1038,7 +1037,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         match node.kind {
-            k if k == syntax_kind_ext::THIS_TYPE || k == syntax_kind_ext::TYPE_REFERENCE => true,
+            k if k == syntax_kind_ext::THIS_TYPE => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => self
+                .ctx
+                .arena
+                .get_type_ref(node)
+                .is_some_and(|type_ref| type_ref.type_arguments.is_none()),
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
                 self.ctx.arena.get_wrapped_type(node).is_some_and(|paren| {
                     self.indexed_access_object_is_type_param_candidate(paren.type_node)

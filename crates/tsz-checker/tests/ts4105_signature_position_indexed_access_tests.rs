@@ -206,3 +206,30 @@ function pick<T, K extends keyof T>(obj: T, key: K): T[K] { return obj[key]; }
         "generic keyed access must not trigger TS2536; got {diags:?}"
     );
 }
+
+/// Utility/generic type applications indexed by a public literal property must
+/// stay clean. The signature-position TS4105 probe is only for bare
+/// type-parameter/`this` candidates such as `T["private"]`, not for resolving
+/// generic helper applications like `Parameters<F>["length"]`.
+#[test]
+fn generic_type_application_literal_index_signatures_stay_clean() {
+    let diags = diagnostics(
+        r#"
+type DataFirst = (value: string, count: number) => void;
+type Box<T> = { value: T };
+
+function arity(value: Parameters<DataFirst>["length"]): Parameters<DataFirst>["length"] {
+    return value;
+}
+
+function unwrap<T>(value: Box<T>["value"]): T {
+    return value;
+}
+"#,
+    );
+    assert_eq!(
+        count(&diags, TS4105),
+        0,
+        "generic type applications with public literal indexes must not trigger TS4105; got {diags:?}"
+    );
+}
