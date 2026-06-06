@@ -649,3 +649,181 @@ fn test_union_new_all_fail_requires_all_member_success() {
         "string arg where member1 fails should fail the union. Got: {result:?}"
     );
 }
+
+#[test]
+fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let a_param = TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let b_param = TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let c_param = TypeParamInfo {
+        name: interner.intern_string("C"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let a_type = interner.type_param(a_param);
+    let b_type = interner.type_param(b_param);
+    let c_type = interner.type_param(c_param);
+
+    let first_step = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("input")),
+            type_id: a_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: b_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let second_step = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("middle")),
+            type_id: b_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: c_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let piped_return = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: a_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: c_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let pipe = interner.function(FunctionShape {
+        type_params: vec![a_param, b_param, c_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("left")),
+                type_id: first_step,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("right")),
+                type_id: second_step,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: piped_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let x_param = TypeParamInfo {
+        name: interner.intern_string("X"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let y_param = TypeParamInfo {
+        name: interner.intern_string("Y"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let x_type = interner.type_param(x_param);
+    let y_type = interner.type_param(y_param);
+    let list = interner.function(FunctionShape {
+        type_params: vec![x_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("item")),
+            type_id: x_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: interner.array(x_type),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let wrap = interner.function(FunctionShape {
+        type_params: vec![y_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("entry")),
+            type_id: y_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: interner.array(y_type),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(pipe, &[list, wrap]);
+    let CallResult::Success(return_type) = result else {
+        panic!("expected higher-order generic composition to succeed, got {result:?}");
+    };
+    let Some(TypeData::Function(shape_id)) = interner.lookup(return_type) else {
+        panic!("expected composed return to be a function, got {:?}", interner.lookup(return_type));
+    };
+    let shape = interner.function_shape(shape_id);
+    assert_eq!(
+        shape.type_params.len(),
+        1,
+        "tsc re-generalizes the composed function instead of collapsing it to unknown"
+    );
+    let hoisted = shape.type_params[0].name;
+    let Some(TypeData::TypeParameter(param_info)) = interner.lookup(shape.params[0].type_id) else {
+        panic!(
+            "expected composed parameter to be the hoisted type parameter, got {:?}",
+            interner.lookup(shape.params[0].type_id)
+        );
+    };
+    assert_eq!(param_info.name, hoisted);
+    let Some(TypeData::Array(outer)) = interner.lookup(shape.return_type) else {
+        panic!(
+            "expected composed return to be an array, got {:?}",
+            interner.lookup(shape.return_type)
+        );
+    };
+    let Some(TypeData::Array(inner)) = interner.lookup(outer) else {
+        panic!(
+            "expected composed return to be a nested array, got {:?}",
+            interner.lookup(outer)
+        );
+    };
+    let Some(TypeData::TypeParameter(return_info)) = interner.lookup(inner) else {
+        panic!(
+            "expected nested array element to be the hoisted type parameter, got {:?}",
+            interner.lookup(inner)
+        );
+    };
+    assert_eq!(return_info.name, hoisted);
+}

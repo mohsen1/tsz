@@ -45,7 +45,10 @@ pub(crate) struct ParserCheckpoint {
     suppress_object_literal_comma_once: bool,
     abort_object_literal_recovery_once: bool,
     recovered_template_literal_property_in_object: bool,
+    recovered_object_literal_dot_tail_once: bool,
     suppress_next_missing_close_paren_error_once: bool,
+    abort_function_signature_after_definite_assignment_tail_once: bool,
+    recovered_definite_assignment_empty_statement_close_brace_pos: Option<u32>,
     saw_arrow_parameter_recovery: bool,
 }
 
@@ -73,8 +76,13 @@ impl ParserState {
             abort_object_literal_recovery_once: self.abort_object_literal_recovery_once,
             recovered_template_literal_property_in_object: self
                 .recovered_template_literal_property_in_object,
+            recovered_object_literal_dot_tail_once: self.recovered_object_literal_dot_tail_once,
             suppress_next_missing_close_paren_error_once: self
                 .suppress_next_missing_close_paren_error_once,
+            abort_function_signature_after_definite_assignment_tail_once: self
+                .abort_function_signature_after_definite_assignment_tail_once,
+            recovered_definite_assignment_empty_statement_close_brace_pos: self
+                .recovered_definite_assignment_empty_statement_close_brace_pos,
             saw_arrow_parameter_recovery: self.saw_arrow_parameter_recovery,
         }
     }
@@ -99,7 +107,10 @@ impl ParserState {
             suppress_object_literal_comma_once,
             abort_object_literal_recovery_once,
             recovered_template_literal_property_in_object,
+            recovered_object_literal_dot_tail_once,
             suppress_next_missing_close_paren_error_once,
+            abort_function_signature_after_definite_assignment_tail_once,
+            recovered_definite_assignment_empty_statement_close_brace_pos,
             saw_arrow_parameter_recovery,
         } = checkpoint;
 
@@ -121,8 +132,13 @@ impl ParserState {
         self.abort_object_literal_recovery_once = abort_object_literal_recovery_once;
         self.recovered_template_literal_property_in_object =
             recovered_template_literal_property_in_object;
+        self.recovered_object_literal_dot_tail_once = recovered_object_literal_dot_tail_once;
         self.suppress_next_missing_close_paren_error_once =
             suppress_next_missing_close_paren_error_once;
+        self.abort_function_signature_after_definite_assignment_tail_once =
+            abort_function_signature_after_definite_assignment_tail_once;
+        self.recovered_definite_assignment_empty_statement_close_brace_pos =
+            recovered_definite_assignment_empty_statement_close_brace_pos;
         self.saw_arrow_parameter_recovery = saw_arrow_parameter_recovery;
     }
 

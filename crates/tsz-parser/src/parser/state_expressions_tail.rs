@@ -242,8 +242,8 @@ impl ParserState {
 
     // Returns true for statement-only keywords that should stop argument parsing
     // during recovery to avoid cascading diagnostics.
-    pub(crate) const fn is_argument_list_recovery_boundary(&self) -> bool {
-        matches!(
+    pub(crate) fn is_argument_list_recovery_boundary(&mut self) -> bool {
+        if matches!(
             self.token(),
             SyntaxKind::ReturnKeyword
                 | SyntaxKind::BreakKeyword
@@ -266,7 +266,32 @@ impl ParserState {
                 | SyntaxKind::DefaultKeyword
                 | SyntaxKind::ElseKeyword
                 | SyntaxKind::EndOfFileToken
-        )
+        ) {
+            return true;
+        }
+
+        self.is_recovered_const_for_of_header_start()
+    }
+
+    pub(crate) fn is_recovered_const_for_of_header_start(&mut self) -> bool {
+        let is_const_head = self.is_token(SyntaxKind::ConstKeyword)
+            || (self.is_token(SyntaxKind::Identifier)
+                && self.scanner.get_token_value_ref() == "const");
+        if !is_const_head {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        self.next_token();
+        let has_binding = self.is_identifier_or_keyword();
+        if has_binding {
+            self.next_token();
+        }
+        let is_recovered_for_of_header = has_binding && self.is_token(SyntaxKind::OfKeyword);
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        is_recovered_for_of_header
     }
 
     pub(crate) fn look_ahead_is_hashbang_after_at(&mut self) -> bool {

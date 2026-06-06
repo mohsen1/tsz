@@ -1,7 +1,7 @@
 use crate::context::CheckerOptions;
 use crate::test_utils::{
     check_computed_type_argument_resolution_counts, check_multi_file_with_global_index,
-    check_source_diagnostics,
+    check_source_diagnostics, diagnostic_count,
 };
 
 /// When multiple type references in the same alias body refer to the same
@@ -174,6 +174,50 @@ fn direct_conditional_true_branch_validation_skips_check_type_resolution() {
         "Direct conditional true-branch type-reference validation should only push \
          infer bindings and validate the branch; resolving the check type eagerly \
          evaluates recursive aliases such as ts-toolbelt Drop/Flatten."
+    );
+}
+
+#[test]
+fn recursive_alias_type_args_are_not_validated_before_cycle_guard() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    let type_reference_branch = checker_source
+        .find("k if k == syntax_kind_ext::TYPE_REFERENCE =>")
+        .expect("type-reference validation branch");
+    let branch_source = &checker_source[type_reference_branch..];
+    let recursive_guard = branch_source
+        .find("type_alias_reaches_resolving_alias")
+        .expect("recursive alias guard");
+    let argument_walk = branch_source
+        .find("for &arg_idx in &type_arguments.nodes")
+        .expect("type argument validation walk");
+    assert!(
+        recursive_guard < argument_walk,
+        "Recursive alias references should short-circuit before declaration-time \
+         type-argument validation; ts-toolbelt dispatch aliases recursively refer \
+         to themselves with expensive intermediate arguments."
+    );
+}
+
+#[test]
+fn recursive_alias_type_arg_skip_preserves_missing_name_diagnostics() {
+    let diags = check_source_diagnostics(
+        r#"
+type A<T extends string> = {0: A<number>}[0];
+type C<T> = {0: C<Missing>}[0];
+"#,
+    );
+
+    assert_eq!(
+        diagnostic_count(&diags, 2304),
+        1,
+        "Recursive alias type arguments should still report unresolved names; got: {diags:#?}"
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2344),
+        0,
+        "Recursive alias type arguments should not be constraint-validated during \
+         cycle detection; got: {diags:#?}"
     );
 }
 

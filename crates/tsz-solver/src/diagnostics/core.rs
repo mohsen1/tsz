@@ -260,6 +260,29 @@ pub enum SubtypeFailureReason {
         /// positional disambiguation line is warranted.
         multi_element: bool,
     },
+    /// Tuple element type mismatch inside the region that aligns to a target
+    /// **rest** element (a variadic slot), where the source occupies a *span* of
+    /// positions while the target is a single rest slot.
+    ///
+    /// Unlike [`Self::TupleElementTypeMismatch`] — a fixed element where the
+    /// source and target share one position — `tsc` here renders the plural
+    /// `Type at positions <start> through <end> in source is not compatible with
+    /// type at position <target> in target.` (TS2627), or the singular
+    /// `Type at position <start> in source ... position <target> in target.`
+    /// (TS2626) when the span is a single element, with the failing element
+    /// relation nested beneath. The target position is the rest slot index, which
+    /// generally differs from the source span.
+    TupleVariadicPositionMismatch {
+        /// First source element index aligned to the target rest slot.
+        source_start: usize,
+        /// Last source element index aligned to the target rest slot (inclusive).
+        source_end: usize,
+        /// The target rest slot's element index.
+        target_position: usize,
+        source_element: TypeId,
+        target_element: TypeId,
+        nested_reason: Option<Box<Self>>,
+    },
     /// Array element type mismatch.
     ///
     /// Like a single-element tuple, an array relation fails through its element
@@ -680,6 +703,7 @@ pub mod codes {
     pub use dc::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE as MISSING_INDEX_SIGNATURE;
     pub use dc::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE as TYPE_PARAM_INSTANTIATED_WITH_DIFFERENT_SUBTYPE;
     pub use dc::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET as TUPLE_ELEMENT_POSITION_MISMATCH;
+    pub use dc::TYPE_AT_POSITIONS_THROUGH_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_T as TUPLE_ELEMENT_POSITION_SPAN_MISMATCH;
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
     // Tuple arity mismatch family (TS2618–TS2621).
@@ -793,6 +817,7 @@ impl SubtypeFailureReason {
             | Self::ParameterTypeMismatch { .. }
             | Self::TupleElementMismatch { .. }
             | Self::TupleElementTypeMismatch { .. }
+            | Self::TupleVariadicPositionMismatch { .. }
             | Self::ArrayElementMismatch { .. }
             | Self::IndexSignatureMismatch { .. }
             | Self::MissingIndexSignature { .. }
@@ -815,6 +840,26 @@ impl SubtypeFailureReason {
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
             Self::ReadonlyToMutableAssignment { .. } => codes::READONLY_TO_MUTABLE,
+        }
+    }
+
+    /// Attach the failing inner element relation beneath `diag`: drill into the
+    /// structured `nested_reason` when present, otherwise emit the flat
+    /// `Type 'se' is not assignable to type 'te'.` leaf. Shared by the tuple
+    /// element, variadic-span, and array element arms, which all relate a single
+    /// inner element pair (`source_element`/`target_element`) the same way.
+    fn with_element_relation(
+        diag: PendingDiagnostic,
+        nested_reason: &Option<Box<Self>>,
+        source_element: TypeId,
+        target_element: TypeId,
+    ) -> PendingDiagnostic {
+        match nested_reason {
+            Some(nested) => diag.with_related(nested.to_diagnostic(source_element, target_element)),
+            None => diag.with_related(PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![source_element.into(), target_element.into()],
+            )),
         }
     }
 
@@ -1019,16 +1064,42 @@ impl SubtypeFailureReason {
                         vec![(*index).into(), (*index).into()],
                     ));
                 }
-                if let Some(nested) = nested_reason {
-                    diag =
-                        diag.with_related(nested.to_diagnostic(*source_element, *target_element));
+                Self::with_element_relation(diag, nested_reason, *source_element, *target_element)
+            }
+
+            Self::TupleVariadicPositionMismatch {
+                source_start,
+                source_end,
+                target_position,
+                source_element,
+                target_element,
+                nested_reason,
+            } => {
+                // A single-element span uses the singular TS2626 positional line;
+                // a multi-element span uses the plural TS2627 "positions X through
+                // Y" line. The target position is the rest slot, distinct from the
+                // source span.
+                let positional = if source_start == source_end {
+                    PendingDiagnostic::error(
+                        codes::TUPLE_ELEMENT_POSITION_MISMATCH,
+                        vec![(*source_start).into(), (*target_position).into()],
+                    )
                 } else {
-                    diag = diag.with_related(PendingDiagnostic::error(
-                        codes::TYPE_NOT_ASSIGNABLE,
-                        vec![(*source_element).into(), (*target_element).into()],
-                    ));
-                }
-                diag
+                    PendingDiagnostic::error(
+                        codes::TUPLE_ELEMENT_POSITION_SPAN_MISMATCH,
+                        vec![
+                            (*source_start).into(),
+                            (*source_end).into(),
+                            (*target_position).into(),
+                        ],
+                    )
+                };
+                let diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+                .with_related(positional);
+                Self::with_element_relation(diag, nested_reason, *source_element, *target_element)
             }
 
             Self::ArrayElementMismatch {
@@ -1036,20 +1107,11 @@ impl SubtypeFailureReason {
                 target_element,
                 nested_reason,
             } => {
-                let mut diag = PendingDiagnostic::error(
+                let diag = PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
                     vec![source.into(), target.into()],
                 );
-                if let Some(nested) = nested_reason {
-                    diag =
-                        diag.with_related(nested.to_diagnostic(*source_element, *target_element));
-                } else {
-                    diag = diag.with_related(PendingDiagnostic::error(
-                        codes::TYPE_NOT_ASSIGNABLE,
-                        vec![(*source_element).into(), (*target_element).into()],
-                    ));
-                }
-                diag
+                Self::with_element_relation(diag, nested_reason, *source_element, *target_element)
             }
 
             Self::IndexSignatureMismatch {

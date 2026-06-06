@@ -785,12 +785,16 @@ impl<'a> Printer<'a> {
                 let recovery_tail = if i + 1 < emitted_properties.len() {
                     self.object_literal_shorthand_continuation_tail(prop, emitted_properties[i + 1])
                 } else {
-                    None
+                    self.object_literal_last_shorthand_continuation_tail(prop, node)
                 };
                 let unit_end_index = if let Some(tail) = recovery_tail {
                     self.write(", ");
                     self.write(&tail);
-                    i + 1
+                    if i + 1 < emitted_properties.len() {
+                        i + 1
+                    } else {
+                        i
+                    }
                 } else {
                     i
                 };

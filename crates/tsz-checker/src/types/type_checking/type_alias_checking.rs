@@ -1372,11 +1372,6 @@ impl<'a> CheckerState<'a> {
                             type_ref.type_arguments.as_ref(),
                         );
                     if !is_bare_scoped_type_parameter {
-                        if let Some(type_arguments) = &type_ref.type_arguments {
-                            for &arg_idx in &type_arguments.nodes {
-                                check_child_type_node!(self, arg_idx);
-                            }
-                        }
                         if let Some(sym_id) = self
                             .resolve_type_symbol_for_lowering(type_ref.type_name)
                             .map(tsz_binder::SymbolId)
@@ -1385,7 +1380,33 @@ impl<'a> CheckerState<'a> {
                         {
                             return;
                         }
-                        if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
+                        let explicit_validation_done =
+                            self.check_explicit_type_reference_for_alias_body_validation(node_idx);
+                        let type_arguments_checked_by_validation = explicit_validation_done
+                            && type_ref
+                                .type_arguments
+                                .as_ref()
+                                .is_some_and(|type_arguments| {
+                                    type_arguments.nodes.iter().all(|arg_idx| {
+                                        self.ctx
+                                            .type_reference_validation_caches
+                                            .type_node_validation
+                                            .contains(&(
+                                                arg_idx.0,
+                                                child_nested_in_type_literal,
+                                                scope_key,
+                                                active_alias_key,
+                                            ))
+                                    })
+                                });
+                        if !type_arguments_checked_by_validation
+                            && let Some(type_arguments) = &type_ref.type_arguments
+                        {
+                            for &arg_idx in &type_arguments.nodes {
+                                check_child_type_node!(self, arg_idx);
+                            }
+                        }
+                        if !explicit_validation_done {
                             let _ = if nested_in_type_literal {
                                 self.get_type_from_type_node_in_type_literal(node_idx)
                             } else {

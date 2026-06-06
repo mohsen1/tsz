@@ -38,7 +38,17 @@ withTempDir((dir) => {
     filter: "project|single",
     measurement_profile: {
       mode: "release-pgo",
+      tsz_binary_source: "bench-dist",
       generated_at: "2026-05-20T00:00:00.000Z",
+      profile_guided_optimization: {
+        requested: true,
+        required: true,
+        optimized: true,
+        profile_fingerprint: "profile-abc123",
+        training_fingerprint: "training-def456",
+        training_input_count: 12,
+        training_failure_count: 0,
+      },
     },
     results: [
       {
@@ -176,6 +186,7 @@ withTempDir((dir) => {
   assert.equal(report.totals.green_tsgo_winners_with_attribution, 1);
   assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
+  assert.match(result.stdout, /2x target gaps with attribution commands: 1\/3/);
   assert.deepEqual(report.two_x_target, {
     tsz_speedup_target: 2,
     eligible_green_rows: 4,
@@ -185,6 +196,33 @@ withTempDir((dir) => {
     project_rows_below_target: 2,
     rows_with_attribution: 1,
     missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
+    rows_with_attribution_command: 1,
+    missing_attribution_plan: [
+      {
+        name: "vite-vanilla-ts-app",
+        target_gap_factor: report.target_gaps[1].target_gap_factor,
+        tsz_speedup_vs_tsgo: report.target_gaps[1].tsz_speedup_vs_tsgo,
+        semantic_owner_family: "generated Vite dependency graph",
+        owner: "Track 7/9 generated app lib/module identity",
+        issue: 7378,
+        url: "https://github.com/tsz-org/tsz/issues/7378",
+        attribution_command: report.target_gaps[1].loss_closure.attribution_command,
+        timing_command: report.target_gaps[1].loss_closure.command,
+        attribution_warning: "attribution artifact missing",
+      },
+      {
+        name: "single-file-loss",
+        target_gap_factor: report.target_gaps[2].target_gap_factor,
+        tsz_speedup_vs_tsgo: report.target_gaps[2].tsz_speedup_vs_tsgo,
+        semantic_owner_family: null,
+        owner: null,
+        issue: null,
+        url: null,
+        attribution_command: null,
+        timing_command: null,
+        attribution_warning: "attribution artifact missing",
+      },
+    ],
     worst_gap: report.target_gaps[0],
   });
   assert.deepEqual(
@@ -197,6 +235,14 @@ withTempDir((dir) => {
   assert.deepEqual(report.measurement_profile, {
     present: true,
     mode: "release-pgo",
+    tsz_binary_source: "bench-dist",
+    pgo_requested: true,
+    pgo_required: true,
+    pgo_optimized: true,
+    profile_fingerprint: "profile-abc123",
+    training_fingerprint: "training-def456",
+    training_input_count: 12,
+    training_failure_count: 0,
     warning: null,
   });
   assert.deepEqual(report.duplicate_rows, []);
@@ -257,6 +303,38 @@ withTempDir((dir) => {
   const importedReport = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
   assert.equal(importedReport.totals.green_tsgo_winners, 3);
   assert.equal(importedReport.worst.name, "ts-toolbelt-project");
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    measurement_profile: {
+      mode: "release-pgo",
+      tsz_binary_source: "bench-dist",
+      profile_guided_optimization: {
+        requested: true,
+        required: true,
+        optimized: false,
+      },
+    },
+    results: [],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  assert.deepEqual(report.measurement_profile, {
+    present: true,
+    mode: "release-pgo",
+    tsz_binary_source: "bench-dist",
+    pgo_requested: true,
+    pgo_required: true,
+    pgo_optimized: false,
+    profile_fingerprint: null,
+    training_fingerprint: null,
+    training_input_count: null,
+    training_failure_count: null,
+    warning: "release-pgo metadata missing pgo optimized flag, profile fingerprint, training fingerprint",
+  });
 });
 
 withTempDir((dir) => {
@@ -474,6 +552,14 @@ withTempDir((dir) => {
   assert.deepEqual(report.measurement_profile, {
     present: false,
     mode: null,
+    tsz_binary_source: null,
+    pgo_requested: null,
+    pgo_required: null,
+    pgo_optimized: null,
+    profile_fingerprint: null,
+    training_fingerprint: null,
+    training_input_count: null,
+    training_failure_count: null,
     warning: "measurement_profile missing",
   });
   // 6 rows excluded due to missing phase/exit metadata or artifact_missing
@@ -644,6 +730,14 @@ withTempDir((dir) => {
   assert.equal(report.two_x_target.rows_below_target, 2);
   assert.equal(report.two_x_target.rows_with_attribution, 1);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, ["vite-vanilla-ts-app"]);
+  assert.equal(report.two_x_target.rows_with_attribution_command, 1);
+  assert.deepEqual(report.two_x_target.missing_attribution_plan.map((row) => row.name), [
+    "vite-vanilla-ts-app",
+  ]);
+  assert.match(
+    report.two_x_target.missing_attribution_plan[0].attribution_command,
+    /nextjs-fresh-app|vite-vanilla-ts-app/,
+  );
   const tsEssentials = report.target_gaps.find((row) => row.name === "ts-essentials-project");
   assert.deepEqual(tsEssentials.attribution_status, {
     present: true,
