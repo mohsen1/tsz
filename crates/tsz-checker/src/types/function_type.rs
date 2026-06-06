@@ -3,6 +3,7 @@ mod contextual_arity;
 mod function_name_diagnostics;
 mod js_prototype;
 mod jsx_body_context;
+mod literal_context;
 
 use super::function_type_helpers::{
     ExpressionBodyReturnCheckCtx, FunctionBodyReturnTypeCtx, FunctionFinalReturnTypeCtx,
@@ -1889,31 +1890,12 @@ impl<'a> CheckerState<'a> {
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
                 if !skip_body_check {
-                    let body_request = if body_is_expression {
-                        TypingRequest::NONE.contextual_opt(effective_body_ctx)
-                    } else {
-                        TypingRequest::NONE
-                    };
-                    // A function body makes its own literal-widening decisions.
-                    // When this closure is being type-checked as an argument to a
-                    // generic call, the call's argument-collection scope leaves
-                    // `preserve_literal_types` set so that literal *arguments* can
-                    // seed type-parameter inference. That flag must not leak into
-                    // the body's own statements: a local `const s = { ok: false }`
-                    // widens to `{ ok: boolean }` by its declaration rules,
-                    // independent of the surrounding inference. Without clearing
-                    // it, the local keeps its narrow property literal (`false`)
-                    // and a later `s.ok = true` produces a false TS2322
-                    // ("'true' is not assignable to 'false'"). Return statements
-                    // re-establish their own preservation policy in
-                    // `check_return_statement`, so this only affects the body's
-                    // non-return computations. Mirrors the nested-function
-                    // clearing in `return_expression_type` and the accessor body
-                    // walk in `accessor_element.rs`.
-                    let saved_preserve_literals = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = false;
-                    self.check_statement_with_request(body, &body_request);
-                    self.ctx.preserve_literal_types = saved_preserve_literals;
+                    let body_request = self
+                        .function_body_statement_request(body_is_expression, effective_body_ctx);
+                    self.check_function_body_statement_with_own_literal_context(
+                        body,
+                        &body_request,
+                    );
                 }
                 if let Some(snap) = diag_snap {
                     snap.rollback(&mut self.ctx.diagnostic_state());
