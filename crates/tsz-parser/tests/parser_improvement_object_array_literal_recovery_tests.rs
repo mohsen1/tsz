@@ -83,6 +83,36 @@ fn test_object_literal_statement_recovery_after_missing_initializer() {
 }
 
 #[test]
+fn test_object_literal_method_without_body_reports_open_brace_expected() {
+    // Conformance: `objectLiteralMemberWithoutBlock1.ts`.
+    // Object literal methods are expressions, not method signatures, so a
+    // trailing semicolon after the parameter list should report the missing
+    // method body itself rather than falling through to member-list comma
+    // recovery.
+    let source = "var v = { foo(); }";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let semicolon_pos = source.find(';').expect("semicolon position") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == semicolon_pos
+                && diag.message == "'{' expected."),
+        "expected TS1005 `'{{' expected.` at the method semicolon, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == diagnostic_codes::EXPECTED
+                && diag.start == semicolon_pos
+                && diag.message == "',' expected.")),
+        "object method body recovery should not report `',' expected.` at the semicolon: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_object_literal_statement_recovery_after_trailing_comma() {
     let source = "var v = { a: 1,\nreturn;";
     let (parser, _root) = parse_source(source);

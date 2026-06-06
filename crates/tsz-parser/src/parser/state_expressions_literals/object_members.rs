@@ -935,10 +935,8 @@ impl ParserState {
                     .last()
                     .map_or(0, |diagnostic| diagnostic.start);
             }
-            if !self.is_token(SyntaxKind::SemicolonToken) {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
-            }
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             NodeIndex::NONE
         };
         if dot_tail_recovery {
