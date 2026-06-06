@@ -31,20 +31,11 @@
 #   row and sixteen previous accepted rows resolved after exact-head aggregate.
 # - PR #12660 run 27037607717 at synthetic merge 854e089920 found seven rows
 #   returned and two previous accepted rows resolved after exact-head aggregate.
-# - PR #12693 run 27054547274 at synthetic merge 8a13bc3a1a found
-#   jsxIntrinsicElementsTypeArgumentErrors.tsx returned and four previous
-#   accepted rows resolved after exact-head aggregate.
-# - PR #12693 run 27055641349 at head 2f557758ad found four returned rows
-#   (constraintWithIndexedAccess.ts, constructorWithIncompleteTypeAnnotation.ts,
-#   jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts,
-#   externalModules/circularReference.ts) and six previous accepted rows
-#   resolved after exact-head aggregate.
 # - PR #12702 run 27037509191 at exact head 591b1dee210f found six rows
 #   unlisted and eleven previous accepted rows resolved after the recovered
 #   generic-parameter-tail parser fix.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
-TypeScript/tests/cases/compiler/constraintWithIndexedAccess.ts
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
