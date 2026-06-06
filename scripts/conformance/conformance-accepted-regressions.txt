@@ -37,6 +37,10 @@
 # - PR #12748 run 27057787055 at synthetic merge bf33f5f1ef found four
 #   current-main rows still failing on exact-head aggregate after rebasing on
 #   current main.
+# - PR #12544 run 27062518424 at synthetic merge for head 87bacd18a4 found
+#   circularReference.ts resolved after rebasing on current main. It also found
+#   privateNamesAndIndexedAccess.ts as a new unlisted row; that row is tracked
+#   in an issue instead of growing this ledger.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
@@ -53,7 +57,6 @@ TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
-TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/importDefer/dynamicImportDeferInvalidStandalone.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
