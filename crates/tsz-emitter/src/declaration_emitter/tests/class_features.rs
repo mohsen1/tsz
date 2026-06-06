@@ -491,6 +491,34 @@ fn test_function_overloads_emit_only_signatures() {
     );
 }
 
+#[test]
+fn declaration_summary_precomputes_function_overload_suppression() {
+    let source = r#"
+    export function parse(input: any): any { return input; }
+    export const keep = 1;
+    "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut summary = tsz_binder::DeclarationSummary::default();
+    summary
+        .export_surface
+        .overloaded_functions
+        .insert("parse".to_string());
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.set_declaration_summary(summary);
+    let output = emitter.emit(root);
+
+    assert!(
+        !output.contains("export declare function parse(input: any): any;"),
+        "Expected precomputed overload summary to suppress implementation: {output}"
+    );
+    assert!(
+        output.contains("export declare const keep"),
+        "Expected adjacent export to prove declaration emit still ran: {output}"
+    );
+}
+
 // =============================================================================
 // 12. Interface Heritage
 // =============================================================================
