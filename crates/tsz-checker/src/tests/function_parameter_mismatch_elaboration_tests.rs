@@ -394,6 +394,147 @@ take({ m(x: string) {} });
     );
 }
 
+/// When the offending parameter is itself a callback whose own parameter is
+/// contravariantly incompatible, tsc keeps descending — one `Types of
+/// parameters` frame per callback nesting level — rather than stopping at the
+/// outer signature line. The single-callback case is the common callback-heavy
+/// shape (rxjs/kysely operators, event listeners).
+#[test]
+fn nested_callback_parameter_mismatch_elaborates_full_chain() {
+    let text = elaboration(
+        r#"
+let target: (cb: (x: string) => void) => void;
+let source: (cb: (x: number) => void) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(cb: (x: number) => void) => void' is not assignable to type '(cb: (x: string) => void) => void'.\n\
+         Types of parameters 'cb' and 'cb' are incompatible.\n\
+         Types of parameters 'x' and 'x' are incompatible.\n\
+         Type 'number' is not assignable to type 'string'.",
+        "Expected the full nested-callback parameter chain. Got: {text:?}"
+    );
+}
+
+/// Three callback nesting levels: tsc re-prints the current callback signature
+/// relation line before every second `Types of parameters` frame and flips the
+/// contravariant leaf orientation with the nesting parity. The renderer must
+/// reproduce that layout exactly.
+#[test]
+fn deeply_nested_callback_reprints_signature_and_flips_leaf_orientation() {
+    let text = elaboration(
+        r#"
+let target: (a: (b: (c: string) => void) => void) => void;
+let source: (a: (b: (c: number) => void) => void) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(a: (b: (c: number) => void) => void) => void' is not assignable to type '(a: (b: (c: string) => void) => void) => void'.\n\
+         Types of parameters 'a' and 'a' are incompatible.\n\
+         Types of parameters 'b' and 'b' are incompatible.\n\
+         Type '(c: number) => void' is not assignable to type '(c: string) => void'.\n\
+         Types of parameters 'c' and 'c' are incompatible.\n\
+         Type 'string' is not assignable to type 'number'.",
+        "Expected the signature reprint and flipped leaf orientation. Got: {text:?}"
+    );
+}
+
+/// The nesting rule is structural: renamed binders and a call-argument (TS2345)
+/// surface produce the same descending chain, proving it is not keyed on the
+/// `x`/`cb` spelling or the assignment surface.
+#[test]
+fn nested_callback_chain_is_structural_renamed_and_call_argument() {
+    let text = elaboration(
+        r#"
+declare function register(listener: (evt: (payload: string) => void) => void): void;
+declare const handler: (evt: (payload: number) => void) => void;
+register(handler);
+"#,
+        2345,
+    );
+    assert!(
+        text.contains("Types of parameters 'evt' and 'evt' are incompatible.")
+            && text.contains("Types of parameters 'payload' and 'payload' are incompatible.")
+            && text.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the renamed nested-callback chain under TS2345. Got: {text:?}"
+    );
+}
+
+/// A callback whose innermost parameter is an object leads the leaf with the
+/// object relation header `Type '{ … }' is not assignable to type '{ … }'.`
+/// before drilling into `Types of property 'p' …`, matching tsc.
+#[test]
+fn nested_callback_object_parameter_leaf_emits_object_header() {
+    let text = elaboration(
+        r#"
+let target: (cb: (o: { a: string }) => void) => void;
+let source: (cb: (o: { a: number }) => void) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(cb: (o: { a: number; }) => void) => void' is not assignable to type '(cb: (o: { a: string; }) => void) => void'.\n\
+         Types of parameters 'cb' and 'cb' are incompatible.\n\
+         Types of parameters 'o' and 'o' are incompatible.\n\
+         Type '{ a: number; }' is not assignable to type '{ a: string; }'.\n\
+         Types of property 'a' are incompatible.\n\
+         Type 'number' is not assignable to type 'string'.",
+        "Expected the object header before the property drill. Got: {text:?}"
+    );
+}
+
+/// A callback whose innermost parameter fails because a required property is
+/// missing self-heads with the `Property 'p' is missing …` summary directly
+/// under the parameter frame — no object header — matching tsc.
+#[test]
+fn nested_callback_missing_property_leaf_self_heads() {
+    let text = elaboration(
+        r#"
+let target: (cb: (o: { a: string; b: number }) => void) => void;
+let source: (cb: (o: { a: string }) => void) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(cb: (o: { a: string; }) => void) => void' is not assignable to type '(cb: (o: { a: string; b: number; }) => void) => void'.\n\
+         Types of parameters 'cb' and 'cb' are incompatible.\n\
+         Types of parameters 'o' and 'o' are incompatible.\n\
+         Property 'b' is missing in type '{ a: string; }' but required in type '{ a: string; b: number; }'.",
+        "Expected the missing-property summary to self-head. Got: {text:?}"
+    );
+}
+
+/// A nested callback that differs on its *return* type (not a parameter) is not
+/// part of the parameter-chain layout reproduced here; the renderer must leave
+/// the prior signature-only rendering intact rather than emit a partial chain
+/// (no dangling `Types of parameters` frame).
+#[test]
+fn nested_callback_inner_return_mismatch_does_not_emit_partial_chain() {
+    let text = elaboration(
+        r#"
+let target: (a: (b: () => string) => void) => void;
+let source: (a: (b: () => number) => void) => void;
+target = source;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type '(a: (b: () => number) => void) => void' is not assignable to type '(a: (b: () => string) => void) => void'.",
+        "A return-terminated callback chain must not leave a dangling parameter frame. Got: {text:?}"
+    );
+}
+
 #[test]
 fn class_method_with_fewer_params_implements_interface_with_more_params() {
     // TypeScript allows a class method to implement an interface method with
