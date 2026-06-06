@@ -393,7 +393,12 @@ impl ParserState {
                 SyntaxKind::CommaToken | SyntaxKind::QuestionToken
             );
         let mut expression = if started_with_assignment_operator {
-            self.error_expression_expected();
+            if self.should_report_error() {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+            }
             let operator_token = self.token() as u16;
             self.next_token();
             let mut right = self.parse_assignment_expression();

@@ -2,6 +2,7 @@
 
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
+use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
 
 /// Walk every node in the arena and return the operator tokens of binary
@@ -207,6 +208,72 @@ fn test_statement_starting_with_assignment_operator_keeps_missing_left_binary() 
             "expected `<missing> {op:?} rhs` recovery for source {source:?}, got {ops:?}"
         );
     }
+}
+
+#[test]
+fn test_statement_starting_with_assignment_operator_reports_statement_recovery() {
+    let cases = [
+        ("= replacement;\n", SyntaxKind::EqualsToken, "="),
+        ("^= replacement;\n", SyntaxKind::CaretEqualsToken, "^="),
+        (
+            "&&= fallback;\n",
+            SyntaxKind::AmpersandAmpersandEqualsToken,
+            "&&=",
+        ),
+        (
+            "??= defaultValue;\n",
+            SyntaxKind::QuestionQuestionEqualsToken,
+            "??=",
+        ),
+        (
+            "function bar() { } *= value;\n",
+            SyntaxKind::AsteriskEqualsToken,
+            "*=",
+        ),
+    ];
+
+    for (source, op, op_text) in cases {
+        let (parser, _root) = parse_source(source);
+        let diagnostics = parser.get_diagnostics();
+        let operator_pos = source.find(op_text).expect("source contains operator") as u32;
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                    && diag.start == operator_pos
+            }),
+            "expected TS1128 at {op:?} for source {source:?}, got {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diag| diag.code != diagnostic_codes::EXPRESSION_EXPECTED
+                    || diag.start != operator_pos),
+            "statement-start assignment recovery should not report TS1109 at {op:?}; got {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn test_invalid_private_name_indexed_access_does_not_gain_assignment_statement_cascade() {
+    let source = r#"
+class C {
+    foo = 3;
+    #bar = 3;
+    constructor () {
+        const badForNow: C[#bar] = 3;
+    }
+}
+"#;
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "invalid private-name indexed access should not cascade into TS1128: {diagnostics:?}"
+    );
 }
 
 #[test]
