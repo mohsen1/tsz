@@ -1372,14 +1372,14 @@ REGEX_LINE_COUNT_CHECKS = [
         14,
     ),
     (
-        # Ratcheted from 3→1: two calls removed (bang-module and mixin-intersection
-        # decisions migrated to structured AST facts in #8406 / #8276 cycle).
-        # Remaining call: variable_decl.rs intersection-arm detection; issue #8276
-        # tracks migrating it to a structured declaration summary.
-        "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
+        # Broadens the previous direct-call guard to include sliced source-text
+        # recovery predicates such as `source_text[start..end].contains(...)`.
+        # The current baseline is pinned so each migration to structured emit
+        # facts can ratchet this count down in the same PR.
+        "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
-        re.compile(r"\bsource_text\.contains\s*\("),
-        1,
+        re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
+        6,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
