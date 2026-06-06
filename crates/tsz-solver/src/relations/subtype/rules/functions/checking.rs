@@ -32,6 +32,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_function_subtype_impl(source, target, allow_constructor_bivariance)
     }
 
+    /// True when any of `candidate_tp_ids` occurs *free* in `shape`'s parameter
+    /// or return positions.
+    ///
+    /// Used when relating a generic signature to a non-generic one to detect a
+    /// genuine type-parameter identity shared between them (from contextual
+    /// seeding). tsz interns `TypeParameter`s structurally by name, so a
+    /// same-named parameter *bound* by a nested generic signature in `shape`
+    /// (e.g. a method `call<T>(...)` on a parameter type) shares the candidate's
+    /// `TypeId` without sharing identity; restricting to *free* occurrences
+    /// avoids treating that coincidence as identity-sharing, which would
+    /// otherwise skip contextual instantiation and emit spurious
+    /// `TS2322`/`TS2345`/`TS2416`.
+    fn shape_free_type_params_overlap(
+        &self,
+        candidate_tp_ids: &[TypeId],
+        shape: &FunctionShape,
+    ) -> bool {
+        if candidate_tp_ids.is_empty() {
+            return false;
+        }
+        let free = crate::visitors::visitor_predicates::free_type_parameter_ids_in(
+            self.interner,
+            shape
+                .params
+                .iter()
+                .map(|p| p.type_id)
+                .chain(std::iter::once(shape.return_type)),
+        );
+        candidate_tp_ids.iter().any(|id| free.contains(id))
+    }
+
     fn check_function_subtype_impl(
         &mut self,
         source: &FunctionShape,
@@ -405,20 +436,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // the source's type parameter TypeIds. In this case, the source and target already share
             // the same type parameter identity — no erasure or inference is needed; just clear the
             // source type params so structural comparison proceeds with matching TypeIds.
+            //
+            // Identity here must be a *free* occurrence of the source parameter in
+            // the target. tsz interns `TypeParameter`s structurally by name, so an
+            // unrelated same-named parameter bound by a nested generic signature in
+            // the target (e.g. a method `$call<T>(...)` on the target's parameter
+            // type) shares the source `T`'s `TypeId` without sharing its identity.
+            // Counting those bound occurrences would wrongly skip instantiation and
+            // leave the source parameter free, producing spurious TS2322/TS2345
+            // (`'X' is not assignable to 'T'`). Restrict the check to free
+            // occurrences so only genuine contextual-seeding shares identity.
             let source_tp_ids: Vec<TypeId> = source_instantiated
                 .type_params
                 .iter()
                 .map(|tp| self.interner.type_param(*tp))
                 .collect();
-            let target_refs_source_params = target_instantiated.params.iter().any(|p| {
-                source_tp_ids.contains(&p.type_id)
-                    || source_tp_ids.iter().any(|&tp_id| {
-                        crate::visitor::collect_all_types(self.interner, p.type_id).contains(&tp_id)
-                    })
-            }) || source_tp_ids.iter().any(|&tp_id| {
-                crate::visitor::collect_all_types(self.interner, target_instantiated.return_type)
-                    .contains(&tp_id)
-            });
+            let target_refs_source_params =
+                self.shape_free_type_params_overlap(&source_tp_ids, &target_instantiated);
 
             if target_refs_source_params {
                 // Target references source's type params — they share identity.
@@ -458,6 +492,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // same TypeParam as in the contextual type `<A>(x: A) => A[]`).
         // In this case, treat the source as effectively generic with the same type params.
         // Otherwise, fall back to erasing target type params to constraints.
+        //
+        // As with the generic-source branch above, only a *free* occurrence of the
+        // target parameter in the source signifies shared identity. A same-named
+        // parameter bound by a nested generic signature inside the source shares the
+        // interned `TypeId` without sharing identity and must not be counted, or a
+        // concrete source member is spuriously rejected as a subtype of the
+        // universally quantified target (false TS2416/TS2430).
         if source_instantiated.type_params.is_empty() && !target_instantiated.type_params.is_empty()
         {
             let target_tp_ids: Vec<TypeId> = target_instantiated
@@ -465,15 +506,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .iter()
                 .map(|tp| self.interner.type_param(*tp))
                 .collect();
-            let source_refs_target_params = source_instantiated.params.iter().any(|p| {
-                target_tp_ids.contains(&p.type_id)
-                    || target_tp_ids.iter().any(|&tp_id| {
-                        crate::visitor::collect_all_types(self.interner, p.type_id).contains(&tp_id)
-                    })
-            }) || target_tp_ids.iter().any(|&tp_id| {
-                crate::visitor::collect_all_types(self.interner, source_instantiated.return_type)
-                    .contains(&tp_id)
-            });
+            let source_refs_target_params =
+                self.shape_free_type_params_overlap(&target_tp_ids, &source_instantiated);
 
             if source_refs_target_params {
                 if !self.erase_generics {
