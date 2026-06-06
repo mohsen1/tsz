@@ -5,7 +5,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::TypeGuard;
 use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
@@ -579,20 +578,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
 
-        let guard = if use_predicate_guard {
-            TypeGuard::Predicate {
-                type_id: Some(instance_type),
-                asserts: false,
-            }
-        } else {
-            TypeGuard::Instanceof(instance_type, false)
-        };
-
-        flow_query::narrow_with_guard(
+        flow_query::narrow_by_instanceof_target(
             self.interner,
             env_borrow.as_deref(),
             type_id,
-            &guard,
+            instance_type,
+            use_predicate_guard,
             is_true_branch,
         )
     }
