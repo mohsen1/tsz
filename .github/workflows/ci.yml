@@ -940,11 +940,29 @@ jobs:
           compression-level: 1
 
   unit:
-    # Required unit context. Keep this on the Cloud Build private pool: direct
-    # Cloud Run unit still OOMs while linking checker integration test targets
-    # even with one test thread and single-threaded lld. The remaining compiler
-    # shards run on the Cloud Run runner fleet.
+    # Required unit context. Run this directly on the Cloud Run runner fleet;
+    # checker integration tests are split out below because their binaries can
+    # exceed the 32 GiB linker budget.
     name: unit
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run unit suite on Cloud Run runner
+        run: scripts/ci/github-suite.sh unit
+
+  unit-checker-integration:
+    # Heavy exception to the Cloud Run default. Individual checker integration
+    # test binaries can still exceed the 32 GiB Cloud Run linker budget, so
+    # keep only this linker-heavy slice on the larger Cloud Build pool.
+    name: unit-checker-integration
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
@@ -953,27 +971,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Submit required unit suite to Cloud Build pool
-        # `gcloud builds submit` tars the working directory, uploads it to the
-        # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
-        # private-pool build. Keep polling coarse enough that concurrent PR
-        # unit jobs do not exhaust Cloud Build get-request quota.
+      - name: Submit checker integration suite to Cloud Build pool
         run: |
           set -euo pipefail
           timeout 25m gcloud builds submit \
             --project=tsz-ci \
             --region=us-central1 \
             --polling-interval=10 \
-            --config=scripts/cloudbuild/cloudbuild-unit.yaml \
+            --config=scripts/cloudbuild/cloudbuild-checker-integration.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             .
 
   unit-cloudbuild:
     # Compatibility status for dashboards and branch-protection rules that may
     # still look for the old experimental Cloud Build context. The required
-    # Cloud Build unit suite is enforced by the `unit` job above.
+    # Cloud Build checker integration slice is enforced by the required
+    # `unit-checker-integration` job above.
     name: unit-cloudbuild
-    needs: [gate, unit]
+    needs: [gate, unit-checker-integration]
     if: always() && needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -983,14 +998,14 @@ jobs:
           fetch-depth: 1
       - name: Report promoted unit path
         env:
-          UNIT_RESULT: ${{ needs.unit.result }}
+          UNIT_RESULT: ${{ needs.unit-checker-integration.result }}
         run: |
           set -euo pipefail
           if [[ "$UNIT_RESULT" != "success" ]]; then
-            echo "Required Cloud Build unit job did not pass: ${UNIT_RESULT}"
+            echo "Required Cloud Build checker integration job did not pass: ${UNIT_RESULT}"
             exit 1
           fi
-          echo "Cloud Build unit suite is enforced by the required unit job."
+          echo "Cloud Build checker integration suite is enforced by the required unit-checker-integration job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -1287,6 +1302,7 @@ jobs:
       - wasm-web
       - node-harness-prep
       - unit
+      - unit-checker-integration
       - conformance-aggregate
       - conformance-snapshot-gate
       - emit
@@ -1406,7 +1422,7 @@ jobs:
 
           required = {"lint", "cargo-shear", "cargo-deny", "project-row-drift"}
           if compiler_checks_required:
-              required.update({"dist-binaries", "unit"})
+              required.update({"dist-binaries", "unit", "unit-checker-integration"})
           else:
               print("Compiler checks are non-required for this non-compiler diff.")
 
