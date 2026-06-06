@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 // Per-thread path-existence caches for module-resolution hot loops.
 //
@@ -79,34 +79,21 @@ pub(crate) fn clear_path_existence_caches() {
 /// container-relative specifiers can all introduce stray `./` or `../` segments
 /// that survive `Path::join` (which preserves the literal components).
 ///
-/// Leading `..` segments are preserved when there is nothing to pop, mirroring
-/// `path.Normalize` in tsc. An earlier copy in `relative_resolution.rs`
-/// silently popped past the root; this consolidation removes that divergence.
+/// The collapse rules (clamp `..` at the filesystem root / drive prefix,
+/// preserve leading `..` on relative paths) are owned by
+/// [`tsz_common::module_resolution::path_identity::normalize_segments`] so the
+/// resolver's textual identity and the CLI driver's canonical file identity
+/// cannot drift. A `..` that escapes the root previously survived here as a
+/// `/../foo` spelling while the driver clamped it to `/foo`, minting two
+/// distinct module identities for one file.
 ///
 /// Returns `Cow::Borrowed` when the input is already canonical (the common
 /// case on the hot probe path), avoiding the per-call `PathBuf` allocation.
 pub(crate) fn normalize_path_segments(path: &Path) -> Cow<'_, Path> {
-    if !path
-        .components()
-        .any(|c| matches!(c, Component::CurDir | Component::ParentDir))
-    {
+    if tsz_common::module_resolution::path_identity::is_already_normalized(path) {
         return Cow::Borrowed(path);
     }
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push("..");
-                }
-            }
-            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    Cow::Owned(normalized)
+    Cow::Owned(tsz_common::module_resolution::path_identity::normalize_segments(path))
 }
 
 pub(crate) fn parse_package_specifier(specifier: &str) -> (String, Option<String>) {

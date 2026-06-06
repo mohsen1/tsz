@@ -358,6 +358,19 @@ impl<'a> CheckerState<'a> {
                 };
 
             let all_binders = self.ctx.all_binders.as_ref();
+            // Forward `export *` barrel direction (computed once, loop-invariant):
+            // the module we are resolving the interface from (`source_idx`)
+            // re-exports `interface_name`, and the chain lands on its declaring
+            // file. When that declaring file is an augmentation target, the
+            // augmentation must merge even though it was reached through the
+            // barrel (e.g. `./c` does `export * from './a'` and the augmentation
+            // targets `./a`). `resolve_export_in_file` follows wildcard and named
+            // re-export chains transitively, so multi-hop barrels are covered.
+            let source_export_decl_file = {
+                let mut visited = rustc_hash::FxHashSet::default();
+                self.resolve_export_in_file(source_idx, interface_name, &mut visited)
+                    .map(|(_sym_id, decl_file_idx)| decl_file_idx)
+            };
             for (aug_key, indexed_augs) in &aug_entries {
                 if candidates.iter().any(|c| c == aug_key) {
                     continue;
@@ -423,8 +436,15 @@ impl<'a> CheckerState<'a> {
                                     ) == Some(source_idx)
                             })
                     });
+                // Forward `export *` barrel direction (see `source_export_decl_file`
+                // above): the interface reached through `source_idx` declares in the
+                // augmentation target. Excludes the self case (`source_idx ==
+                // aug_target_idx`), which the direct candidate path already handles.
+                let source_reexports_aug_target =
+                    source_idx != aug_target_idx && source_export_decl_file == Some(aug_target_idx);
                 let reexports_from_source = wildcard_reexports_from_source
                     || named_reexports_from_source
+                    || source_reexports_aug_target
                     || self
                         .resolve_cross_file_export_from_file(
                             aug_key,

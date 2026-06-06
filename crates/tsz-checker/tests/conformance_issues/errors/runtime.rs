@@ -597,6 +597,12 @@ type TypeGeneric3<
     assert!(
         ts2536
             .iter()
+            .all(|message| !message.contains("Type 'F' cannot be used to index type '{ Boat:")),
+        "TS2536 should not expand the direct object alias in the indexed-access display. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
             .any(|message| message
                 .contains("Type 'F' cannot be used to index type 'DataFetchFns[F]'")),
         "Expected TS2536 to preserve nested raw object surfaces for direct indexed access. Actual diagnostics: {diagnostics:?}"

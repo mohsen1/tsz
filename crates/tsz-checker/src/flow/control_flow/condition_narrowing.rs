@@ -931,7 +931,8 @@ impl<'a> FlowAnalyzer<'a> {
                 // `{flag: "hello"; data: string} | {flag: ""; data: number}`,
                 // narrow x based on whether `flag` is truthy or falsy.
                 if let Some(property_path) = self.discriminant_property(condition_idx, target) {
-                    let narrowed = narrowing.narrow_by_property_truthiness(
+                    let narrowed = flow_query::narrow_by_property_truthiness_in_context(
+                        &narrowing,
                         type_id,
                         &property_path,
                         is_true_branch,
@@ -980,7 +981,8 @@ impl<'a> FlowAnalyzer<'a> {
                         self.binder.resolve_identifier(self.arena, condition_ref)
                     && !self.is_alias_reference_mutated(alias_sym_id, target, antecedent_id)
                 {
-                    let narrowed = narrowing.narrow_by_property_truthiness(
+                    let narrowed = flow_query::narrow_by_property_truthiness_in_context(
+                        &narrowing,
                         type_id,
                         &prop_names,
                         is_true_branch,
