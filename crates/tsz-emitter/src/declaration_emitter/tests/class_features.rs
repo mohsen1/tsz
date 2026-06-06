@@ -499,11 +499,11 @@ fn declaration_summary_precomputes_function_overload_suppression() {
     "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let mut summary = tsz_binder::DeclarationSummary::default();
-    summary
-        .export_surface
+    let mut export_surface = tsz_binder::ExportSurface::default();
+    export_surface
         .overloaded_functions
         .insert("parse".to_string());
+    let summary = tsz_binder::DeclarationSummary::from_export_surface(export_surface);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.set_declaration_summary(summary);
