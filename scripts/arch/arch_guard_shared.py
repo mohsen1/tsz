@@ -1409,6 +1409,22 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        # The async ES5 lowering path still has one source-text fallback for
+        # recovered `yield` detection. Keep it visible so the future parser- or
+        # lowering-owned fact can ratchet this to zero in the same PR.
+        "Emitter boundary: async yield source-text fallback (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "transforms"
+            / "async_es5_ir_discovery.rs"
+        ],
+        re.compile(r"\bfn\s+node_text_contains_yield\s*\("),
+        1,
+    ),
+    (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
         [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
         re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
