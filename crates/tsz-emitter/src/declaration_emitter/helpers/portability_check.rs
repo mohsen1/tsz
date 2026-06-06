@@ -978,6 +978,7 @@ impl<'a> DeclarationEmitter<'a> {
             && collect.seen.insert(result.clone())
         {
             collect.results.push(result);
+            return;
         }
 
         if let Some(identifier) = arena.get_identifier(node) {
@@ -1473,6 +1474,9 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(root_expr) = self.skip_parenthesized_expression(expr_idx) else {
             return false;
         };
+        if self.tagged_template_has_nameable_surface_type(root_expr) {
+            return false;
+        }
         let mut current = root_expr;
         loop {
             let Some(node) = self.arena.get(current) else {
@@ -1509,6 +1513,28 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
         self.emit_non_portable_symbol_declaration_diagnostic(sym_id, decl_name, file, pos, length)
+    }
+
+    fn tagged_template_has_nameable_surface_type(&self, expr_idx: NodeIndex) -> bool {
+        if self
+            .arena
+            .get(expr_idx)
+            .is_none_or(|node| node.kind != syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION)
+        {
+            return false;
+        }
+
+        self.tagged_template_declared_return_type_text(expr_idx)
+            .or_else(|| self.preferred_expression_type_text(expr_idx))
+            .or_else(|| {
+                self.get_node_type(expr_idx)
+                    .map(|type_id| self.print_type_id(type_id))
+            })
+            .is_some_and(|type_text| {
+                self.type_text_is_directly_nameable_reference(&type_text)
+                    && (Self::type_text_starts_with_import_type(&type_text)
+                        || type_text.contains(['<', '.']))
+            })
     }
 
     fn type_text_identifier_is_mapped_key_import_member(type_text: &str, start: usize) -> bool {
