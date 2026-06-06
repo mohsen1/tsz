@@ -101,6 +101,10 @@ pub(crate) enum RelationKind {
     DiagnosticSourceNarrowing,
     /// Diagnostic overlap/comparability probes.
     DiagnosticOverlap,
+    /// Broad mapped index-signature display suppression probes.
+    BroadMappedIndexSignatureDisplay,
+    /// Mapped object-literal excess-property value classification probes.
+    MappedObjectLiteralExcessValue,
     /// Polymorphic `this` receiver/member compatibility probes for diagnostics.
     PolymorphicThisReceiver,
     /// Class extends index-signature value compatibility probes.
@@ -431,6 +435,21 @@ impl RelationRequest {
 
     pub(crate) const fn diagnostic_overlap(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::DiagnosticOverlap)
+    }
+
+    pub(crate) const fn broad_mapped_index_signature_display(
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::BroadMappedIndexSignatureDisplay,
+        )
+    }
+
+    pub(crate) const fn mapped_object_literal_excess_value(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::MappedObjectLiteralExcessValue)
     }
 
     pub(crate) const fn polymorphic_this_receiver(source: TypeId, target: TypeId) -> Self {
