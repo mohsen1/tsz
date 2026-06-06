@@ -149,6 +149,11 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
+  /id: metadata-active-suite[\s\S]+?if: github\.event_name == 'pull_request' && github\.event\.action == 'edited'[\s\S]+?actions\/workflows\/ci\.yml\/runs\?head_sha=\$\{PR_HEAD_SHA\}&event=pull_request[\s\S]+?\.status == "queued"[\s\S]+?\.status == "in_progress"[\s\S]+?\.id != \$current_run_id[\s\S]+?active_suite_found=true[\s\S]+?metadata CI will publish CI Light Summary[\s\S]+?METADATA_ACTIVE_SUITE_FOUND: \$\{\{ steps\.metadata-active-suite\.outputs\.active_suite_found \}\}[\s\S]+?PR metadata edited[\s\S]+?required_summary=false/,
+  "metadata-only edited runs should publish CI Light Summary while the exact-head real suite is active",
+);
+assert.match(
+  ciWorkflow,
   /accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"[\s\S]+?previous \{accepted_summary_label\}/,
   "metadata-only edited runs should report the accepted prior summary class when no mirror exists",
 );
