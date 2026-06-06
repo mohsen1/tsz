@@ -189,5 +189,15 @@ assert.match(
   /bench-results-project-winner-regressions\.md/,
   "merged benchmark artifact should include the project winner regression markdown report",
 );
+assert.match(
+  benchWorkflow,
+  /check-artifact-readiness\.mjs\s+\\\s*\n\s+--json\s+\\\s*\n\s+--require-project-timing-pairs=1\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"/,
+  "bench publish should reject artifacts with no successful project timing pairs before publishing latest.json",
+);
+assert.match(
+  benchWorkflow,
+  /bench-results-readiness\.json/,
+  "merged benchmark artifact should include the public publish readiness JSON report",
+);
 
 console.log("project winner regression report tests passed");

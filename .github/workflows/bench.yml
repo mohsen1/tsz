@@ -1408,6 +1408,16 @@ jobs:
           fi
           exit "$status"
 
+      - name: Check public benchmark project timings
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bench/check-artifact-readiness.mjs \
+            --json \
+            --require-project-timing-pairs=1 \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            > "$GITHUB_WORKSPACE/bench-results-readiness.json"
+
       - name: Upload merged benchmark artifact
         uses: actions/upload-artifact@v4
         with:
@@ -1417,6 +1427,7 @@ jobs:
             bench-results-tsgo-winners.json
             bench-results-project-winner-regressions.json
             bench-results-project-winner-regressions.md
+            bench-results-readiness.json
           retention-days: 30
           if-no-files-found: error
           compression-level: 1
