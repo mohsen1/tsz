@@ -595,10 +595,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// mapped type chains (ts-toolbelt, ts-essentials) can grow the stack
     /// dynamically instead of crashing even if the logical recursion guard
     /// has not yet tripped.
+    ///
+    /// The shared cross-operation [`crate::recursion::with_solver_frame`] breaker
+    /// additionally bounds the combined
+    /// `evaluate -> subtype -> instantiate -> evaluate` cycle whose interleaved
+    /// frames slip past every per-instance guard (issue #7574). When the budget
+    /// is exhausted we leave `type_id` opaque — the same graceful, non-`ERROR`
+    /// bail the cross-evaluator `MAX_GLOBAL_EVAL_DEPTH` guard uses — so an outer
+    /// evaluator can still make progress at a shallower depth.
     fn evaluate_guarded(&mut self, type_id: TypeId) -> TypeId {
-        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
-            self.evaluate_guarded_inner(type_id)
-        })
+        crate::recursion::with_solver_frame(|| self.evaluate_guarded_inner(type_id)).unwrap_or_else(
+            || {
+                self.silent_depth_bailed = true;
+                type_id
+            },
+        )
     }
 
     /// Interval for checking global evaluation fuel.
