@@ -127,3 +127,18 @@ fn span_contains_line_break_returns_false_for_invalid_spans() {
     assert!(!span_contains_line_break(s, 0, 100));
     assert!(!span_contains_line_break(s, 7, 10));
 }
+
+#[test]
+fn span_contains_byte_reports_requested_byte() {
+    let s = "let x = 1;\nlet y = 2";
+    assert!(span_contains_byte(s, 0, 10, b';'));
+    assert!(!span_contains_byte(s, 11, s.len(), b';'));
+}
+
+#[test]
+fn span_contains_byte_returns_false_for_invalid_spans() {
+    let s = "hello 🦀 world";
+    assert!(!span_contains_byte(s, 10, 6, b';'));
+    assert!(!span_contains_byte(s, 0, 100, b';'));
+    assert!(!span_contains_byte(s, 7, 10, b';'));
+}

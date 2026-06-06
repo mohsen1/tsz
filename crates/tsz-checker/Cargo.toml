@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "assertion_source_literal_display_tests"
 path = "tests/assertion_source_literal_display_tests.rs"
 [[test]]
+name = "return_context_identity_wrapper_literal_tests"
+path = "tests/return_context_identity_wrapper_literal_tests.rs"
+[[test]]
 name = "nested_mapped_optional_modifier_inline_application_tests"
 path = "tests/nested_mapped_optional_modifier_inline_application_tests.rs"
 [[test]]
@@ -406,6 +409,9 @@ path = "tests/recursive_typeof_param_display_tests.rs"
 [[test]]
 name = "recursive_value_call_return_tests"
 path = "tests/recursive_value_call_return_tests.rs"
+[[test]]
+name = "literal_source_widening_position_parity_tests"
+path = "tests/literal_source_widening_position_parity_tests.rs"
 [[test]]
 name = "interface_call_signature_typeof_param_tests"
 path = "tests/interface_call_signature_typeof_param_tests.rs"
