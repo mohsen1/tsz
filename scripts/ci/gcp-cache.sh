@@ -39,6 +39,25 @@ source scripts/ci/suite-metadata.sh
 CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:?_TSZ_CI_CACHE_BUCKET is required}"
 CACHE_BUCKET="${CACHE_BUCKET%/}"
 
+ensure_gcs_auth() {
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" && -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    local key_file="/tmp/sccache-gcs-key.json"
+    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+    chmod 600 "$key_file"
+    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+    echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+  fi
+
+  # Cloud Run runners can arrive with `gcloud auth` already configured. Make
+  # the bundled gsutil use that account instead of falling back to anonymous
+  # requests during early cache restore.
+  if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] && command -v gcloud >/dev/null 2>&1; then
+    if gcloud auth print-access-token >/dev/null 2>&1; then
+      gcloud config set pass_credentials_to_gsutil true >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
 cache_uri() {
   printf '%s/%s\n' "$CACHE_BUCKET" "$1"
 }
@@ -634,6 +653,8 @@ save_caches() {
 }
 
 main() {
+  ensure_gcs_auth
+
   case "${1:-}" in
     restore)
       restore_caches

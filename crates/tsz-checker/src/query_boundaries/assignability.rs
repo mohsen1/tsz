@@ -295,6 +295,22 @@ pub(crate) fn contextual_function_callable_union_members(
     callable_members
 }
 
+pub(crate) fn callable_pair_contains_type_parameters(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    fn is_callable_or_function(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        super::common::callable_shape_for_type(db, type_id).is_some()
+            || super::common::function_shape_for_type(db, type_id).is_some()
+    }
+
+    is_callable_or_function(db, source)
+        && is_callable_or_function(db, target)
+        && super::common::contains_type_parameters(db, source)
+        && super::common::contains_type_parameters(db, target)
+}
+
 /// Return true when the source is an intersection that directly contains the
 /// target as one of its constituents.
 ///

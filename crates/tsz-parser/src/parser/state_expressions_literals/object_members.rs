@@ -881,6 +881,8 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
+        let dot_tail_recovery = self.recovered_object_literal_dot_tail_once;
+        let dot_tail_diag_len = self.parse_diagnostics.len();
         let mut body_already_consumed_by_recovery = false;
         let parameters = if has_open_paren {
             let parameters = self.parse_parameter_list();
@@ -926,11 +928,22 @@ impl ParserState {
             self.context_flags = saved_flags;
             return NodeIndex::NONE;
         } else {
-            // tsc emits TS1005 "'{' expected." when an object method body is missing
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            if dot_tail_recovery && self.is_token(SyntaxKind::SemicolonToken) {
+                self.parse_diagnostics.truncate(dot_tail_diag_len);
+                self.last_error_pos = self
+                    .parse_diagnostics
+                    .last()
+                    .map_or(0, |diagnostic| diagnostic.start);
+            }
+            if !self.is_token(SyntaxKind::SemicolonToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            }
             NodeIndex::NONE
         };
+        if dot_tail_recovery {
+            self.recovered_object_literal_dot_tail_once = false;
+        }
         self.pop_label_scope();
 
         // Restore context flags after parsing body.
