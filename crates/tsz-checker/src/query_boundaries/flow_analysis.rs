@@ -434,6 +434,19 @@ pub(crate) fn narrow_excluding_types_in_context(
     narrowing.narrow_excluding_types(type_id, excluded_types)
 }
 
+/// Exclude one known value from a flow type using the caller's active flow
+/// narrowing context.
+///
+/// The checker owns discovering the equality/nullish fact. The solver owns the
+/// semantic set subtraction.
+pub(crate) fn narrow_excluding_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    excluded_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_excluding_type(type_id, excluded_type)
+}
+
 /// Exclude known values from a discriminant-property flow fact using the
 /// caller's active flow narrowing context.
 ///
@@ -448,6 +461,112 @@ pub(crate) fn narrow_by_excluding_discriminant_values_in_context(
     narrowing.narrow_by_excluding_discriminant_values(type_id, property_path, excluded_types)
 }
 
+/// Narrow a flow type by a discriminant equality fact using the caller's active
+/// flow narrowing context.
+///
+/// The checker owns property-path discovery and branch selection. The solver
+/// owns filtering by discriminant value, including constraint and intersection
+/// handling.
+pub(crate) fn narrow_by_discriminant_for_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    literal_type: TypeId,
+    is_true_branch: bool,
+) -> TypeId {
+    narrowing.narrow_by_discriminant_for_type(type_id, property_path, literal_type, is_true_branch)
+}
+
+/// Narrow a union-like assertion target by a discriminant equality fact.
+///
+/// Assertion handling owns recognizing the predicate target. The solver owns
+/// the discriminant filter itself.
+pub(crate) fn narrow_by_discriminant_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    property_path: &[tsz_common::interner::Atom],
+    literal_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_by_discriminant(type_id, property_path, literal_type)
+}
+
+/// Keep only values compatible with a literal equality fact.
+pub(crate) fn narrow_to_type_in_context(
+    narrowing: &NarrowingContext<'_>,
+    type_id: TypeId,
+    literal_type: TypeId,
+) -> TypeId {
+    narrowing.narrow_to_type(type_id, literal_type)
+}
+
+/// Return whether a literal comparison target is assignable to the flow type.
+pub(crate) fn literal_assignable_to_in_context(
+    narrowing: &NarrowingContext<'_>,
+    literal_type: TypeId,
+    type_id: TypeId,
+) -> bool {
+    narrowing.literal_assignable_to(literal_type, type_id)
+}
+
+/// Apply a function type-predicate fact to a flow type.
+///
+/// The checker owns resolving the called signature, target expression, and
+/// branch sense. The boundary owns constructing the solver predicate payload
+/// and applying it through the semantic narrowing engine.
+pub(crate) fn narrow_type_predicate(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    predicate_type: TypeId,
+    asserts: bool,
+    is_true_branch: bool,
+) -> TypeId {
+    narrow_with_guard(
+        db,
+        env,
+        type_id,
+        &TypeGuard::Predicate {
+            type_id: Some(predicate_type),
+            asserts,
+        },
+        asserts || is_true_branch,
+    )
+}
+
+/// Apply an assertion predicate without an explicit type (`asserts value`).
+///
+/// The checker owns recognizing that the asserted value is known true after the
+/// call. The solver owns truthiness narrowing beyond plain nullish removal.
+pub(crate) fn narrow_asserts_truthy(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+) -> TypeId {
+    narrow_with_guard(db, env, type_id, &TypeGuard::Truthy, true)
+}
+
+/// Apply a receiver-property predicate to the property flow type.
+///
+/// The checker owns identifying the receiver property and extracting its
+/// contextual predicate type. The solver owns the predicate guard semantics for
+/// the property value.
+pub(crate) fn narrow_property_type_by_predicate(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    predicate_property_type: TypeId,
+) -> TypeId {
+    narrow_inferred_predicate_guard(
+        db,
+        env,
+        type_id,
+        &TypeGuard::Predicate {
+            type_id: Some(predicate_property_type),
+            asserts: false,
+        },
+    )
+}
+
 /// Narrow a value to the object-like branch of an `instanceof`-style check.
 pub(crate) fn narrow_to_objectish(
     db: &dyn QueryDatabase,
@@ -459,6 +578,32 @@ pub(crate) fn narrow_to_objectish(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_to_objectish(type_id)
+}
+
+/// Apply an `instanceof` target or `[Symbol.hasInstance]` predicate result.
+///
+/// The checker owns matching the binary expression and resolving the constructor
+/// to an instance target. This boundary owns the solver guard payload choice so
+/// `Symbol.hasInstance` predicates and normal `instanceof` guards stay behind
+/// the flow query boundary.
+pub(crate) fn narrow_by_instanceof_target(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    instance_type: TypeId,
+    use_predicate_guard: bool,
+    is_true_branch: bool,
+) -> TypeId {
+    let guard = if use_predicate_guard {
+        TypeGuard::Predicate {
+            type_id: Some(instance_type),
+            asserts: false,
+        }
+    } else {
+        TypeGuard::Instanceof(instance_type, false)
+    };
+
+    narrow_with_guard(db, env, type_id, &guard, is_true_branch)
 }
 
 /// Apply an inferred predicate guard to a parameter type.

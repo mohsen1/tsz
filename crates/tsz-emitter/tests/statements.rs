@@ -1466,6 +1466,22 @@ fn recovered_typeof_member_type_tail_emits_as_statement() {
 }
 
 #[test]
+fn recovered_typeof_member_tail_emits_from_parser_recorded_span() {
+    let source = r#"class C {
+    foo() {
+        const x: "".typeof(/* keep */ this.foo);
+    }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("typeof (/* keep */ this.foo);"),
+        "Recovered `.typeof(...)` should reproduce the parser-recorded argument span.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn typeof_text_inside_string_literal_type_is_erased() {
     let source = r#"var a: ".typeof(foo)";"#;
 

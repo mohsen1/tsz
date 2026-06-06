@@ -80,32 +80,9 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn return_context_type_head(&self, type_id: TypeId) -> Option<String> {
-        let display = self.format_type(type_id);
-        let trimmed = display.trim();
-        if !trimmed.contains('<') {
-            return None;
-        }
-
-        Some(
-            trimmed
-                .split('<')
-                .next()
-                .unwrap_or(trimmed)
-                .trim()
-                .to_string(),
-        )
-    }
-
     fn return_context_types_share_outer_structure(&mut self, left: TypeId, right: TypeId) -> bool {
-        let left_application = common::application_info(self.ctx.types, left).or_else(|| {
-            let evaluated = self.evaluate_for_return_context_substitution(left);
-            (evaluated != left).then(|| common::application_info(self.ctx.types, evaluated))?
-        });
-        let right_application = common::application_info(self.ctx.types, right).or_else(|| {
-            let evaluated = self.evaluate_for_return_context_substitution(right);
-            (evaluated != right).then(|| common::application_info(self.ctx.types, evaluated))?
-        });
+        let left_application = self.return_context_application_info(left);
+        let right_application = self.return_context_application_info(right);
         if let (Some((left_base, _)), Some((right_base, _))) = (left_application, right_application)
             && self.return_context_application_bases_match(left_base, right_base)
         {
@@ -376,14 +353,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let source_application = common::application_info(self.ctx.types, source).or_else(|| {
-            let evaluated = self.evaluate_for_return_context_substitution(source);
-            (evaluated != source).then(|| common::application_info(self.ctx.types, evaluated))?
-        });
-        let target_application = common::application_info(self.ctx.types, target).or_else(|| {
-            let evaluated = self.evaluate_for_return_context_substitution(target);
-            (evaluated != target).then(|| common::application_info(self.ctx.types, evaluated))?
-        });
+        let source_application = self.return_context_application_info(source);
+        let target_application = self.return_context_application_info(target);
 
         // Handle Application types like Readonly<T>, Promise<T>, etc.
         // When source is Application(Base, [args...]) and target is NOT
@@ -400,10 +371,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|(target_base, target_args)| {
                         self.return_context_application_bases_match(*source_base, *target_base)
                             && target_args.len() == source_args.len()
-                    })
-                    || (target_application.is_none()
-                        && self.return_context_type_head(source)
-                            == self.return_context_type_head(target));
+                    });
             if !target_same_base {
                 // When the source Application evaluates to a callable type
                 // (e.g., Mapper<T, U> = (x: T) => U) and the target is also

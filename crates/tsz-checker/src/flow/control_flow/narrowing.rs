@@ -5,7 +5,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::TypeGuard;
 use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
@@ -454,19 +453,16 @@ impl<'a> FlowAnalyzer<'a> {
         let env = env_borrow.as_deref();
 
         if let Some(predicate_type) = predicate.type_id {
-            // Route through TypeGuard::Predicate for proper intersection semantics.
+            // Route through flow query predicate narrowing for proper intersection semantics.
             // When source and target don't overlap (e.g. successive type guards
             // hasLegs then hasWings), the solver falls back to intersection.
-            let guard = TypeGuard::Predicate {
-                type_id: Some(predicate_type),
-                asserts: predicate.asserts,
-            };
-            let narrowed = flow_query::narrow_with_guard(
+            let narrowed = flow_query::narrow_type_predicate(
                 self.interner,
                 env,
                 type_id,
-                &guard,
-                effective_true_branch,
+                predicate_type,
+                predicate.asserts,
+                is_true_branch,
             );
 
             // Fallback for cross-file asserted predicates whose target is an
@@ -521,16 +517,9 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Assertion guards without type predicate (asserts x) narrow to truthy
-        // This is the CRITICAL fix: use TypeGuard::Truthy instead of just excluding null/undefined
+        // This is the CRITICAL fix: use truthiness narrowing instead of just excluding null/undefined
         if effective_true_branch {
-            // Delegate to narrow_type with TypeGuard::Truthy for comprehensive narrowing
-            return flow_query::narrow_with_guard(
-                self.interner,
-                env,
-                type_id,
-                &TypeGuard::Truthy,
-                true,
-            );
+            return flow_query::narrow_asserts_truthy(self.interner, env, type_id);
         }
 
         // Use Solver's narrow_to_falsy for correct NaN handling
@@ -589,20 +578,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
 
-        let guard = if use_predicate_guard {
-            TypeGuard::Predicate {
-                type_id: Some(instance_type),
-                asserts: false,
-            }
-        } else {
-            TypeGuard::Instanceof(instance_type, false)
-        };
-
-        flow_query::narrow_with_guard(
+        flow_query::narrow_by_instanceof_target(
             self.interner,
             env_borrow.as_deref(),
             type_id,
-            &guard,
+            instance_type,
+            use_predicate_guard,
             is_true_branch,
         )
     }

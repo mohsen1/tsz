@@ -665,6 +665,21 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("recovery.rs:1", hits[0])
         self.assertIn("recovery.rs:2", hits[1])
 
+    def test_flags_async_yield_source_text_fallback(self):
+        pattern, _max_lines = self._check_by_name("async yield source-text")
+        root = self._make_tree(
+            {
+                "crates/tsz-emitter/src/transforms/async_es5_ir_discovery.rs": (
+                    "pub(super) fn node_text_contains_yield(&self, idx: NodeIndex) -> bool {\n"
+                    "    self.node_text_contains(idx, \"yield\")\n"
+                    "}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("async_es5_ir_discovery.rs:1", hits[0])
+
     def test_flags_file_name_and_path_substring_decisions(self):
         pattern, _max_lines = self._check_by_name("file-name/path")
         root = self._make_tree(

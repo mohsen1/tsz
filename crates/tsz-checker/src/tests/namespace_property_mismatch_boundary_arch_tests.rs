@@ -32,4 +32,12 @@ fn namespace_property_mismatch_uses_narrow_boundaries() {
         function.matches("object_shape_for_type").count() >= 2,
         "namespace object-shape fallback order should route through the assignability boundary"
     );
+    assert!(
+        function.contains("namespace_property_mismatch_relation_outcome("),
+        "namespace property comparisons should route through a named RelationRequest helper"
+    );
+    assert!(
+        !function.contains("is_assignable_to("),
+        "namespace property mismatch should not use a raw relation call for diagnostic downgrade"
+    );
 }
