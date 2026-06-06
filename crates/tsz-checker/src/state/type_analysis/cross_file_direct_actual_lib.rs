@@ -54,7 +54,7 @@ pub(super) fn iterator_object_has_global_augmentations(
 }
 
 impl<'a> CheckerState<'a> {
-    fn value_merged_dom_interface_members_are_lazy_resolvable(
+    fn value_merged_dom_interface_can_stay_type_position_lazy(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -70,6 +70,14 @@ impl<'a> CheckerState<'a> {
             else {
                 return true;
             };
+
+            if interface
+                .heritage_clauses
+                .as_ref()
+                .is_some_and(|clauses| !clauses.nodes.is_empty())
+            {
+                return false;
+            }
 
             interface.members.nodes.iter().all(|&member_idx| {
                 let Some(member) = arena.get(member_idx) else {
@@ -203,12 +211,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         // DOM value/interface pairs used in type position can stay as lazy lib
-        // identities when their own member surface is resolvable by the lazy
-        // member gateway. Method signatures are safe here because
+        // identities only when their own member surface is resolvable by the
+        // lazy member gateway and the interface has no heritage. Method
+        // signatures are safe for member reads because
         // `resolve_simple_lib_interface_own_property` lowers unambiguous method
-        // groups through `TypeLowering`; call/construct signatures still require
-        // the full child/interface path.
-        if !self.value_merged_dom_interface_members_are_lazy_resolvable(sym_id, &symbol) {
+        // groups through `TypeLowering`, but relation checks for a type-position
+        // `Lazy(DefId)` still need the full inherited DOM base closure. Until
+        // that relation/materialization story is heritage-aware, inherited DOM
+        // interfaces fall back to the existing full child/interface path.
+        if !self.value_merged_dom_interface_can_stay_type_position_lazy(sym_id, &symbol) {
             return None;
         }
 
