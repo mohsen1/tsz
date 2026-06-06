@@ -156,6 +156,15 @@ pub(crate) fn is_literal_for_alias_display(db: &dyn TypeDatabase, type_id: TypeI
         || common::is_template_literal_type(db, type_id)
 }
 
+/// True when `type_id` is a scalar unit literal (`0n`, `42`, `"x"`, `true`) —
+/// i.e. it carries a single `LiteralValue`. Unlike [`is_literal_for_alias_display`]
+/// this excludes literal *unions* and template-literal types, so the
+/// assignability source-display widening only fires for a lone literal whose
+/// base primitive `tsc` shows against a non-literal-sensitive target.
+pub(crate) fn is_unit_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    common::literal_value(db, type_id).is_some()
+}
+
 /// A deferred string-mapping intrinsic (`Uppercase`/`Lowercase`/`Capitalize`/
 /// `Uncapitalize` over a non-literal argument). tsc always renders these in
 /// their structural `Intrinsic<arg>` form in assignability diagnostics, never

@@ -1605,9 +1605,10 @@ impl<'a> CheckerState<'a> {
                     // positions agree with tsc. Compound literal surfaces
                     // (tuples, objects, `as const`) have no scalar `literal_value`
                     // and keep their existing preserve-the-literal behaviour.
-                    if crate::query_boundaries::common::literal_value(self.ctx.types, declared_type)
-                        .is_some()
-                        && !self.is_literal_sensitive_assignment_target(target)
+                    if crate::query_boundaries::assignability_alias_display::is_unit_literal_type(
+                        self.ctx.types.as_type_database(),
+                        declared_type,
+                    ) && !self.is_literal_sensitive_assignment_target(target)
                     {
                         return Some(widened_display);
                     }
