@@ -232,7 +232,8 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # derived through `query_boundaries::type_computation::access`, not the
         # `common` barrel). It is an existing request-shaped helper already used
         # throughout this file — no new quarantine entry.
-        3278,
+        # Ratcheted 3278→3202 after current arch-smoke caught live-count slack.
+        3202,
     ),
 ]
 

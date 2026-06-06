@@ -313,6 +313,22 @@ FILE_LINE_LIMIT_CHECKS = [
         / "resolve.rs",
         3413,
     ),
+    (
+        "Solver generic-call boundary: inference_helpers size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "inference_helpers.rs",
+        2065,
+    ),
+    (
+        "Solver inference boundary: infer_matching size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "inference" / "infer_matching.rs",
+        2002,
+    ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
     # as more phases (helper scheduling, temp/hoist planning, suspended
@@ -347,13 +363,13 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
         4281,
     ),
-    # LSP signature-help: the root provider has been split by concern. Existing
-    # TypeData/direct lookup() debt is isolated in signature_help/shapes.rs (see
-    # arch_guard_policy.toml exclusions) and should burn down separately.
+    # LSP signature-help root provider has been split into signature_help/.
+    # Keep the largest implementation shard pinned while the remaining
+    # TypeData/direct lookup() debt in shapes.rs burns down separately.
     (
-        "LSP boundary: signature_help monolith size ratchet",
-        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help.rs",
-        968,
+        "LSP boundary: signature_help contextual shard size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help" / "contextual.rs",
+        1309,
     ),
     # Scanner main loop: issue #9431 tracks splitting by token family.
     (
@@ -395,13 +411,6 @@ FILE_LINE_LIMIT_CHECKS = [
         "LSP boundary: module_specifiers monolith size ratchet",
         ROOT / "crates" / "tsz-lsp" / "src" / "project" / "module_specifiers.rs",
         3669,
-    ),
-    # LSP import candidate collection: issue #9420 tracks splitting collection
-    # from ranking and rendering.
-    (
-        "LSP boundary: project/imports monolith size ratchet (#9420)",
-        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "imports.rs",
-        3449,
     ),
     # Binder declaration binding: split by declaration family per §19.
     (
@@ -1249,7 +1258,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # as-written nominal reference. Removal condition remains #8225
         # narrowing these common-barrel calls behind a dedicated diagnostic
         # source-display query.
-        3213,
+        #
+        # Ratcheted 3213→3202 after current arch-smoke caught live-count slack.
+        3202,
     ),
 ]
 
