@@ -5,6 +5,7 @@
 
 mod core;
 mod core_jsdoc;
+pub mod declaration_summary;
 pub mod export_surface;
 mod flow_helpers;
 mod lib_merge;

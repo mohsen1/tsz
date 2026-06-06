@@ -1317,11 +1317,11 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            &dir.path().join("src/first.ts"),
+            dir.path().join("src/first.ts"),
             "export const a = 1; export const c = 2;\n",
         )
         .unwrap();
-        std::fs::write(&dir.path().join("src/second.ts"), "export const b = 1;\n").unwrap();
+        std::fs::write(dir.path().join("src/second.ts"), "export const b = 1;\n").unwrap();
 
         assert_eq!(
             root_dep_file_names(dir.path(), &root),
