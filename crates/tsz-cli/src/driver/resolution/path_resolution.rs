@@ -544,41 +544,10 @@ pub(crate) const fn extension_candidates_for_resolution(
 /// - leading `..` on a relative path is preserved (`../foo` stays `../foo`)
 ///   instead of being silently dropped.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-
-    let mut normalized = PathBuf::new();
-    // Count of poppable `Normal` segments currently sitting above any root or
-    // leading `..` run. Tracking it lets `..` resolve in a single pass without
-    // re-parsing `normalized` on every parent segment.
-    let mut poppable = 0usize;
-    let mut rooted = false;
-
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if poppable > 0 {
-                    normalized.pop();
-                    poppable -= 1;
-                } else if !rooted {
-                    // Relative path with nothing to pop: keep the leading `..`.
-                    normalized.push("..");
-                }
-                // Otherwise `..` is at the filesystem root or a drive prefix,
-                // where `tsc`/Node clamp instead of escaping root: a no-op.
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                rooted = true;
-                normalized.push(component.as_os_str());
-            }
-            Component::Normal(segment) => {
-                normalized.push(segment);
-                poppable += 1;
-            }
-        }
-    }
-
-    normalized
+    // The collapse algorithm is shared with the `tsz-core` resolver's
+    // `normalize_path_segments` via `tsz_common` so the driver's canonical file
+    // identity and the resolver's textual identity cannot drift.
+    tsz_common::module_resolution::path_identity::normalize_segments(path)
 }
 
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
