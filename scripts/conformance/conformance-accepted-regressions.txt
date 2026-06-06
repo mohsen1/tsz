@@ -49,15 +49,10 @@ TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
-TypeScript/tests/cases/compiler/letInConstDeclarations_ES6.ts
-TypeScript/tests/cases/compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts
-TypeScript/tests/cases/compiler/letInLetDeclarations_ES6.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
-TypeScript/tests/cases/compiler/strictModeReservedWord.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
-TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/importDefer/dynamicImportDeferInvalidStandalone.ts

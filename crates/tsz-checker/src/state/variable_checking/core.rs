@@ -538,7 +538,6 @@ impl<'a> CheckerState<'a> {
         if !is_ambient
             && !name_has_unicode_escape
             && self.is_strict_mode_for_node(var_decl.name)
-            && !is_let_name_in_lexical_declaration
             && let Some(ref name) = var_name
             && crate::state_checking::is_strict_mode_reserved_name(name)
             && !(name.as_str() == "arguments" && in_non_ambient_class)
