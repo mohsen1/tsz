@@ -909,3 +909,26 @@ export function withRest({ enum: _enum, ...rest }: P) {
         "rest binding element must still emit a source-annotation-derived return type: {output}"
     );
 }
+
+// Inferred `const` whose initializer is a call returning a single, top-level
+// exported conditional type-alias application is preserved as `Alias<args>`
+// rather than expanded to the conditional body — mirroring `tsc`'s
+// `declarationEmitRecursiveConditionalAliasPreserved` declaration emit.
+#[test]
+fn fix_inferred_call_return_preserves_exported_conditional_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export type Cond<T> = T extends string ? { s: T } : { n: T };
+declare function make<T>(t: T): Cond<T>;
+export const viaFn = make("x");
+"#,
+    );
+    assert!(
+        output.contains("export declare const viaFn: Cond<string>;"),
+        "single exported conditional alias application should be preserved, got: {output}"
+    );
+    assert!(
+        !output.contains("viaFn: {"),
+        "conditional alias body must not be expanded inline, got: {output}"
+    );
+}
