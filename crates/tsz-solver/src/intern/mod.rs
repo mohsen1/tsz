@@ -24,6 +24,7 @@ mod core;
 mod intersection;
 mod normalize;
 mod template;
+mod template_intersection;
 mod tuple_normalization;
 pub mod type_factory;
 

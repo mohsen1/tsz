@@ -269,6 +269,29 @@ pub(crate) fn narrow_with_guard(
     narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
 }
 
+/// Apply a runtime `typeof` result to a flow type.
+///
+/// The checker owns recognizing `typeof x === "..."` or switch-case syntax and
+/// extracting the string result. This boundary owns the semantic narrowing for
+/// both positive and negative branches.
+pub(crate) fn narrow_by_typeof_result(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    typeof_result: &str,
+    is_true_branch: bool,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    if is_true_branch {
+        narrowing.narrow_by_typeof(type_id, typeof_result)
+    } else {
+        narrowing.narrow_by_typeof_negation(type_id, typeof_result)
+    }
+}
+
 /// Apply a type predicate discovered from a call-expression condition.
 ///
 /// The checker owns matching the callee, call target, optional-chain shape, and
@@ -1126,6 +1149,24 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert!(members.contains(&db.literal_string("string")));
         assert!(members.contains(&db.literal_string("number")));
+    }
+
+    #[test]
+    fn narrow_by_typeof_result_routes_positive_and_negative_branches() {
+        let db = TypeInterner::new();
+        let source = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+        assert_eq!(
+            narrow_by_typeof_result(&db, None, source, "string", true),
+            TypeId::STRING
+        );
+
+        let negative = narrow_by_typeof_result(&db, None, source, "string", false);
+        let members =
+            union_members_for_type(&db, negative).unwrap_or_else(|| vec![negative].into());
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&TypeId::NUMBER));
+        assert!(members.contains(&TypeId::BOOLEAN));
     }
 
     #[test]
