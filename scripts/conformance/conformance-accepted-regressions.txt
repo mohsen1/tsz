@@ -51,7 +51,6 @@ TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
-TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
@@ -72,3 +71,13 @@ TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 # (store_parametric_structural_back_reference). Provenance is now recorded for
 # those instances, so display matches tsc. Covered by
 # recursive_generic_interface_application_display_tests.
+# indexedAccessAndNullableNarrowing.ts: RESOLVED. A false TS2322 fired on
+# `T[K] = Partial<T>[K] & ({} | null)` because `(X | undefined) & ({} | null)`
+# was kept as an unsimplified intersection-of-unions: neither constituent is a
+# subtype of `X`, so the relation rejected it. tsc forms the distributed cross
+# product and drops its `never` constituents (`undefined & {}` and
+# `undefined & null`), leaving `(X & {}) | (X & null)`, which is assignable to
+# `X`. The all-union distribution gate now accepts a distributed result that
+# eliminated at least one impossible arm. Covered by
+# intersection_type_param_tests::
+# test_type_param_union_undefined_intersect_empty_or_null_assignable_to_type_param.

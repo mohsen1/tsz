@@ -36,6 +36,115 @@ fn test_intersection_with_empty_object_assignable_to_type_param() {
 }
 
 #[test]
+fn test_type_param_union_undefined_intersect_empty_or_null_assignable_to_type_param() {
+    // Regression: `(T | undefined) & ({} | null)` must be assignable to `T`.
+    //
+    // This is the `indexedAccessAndNullableNarrowing` shape: `Partial<X>[K]` is
+    // `T[K] | undefined`, and tsc narrows / intersects it with the "non-undefined"
+    // filter `{} | null`. Distributing the cross product drops the impossible
+    // arms (`undefined & {}` and `undefined & null` are both `never`), leaving
+    // `(T & {}) | (T & null)`, which is assignable to `T`. Without the
+    // distribution the intersection survives unsimplified and the relation
+    // cannot prove the subtype, producing a spurious TS2322.
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let empty_obj = interner.object(vec![]);
+
+    // (T | undefined)
+    let t_or_undefined = interner.union(vec![t_param, TypeId::UNDEFINED]);
+    // ({} | null)
+    let empty_or_null = interner.union(vec![empty_obj, TypeId::NULL]);
+    // (T | undefined) & ({} | null)
+    let source = interner.intersection(vec![t_or_undefined, empty_or_null]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(source, t_param),
+        "(T | undefined) & ({{}} | null) should be assignable to T"
+    );
+
+    // The companion `& {}` form (single non-union filter) must keep working too.
+    let source_empty_only = interner.intersection(vec![t_or_undefined, empty_obj]);
+    assert!(
+        checker.is_subtype_of(source_empty_only, t_param),
+        "(T | undefined) & {{}} should be assignable to T"
+    );
+}
+
+#[test]
+fn test_non_reducing_cross_product_intersection_is_not_distributed() {
+    // Guard: a cross product whose arms cannot merge and where nothing reduces
+    // to `never` — `(A | B) & (C | D)` over distinct type parameters — must NOT
+    // be distributed. It stays an intersection of unions exactly as tsc keeps
+    // it, pinning the boundary of the distribution refinement above (which only
+    // fires when an impossible arm is eliminated).
+    let interner = TypeInterner::new();
+
+    let mk = |n: &str| {
+        interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(n),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }))
+    };
+    let (a, b, c, d) = (mk("A"), mk("B"), mk("C"), mk("D"));
+
+    let a_or_b = interner.union(vec![a, b]);
+    let c_or_d = interner.union(vec![c, d]);
+    let result = interner.intersection(vec![a_or_b, c_or_d]);
+
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Intersection(_))),
+        "non-reducing cross product should remain an intersection, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_value_union_filter_intersection_is_not_distributed() {
+    // Guard against over-eager distribution: `(T | undefined) & ({ a } | { b })`
+    // eliminates `undefined & { a }` / `undefined & { b }` arms, but `{ a } | { b }`
+    // is a genuine value union, NOT a nullish-removal filter. Distributing it would
+    // drop the alias display tsc keeps and perturb relation-complexity accounting
+    // (regression witness: relationComplexityError.ts). It must stay an intersection.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+
+    let t_or_undefined = interner.union(vec![t_param, TypeId::UNDEFINED]);
+    let a_or_b = interner.union(vec![obj_a, obj_b]);
+    let result = interner.intersection(vec![t_or_undefined, a_or_b]);
+
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Intersection(_))),
+        "value-union filter intersection should remain an intersection, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
 fn test_intersection_with_type_param_and_constraint() {
     // T & string should be assignable to T extends string
     let interner = TypeInterner::new();
