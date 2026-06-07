@@ -1699,6 +1699,11 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(result) =
                     emitter.check_symbol_portability(sym_id, binder, current_file_path, visit)
                 {
+                    if let Some(alias_result) =
+                        emitter.alias_reference_covering_helper_symbol(sym_id, binder, &result.0)
+                    {
+                        return Some(alias_result);
+                    }
                     return Some(result);
                 }
                 if let Some(result) = emitter
@@ -1919,5 +1924,77 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn alias_reference_covering_helper_symbol(
+        &self,
+        helper_sym_id: SymbolId,
+        binder: &BinderState,
+        from_path: &str,
+    ) -> Option<(String, String)> {
+        let helper_source_path = self.get_symbol_source_path(helper_sym_id, binder)?;
+        let helper_source_path = helper_source_path.replace('\\', "/");
+
+        binder.symbols.iter().find_map(|candidate| {
+            if candidate.id == helper_sym_id {
+                return None;
+            }
+            let candidate_source_path = self
+                .get_symbol_source_path(candidate.id, binder)?
+                .replace('\\', "/");
+            if candidate_source_path != helper_source_path {
+                return None;
+            }
+            let source_arena = binder
+                .symbol_arenas
+                .get(&candidate.id)
+                .or_else(|| self.global_symbol_arenas.get(&candidate.id))?;
+            candidate.declarations.iter().copied().find_map(|decl_idx| {
+                let decl_node = source_arena.get(decl_idx)?;
+                let alias = source_arena.get_type_alias(decl_node)?;
+                if matches!(source_arena.get(alias.type_node), Some(node) if node.kind == syntax_kind_ext::TYPE_LITERAL) {
+                    return None;
+                }
+                self.type_node_subtree_references_symbol(
+                    source_arena.as_ref(),
+                    alias.type_node,
+                    helper_sym_id,
+                )
+                .then(|| (from_path.to_string(), candidate.escaped_name.clone()))
+            })
+        })
+    }
+
+    fn type_node_subtree_references_symbol(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        target_sym_id: SymbolId,
+    ) -> bool {
+        if !node_idx.is_some() {
+            return false;
+        }
+        if let Some(binder) = self.binder
+            && let Some(sym_id) = binder.get_node_symbol(node_idx)
+            && self.resolve_portability_declaration_symbol(sym_id, binder)
+                == self.resolve_portability_declaration_symbol(target_sym_id, binder)
+        {
+            return true;
+        }
+        if arena.get(node_idx).is_none() {
+            return false;
+        };
+        if let Some(node) = arena.get(node_idx)
+            && let Some(identifier) = arena.get_identifier(node)
+            && let Some(sym_id) = self.find_symbol_in_arena_by_name(arena, &identifier.escaped_text)
+            && let Some(binder) = self.binder
+            && self.resolve_portability_declaration_symbol(sym_id, binder)
+                == self.resolve_portability_declaration_symbol(target_sym_id, binder)
+        {
+            return true;
+        }
+        arena.get_children(node_idx).into_iter().any(|child_idx| {
+            self.type_node_subtree_references_symbol(arena, child_idx, target_sym_id)
+        })
     }
 }

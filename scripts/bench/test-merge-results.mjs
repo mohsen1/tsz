@@ -300,6 +300,58 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const requiredCanaryRow = "ts-toolbelt-project";
+  assert.ok(COMPILE_CANARY_PROJECT_ROWS.includes(requiredCanaryRow));
+  assert.ok(REQUIRED_PROJECT_ROWS.includes(requiredCanaryRow));
+  const slowdownCompatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    state: "red",
+    exit_class: "slowdown",
+    first_failure_class: "runtime slowdown during project timing",
+    owner_track: "Track 10 runtime slowdown triage",
+    phase: "timing",
+    last_successful_phase: null,
+    diagnostic_status: "runtime slowdown",
+    diagnostic_deltas: ["timing failure: tsz 356 ms, tsgo 10 ms, ratio 35.61x, threshold 8x"],
+    known_blockers: ["runtime slowdown during project timing", "timing phase blocker"],
+  };
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => {
+    if (name !== requiredCanaryRow) return projectRow(name);
+    return {
+      ...projectRow(name, slowdownCompatibility),
+      tsz_ms: null,
+      tsgo_ms: null,
+      tsz_lps: null,
+      tsgo_lps: null,
+      winner: "error",
+      factor: 0,
+      status: "tsz slowdown (35.61x slower than tsgo; threshold 8x)",
+    };
+  });
+  const input = writeInput(dir, "input.json", rows);
+  const compatibilityJsonl = path.join(dir, "project-compatibility.jsonl");
+  fs.writeFileSync(
+    compatibilityJsonl,
+    `${JSON.stringify({ ...SAMPLE_COMPATIBILITY, name: requiredCanaryRow })}\n`,
+    "utf8",
+  );
+
+  const result = runMergeInputs(dir, ["--compat-jsonl", compatibilityJsonl, input]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  const row = merged.results.find((candidate) => candidate.name === requiredCanaryRow);
+  assert.ok(row, "expected required canary benchmark row");
+  assert.equal(row.status, "tsz slowdown (35.61x slower than tsgo; threshold 8x)");
+  assert.equal(row.compatibility.state, "red");
+  assert.equal(row.compatibility.exit_class, "slowdown");
+  assert.equal(row.compatibility.first_failure_class, "runtime slowdown during project timing");
+  assert.deepEqual(row.compatibility.known_blockers, [
+    "runtime slowdown during project timing",
+    "timing phase blocker",
+  ]);
+});
+
+withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);

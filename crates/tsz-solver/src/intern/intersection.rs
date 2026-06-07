@@ -31,6 +31,35 @@ impl TypeInterner {
         }
     }
 
+    /// Check if a type is a nullish-removal filter union, i.e. a union whose
+    /// every member is the empty object `{}` or a nullish type (`null` /
+    /// `undefined` / `void`).
+    ///
+    /// These are the unions TypeScript intersects against to subtract
+    /// nullishness — `{} | null` ("everything except `undefined`"), `{} |
+    /// undefined` ("everything except `null`"), `null | undefined`, etc. When
+    /// such a filter is intersected with a value union, the distributed cross
+    /// product drops the impossible nullish arms (`undefined & {}`,
+    /// `undefined & null`, …) and the remaining arms are exactly the value
+    /// restricted to non-nullishness. This is the canonical witness for the
+    /// distribution acceptance below; a genuine object-alternative union such as
+    /// `{ a: string } | { b: number }` is deliberately NOT a nullish filter, so
+    /// `T1 & ({ a } | { b })` keeps its conservative non-distributed form.
+    fn is_nullish_filter_union(&self, id: TypeId) -> bool {
+        if id.is_intrinsic() {
+            return false;
+        }
+        match self.lookup(id) {
+            Some(TypeData::Union(list_id)) => {
+                let members = self.type_list(list_id);
+                members
+                    .iter()
+                    .all(|&m| m.is_nullable() || self.is_empty_object(m))
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a type is a "widening" primitive intrinsic — i.e., the wide
     /// `string` / `number` / `boolean` / `bigint` / `symbol` types whose
     /// literal subtypes get absorbed during union normalization.
@@ -394,10 +423,30 @@ impl TypeInterner {
                 let is_simpler = match self.lookup(distributed) {
                     Some(TypeData::Union(members)) => {
                         let list = self.type_list(members);
-                        !list.iter().any(|&m| {
+                        let no_intersection_members = !list.iter().any(|&m| {
                             !m.is_intrinsic()
                                 && matches!(self.lookup(m), Some(TypeData::Intersection(_)))
-                        })
+                        });
+                        // Distribution genuinely simplifies the type when either no
+                        // intersection members remain, or a nullish-removal filter
+                        // (`{} | null` and friends) eliminated at least one impossible
+                        // combination — an arm reduced to `never` and was dropped,
+                        // leaving fewer members than the full cross product. This
+                        // matches tsc, which forms the distributed cross product and
+                        // drops its `never` constituents. The canonical witness is
+                        // `(T | undefined) & ({} | null)` (e.g. `Partial<X>[K] & ({} |
+                        // null)`): `undefined & {}` and `undefined & null` are both
+                        // `never`, so it reduces to `(T & {}) | (T & null)`, which is
+                        // assignable to `T`.
+                        //
+                        // The nullish-filter guard keeps the conservative form for
+                        // genuine value-union cross products such as
+                        // `T1 & ({ a: string } | { b: number })` (display- and
+                        // relation-complexity-sensitive) — those eliminate arms too,
+                        // but distributing them would drop the alias display tsc keeps.
+                        let eliminated_via_nullish_filter = list.len() < cross_product
+                            && flat.iter().any(|&id| self.is_nullish_filter_union(id));
+                        no_intersection_members || eliminated_via_nullish_filter
                     }
                     _ => true,
                 };

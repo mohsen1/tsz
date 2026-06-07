@@ -199,9 +199,8 @@ pub mod computation {
 /// `query_boundaries` in the checker crate.
 pub mod construction {
     pub use crate::caches::db::{QueryDatabase, TypeDatabase};
-    pub use crate::caches::query_cache::{
-        QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
-    };
+    pub use crate::caches::query_cache::{QueryCache, RelationCacheProbe, SharedQueryCache};
+    pub use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
     pub use crate::intern::type_factory::*;
     pub use crate::intern::{TypeInterner, clear_thread_local_cache};
 }

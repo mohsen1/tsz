@@ -88,11 +88,13 @@ intake only after that queue is drained, queued, or explicitly blocked.
 1. Run the lane's `Start Every Cycle` commands.
 2. If open PRs carry the lane label, inspect each one and move it to the next
    concrete state before starting new issue work: fix/rebase it, mark it ready,
-   queue it with `gh pr merge --queue`, restore draft/WIP with a signed blocker, hand it off, or
-   close it only as duplicate/superseded with evidence.
+   queue it with `gh pr merge <pr> --match-head-commit <sha>`, restore
+   draft/WIP with a signed blocker, hand it off, or close it only as
+   duplicate/superseded with evidence.
 3. If an owned ready `main` PR has passing PR-head `CI Summary`, is not
    dirty/conflicting, and is not WIP or blocked, queue it with
-   `gh pr merge --queue` or ask `Studio-manager` to queue it.
+   `gh pr merge <pr> --match-head-commit <sha>` or ask `Studio-manager` to
+   queue it.
 4. Treat stale drafts as live debt. Drafts older than 24 hours without fresh
    commits/comments, and owners over two unstacked drafts, must be refreshed,
    handed off, marked help-wanted, or documented as blocked before new PRs.

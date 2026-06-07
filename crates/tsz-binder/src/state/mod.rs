@@ -5,6 +5,7 @@
 
 mod core;
 mod core_jsdoc;
+pub mod declaration_summary;
 pub mod export_surface;
 mod flow_helpers;
 mod lib_merge;
@@ -100,13 +101,18 @@ type EnclosingScopeCacheStorage = CloneableRwLock<EnclosingScopeCache>;
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BinderResolutionCacheStatistics {
     pub export_cache_entries: usize,
+    pub export_type_only_cache_entries: usize,
     pub identifier_cache_entries: usize,
+    pub enclosing_scope_cache_entries: usize,
 }
 
 impl BinderResolutionCacheStatistics {
     #[must_use]
     pub const fn total_entries(&self) -> usize {
-        self.export_cache_entries + self.identifier_cache_entries
+        self.export_cache_entries
+            + self.export_type_only_cache_entries
+            + self.identifier_cache_entries
+            + self.enclosing_scope_cache_entries
     }
 
     #[must_use]
@@ -114,10 +120,16 @@ impl BinderResolutionCacheStatistics {
         const BUCKET_OVERHEAD: usize = 8;
         let export_entry =
             BUCKET_OVERHEAD + (2 * size_of::<String>()) + size_of::<Option<SymbolId>>();
+        let export_type_only_entry =
+            BUCKET_OVERHEAD + (2 * size_of::<String>()) + size_of::<Option<(SymbolId, bool)>>();
         let identifier_entry =
             BUCKET_OVERHEAD + size_of::<(usize, u32)>() + size_of::<Option<SymbolId>>();
+        let enclosing_scope_entry =
+            BUCKET_OVERHEAD + size_of::<(usize, u32)>() + size_of::<ScopeId>();
         (self.export_cache_entries * export_entry)
+            + (self.export_type_only_cache_entries * export_type_only_entry)
             + (self.identifier_cache_entries * identifier_entry)
+            + (self.enclosing_scope_cache_entries * enclosing_scope_entry)
     }
 }
 
@@ -1048,10 +1060,20 @@ impl BinderState {
                 .read()
                 .expect("resolved_export_cache RwLock poisoned")
                 .len(),
+            export_type_only_cache_entries: self
+                .resolved_export_type_only_cache
+                .read()
+                .expect("resolved_export_type_only_cache RwLock poisoned")
+                .len(),
             identifier_cache_entries: self
                 .resolved_identifier_cache
                 .read()
                 .expect("resolved_identifier_cache RwLock poisoned")
+                .len(),
+            enclosing_scope_cache_entries: self
+                .find_enclosing_scope_cache
+                .read()
+                .expect("find_enclosing_scope_cache RwLock poisoned")
                 .len(),
         }
     }

@@ -11,10 +11,10 @@ pub(crate) use super::common::{
     contains_type_parameters, enum_def_id, enum_member_type, function_shape_for_type,
     get_indexed_access_type, get_type_query_symbol_ref, has_function_shape, index_access_types,
     instantiate_type, intersection_list_id, intersection_members, is_fresh_object_type,
-    is_generic_mapped_type, is_number_literal, is_symbol_or_unique_symbol,
-    is_template_literal_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_info,
-    no_infer_inner_type, object_shape_for_type, readonly_inner_type, return_type_for_type,
-    string_literal_value, tuple_elements, type_has_displayable_name,
+    is_generic_mapped_type, is_intersection_type, is_number_literal, is_symbol_or_unique_symbol,
+    is_template_literal_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
+    mapped_type_info, no_infer_inner_type, object_shape_for_type, readonly_inner_type,
+    return_type_for_type, string_literal_value, tuple_elements, type_has_displayable_name,
     type_is_conditional_type_result_with_unresolved_inference, type_may_display_iterator_protocol,
     type_param_info, type_parameter_constraint, union_list_id, union_members,
     widen_literal_to_primitive, widen_type_deep,
@@ -82,6 +82,10 @@ pub(crate) fn evaluated_alias_application_has_concrete_display(
         && !super::common::is_conditional_type(db, evaluated)
         && !super::common::is_index_access_type(db, evaluated)
         && !super::common::contains_type_parameters(db, evaluated)
+}
+
+pub(crate) fn is_object_or_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_object_or_mapped_type(db, type_id)
 }
 
 fn alias_body_reduces_through_conditional_or_indexed(

@@ -92,11 +92,8 @@ impl<'a> FlowAnalyzer<'a> {
                         .collect();
                     if concrete_members.iter().any(|&m| {
                         let evaluated = flow_query::evaluate_type_structure(self.interner, m);
-                        crate::query_boundaries::common::contains_type_parameters(self.interner, m)
-                            || crate::query_boundaries::common::contains_type_parameters(
-                                self.interner,
-                                evaluated,
-                            )
+                        flow_query::contains_type_parameters(self.interner, m)
+                            || flow_query::contains_type_parameters(self.interner, evaluated)
                             || crate::query_boundaries::state::checking::object_shape(
                                 self.interner,
                                 evaluated,
@@ -132,7 +129,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Case 2: Complex predicate type CONTAINS type parameters (e.g., mapped types
         // like `target is { readonly [K in P]: unknown }`). Build a substitution from
         // function type params to call argument types and instantiate the predicate type.
-        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut substitution = flow_query::TypeSubstitution::new();
         for tp in &type_params {
             for (i, param) in params.iter().enumerate() {
                 if let Some(info) = flow_query::type_param_info(self.interner, param.type_id)
@@ -211,11 +208,7 @@ impl<'a> FlowAnalyzer<'a> {
         let predicate_still_generic = !predicate_target_is_bare_type_param
             && type_params.iter().any(|tp| {
                 substitution.get(tp.name).is_none()
-                    && crate::query_boundaries::common::contains_type_parameter_named(
-                        self.interner,
-                        pred_type,
-                        tp.name,
-                    )
+                    && flow_query::contains_type_parameter_named(self.interner, pred_type, tp.name)
             });
         if predicate_still_generic {
             let param_arg_pairs: Vec<(TypeId, TypeId)> = params
@@ -239,11 +232,8 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if !substitution.is_empty() {
-            let instantiated = crate::query_boundaries::common::instantiate_type(
-                self.interner,
-                pred_type,
-                &substitution,
-            );
+            let instantiated =
+                flow_query::instantiate_type(self.interner, pred_type, &substitution);
             if instantiated != pred_type {
                 // Evaluate to resolve mapped types (e.g., `{ [K in "length"]: unknown }` -> `{ length: unknown }`)
                 let evaluated = flow_query::evaluate_type_structure(self.interner, instantiated);

@@ -35,10 +35,8 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_for_assignability(type_id);
         let other_evaluated = self.evaluate_type_for_assignability(other_type);
         if evaluated != type_id
-            && crate::query_boundaries::common::function_shape_for_type(self.ctx.types, evaluated)
-                .is_none()
-            && crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, evaluated)
-                .is_none()
+            && diagnostic_query::function_shape_for_type(self.ctx.types, evaluated).is_none()
+            && diagnostic_query::callable_shape_for_type(self.ctx.types, evaluated).is_none()
         {
             self.collect_numeric_literal_union_display_replacements(
                 evaluated,
@@ -84,8 +82,7 @@ impl<'a> CheckerState<'a> {
         seen.push(type_id);
 
         if self.is_number_literal_union_for_display_order(type_id)
-            && let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+            && let Some(members) = diagnostic_query::union_members(self.ctx.types, type_id)
         {
             let member_displays = members
                 .iter()
@@ -201,7 +198,7 @@ impl<'a> CheckerState<'a> {
         match diagnostic_query::assignment_numeric_display_children(self.ctx.types, type_id) {
             diagnostic_query::AssignmentNumericDisplayChildren::Application { base, args } => {
                 let other_args = other_type.and_then(|other| {
-                    crate::query_boundaries::common::application_info(self.ctx.types, other)
+                    diagnostic_query::application_info(self.ctx.types, other)
                         .and_then(|(other_base, args)| (other_base == base).then_some(args))
                 });
                 for (index, &arg) in args.iter().enumerate() {
@@ -232,7 +229,7 @@ impl<'a> CheckerState<'a> {
                 self.collect_numeric_literal_union_display_replacements(
                     element,
                     other_type.and_then(|other| {
-                        crate::query_boundaries::common::array_element_type(self.ctx.types, other)
+                        diagnostic_query::array_element_type(self.ctx.types, other)
                     }),
                     rewrite_alias_origin,
                     seen,
@@ -240,9 +237,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
             diagnostic_query::AssignmentNumericDisplayChildren::Tuple(elements) => {
-                let other_elements = other_type.and_then(|other| {
-                    crate::query_boundaries::common::tuple_elements(self.ctx.types, other)
-                });
+                let other_elements = other_type
+                    .and_then(|other| diagnostic_query::tuple_elements(self.ctx.types, other));
                 for (index, element) in elements.iter().enumerate() {
                     self.collect_numeric_literal_union_display_replacements(
                         element.type_id,
@@ -320,16 +316,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<TypeId> {
-        if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-            .is_some()
-            || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-                .is_some()
+        if diagnostic_query::function_shape_for_type(self.ctx.types, type_id).is_some()
+            || diagnostic_query::callable_shape_for_type(self.ctx.types, type_id).is_some()
         {
             return None;
         }
 
         if self.is_number_literal_union_for_display_order(type_id)
-            || crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_some()
+            || diagnostic_query::application_info(self.ctx.types, type_id).is_some()
             || self.source_type_contains_number_literal_only_union(type_id)
         {
             return Some(type_id);
@@ -337,17 +331,14 @@ impl<'a> CheckerState<'a> {
 
         let evaluated = self.evaluate_type_for_assignability(type_id);
         if evaluated == type_id
-            || crate::query_boundaries::common::function_shape_for_type(self.ctx.types, evaluated)
-                .is_some()
-            || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, evaluated)
-                .is_some()
+            || diagnostic_query::function_shape_for_type(self.ctx.types, evaluated).is_some()
+            || diagnostic_query::callable_shape_for_type(self.ctx.types, evaluated).is_some()
         {
             return None;
         }
 
         if self.is_number_literal_union_for_display_order(evaluated)
-            || crate::query_boundaries::common::application_info(self.ctx.types, evaluated)
-                .is_some()
+            || diagnostic_query::application_info(self.ctx.types, evaluated).is_some()
         {
             Some(evaluated)
         } else {
@@ -359,10 +350,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<TypeId> {
-        if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-            .is_some()
-            || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-                .is_some()
+        if diagnostic_query::function_shape_for_type(self.ctx.types, type_id).is_some()
+            || diagnostic_query::callable_shape_for_type(self.ctx.types, type_id).is_some()
         {
             return None;
         }
@@ -451,7 +440,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        let members = diagnostic_query::union_members(self.ctx.types, type_id)?;
         let mut unmatched = Vec::new();
         let mut matched = Vec::new();
         for member in members {
@@ -486,7 +475,7 @@ impl<'a> CheckerState<'a> {
             return Some(vec![number]);
         }
 
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        let members = diagnostic_query::union_members(self.ctx.types, type_id)?;
         let mut numbers = Vec::with_capacity(members.len());
         for member in members {
             numbers.push(self.numeric_literal_value(member)?);

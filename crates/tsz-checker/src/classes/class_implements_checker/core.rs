@@ -1492,6 +1492,18 @@ impl<'a> CheckerState<'a> {
                                     interface_member_type,
                                     class_member_idx,
                                 )
+                                // A non-generic class member validly implements a
+                                // generic interface method by dropping the method-local
+                                // type parameter(s) to their constraint(s) when those
+                                // appear only in input positions. The strict own-member
+                                // relation rejects that sound specialization (false
+                                // TS2416); the same suppression already governs the
+                                // interface-/class-`extends` paths, so all three heritage
+                                // forms make identical variance decisions.
+                                && !self.nongeneric_input_only_generic_override_is_valid(
+                                    class_member_type,
+                                    interface_member_type,
+                                )
                             {
                                 incompatible_members.push((
                                     class_member_idx,
@@ -1514,6 +1526,13 @@ impl<'a> CheckerState<'a> {
                                     inherited_type,
                                     interface_member_type,
                                     class_idx,
+                                )
+                                // Same input-only generic-drop specialization rule as
+                                // the own-member branch above, for a member the class
+                                // inherits from its base class to satisfy the interface.
+                                && !self.nongeneric_input_only_generic_override_is_valid(
+                                    inherited_type,
+                                    interface_member_type,
                                 )
                             {
                                 incompatible_members.push((

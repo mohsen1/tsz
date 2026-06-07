@@ -416,6 +416,24 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
+                if true_type == check {
+                    let extends_resolved = self.resolve_lazy_type(extends_type);
+                    let extends_evaluated = self.evaluate_type_for_assignability(extends_resolved);
+                    let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
+                    return self
+                        .conditional_constraint_component_relation_outcome(
+                            extends_evaluated,
+                            constraint_evaluated,
+                        )
+                        .related
+                        || self
+                            .conditional_constraint_component_relation_outcome(
+                                extends_resolved,
+                                constraint,
+                            )
+                            .related;
+                }
+
                 let true_resolved = self.resolve_lazy_type(true_type);
                 let true_evaluated = self.evaluate_type_for_assignability(true_resolved);
                 let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
@@ -437,23 +455,7 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
 
-                if true_type != check {
-                    return false;
-                }
-                let extends_resolved = self.resolve_lazy_type(extends_type);
-                let extends_evaluated = self.evaluate_type_for_assignability(extends_resolved);
-                return self
-                    .conditional_constraint_component_relation_outcome(
-                        extends_evaluated,
-                        constraint_evaluated,
-                    )
-                    .related
-                    || self
-                        .conditional_constraint_component_relation_outcome(
-                            extends_resolved,
-                            constraint,
-                        )
-                        .related;
+                return false;
             }
 
             let Some(app) =

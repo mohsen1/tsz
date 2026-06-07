@@ -1,10 +1,10 @@
 {
-  "detailFingerprint": "sha256:e910c199687ebf8feeac644e43e91339dbf79a4c2eb9d2fec05190d658e7cdf2",
+  "detailFingerprint": "sha256:0972b18fe9f1f02a5b7aaf6bb834f6933abb0f6f284be419cc522f992a888437",
   "detailResultCount": 13531,
   "summary": {
     "jsTotal": 13530,
-    "jsPass": 13526,
-    "jsFail": 4,
+    "jsPass": 13530,
+    "jsFail": 0,
     "jsSkip": 1,
     "jsTimeout": 0,
     "jsPassRate": 100,

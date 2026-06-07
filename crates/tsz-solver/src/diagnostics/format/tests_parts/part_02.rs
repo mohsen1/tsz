@@ -838,21 +838,64 @@ fn distributive_conditional_alias_with_boolean_renders_branches_not_alias() {
 }
 
 #[test]
-fn distributive_conditional_alias_with_non_boolean_singleton_keeps_alias() {
+fn conditional_alias_application_resolving_to_object_renders_structurally() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
     let foo_lazy = build_distributive_foo_alias(&db, &def_store);
 
-    // Application(Foo, [string]) — singleton arg; no distribution.
+    // Application(Foo, [string]) — `string` is not a union, so the conditional
+    // resolves (without distributing) to its false branch `{ kind: "o" }`.
     let app = db.application(foo_lazy, vec![TypeId::STRING]);
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(app);
 
-    // No distribution because `string` is neither `boolean` nor a Union.
-    // The formatter should preserve the alias-application form.
+    // A conditional-bodied alias application drops its alias symbol once the
+    // conditional resolves: tsc 6.0.2 renders the resolved branch structurally
+    // (`{ kind: "o"; }`), never `Foo<string>` (issue #10914).
     assert_eq!(
-        result, "Foo<string>",
-        "Singleton non-distributable args must keep the alias name. Got: {result}"
+        result, "{ kind: \"o\"; }",
+        "A resolved conditional application must render its branch structurally. Got: {result}"
+    );
+}
+
+#[test]
+fn conditional_alias_application_resolving_to_tuple_keeps_application_surface() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let t_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t = db.type_param(t_param);
+    let tuple = db.tuple(vec![crate::types::TupleElement {
+        type_id: t,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let cond = db.conditional(crate::types::ConditionalType {
+        check_type: t,
+        extends_type: TypeId::STRING,
+        true_type: tuple,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let tuple_box_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("TupleBox"),
+        vec![t_param],
+        cond,
+    ));
+    let app = db.application(db.lazy(tuple_box_def), vec![TypeId::STRING]);
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+
+    assert_eq!(
+        fmt.format(app),
+        "TupleBox<string>",
+        "Only anonymous object/mapped conditional alias application results \
+         expand structurally; tuple results keep the application surface"
     );
 }
 

@@ -9,12 +9,13 @@
 //! `type P = true extends true ? [string, number] : never` elaborates as
 //! `[string, number]`, never `P`.
 //!
-//! These tests pin the "tuple-like" family (tuple / array / function / scalar /
-//! primitive union) the issue targets, vary the alias binder names so a
-//! hardcoded fix would fail, and guard the object-result cases that keep their
-//! name (object results route through a separate reverse-lookup path and are
-//! intentionally left displaying the alias name to avoid a name-collision
-//! regression).
+//! These tests pin the tuple / array / function / scalar / primitive-union
+//! family, the bare-object family (a conditional / indexed access reducing to an
+//! anonymous object renders structurally; a directly-written alias sharing the
+//! shape keeps its name via the def store's "direct wins" guard), and the
+//! reducing-bodied *application* family (issue #10914: a conditional-bodied
+//! alias application such as `DeepReadonly<Config>` drops its alias symbol and
+//! renders its resolved structure). Binder names vary so a hardcoded fix fails.
 
 use crate::test_utils::check_source_diagnostics;
 
@@ -266,5 +267,111 @@ const h: RegistryKeys = 0;
     assert!(
         msg.contains("keyof Registry") && !msg.contains("\"red\""),
         "expected `keyof NamedInterface` to keep its operator spelling, got: {msg}"
+    );
+}
+// ── reducing-bodied alias *application* family (issue #10914) ─────────────
+//
+// A non-generic alias whose body is an *application* of a generic alias whose
+// own declared body is a reducing operator (a conditional or an indexed access)
+// drops its alias symbol when the operator resolves: tsc renders the resolved
+// structural type, never `Name<Args>` (the application spelling) nor the outer
+// alias name. A mapped/object-bodied application (`Partial<T>`) keeps its alias
+// symbol. Binder names vary so a hardcoded fix cannot satisfy these.
+
+// 11. A non-generic alias whose body is a conditional-bodied application
+//     resolving to an anonymous object renders the resolved object.
+#[test]
+fn conditional_application_alias_renders_underlying_object() {
+    let msg = ts2322_target(
+        r#"
+type Pick2<T> = T extends object ? { x: 1 } : never;
+type RO = Pick2<{ a: 1 }>;
+const bad: number = null as any as RO;
+"#,
+    );
+    assert!(
+        msg.contains("{ x: 1; }") && !msg.contains("RO") && !msg.contains("Pick2"),
+        "expected conditional-bodied application alias to render `{{ x: 1; }}`, got: {msg}"
+    );
+}
+
+// 12. Renamed binders, a different conditional-bodied utility application
+//     resolving to an object — proves the rule is structural, not keyed on a
+//     specific identifier such as `DeepReadonly`/`Pick2`.
+#[test]
+fn renamed_conditional_application_alias_renders_underlying_object() {
+    let msg = ts2322_target(
+        r#"
+type Unwrap<Value> = Value extends object ? { resolved: Value } : Value;
+type Final = Unwrap<{ id: 1 }>;
+const bad: number = null as any as Final;
+"#,
+    );
+    assert!(
+        msg.contains("{ resolved: { id: 1; }; }")
+            && !msg.contains("Final")
+            && !msg.contains("Unwrap"),
+        "expected renamed conditional application alias to render structurally, got: {msg}"
+    );
+}
+
+// 13. The headline #10914 repro: a recursive `DeepReadonly` application renders
+//     the fully-resolved structural object, expanding *every* nested helper
+//     application (`DeepReadonly<{ b: number }>` → `{ readonly b: number; }`,
+//     `DeepReadonly<string>` → `string`) rather than leaking the internal
+//     helper name into the diagnostic.
+#[test]
+fn recursive_deep_readonly_application_renders_fully_resolved_object() {
+    let msg = ts2322_target(
+        r#"
+type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
+type Config = { a: { b: number }; c: string };
+type RO = DeepReadonly<Config>;
+const bad: number = null as any as RO;
+"#,
+    );
+    assert!(
+        !msg.contains("DeepReadonly"),
+        "expected no internal helper name in the diagnostic, got: {msg}"
+    );
+    assert!(
+        msg.contains("readonly b: number") && msg.contains("readonly c: string"),
+        "expected the fully-resolved nested readonly object, got: {msg}"
+    );
+}
+
+// 14. An *inline* (un-aliased) reducing-bodied application in a property
+//     position also renders structurally — covers the nested formatter path.
+#[test]
+fn inline_conditional_application_renders_underlying_object() {
+    let msg = ts2322_target(
+        r#"
+type Wrap<T> = T extends object ? { wrapped: T } : never;
+type Holder = { slot: Wrap<{ a: 1 }> };
+const h: Holder = { slot: 0 };
+"#,
+    );
+    assert!(
+        msg.contains("{ wrapped: { a: 1; }; }") && !msg.contains("Wrap"),
+        "expected inline conditional application to render structurally, got: {msg}"
+    );
+}
+
+// 15. Negative case: a *mapped*-bodied application (`Partial`-like) keeps its
+//     alias symbol and renders the `Name<Args>` application form, since tsc
+//     stamps the alias onto a homomorphic mapped result.
+#[test]
+fn mapped_bodied_application_keeps_application_form() {
+    let msg = ts2322_target(
+        r#"
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+type Config = { a: number };
+type RO = MyPartial<Config>;
+const bad: number = null as any as RO;
+"#,
+    );
+    assert!(
+        msg.contains("MyPartial<Config>"),
+        "expected a mapped-bodied application to keep its `Name<Args>` form, got: {msg}"
     );
 }

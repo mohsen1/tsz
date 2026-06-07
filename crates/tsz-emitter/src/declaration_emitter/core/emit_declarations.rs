@@ -28,12 +28,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_scope_marker = false;
         self.emitted_module_indicator = false;
 
-        // Seed overload tracking from precomputed ExportSurface if available.
-        // This replaces the incremental on-the-fly detection for top-level
-        // functions, ensuring overload grouping is correct even if the surface
-        // was built in a previous pass.
-        if let Some(ref surface) = self.export_surface {
-            self.function_names_with_overloads = surface.overloaded_functions.clone();
+        // Seed overload tracking from the precomputed declaration summary.
+        // This replaces incremental on-the-fly discovery for top-level
+        // functions, ensuring overload grouping is correct even when the
+        // exported surface was built in a previous pass.
+        if let Some(ref summary) = self.declaration_summary {
+            self.function_names_with_overloads = summary.overloaded_functions().clone();
         }
 
         // Prepare import metadata for elision BEFORE running UsageAnalyzer
@@ -141,12 +141,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.source_is_js_file = self.source_file_is_js(source_file);
         self.current_source_file_idx = Some(root_idx);
-        // Prefer the pre-computed flag from ExportSurface when available;
+        // Prefer the precomputed declaration summary flag when available;
         // fall back to the existing AST walk for JS files (which need
         // CommonJS-specific detection the surface doesn't cover yet).
-        self.emit_public_api_only = if let Some(ref surface) = self.export_surface {
+        self.emit_public_api_only = if let Some(ref summary) = self.declaration_summary {
             if !self.source_is_js_file {
-                surface.has_public_api_scope
+                summary.has_public_api_scope()
             } else {
                 self.has_public_api_exports(source_file)
             }

@@ -126,16 +126,12 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        let property_guard = TypeGuard::Predicate {
-            type_id: Some(predicate_property_type),
-            asserts: false,
-        };
         let env = self.type_environment.map(std::cell::RefCell::borrow);
-        let narrowed = flow_query::narrow_inferred_predicate_guard(
+        let narrowed = flow_query::narrow_property_type_by_predicate(
             self.interner,
             env.as_deref(),
             type_id,
-            &property_guard,
+            predicate_property_type,
         );
         (narrowed != type_id).then_some(narrowed)
     }

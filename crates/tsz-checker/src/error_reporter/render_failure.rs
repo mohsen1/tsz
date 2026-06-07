@@ -754,28 +754,30 @@ impl<'a> CheckerState<'a> {
                 source_count,
                 target_count,
             } => {
+                // The arity leaf is identical at every depth: direction picks the
+                // catalog message — a source longer than a closed target ->
+                // "target allows only M" (`TS2619`); shorter than required ->
+                // "target requires M" (`TS2618`). Only its framing differs by
+                // depth (top-level headline vs. drilled leaf), so compute it once.
+                let (arity_message, arity_code) = if source_count > target_count {
+                    (
+                        diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                        diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                    )
+                } else {
+                    (
+                        diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                        diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                    )
+                };
+                let arity_text = format_message(
+                    arity_message,
+                    &[&source_count.to_string(), &target_count.to_string()],
+                );
                 if depth == 0 {
                     // Top level: tsc keeps the `TS2322` headline and attaches the
                     // arity reason as a nested elaboration line, matching the
-                    // sibling function-arity elaboration above. Direction picks the
-                    // catalog message: a source longer than a closed target ->
-                    // "target allows only M" (`TS2619`); shorter than required ->
-                    // "target requires M" (`TS2618`).
-                    let (arity_message, arity_code) = if source_count > target_count {
-                        (
-                            diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
-                            diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
-                        )
-                    } else {
-                        (
-                            diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
-                            diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
-                        )
-                    };
-                    let arity_text = format_message(
-                        arity_message,
-                        &[&source_count.to_string(), &target_count.to_string()],
-                    );
+                    // sibling function-arity elaboration above.
                     let (source_str, target_str) =
                         self.format_top_level_assignability_message_types_at(source, target, idx);
                     let base = format_message(
@@ -800,14 +802,11 @@ impl<'a> CheckerState<'a> {
                     });
                     diag
                 } else {
-                    // Nested rendering is preserved as-is: this PR's scope is the
-                    // top-level (`depth == 0`) elaboration that was missing. The
-                    // nested wording is left untouched to avoid perturbing existing
-                    // diagnostic chains in conformance fixtures.
-                    let message = format!(
-                        "Tuple type has {source_count} elements but target requires {target_count}."
-                    );
-                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                    // Nested (depth >= 1) render: a closed-tuple arity mismatch
+                    // drilled beneath a member/property header (e.g. a failing
+                    // union member or `Types of property 'p' …`). tsc emits the
+                    // same `TS2618`/`TS2619` leaf here as at the top level.
+                    Diagnostic::error(file_name, start, length, arity_text, arity_code)
                 }
             }
             SubtypeFailureReason::TupleArityMismatch(arity) => {

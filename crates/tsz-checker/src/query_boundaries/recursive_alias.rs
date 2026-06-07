@@ -101,6 +101,28 @@ pub(crate) fn is_recursive_type_alias_application(
     type_reaches_alias_def(db, body, def_id, &mut visited)
 }
 
+/// True when `type_id` is a recursive generic type-alias application whose
+/// current or evaluated shape is tuple-like.
+///
+/// Tuple recursion is the assignability-display case where structural expansion
+/// runs away (`[number, [number, [..., ...]]]`). Recursive object and mapped
+/// aliases still need role-specific display handling so mapped property values
+/// can reduce to their concrete value types.
+pub(crate) fn is_recursive_tuple_type_alias_application(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    evaluated: TypeId,
+) -> bool {
+    if !is_recursive_type_alias_application(db, def_store, type_id) {
+        return false;
+    }
+    tsz_solver::type_queries::is_tuple_like_type(db, type_id)
+        || (evaluated != type_id
+            && evaluated != TypeId::ERROR
+            && tsz_solver::type_queries::is_tuple_like_type(db, evaluated))
+}
+
 fn type_reaches_alias_def(
     db: &dyn TypeDatabase,
     type_id: TypeId,

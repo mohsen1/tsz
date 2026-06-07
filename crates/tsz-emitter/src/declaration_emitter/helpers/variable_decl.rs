@@ -1854,10 +1854,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .map(|type_text| self.jsdoc_type_text_for_declaration_emit(&type_text))
             });
         let prefer_source_text = type_text == "never"
-            || source_type_text.as_ref().is_some_and(|source_text| {
-                source_text.contains(" & ")
-                    || (Self::is_constructor_object_type_text(source_text)
-                        && Self::type_text_has_conditional_infer_surface(&type_text))
+            || source_type_text.as_ref().is_some_and(|source_type_text| {
+                Self::should_prefer_synthetic_extends_source_type_text(source_type_text, &type_text)
             });
         let type_text = if prefer_source_text {
             source_type_text.unwrap_or(type_text)
@@ -1870,6 +1868,15 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_non_exported_declaration = true;
 
         Some(alias_name)
+    }
+
+    fn should_prefer_synthetic_extends_source_type_text(
+        source_type_text: &str,
+        printed_type_text: &str,
+    ) -> bool {
+        source_type_text.contains(" & ")
+            || (Self::is_constructor_object_type_text(source_type_text)
+                && Self::type_text_has_conditional_infer_surface(printed_type_text))
     }
 
     fn enum_member_literal_initializer_value(
@@ -1899,5 +1906,37 @@ impl<'a> DeclarationEmitter<'a> {
                 self.primitive_literal_argument_type_text(arg).as_deref() == Some(type_text)
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::DeclarationEmitter;
+
+    #[test]
+    fn synthetic_extends_source_type_policy_prefers_intersections() {
+        assert!(
+            DeclarationEmitter::should_prefer_synthetic_extends_source_type_text(
+                "CtorA & CtorB",
+                "CtorA",
+            )
+        );
+    }
+
+    #[test]
+    fn synthetic_extends_source_type_policy_prefers_constructor_object_for_conditional_infer() {
+        assert!(
+            DeclarationEmitter::should_prefer_synthetic_extends_source_type_text(
+                "{ new (): X; prototype: X }",
+                "T extends U ? infer R : never",
+            )
+        );
+    }
+
+    #[test]
+    fn synthetic_extends_source_type_policy_keeps_plain_printed_type() {
+        assert!(
+            !DeclarationEmitter::should_prefer_synthetic_extends_source_type_text("Ctor", "Ctor",)
+        );
     }
 }

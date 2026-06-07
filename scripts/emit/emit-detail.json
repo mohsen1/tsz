@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-06-06T10:02:41.339Z",
-  "detailFingerprint": "sha256:e910c199687ebf8feeac644e43e91339dbf79a4c2eb9d2fec05190d658e7cdf2",
+  "timestamp": "2026-06-06T12:10:44.144426Z",
+  "detailFingerprint": "sha256:0972b18fe9f1f02a5b7aaf6bb834f6933abb0f6f284be419cc522f992a888437",
   "detailResultCount": 13531,
   "summary": {
     "jsTotal": 13530,
-    "jsPass": 13526,
-    "jsFail": 4,
+    "jsPass": 13530,
+    "jsFail": 0,
     "jsSkip": 1,
     "jsTimeout": 0,
     "jsPassRate": 100,
@@ -8844,10 +8844,9 @@
       "name": "autoAccessor5(target=es5)",
       "baselineFile": "autoAccessor5(target=es5).js",
       "testPath": "tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor5.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+2/-1 lines",
-      "elapsed": 26
+      "elapsed": 12
     },
     {
       "name": "autoAccessor5(target=es2022)",
@@ -11941,10 +11940,9 @@
       "name": "canFollowGetSetKeyword",
       "baselineFile": "canFollowGetSetKeyword.js",
       "testPath": "tests/cases/conformance/classes/propertyMemberDeclarations/canFollowGetSetKeyword.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+2/-4 lines",
-      "elapsed": 62
+      "elapsed": 11
     },
     {
       "name": "capturedLetConstInLoop10",
@@ -105158,10 +105156,9 @@
       "name": "usingDeclarations.1(target=es5)",
       "baselineFile": "usingDeclarations.1(target=es5).js",
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.1.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+1/-2 lines",
-      "elapsed": 114
+      "elapsed": 796
     },
     {
       "name": "usingDeclarations.2(target=es2015)",
@@ -105503,10 +105500,9 @@
       "name": "usingDeclarationsNamedEvaluationDecoratorsAndClassFields",
       "baselineFile": "usingDeclarationsNamedEvaluationDecoratorsAndClassFields.js",
       "testPath": "tests/cases/conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsNamedEvaluationDecoratorsAndClassFields.ts",
-      "jsStatus": "fail",
+      "jsStatus": "pass",
       "dtsStatus": "skip",
-      "jsError": "+7/-7 lines",
-      "elapsed": 55
+      "elapsed": 764
     },
     {
       "name": "usingDeclarationsInForOf.4",

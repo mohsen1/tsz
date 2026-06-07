@@ -579,10 +579,13 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
-            // Clean up object type text: strip enclosing parens and any trailing
-            // index access syntax that may leak from the object_type node span.
+            // Clean up object type text: normalize stray whitespace (so the
+            // display matches tsc's printer), strip enclosing parens, and drop
+            // any trailing index access syntax that may leak from the node span.
+            let normalized_object_text =
+                object_format::normalize_indexed_access_object_text(&raw_object_text);
             let object_type_str = {
-                let trimmed = raw_object_text.trim();
+                let trimmed = normalized_object_text.trim();
                 let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
                 let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
                 if let Some(pos) = trimmed.find(")[") {
@@ -939,6 +942,7 @@ impl<'a> CheckerState<'a> {
         if foreign_keyof_indexed_constraint {
             let obj_type_str = self
                 .node_text(data.object_type)
+                .map(|text| object_format::normalize_indexed_access_object_text(&text))
                 .unwrap_or_else(|| self.format_type(object_type));
             let index_type_str = self.format_type(index_type);
             let message_2536 = format_message(
@@ -1433,6 +1437,8 @@ impl<'a> CheckerState<'a> {
                         let object_type_str = self
                             .node_text(data.object_type)
                             .map(|text| {
+                                let text =
+                                    object_format::normalize_indexed_access_object_text(&text);
                                 let trimmed = text.trim();
                                 let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
                                 let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
