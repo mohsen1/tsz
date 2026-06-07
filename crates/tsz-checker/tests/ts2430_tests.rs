@@ -587,11 +587,17 @@ interface Derived<K, V> extends Base<K, V> {
 }
 
 #[test]
-fn test_overloaded_non_generic_method_incompatible_return_still_errors() {
-    // Non-generic overloads with a return type mismatch in the trailing
-    // (non-specialized) signature must still produce TS2430. The fallback
-    // `is_assignable_to` call does not affect non-generic signatures, so
-    // genuine incompatibilities are preserved.
+fn test_overloaded_non_generic_method_specialized_overload_covers_general_no_ts2430() {
+    // tsc relates interface heritage with the full N×M overload rule: every base
+    // (target) overload must be matched by *some* derived (source) overload, with
+    // method signatures compared bivariantly. Here the derived's specialized
+    // `concat("literal"): number` overload covers the base's general
+    // `concat(string): number` overload (`"literal"` relates to `string`
+    // bivariantly, returns match), so even though the derived's own
+    // `concat(string)` overload returns `string`, the override is valid and tsc
+    // emits no TS2430. (Verified against `tsc --strict`.) The previous trailing-
+    // signature heuristic compared only the last signature on each side and
+    // over-reported here.
     let source = r#"
 interface Base {
     concat(x: "literal"): number;
@@ -603,18 +609,44 @@ interface Derived extends Base {
 }
 "#;
     let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
     assert!(
-        diags.iter().any(|d| d.0 == 2430),
-        "Should emit TS2430 when non-generic overloaded method trailing signature has \
-         incompatible return type. Got: {diags:?}"
+        ts2430.is_empty(),
+        "Should NOT emit TS2430: derived's specialized overload covers the base's \
+         general overload (tsc parity). Got: {diags:?}"
     );
 }
 
 #[test]
-fn test_overloaded_generic_method_incompatible_return_still_errors() {
-    // The fresh-instantiation fallback is only for structurally matching
-    // generic trailing overloads. A real generic return mismatch must still
-    // report TS2430.
+fn test_overloaded_non_generic_method_uncovered_overload_still_errors() {
+    // Negative control: no derived overload can service the base's general
+    // `concat(string): number` overload — the only candidates are
+    // `concat(number)` (param `number` does not relate to `string`) and
+    // `concat(string): string` (return `string` ≠ `number`). tsc reports TS2430.
+    let source = r#"
+interface Base {
+    concat(x: number): number;
+    concat(x: string): number;
+}
+interface Derived extends Base {
+    concat(x: number): number;
+    concat(x: string): string;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2430),
+        "Should emit TS2430 when no derived overload covers a base overload. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_overloaded_generic_method_specialized_overload_covers_general_no_ts2430() {
+    // Generic analogue of the specialized-covers-general case: after method-local
+    // generic erasure, the derived's `merge("literal"): { value: T }` overload
+    // covers the base's general `merge(x: T): { value: T }` overload, so tsc emits
+    // no TS2430 even though the derived's own general overload returns
+    // `{ other: T }`. (Verified against `tsc --strict`.)
     let source = r#"
 interface Base {
     merge<T>(x: "literal"): { value: T };
@@ -626,10 +658,34 @@ interface Derived extends Base {
 }
 "#;
     let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430: derived's specialized generic overload covers the \
+         base's general overload (tsc parity). Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_overloaded_generic_method_dropped_overload_still_errors() {
+    // Negative control: the derived drops the base's one-argument overload and
+    // keeps only the two-argument one, which cannot be called with a single
+    // argument. tsc reports TS2430. (The old trailing-only heuristic missed this
+    // because both sides' trailing signatures matched.)
+    let source = r#"
+interface Base {
+    pipe<A>(op1: (x: number) => A): A;
+    pipe<A, B>(op1: (x: number) => A, op2: (x: A) => B): B;
+}
+interface Derived extends Base {
+    pipe<A, B>(op1: (x: number) => A, op2: (x: A) => B): B;
+}
+"#;
+    let diags = get_diagnostics(source);
     assert!(
         diags.iter().any(|d| d.0 == 2430),
-        "Should emit TS2430 when generic overloaded method trailing signature has \
-         an incompatible return shape. Got: {diags:?}"
+        "Should emit TS2430 when the derived drops a base overload it cannot service. \
+         Got: {diags:?}"
     );
 }
 
