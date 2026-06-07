@@ -15,6 +15,10 @@ fn test_relation_request_property_policy_is_executed() {
         request_source.contains("fn requires_property_classification(&self) -> bool"),
         "RelationRequest must expose an executable policy query for property classification"
     );
+    assert!(
+        request_source.contains("fn solver_relation_policy("),
+        "RelationRequest must expose executable solver relation kind/flag policy"
+    );
 
     let execute_body = boundary_source
         .split("pub(crate) fn execute_relation")
@@ -24,5 +28,9 @@ fn test_relation_request_property_policy_is_executed() {
     assert!(
         execute_body.contains("request.requires_property_classification()"),
         "execute_relation must use request property policy before classifying object properties"
+    );
+    assert!(
+        execute_body.contains("request.solver_relation_policy("),
+        "execute_relation must ask RelationRequest for solver kind/flags instead of open-coding request policy"
     );
 }

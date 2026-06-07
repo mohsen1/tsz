@@ -15,7 +15,7 @@ use tsz_solver::relations::relation_queries::{
 };
 
 use super::relation_policy;
-pub(crate) use super::relation_request::{RelationKind, RelationRequest};
+pub(crate) use super::relation_request::RelationRequest;
 
 pub(crate) use super::common::{contains_type_parameters, is_callable_type, object_shape_for_type};
 
@@ -1176,22 +1176,10 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     )
     .entered();
 
-    let mut relation_flags = flags;
-    if request.allow_erased_generic_signature_retry {
-        relation_flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
-    }
-
     // BivariantCallbacks treats callback parameter types bivariantly by stripping
     // strict-function-types. The decision and the failure reason both run under
     // this policy so they cannot diverge.
-    let (solver_kind, solver_flags) = if request.kind == RelationKind::BivariantCallbacks {
-        (
-            SolverRelationKind::AssignableBivariantCallbacks,
-            relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES,
-        )
-    } else {
-        (SolverRelationKind::Assignable, relation_flags)
-    };
+    let (solver_kind, solver_flags) = request.solver_relation_policy(flags);
 
     // Decide the relation and, on failure, capture the structured reason from the
     // SAME configured checker (single pass). This is the canonical fix for the

@@ -690,6 +690,28 @@ impl RelationRequest {
         self.source_is_fresh || checks_excess_properties || reports_missing_properties
     }
 
+    pub(crate) fn solver_relation_policy(
+        &self,
+        base_flags: u16,
+    ) -> (tsz_solver::relations::relation_queries::RelationKind, u16) {
+        let mut flags = base_flags;
+        if self.allow_erased_generic_signature_retry {
+            flags |= tsz_solver::RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY.bits() as u16;
+        }
+
+        if self.kind == RelationKind::BivariantCallbacks {
+            (
+                tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
+                flags & !(tsz_solver::RelationFlags::STRICT_FUNCTION_TYPES.bits() as u16),
+            )
+        } else {
+            (
+                tsz_solver::relations::relation_queries::RelationKind::Assignable,
+                flags,
+            )
+        }
+    }
+
     /// Allow a failed generic-signature inference to retry with erased signatures.
     pub(crate) const fn with_erased_generic_signature_retry(mut self) -> Self {
         self.allow_erased_generic_signature_retry = true;
