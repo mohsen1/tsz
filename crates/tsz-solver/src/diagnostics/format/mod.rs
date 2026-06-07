@@ -300,15 +300,19 @@ impl<'a> TypeFormatter<'a> {
     /// A non-distributive application of a generic alias whose *declared body is
     /// a conditional type* loses its alias symbol when the conditional resolves:
     /// the operator resolves into its branch and never stamps the enclosing
-    /// alias onto anonymous object/mapped results, so tsc renders those results
-    /// structurally (`DeepReadonly<{ b: number }>` →
-    /// `{ readonly b: number; }`, issue #10914), not as `Name<Args>`.
+    /// alias onto the result, so tsc renders the resolved type structurally for
+    /// any shape — scalar (`DeepReadonly<number>` → `number`), tuple
+    /// (`Parameters<F>` → `[a: number]`), union (`A | B`), and object
+    /// (`DeepReadonly<{ b: number }>` → `{ readonly b: number; }`, issue
+    /// #10914) alike — not as `Name<Args>`.
     ///
     /// Returns the evaluated type to format in place of the application form.
-    /// Returns `None` for a mapped/object-bodied application (`Partial<T>` keeps
-    /// its alias symbol), for a result that stays generic, and for a result that
-    /// fails to reduce (a still-deferred conditional), so those keep their
-    /// existing display. The distributive form is handled earlier by
+    /// Returns `None` only when the conditional cannot drop its name: a
+    /// mapped/object-bodied application (`Partial<T>` keeps its alias symbol)
+    /// fails the structural gate, a result that stays generic is rejected
+    /// above, and a result that fails to reduce (a still-deferred conditional,
+    /// or one whose evaluation made no progress) keeps the application form.
+    /// The distributive form is handled earlier by
     /// [`Self::distributed_conditional_application_display`].
     fn reducing_conditional_application_display(&self, type_id: TypeId) -> Option<TypeId> {
         let def_store = self.def_store?;
@@ -348,14 +352,25 @@ impl<'a> TypeFormatter<'a> {
         }
         // A conditional still deferred after evaluation never reduced (an
         // unresolved operand); the raw node is no more informative than the
-        // application form, so keep the application form. Non-object results
-        // also keep the application surface; expanding tuple/scalar helper
-        // applications produces conformance fingerprint drift in assignment
-        // diagnostics where tsc preserves the helper spelling.
+        // application form, so keep the application form. A result identical to
+        // the application itself made no progress, so keep it too — formatting
+        // it again would recurse forever.
+        //
+        // Every *resolved* shape reduces, not just objects: `tsc` drops the
+        // alias `aliasSymbol` once a non-distributive conditional resolves with
+        // concrete arguments, then renders the resolved type structurally for
+        // any shape — scalar (`DeepReadonly<number>` → `number`,
+        // `IsString<number>` → `false`), tuple (`Parameters<F>` →
+        // `[a: number]`), union (`T extends X ? A | B : C` → `A | B`), and
+        // object alike (issue #10914, verified against `tsc` 6.0.2). A result
+        // that is itself a *named* target re-paints its own name through the
+        // formatter's named-type path, so only the dropped outer alias is
+        // suppressed; distributive conditionals keep the outer alias on the
+        // separate distribution path above.
         if matches!(
             self.interner.lookup(evaluated),
             Some(TypeData::Conditional(_))
-        ) || !crate::type_queries::is_object_or_mapped_type(self.interner, evaluated)
+        ) || evaluated == type_id
         {
             return None;
         }

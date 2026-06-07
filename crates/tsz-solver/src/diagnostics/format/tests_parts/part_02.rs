@@ -859,7 +859,7 @@ fn conditional_alias_application_resolving_to_object_renders_structurally() {
 }
 
 #[test]
-fn conditional_alias_application_resolving_to_tuple_keeps_application_surface() {
+fn conditional_alias_application_resolving_to_tuple_renders_structurally() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -891,11 +891,18 @@ fn conditional_alias_application_resolving_to_tuple_keeps_application_surface() 
     let app = db.application(db.lazy(tuple_box_def), vec![TypeId::STRING]);
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
 
+    // `TupleBox<string>` reduces (non-distributively) to `[string]`; the
+    // resolved conditional drops the alias `aliasSymbol`, so tsc renders the
+    // resolved tuple structurally, never `TupleBox<string>` (issue #10914,
+    // verified against tsc 6.0.2: `type TupleBox<T> = T extends string ? [T]
+    // : never; TupleBox<string>` elaborates as `[string]`). Every resolved
+    // shape reduces — scalar, tuple, union, and object alike — not just
+    // anonymous object/mapped results.
     assert_eq!(
         fmt.format(app),
-        "TupleBox<string>",
-        "Only anonymous object/mapped conditional alias application results \
-         expand structurally; tuple results keep the application surface"
+        "[string]",
+        "A resolved conditional alias application must render its resolved \
+         shape structurally, including tuple results"
     );
 }
 

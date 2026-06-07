@@ -177,3 +177,78 @@ fn deferred_generic_conditional_keeps_alias_name() {
         diag.message_text
     );
 }
+
+/// Core #10914 repro: a *recursive* conditional-bodied alias must expand to a
+/// fully resolved structural type — every nested helper application, down to
+/// the scalar leaves, drops its name. tsc 6.0.2 renders
+/// `{ readonly a: { readonly b: number; }; readonly c: string; }`, never
+/// leaking `DeepReadonly<number>` / `DeepReadonly<string>` internals.
+#[test]
+fn recursive_conditional_alias_expands_fully_without_leaking_helper_names() {
+    let diags = check_strict(
+        "type DeepRO<V> = V extends object ? { readonly [K in keyof V]: DeepRO<V[K]> } : V;\n\
+         type Settings = { a: { b: number }; c: string };\n\
+         const bad: number = (null as any as DeepRO<Settings>);\n",
+    );
+    let diag = single(&diags, 2322);
+    assert!(
+        diag.message_text.contains(
+            "Type '{ readonly a: { readonly b: number; }; readonly c: string; }' \
+             is not assignable to type 'number'"
+        ),
+        "recursive conditional alias must expand fully to the resolved object; got: {}",
+        diag.message_text
+    );
+    assert!(
+        !diag.message_text.contains("DeepRO<"),
+        "no internal helper application may leak into the diagnostic; got: {}",
+        diag.message_text
+    );
+}
+
+/// A conditional-bodied alias application that reduces to a *scalar* drops its
+/// alias name like the object case — tsc renders `number`, never
+/// `DeepRO<number>`. Binder names differ from the recursive case so the
+/// rendering is proven structural.
+#[test]
+fn conditional_alias_reducing_to_scalar_shows_resolved_scalar() {
+    let diags = check_strict(
+        "type DeepRO<W> = W extends object ? { readonly [P in keyof W]: DeepRO<W[P]> } : W;\n\
+         const bad: 1 = (null as any as DeepRO<number>);\n",
+    );
+    let diag = single(&diags, 2322);
+    assert!(
+        diag.message_text
+            .contains("Type 'number' is not assignable to type '1'"),
+        "a scalar-reducing conditional alias must show the resolved scalar; got: {}",
+        diag.message_text
+    );
+    assert!(
+        !diag.message_text.contains("DeepRO<"),
+        "the reduced conditional must drop its alias name; got: {}",
+        diag.message_text
+    );
+}
+
+/// A conditional-bodied alias application that reduces (non-distributively) to a
+/// *union* shows the resolved union, not the application form. tsc 6.0.2
+/// renders `"a" | "b"`.
+#[test]
+fn conditional_alias_reducing_to_union_branch_shows_resolved_union() {
+    let diags = check_strict(
+        "type FirstTwo<S> = S extends string ? \"a\" | \"b\" : never;\n\
+         const bad: 1 = (null as any as FirstTwo<\"x\">);\n",
+    );
+    let diag = single(&diags, 2322);
+    assert!(
+        diag.message_text
+            .contains("Type '\"a\" | \"b\"' is not assignable to type '1'"),
+        "a union-reducing conditional must show the resolved union; got: {}",
+        diag.message_text
+    );
+    assert!(
+        !diag.message_text.contains("FirstTwo<"),
+        "the reduced conditional must drop its alias name; got: {}",
+        diag.message_text
+    );
+}
