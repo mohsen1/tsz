@@ -1260,6 +1260,9 @@ mod union_index_signature_relation_routing_arch_tests;
 #[path = "tests/union_multi_overload_unified_sig_tests.rs"]
 mod union_multi_overload_unified_sig_tests;
 #[cfg(test)]
+#[path = "tests/union_source_literal_target_display_tests.rs"]
+mod union_source_literal_target_display_tests;
+#[cfg(test)]
 #[path = "tests/unique_symbol_assignment_ts2322_tests.rs"]
 mod unique_symbol_assignment_ts2322_tests;
 #[cfg(test)]

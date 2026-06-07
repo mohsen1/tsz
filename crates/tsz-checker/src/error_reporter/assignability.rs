@@ -1213,6 +1213,18 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Whether `ty` (or its assignability-evaluated form `evaluated`) carries
+    /// fresh object-literal `display_properties` — the provenance marker that
+    /// distinguishes a fresh expression literal (whose canonical shape is
+    /// widened, so it is text-widened for display) from a declared annotation /
+    /// named type (rendered verbatim). Shared by the source- and target-side
+    /// non-literal display rewrites so both apply the same fresh-vs-declared
+    /// discipline.
+    fn type_or_evaluated_has_display_properties(&self, ty: TypeId, evaluated: TypeId) -> bool {
+        self.ctx.types.get_display_properties(ty).is_some()
+            || self.ctx.types.get_display_properties(evaluated).is_some()
+    }
+
     pub(super) fn rewrite_source_display_for_non_literal_target_assignability(
         &mut self,
         source: TypeId,
@@ -1225,12 +1237,8 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
                     .is_some_and(|shape| !shape.construct_signatures.is_empty());
         let evaluated_source = self.evaluate_type_for_assignability(source);
-        let source_has_display_props = self.ctx.types.get_display_properties(source).is_some()
-            || self
-                .ctx
-                .types
-                .get_display_properties(evaluated_source)
-                .is_some();
+        let source_has_display_props =
+            self.type_or_evaluated_has_display_properties(source, evaluated_source);
         if let Some(display) = self.typeof_result_source_display(evaluated_source, target) {
             return display.to_string();
         }
@@ -1386,6 +1394,25 @@ impl<'a> CheckerState<'a> {
         if Self::type_displays_as_application(self.ctx.types, target) {
             return target_display;
         }
+
+        // A *declared* target — an annotation or named type with no fresh
+        // object-literal display provenance — carries canonical literal members
+        // that tsc renders verbatim at every nesting depth. Only a genuinely
+        // fresh object-literal target (which interns a widened canonical shape
+        // and therefore carries `display_properties`) is text-widened. Mirror
+        // the fresh-vs-declared discipline the source side already applies in
+        // `rewrite_source_display_for_non_literal_target_assignability`, so a
+        // non-object source (e.g. a union) assigned to an anonymous object
+        // annotation like `{ a: 1 }` keeps the declared literal target instead
+        // of leaking a widened `{ a: number }` (#12179). Fresh-literal targets
+        // (with `display_properties`) still widen, preserving the existing
+        // role-swapped behavior.
+        let target_has_display_props =
+            self.type_or_evaluated_has_display_properties(target, evaluated);
+        if !target_has_display_props && self.source_carries_canonical_literal_member(evaluated) {
+            return target_display;
+        }
+
         let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
         let widened_display = self
