@@ -68,6 +68,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if first_excess.is_none() {
+            // No excess property at *this* level. The present properties may still
+            // carry nested object literals with deeper excess properties — e.g. a
+            // recursive homomorphic mapped utility `{ [K in keyof T]: F<T[K]> }`
+            // whose evaluated property values are themselves object/intersection
+            // shapes (`excessPropertyCheckIntersectionWithRecursiveType`). Returning
+            // `false` defers to the recursion-capable simple-object / intersection
+            // branches in `check_object_literal_excess_properties`, which descend
+            // into each present property's nested literal against the evaluated
+            // (already-expanded) target. Claiming the check is fully handled here
+            // would skip that descent and silently drop the nested TS2353 that tsc
+            // reports.
+            return false;
+        }
         // Display the expanded object shape (matching tsc), not the deferred mapped form.
         self.emit_tracked_excess_property(first_excess, evaluated_target);
         true

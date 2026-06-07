@@ -1113,6 +1113,9 @@ mod recursive_conditional_infer_termination_tests;
 #[path = "tests/recursive_generic_arrow_tests.rs"]
 mod recursive_generic_arrow_tests;
 #[cfg(test)]
+#[path = "tests/recursive_mapped_intersection_nested_excess_property_tests.rs"]
+mod recursive_mapped_intersection_nested_excess_property_tests;
+#[cfg(test)]
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;
 #[cfg(test)]
