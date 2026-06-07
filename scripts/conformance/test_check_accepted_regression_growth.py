@@ -12,16 +12,9 @@ sys.modules[SPEC.name] = mod
 SPEC.loader.exec_module(mod)
 
 check_growth = mod.check_growth
-
-
-def _parse(text: str) -> frozenset[str]:
-    """Parse accepted-regression text directly (mirrors load_entries logic)."""
-    entries: set[str] = set()
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            entries.add(stripped)
-    return frozenset(entries)
+# Parse through the shared library so the test's notion of an "entry" stays in
+# lock-step with production (normalization + dedup), rather than re-deriving it.
+_parse = mod.entry_set
 
 
 class CheckAcceptedRegressionGrowthTests(unittest.TestCase):
