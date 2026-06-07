@@ -212,16 +212,10 @@ impl PathMapping {
             return (self.pattern == specifier).then(String::new);
         }
 
-        // tsc's `tryParsePattern` returns `undefined` for a key containing more
-        // than one `*`: such a key is neither an exact match nor a usable
-        // single-`*` wildcard, so `tryParsePatterns` drops it from path mapping
-        // entirely. Honoring only the first `*` (as `split_path_pattern` does
-        // when it builds `prefix`/`suffix`) would let the key match and mint a
-        // file identity tsc never produces.
-        if self.pattern.matches('*').count() > 1 {
-            return None;
-        }
-
+        // Keys with more than one `*` are rejected up front by
+        // `build_path_mappings` (mirroring tsc's `tryParsePattern`), so every
+        // mapping that reaches here has exactly one `*` and a well-formed
+        // `prefix`/`suffix`.
         if !specifier.starts_with(&self.prefix) || !specifier.ends_with(&self.suffix) {
             return None;
         }
@@ -1004,19 +998,25 @@ mod path_mapping_selection_tests {
     }
 
     #[test]
-    fn multi_star_key_is_dropped_like_tsc_try_parse_pattern() {
-        // tsc's `tryParsePattern` returns `undefined` for a key with two `*`,
-        // so the key never matches anything. Honoring only its first `*` would
-        // wrongly match the specifier on `prefix`/`suffix`.
-        let two_star = mapping("a/*/*", &["./x/*"]);
-        assert_eq!(two_star.match_specifier("a/foo/bar"), None);
-        assert_eq!(two_star.match_specifier("a/foo//"), None);
+    fn multi_star_key_is_dropped_at_build_like_tsc_try_parse_pattern() {
+        use super::build_path_mappings;
+        use rustc_hash::FxHashMap;
 
-        // A dropped multi-`*` key must not win selection over a valid catch-all.
-        let mappings = vec![
-            mapping("a/*/*", &["./wrong/*"]),
-            mapping("*", &["./types/*"]),
-        ];
+        // tsc's `tryParsePattern` returns `undefined` for a key with two `*`, so
+        // `tryParsePatterns` never builds a mapping for it. `build_path_mappings`
+        // must drop it at the parser so it can never match a specifier (which it
+        // would, on its mis-derived first-`*` `prefix`/`suffix`).
+        let mut paths: FxHashMap<String, Vec<String>> = FxHashMap::default();
+        paths.insert("a/*/*".to_string(), vec!["./wrong/*".to_string()]);
+        paths.insert("*".to_string(), vec!["./types/*".to_string()]);
+
+        let mappings = build_path_mappings(&paths);
+        assert!(
+            mappings.iter().all(|m| m.pattern != "a/*/*"),
+            "multi-`*` key must be dropped at build time"
+        );
+
+        // With the malformed key gone, only the valid catch-all can match.
         let (idx, star) =
             PathMapping::select_best(&mappings, "a/foo/bar").expect("catch-all must match");
         assert_eq!(mappings[idx].pattern, "*");

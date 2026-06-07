@@ -1440,6 +1440,15 @@ fn build_path_mappings(paths: &FxHashMap<String, Vec<String>>) -> Vec<PathMappin
             continue;
         }
         let pattern = normalize_path_pattern(pattern);
+        // tsc's `tryParsePattern` returns `undefined` for a key containing more
+        // than one `*`, so `tryParsePatterns` drops it from path mapping
+        // entirely. `split_path_pattern` only consults the first `*`, so a
+        // multi-`*` key would otherwise build a bogus `prefix`/`suffix` and
+        // match specifiers tsc never maps. Reject it here, at the parser, so no
+        // such mapping ever reaches either resolver.
+        if pattern.matches('*').count() > 1 {
+            continue;
+        }
         let targets = targets
             .iter()
             .map(|target| normalize_path_pattern(target))
