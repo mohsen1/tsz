@@ -1312,6 +1312,36 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// True when `union` collapses to `member` as a set: `member` is one of its
+    /// arms (checked by the caller) and every arm is assignable to `member`, so
+    /// `union` and `member` denote the same value set (`2 | number` vs
+    /// `number`). The un-reduced `union` is then the literal-preserving
+    /// contextual form (`UnionReduction.None`) and must not be collapsed to the
+    /// bare `member`. When `union` is *not* assignable to `member` it is
+    /// genuinely wider (`string | number` vs `number`) and the narrower member
+    /// stays preferred.
+    ///
+    /// Callable operands are excluded: literal preservation is about data
+    /// unions, while a union of overloaded call signatures is collapsed to a
+    /// specific member by the dedicated callable-specificity comparison that
+    /// runs immediately after the membership rules. Keeping a callable union
+    /// here would steal that decision and drop the precise signature used to
+    /// contextually type a method/callback property (`then`, `set`, …).
+    fn contextual_union_reduces_to_member(&self, union: TypeId, member: TypeId) -> bool {
+        let union_eval = common::evaluate_type(self.ctx.types, union);
+        let member_eval = common::evaluate_type(self.ctx.types, member);
+        if crate::query_boundaries::common::is_callable_type(self.ctx.types, union_eval)
+            || crate::query_boundaries::common::is_callable_type(self.ctx.types, member_eval)
+        {
+            return false;
+        }
+        crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            union_eval,
+            member_eval,
+        )
+    }
+
     fn prefer_more_specific_contextual_property_type(
         &self,
         current: Option<TypeId>,
@@ -1343,15 +1373,28 @@ impl<'a> CheckerState<'a> {
             return Some(current);
         }
 
-        if common::union_members(self.ctx.types, current)
-            .is_some_and(|members| members.contains(&candidate))
-        {
-            return Some(candidate);
-        }
-        if common::union_members(self.ctx.types, candidate)
-            .is_some_and(|members| members.contains(&current))
-        {
-            return Some(current);
+        // One operand being a union that *contains* the other as a member is
+        // usually a signal that the lone member is the more specific contextual
+        // type. But when the union reduces to exactly that member as a set —
+        // every arm is assignable to it, e.g. `2 | number` collapses to
+        // `number` — the un-reduced union is the literal-preserving form tsc
+        // keeps under `UnionReduction.None`. Collapsing to the bare member there
+        // drops the literal arm and widens a fresh property/element, so a literal
+        // object/array assigned to a differing-arity union (`{ k: 2 }` to
+        // `{ k: 2 } | { k: number; j: boolean }`) loses the arm it matched and
+        // reports a spurious TS2322. Keep the union in that case; only collapse
+        // when the member is a *strict* subset (the union is genuinely wider).
+        // Checked in both orderings, since either operand may be the union.
+        for (union, member) in [(current, candidate), (candidate, current)] {
+            if common::union_members(self.ctx.types, union)
+                .is_some_and(|members| members.contains(&member))
+            {
+                return Some(if self.contextual_union_reduces_to_member(union, member) {
+                    union
+                } else {
+                    member
+                });
+            }
         }
 
         if common::intersection_members(self.ctx.types, current)
