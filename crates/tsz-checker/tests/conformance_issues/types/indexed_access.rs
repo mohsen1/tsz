@@ -1518,3 +1518,51 @@ const fiBad: FromIdx = "no";
         "Both genuine TS2322 assignment errors must still be reported.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+/// TS2536's object display normalizes the object's source span the way `tsc`'s
+/// type printer renders it: stray whitespace written inside an indexed access
+/// (`DataFetchFns[ F ]`, or a type split across lines) must not leak into the
+/// message. Source text is retained for the object so the written alias name is
+/// preserved (a resolved type would expand the alias), but the irregular spacing
+/// is collapsed to the canonical form.
+#[test]
+fn ts2536_object_display_normalizes_source_whitespace() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type DataFetchFns = {
+    Boat: { name: (id: string) => string };
+    Plane: { name: (id: string) => string };
+};
+type WithWhitespace<T extends keyof DataFetchFns, F extends keyof DataFetchFns[T]> =
+    DataFetchFns[ F ][ T ];
+type WithParens<T extends keyof DataFetchFns, F extends keyof DataFetchFns[T]> =
+    (DataFetchFns[F])[T];
+",
+    );
+
+    let ts2536: Vec<&String> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2536)
+        .map(|(_, message)| message)
+        .collect();
+
+    assert!(
+        !ts2536.is_empty(),
+        "Expected TS2536 for the unresolved nested indexed accesses.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    for message in &ts2536 {
+        assert!(
+            !message.contains("[ F ]") && !message.contains("[ T ]"),
+            "TS2536 object display must collapse source whitespace inside the indexed access.\nMessage: {message}"
+        );
+    }
+
+    // The alias name is preserved (not expanded) and rendered in canonical form.
+    assert!(
+        ts2536
+            .iter()
+            .any(|message| message.contains("cannot be used to index type 'DataFetchFns[F]'")),
+        "Expected the normalized `DataFetchFns[F]` object display.\nActual TS2536: {ts2536:#?}"
+    );
+}
