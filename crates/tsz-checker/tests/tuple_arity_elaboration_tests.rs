@@ -120,6 +120,115 @@ const single: [number] = (null as unknown as Coords);
     );
 }
 
+/// A union source whose failing member is a closed-tuple arity mismatch must
+/// elaborate that member beneath the union line — the member header
+/// (`Type '[2, 3]' is not assignable to type '[number]'.`) and the arity leaf
+/// (`Source has 2 element(s) but target allows only 1.`), matching tsc. The
+/// union elaboration previously dropped this whole chain, leaving only the
+/// bare `Type '[2, 3] | [4]' …` headline.
+#[test]
+fn union_member_closed_tuple_arity_elaborates_with_header_and_leaf() {
+    // `Pick`-free distributive identity keeps `[2, 3] | [4]` as a written union
+    // member set so the failing `[2, 3]` member survives to elaboration.
+    let source = r#"
+type Identity<T> = T extends unknown ? T : never;
+const target: [number] = (null as unknown as Identity<[2, 3] | [4]>);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    assert!(
+        diag.message_text
+            .contains("is not assignable to type '[number]'"),
+        "headline targets the 1-tuple; got: {}",
+        diag.message_text
+    );
+    let related: Vec<(u32, &str)> = diag
+        .related_information
+        .iter()
+        .map(|r| (r.code, r.message_text.as_str()))
+        .collect();
+    assert!(
+        related.iter().any(|(code, msg)| *code == 2322
+            && msg.contains("Type '[2, 3]'")
+            && msg.contains("is not assignable to type '[number]'")),
+        "expected the failing-member header line; related: {related:?}"
+    );
+    assert!(
+        related.iter().any(|(code, msg)| *code == 2619
+            && *msg == "Source has 2 element(s) but target allows only 1."),
+        "expected the nested arity leaf; related: {related:?}"
+    );
+}
+
+/// The member header sits one indent above the arity leaf (header depth < leaf
+/// depth), so the chain reads union -> member -> arity rather than collapsing.
+#[test]
+fn union_member_tuple_arity_chain_is_nested_in_order() {
+    let source = r#"
+type Pass<T> = T extends unknown ? T : never;
+const target: [string] = (null as unknown as Pass<[string, string] | [boolean]>);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    let header = diag
+        .related_information
+        .iter()
+        .find(|r| r.code == 2322 && r.message_text.contains("Type '[string, string]'"))
+        .expect("member header present");
+    let leaf = diag
+        .related_information
+        .iter()
+        .find(|r| r.code == 2619)
+        .expect("arity leaf present");
+    assert!(
+        leaf.depth > header.depth,
+        "arity leaf must nest beneath the member header; header depth {} leaf depth {}",
+        header.depth,
+        leaf.depth
+    );
+}
+
+/// Renamed binders/aliases must not change the structural elaboration — proves
+/// the chain is keyed on shape, not identifiers.
+#[test]
+fn union_member_tuple_arity_elaboration_is_structural_under_renaming() {
+    let source = r#"
+type Echo<Element> = Element extends unknown ? Element : never;
+type WideRow = [number, number, number];
+type NarrowRow = [number];
+const slot: NarrowRow = (null as unknown as Echo<WideRow | [number]>);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    assert!(
+        diag.related_information.iter().any(|r| r.code == 2619
+            && r.message_text == "Source has 3 element(s) but target allows only 1."),
+        "renamed aliases must still attach the arity leaf; related: {:?}",
+        diag.related_information
+            .iter()
+            .map(|r| (r.code, &r.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Anti-regression: a union whose members are all assignable must not error.
+#[test]
+fn union_member_tuple_all_assignable_has_no_arity_diagnostic() {
+    let source = r#"
+type Keep<T> = T extends unknown ? T : never;
+const ok: [number] = (null as unknown as Keep<[1] | [2]>);
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "all-assignable union members must not error; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Anti-regression: matching arity must NOT produce a TS2322 or a spurious
 /// arity reason.
 #[test]
