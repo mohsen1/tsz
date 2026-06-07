@@ -11,7 +11,6 @@ use super::normalize::PrimitiveClass;
 use crate::types::{IntrinsicKind, LiteralValue, TemplateSpan, TypeData, TypeId};
 use smallvec::SmallVec;
 use std::sync::Arc;
-use tsz_common::interner::Atom;
 
 /// Backtracking budget for matching a string literal against a pattern template.
 /// When an input exceeds these bounds the reduction *bails* (returns `None`)
@@ -20,6 +19,39 @@ const MAX_PATTERN_TEMPLATE_SPANS: usize = 8;
 /// Total `${...}` placeholders (each branches the backtracking search).
 const MAX_PATTERN_PLACEHOLDERS: usize = 3;
 const MAX_PATTERN_LITERAL_LEN: usize = 128;
+
+/// How a non-template member of a `… & pattern-template` intersection constrains
+/// the (string-domain) value set of the result.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TemplateMemberKind {
+    /// A finite set of string literals (a literal, a union of literals, or a
+    /// string-disjoint primitive whose string set is empty). Bounds the result.
+    Finite,
+    /// An infinite string set (`string` or a pattern template literal). Filters
+    /// candidates but does not bound enumeration.
+    Infinite,
+    /// A shape this reduction cannot decide (object, type parameter, lazy/indexed/
+    /// conditional type, non-reducible template, …). Forces the caller to bail.
+    Undecidable,
+}
+
+impl TemplateMemberKind {
+    /// Combine constituent kinds when classifying a union member: `Undecidable`
+    /// dominates (any undecidable constituent makes the union undecidable), then
+    /// `Infinite` (a single infinite constituent widens the union), otherwise
+    /// `Finite`.
+    const fn combine(self, other: TemplateMemberKind) -> TemplateMemberKind {
+        match (self, other) {
+            (TemplateMemberKind::Undecidable, _) | (_, TemplateMemberKind::Undecidable) => {
+                TemplateMemberKind::Undecidable
+            }
+            (TemplateMemberKind::Infinite, _) | (_, TemplateMemberKind::Infinite) => {
+                TemplateMemberKind::Infinite
+            }
+            (TemplateMemberKind::Finite, TemplateMemberKind::Finite) => TemplateMemberKind::Finite,
+        }
+    }
+}
 
 impl TypeInterner {
     /// Reduce a `... & pattern-template-literal` intersection, mirroring tsc's
@@ -71,52 +103,172 @@ impl TypeInterner {
                 None => others.push(m),
             }
         }
-        // Only the `<single string-domain member> & <pattern template(s)>` shape
-        // is modeled here. Anything else (multiple non-template members, branded
-        // intersections, …) bails — distribution and the other normalization
-        // passes still handle it, recursing back here on each `member & template`
-        // pair they produce.
-        if templates.is_empty() || others.len() != 1 {
+        // Need at least one pattern template and at least one non-template
+        // member. A pure `pattern & pattern` intersection (e.g. `` `${number}` ``
+        // `& ` `` `${string}` ``) is not modeled here.
+        if templates.is_empty() || others.is_empty() {
             return None;
         }
 
-        match self.lookup(others[0])? {
-            TypeData::Literal(LiteralValue::String(atom)) => {
-                // Drop the redundant template(s) when the literal matches; the
-                // value cannot be both the literal and outside the pattern.
-                Some(if self.literal_inhabits_all(atom, &templates)? {
-                    others[0]
-                } else {
-                    TypeId::NEVER
-                })
-            }
-            TypeData::Union(list_id) => {
-                let members = self.type_list(list_id);
-                let mut kept: Vec<TypeId> = Vec::with_capacity(members.len());
-                for &member in members.iter() {
-                    match self.lookup(member) {
-                        Some(TypeData::Literal(LiteralValue::String(atom))) => {
-                            if self.literal_inhabits_all(atom, &templates)? {
-                                kept.push(member);
-                            }
-                            // Non-matching string literal → drops out (never).
-                        }
-                        // Members disjoint from the string domain (the numeric
-                        // index key, number/boolean/bigint/symbol values and
-                        // intrinsics) cannot inhabit a string template, so they
-                        // drop out as `never`.
-                        _ if self
-                            .primitive_class_for(member)
-                            .is_some_and(|class| class != PrimitiveClass::String) => {}
-                        // A member this reduction cannot decide (bare `string`,
-                        // nested template, object, type parameter, …): bail rather
-                        // than risk an incorrect collapse.
-                        _ => return None,
+        // Classify every non-template member and locate a *finite* string-literal
+        // member to bound the result. The intersection is the set of string values
+        // that inhabit every template **and** belong to every `others` member; it is
+        // finitely enumerable exactly when at least one member is a finite set of
+        // string literals (a literal, or a union of literals / string-disjoint
+        // primitives). That member's literals are a superset of the result, so we
+        // enumerate them and filter against the remaining members and the patterns.
+        //
+        // This generalizes the single-member case to the distributive-conditional
+        // family where several large `keyof`-on-tuple key unions are intersected
+        // together (`keyof A & keyof B & ` `` `${number}` ``): each key union is too
+        // large for the size-gated union distribution to expand, so without this the
+        // non-matching keys leak through and the result is over-broad.
+        let mut bound: Option<TypeId> = None;
+        for &member in &others {
+            match self.classify_template_member(member) {
+                // A member this reduction cannot decide (object, type parameter,
+                // lazy/indexed/conditional type, non-reducible template, …): bail
+                // rather than risk an incorrect collapse.
+                TemplateMemberKind::Undecidable => return None,
+                TemplateMemberKind::Finite => {
+                    if bound.is_none() {
+                        bound = Some(member);
                     }
                 }
-                Some(self.union(kept))
+                TemplateMemberKind::Infinite => {}
             }
-            _ => None,
+        }
+        // No finite member bounds the result (e.g. `string & ` `` `${number}` ``,
+        // whose value set is the infinite `` `${number}` ``): leave it for the other
+        // normalization passes, which model the `string`/pattern interaction.
+        let bound = bound?;
+
+        // Candidate literals (in source order) come from the bounding member; the
+        // result is a subset of them.
+        let mut candidates: Vec<TypeId> = Vec::new();
+        self.collect_string_literals_ordered(bound, &mut candidates);
+
+        let mut kept: Vec<TypeId> = Vec::with_capacity(candidates.len());
+        'next: for literal_id in candidates {
+            let Some(TypeData::Literal(LiteralValue::String(atom))) = self.lookup(literal_id)
+            else {
+                continue;
+            };
+            let literal = self.resolve_atom(atom);
+            if literal.len() > MAX_PATTERN_LITERAL_LEN {
+                return None;
+            }
+            // Must inhabit every pattern template.
+            if !templates
+                .iter()
+                .all(|spans| self.match_pattern_template(literal.as_str(), spans, 0))
+            {
+                continue;
+            }
+            // Must belong to every other non-template member.
+            for &member in &others {
+                if member == bound {
+                    continue;
+                }
+                match self.string_literal_in_member(literal.as_str(), member) {
+                    Some(true) => {}
+                    Some(false) => continue 'next,
+                    // Unreachable after `classify_template_member` accepted every
+                    // member, but stay safe rather than guess.
+                    None => return None,
+                }
+            }
+            kept.push(literal_id);
+        }
+        Some(self.union(kept))
+    }
+
+    /// Whether the value set of `member` (restricted to the string domain) is a
+    /// *finite* set of string literals, an *infinite* string set (`string` or a
+    /// pattern template), or a shape this reduction cannot decide.
+    fn classify_template_member(&self, member: TypeId) -> TemplateMemberKind {
+        match self.lookup(member) {
+            Some(TypeData::Literal(LiteralValue::String(_))) => TemplateMemberKind::Finite,
+            Some(TypeData::Intrinsic(IntrinsicKind::String)) => TemplateMemberKind::Infinite,
+            Some(TypeData::TemplateLiteral(_)) => {
+                // A pattern template spans an infinite string set; a non-reducible
+                // template (over budget / generic spans) cannot be decided.
+                if self.reducible_template_spans(member).is_some() {
+                    TemplateMemberKind::Infinite
+                } else {
+                    TemplateMemberKind::Undecidable
+                }
+            }
+            Some(TypeData::Union(list_id)) => {
+                let mut kind = TemplateMemberKind::Finite;
+                for &constituent in self.type_list(list_id).iter() {
+                    kind = kind.combine(self.classify_template_member(constituent));
+                    if matches!(kind, TemplateMemberKind::Undecidable) {
+                        break;
+                    }
+                }
+                kind
+            }
+            _ => {
+                // Primitives disjoint from the string domain (number/boolean/bigint/
+                // symbol/null/undefined and their literals) contribute no string and
+                // are a finite (empty) string set; everything else is undecidable.
+                if self
+                    .primitive_class_for(member)
+                    .is_some_and(|class| class != PrimitiveClass::String)
+                {
+                    TemplateMemberKind::Finite
+                } else {
+                    TemplateMemberKind::Undecidable
+                }
+            }
+        }
+    }
+
+    /// Collect the string-literal `TypeId`s reachable from `member` in source
+    /// order (deduplicated). Only meaningful for a `Finite` member (see
+    /// [`Self::classify_template_member`]); non-literal constituents contribute
+    /// nothing.
+    fn collect_string_literals_ordered(&self, member: TypeId, out: &mut Vec<TypeId>) {
+        match self.lookup(member) {
+            Some(TypeData::Literal(LiteralValue::String(_))) if !out.contains(&member) => {
+                out.push(member);
+            }
+            Some(TypeData::Union(list_id)) => {
+                for &constituent in self.type_list(list_id).iter() {
+                    self.collect_string_literals_ordered(constituent, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether the concrete string `literal` is a member of `member`'s value set.
+    /// Returns `None` for shapes this reduction cannot decide (caller bails).
+    fn string_literal_in_member(&self, literal: &str, member: TypeId) -> Option<bool> {
+        match self.lookup(member)? {
+            TypeData::Literal(LiteralValue::String(atom)) => {
+                Some(self.resolve_atom(atom).as_str() == literal)
+            }
+            TypeData::Intrinsic(IntrinsicKind::String) => Some(true),
+            TypeData::TemplateLiteral(_) => {
+                let spans = self.reducible_template_spans(member)?;
+                Some(self.match_pattern_template(literal, &spans, 0))
+            }
+            TypeData::Union(list_id) => {
+                let mut found = false;
+                for &constituent in self.type_list(list_id).iter() {
+                    if self.string_literal_in_member(literal, constituent)? {
+                        found = true;
+                    }
+                }
+                Some(found)
+            }
+            _ => match self.primitive_class_for(member) {
+                // A string literal cannot inhabit a string-disjoint primitive.
+                Some(class) if class != PrimitiveClass::String => Some(false),
+                _ => None,
+            },
         }
     }
 
@@ -152,31 +304,12 @@ impl TypeInterner {
         (placeholders > 0 && placeholders <= MAX_PATTERN_PLACEHOLDERS).then_some(spans)
     }
 
-    /// Whether `literal` inhabits *every* pattern template. Returns `None` when
-    /// the literal exceeds the safe matching budget, signalling the caller to
-    /// bail the whole reduction (unsound to guess either way).
-    fn literal_inhabits_all(
-        &self,
-        literal: Atom,
-        templates: &[Arc<[TemplateSpan]>],
-    ) -> Option<bool> {
-        let literal = self.resolve_atom(literal);
-        if literal.len() > MAX_PATTERN_LITERAL_LEN {
-            return None;
-        }
-        Some(
-            templates
-                .iter()
-                .all(|spans| self.match_pattern_template(literal.as_str(), spans, 0)),
-        )
-    }
-
     /// Complete (backtracking) match of a concrete string literal against a
     /// reducible pattern template literal. Unlike the deliberately shallow
     /// matcher used by union normalization, this resolves `${string}` wildcards
     /// so the `never`-collapse decision is sound (a `false` result means the
-    /// literal genuinely cannot inhabit the pattern). Only reachable via
-    /// [`Self::literal_inhabits_all`], gated on [`Self::reducible_template_spans`].
+    /// literal genuinely cannot inhabit the pattern). Gated on
+    /// [`Self::reducible_template_spans`].
     fn match_pattern_template(
         &self,
         remaining: &str,
@@ -367,5 +500,124 @@ mod tests {
         assert_eq!(interner.intersection(vec![a, b]), TypeId::NEVER);
         // A single string literal with no template is returned unchanged.
         assert_eq!(interner.intersection(vec![a]), a);
+    }
+
+    #[test]
+    fn template_filters_intersection_of_two_key_unions() {
+        let interner = TypeInterner::new();
+        let zero = interner.literal_string("0");
+        let one = interner.literal_string("1");
+        let two = interner.literal_string("2");
+        let length = interner.literal_string("length");
+        // Mirrors `keyof [a,b,c] & keyof [a,b] & `${number}`` — two large key
+        // unions intersected with the numeric pattern. The size-gated union
+        // distribution skips unions this wide, so the reduction must filter the
+        // multi-member intersection directly. Only the numeric keys common to both
+        // unions survive: `"0" | "1"`.
+        let keys_abc = interner.union(vec![zero, one, two, length, TypeId::NUMBER]);
+        let keys_ab = interner.union(vec![zero, one, length, TypeId::NUMBER]);
+        let result = interner.intersection(vec![keys_abc, keys_ab, numeric_template(&interner)]);
+        assert_eq!(result, interner.union(vec![zero, one]));
+    }
+
+    #[test]
+    fn template_filters_three_way_key_union_intersection() {
+        let interner = TypeInterner::new();
+        let zero = interner.literal_string("0");
+        let one = interner.literal_string("1");
+        let two = interner.literal_string("2");
+        let three = interner.literal_string("3");
+        let length = interner.literal_string("length");
+        let a = interner.union(vec![zero, one, two, three, length, TypeId::NUMBER]);
+        let b = interner.union(vec![zero, one, two, length, TypeId::NUMBER]);
+        let c = interner.union(vec![zero, one, length, TypeId::NUMBER]);
+        let result = interner.intersection(vec![a, b, c, numeric_template(&interner)]);
+        assert_eq!(result, interner.union(vec![zero, one]));
+    }
+
+    #[test]
+    fn multi_member_intersection_with_no_common_numeric_key_is_never() {
+        let interner = TypeInterner::new();
+        let zero = interner.literal_string("0");
+        let one = interner.literal_string("1");
+        let two = interner.literal_string("2");
+        // `("0" | "1") & ("2") & `${number}`` — the literal sets are disjoint, so
+        // the numeric filter leaves nothing.
+        let result = interner.intersection(vec![
+            interner.union(vec![zero, one]),
+            two,
+            numeric_template(&interner),
+        ]);
+        assert_eq!(result, TypeId::NEVER);
+    }
+
+    #[test]
+    fn prefix_template_filters_multi_member_intersection() {
+        let interner = TypeInterner::new();
+        let a1 = interner.literal_string("a-1");
+        let a2 = interner.literal_string("a-2");
+        let b1 = interner.literal_string("b-1");
+        // `("a-1" | "a-2" | "b-1") & ("a-1" | "b-1" | "a-2") & `a-${number}``
+        let template = interner.template_literal(vec![
+            TemplateSpan::Text(interner.intern_string("a-")),
+            TemplateSpan::Type(TypeId::NUMBER),
+        ]);
+        let result = interner.intersection(vec![
+            interner.union(vec![a1, a2, b1]),
+            interner.union(vec![a1, b1, a2]),
+            template,
+        ]);
+        // `b-1` fails the `a-${number}` pattern; `a-1` and `a-2` survive in both.
+        assert_eq!(result, interner.union(vec![a1, a2]));
+    }
+
+    #[test]
+    fn infinite_member_without_finite_bound_is_left_for_other_passes() {
+        let interner = TypeInterner::new();
+        // `(string | "0") & `${number}`` has an infinite value set (`${number}`),
+        // so there is no finite member to bound enumeration: the reduction must
+        // bail rather than collapse to the enumerated literal `"0"`.
+        let zero = interner.literal_string("0");
+        let su = interner.union(vec![TypeId::STRING, zero]);
+        let result = interner.intersection(vec![su, numeric_template(&interner)]);
+        // Whatever the other passes choose, it must not be the over-narrow `"0"`.
+        assert_ne!(
+            result, zero,
+            "must not collapse `(string | \"0\") & `${{number}}`` to \"0\""
+        );
+    }
+
+    #[test]
+    fn finite_bound_lets_string_member_act_as_universal_filter() {
+        let interner = TypeInterner::new();
+        // `("0" | "1") & string & `${number}`` — the finite `"0" | "1"` bounds the
+        // result and the universal `string` member keeps every candidate; the
+        // numeric pattern is already satisfied. Result: `"0" | "1"`.
+        let zero = interner.literal_string("0");
+        let one = interner.literal_string("1");
+        let result = interner.intersection(vec![
+            interner.union(vec![zero, one]),
+            TypeId::STRING,
+            numeric_template(&interner),
+        ]);
+        assert_eq!(result, interner.union(vec![zero, one]));
+    }
+
+    #[test]
+    fn undecidable_object_member_bails_without_collapsing() {
+        let interner = TypeInterner::new();
+        // An object member is not a string filter; the reduction must bail (return
+        // `None`) and leave the intersection for the structural passes rather than
+        // dropping the object or the literals.
+        let zero = interner.literal_string("0");
+        let reduced = interner.reduce_pattern_template_intersection(&[
+            zero,
+            TypeId::OBJECT,
+            numeric_template(&interner),
+        ]);
+        assert!(
+            reduced.is_none(),
+            "object member must bail, leaving the intersection to other passes"
+        );
     }
 }

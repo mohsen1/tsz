@@ -310,8 +310,11 @@ impl TypeInterner {
 
         // Pattern template literal reduction (tsc `extractRedundantTemplateLiterals`):
         // `keyof T & ` `` `${number}` `` and friends keep only the keys that inhabit
-        // the pattern. Runs before the size-gated union distribution below so the
-        // large key unions `keyof` produces on tuples are handled directly.
+        // the pattern. This is *filtration* (the result is a subset of the keys), not
+        // the cross-product *distribution* below, so it intentionally runs first and
+        // is not subject to the size gate — the large key unions `keyof` produces on
+        // tuples (including multi-member `keyof A & keyof B & ` `` `${number}` ``) are
+        // filtered directly rather than skipped as too wide to distribute.
         if let Some(reduced) = self.reduce_pattern_template_intersection(&flat) {
             return reduced;
         }
