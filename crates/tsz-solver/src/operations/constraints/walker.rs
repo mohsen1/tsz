@@ -627,10 +627,79 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target
                 };
 
-                for &member in s_members.iter() {
-                    // Skip source members that directly match a fixed target member
-                    if !fixed_targets.contains(&member) {
-                        self.constrain_types(ctx, var_map, member, reduced_target, priority);
+                // Classify the parameterized target arms into the single naked
+                // type variable (`T`) and structured members that merely contain a
+                // placeholder (`RecArray<T>`, `Array<T>`, …). When the union has the
+                // recursive array-alias shape `T | RecArray<T>` (one naked arm, and
+                // every structured arm is array-like), mirror tsc's
+                // `inferFromMatchingTypes` + `inferToMultipleTypes`: peel each source
+                // member that structurally matches a structured arm into that arm,
+                // then infer the *residual source members as one union* against the
+                // naked `T`. Inferring the residual as a single union — rather than
+                // per-member — is what lets `flat([1, 'a', [2]])` infer
+                // `T = string | number` instead of collapsing to one element through
+                // the common-supertype tournament. The shape is restricted to
+                // array-like structured arms so other `T | F<T>` unions (notably
+                // `T | PromiseLike<T>`) keep their established per-member
+                // decomposition.
+                let naked_targets: Vec<TypeId> = t_members_list
+                    .iter()
+                    .copied()
+                    .filter(|member| var_map.contains_key(member))
+                    .collect();
+                // Only the `T | Structured<T>` shape (exactly one naked arm) takes
+                // the residual-union path; classify the structured arms lazily so
+                // the common case short-circuits before the placeholder walk and
+                // the array-like probe.
+                let structured_targets: Vec<TypeId> = if naked_targets.len() == 1 {
+                    with_placeholder_visited(|visited| {
+                        t_members_list
+                            .iter()
+                            .copied()
+                            .filter(|&member| {
+                                if var_map.contains_key(&member) {
+                                    return false;
+                                }
+                                visited.clear();
+                                self.type_contains_placeholder(member, var_map, visited)
+                            })
+                            .collect()
+                    })
+                } else {
+                    Vec::new()
+                };
+                let all_structured_array_like = !structured_targets.is_empty()
+                    && structured_targets
+                        .iter()
+                        .all(|&t| self.array_like_element_for_constraint(t).is_some());
+
+                if let (Some(&naked), true) = (naked_targets.first(), all_structured_array_like) {
+                    let mut leftover: Vec<TypeId> = Vec::new();
+                    for &member in s_members.iter() {
+                        if fixed_targets.contains(&member) {
+                            continue;
+                        }
+                        let mut matched_any = false;
+                        for &structured in &structured_targets {
+                            if self.types_share_outer_structure_for_constraint(member, structured) {
+                                matched_any = true;
+                                self.constrain_types(ctx, var_map, member, structured, priority);
+                            }
+                        }
+                        if !matched_any {
+                            leftover.push(member);
+                        }
+                    }
+                    if !leftover.is_empty() {
+                        let leftover_union = crate::utils::union_or_single(self.interner, leftover);
+                        self.constrain_types(ctx, var_map, leftover_union, naked, priority);
+                    }
+                } else {
+                    for &member in s_members.iter() {
+                        // Skip source members that directly match a fixed target member
+                        if !fixed_targets.contains(&member) {
+                            self.constrain_types(ctx, var_map, member, reduced_target, priority);
+                        }
                     }
                 }
             }

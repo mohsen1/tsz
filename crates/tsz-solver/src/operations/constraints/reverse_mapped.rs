@@ -1344,6 +1344,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return Some(elem);
         }
 
+        // The context-free `get_array_element_type` above cannot always reduce a
+        // generic alias application to its underlying array form — recursive
+        // aliases such as `type RecArray<T> = Array<T | RecArray<T>>` are left as
+        // an opaque `Application` because the memoized full `evaluate_type`'s
+        // recursion guard can leave them unreduced depending on cache-population
+        // order (which is exactly what makes the inference for these aliases
+        // order-dependent). Expand the alias body a *single* deterministic step
+        // and accept it only when that body is *directly* an array/readonly-array
+        // form. The strict, non-evaluating shape check keeps this from widening
+        // array-likeness to mapped/conditional/interface aliases (e.g. `Promise`),
+        // so it touches only genuine recursive array aliases.
+        if let Some(expanded) = self.checker.expand_type_alias_application(type_id) {
+            let unwrapped = match self.interner.lookup(expanded) {
+                Some(TypeData::ReadonlyType(inner)) => inner,
+                _ => expanded,
+            };
+            if let Some(TypeData::Array(elem)) = self.interner.lookup(unwrapped) {
+                return Some(elem);
+            }
+        }
+
+        // Final fallback: a non-alias reduction that exposes a named array object
+        // (e.g. a mapped form resolving to an `ObjectWithIndex` array shape). This
+        // mirrors the pre-existing behaviour and intentionally does *not* treat an
+        // arbitrary evaluated `Array` as array-like, to avoid broadening matches.
         let evaluated = self.checker.evaluate_type(type_id);
         (evaluated != type_id)
             .then(|| self.named_array_object_element_for_constraint(evaluated))
