@@ -1406,6 +1406,16 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        # `set_export_surface` is the one documented compatibility bridge for
+        # older declaration-emitter callers. New DTS facts should enter through
+        # `DeclarationSummary` query methods instead of growing raw
+        # `ExportSurface` handoff points.
+        "Emitter DTS boundary: raw ExportSurface handoff compatibility bridge (#8275)",
+        [ROOT / "crates" / "tsz-emitter" / "src" / "declaration_emitter"],
+        re.compile(r"\bfn\s+set_export_surface\s*\("),
+        1,
+    ),
+    (
         "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
         [
             ROOT
