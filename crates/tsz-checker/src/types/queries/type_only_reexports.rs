@@ -17,10 +17,17 @@ impl<'a> CheckerState<'a> {
         };
 
         let key = (target_file_idx, export_name.to_string());
-        if !visited.insert(key) {
-            return false;
-        }
+        super::with_type_only_query_path(visited, key, |visited| {
+            self.is_export_type_only_syntax_in_resolved_file(target_file_idx, export_name, visited)
+        })
+    }
 
+    fn is_export_type_only_syntax_in_resolved_file(
+        &self,
+        target_file_idx: usize,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
+    ) -> bool {
         let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
             return false;
         };
@@ -120,10 +127,17 @@ impl<'a> CheckerState<'a> {
         };
 
         let key = (target_file_idx, format!("exists:{export_name}"));
-        if !visited.insert(key) {
-            return false;
-        }
+        super::with_type_only_query_path(visited, key, |visited| {
+            self.name_exists_in_resolved_module_exports(target_file_idx, export_name, visited)
+        })
+    }
 
+    fn name_exists_in_resolved_module_exports(
+        &self,
+        target_file_idx: usize,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
+    ) -> bool {
         let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
             return false;
         };

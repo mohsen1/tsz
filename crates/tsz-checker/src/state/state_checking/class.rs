@@ -791,14 +791,16 @@ impl<'a> CheckerState<'a> {
         if !preserve_stable_class_shape_cache {
             self.ctx.class_constructor_type_cache.remove(&stmt_idx);
         }
-        if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
-            self.ctx.symbol_types.remove(&sym_id);
-        }
-        if class.name.is_some()
-            && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
-            && let Some(name_sym) = self.ctx.binder.file_locals.get(&ident.escaped_text)
-        {
-            self.ctx.symbol_types.remove(&name_sym);
+        if !preserve_stable_class_shape_cache {
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
+                self.ctx.symbol_types.remove(&sym_id);
+            }
+            if class.name.is_some()
+                && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
+                && let Some(name_sym) = self.ctx.binder.file_locals.get(&ident.escaped_text)
+            {
+                self.ctx.symbol_types.remove(&name_sym);
+            }
         }
 
         // Class bodies reset the async context — field initializers and static blocks
@@ -974,15 +976,17 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(type_param_updates);
 
         let mut refresh_symbols = Vec::new();
-        if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
-            refresh_symbols.push(sym_id);
-        }
-        if class.name.is_some()
-            && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
-            && let Some(name_sym) = self.ctx.binder.file_locals.get(&ident.escaped_text)
-            && !refresh_symbols.contains(&name_sym)
-        {
-            refresh_symbols.push(name_sym);
+        if !preserve_stable_class_shape_cache {
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
+                refresh_symbols.push(sym_id);
+            }
+            if class.name.is_some()
+                && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
+                && let Some(name_sym) = self.ctx.binder.file_locals.get(&ident.escaped_text)
+                && !refresh_symbols.contains(&name_sym)
+            {
+                refresh_symbols.push(name_sym);
+            }
         }
 
         self.ctx.checked_classes.insert(stmt_idx);

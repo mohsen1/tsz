@@ -6,6 +6,7 @@ mod compound_assignment_context;
 mod computed_index_source_display;
 mod contextual_index_display;
 mod generic_source_display;
+mod keyof_source_display;
 mod literal_surface;
 mod literal_widening_helpers;
 mod literal_widening_policy;
@@ -462,6 +463,14 @@ impl<'a> CheckerState<'a> {
         if self.declared_source_annotation_names_type_query_alias(expr_idx) {
             return false;
         }
+        // A computed-body alias carries no `aliasSymbol` in tsc, so its source is
+        // rendered structurally, never by name. Scalar bodies already expand (the
+        // index-signature gate below returns `false`), but tuple/array bodies slip
+        // past that gate via their numeric index signature; route them through the
+        // shared display policy so every reducible body drops the alias annotation.
+        if self.source_declared_type_is_displayed_as_underlying(expr_type) {
+            return false;
+        }
         if annotation.contains("`${") {
             return true;
         }
@@ -524,6 +533,20 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// True when `ty` resolves to a non-generic type alias that tsc renders by
+    /// its underlying (computed) type rather than its declared name — see
+    /// [`crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying`],
+    /// which owns the `Lazy(DefId)` / resolved-shape resolution behind the query
+    /// boundary.
+    fn source_declared_type_is_displayed_as_underlying(&self, ty: TypeId) -> bool {
+        crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            ty,
+        )
+        .is_some()
     }
 
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
@@ -1596,6 +1619,22 @@ impl<'a> CheckerState<'a> {
                     self.format_assignability_type_for_message(declared_type, target);
                 let widened_display = self.format_assignability_type_for_message(widened, target);
                 if literal_display != widened_display {
+                    // tsc widens a declared *unit-literal* source (`0n`, `"x"`,
+                    // `42`, `true`) to its base when the target cannot hold a
+                    // literal (`boolean`, `bigint`, …), and keeps the literal only
+                    // against a literal-sensitive target (`0`, `"x"`). The
+                    // call-argument source path already mirrors this; do the same
+                    // for return/assignment identifier sources so the three
+                    // positions agree with tsc. Compound literal surfaces
+                    // (tuples, objects, `as const`) have no scalar `literal_value`
+                    // and keep their existing preserve-the-literal behaviour.
+                    if crate::query_boundaries::assignability_alias_display::is_unit_literal_type(
+                        self.ctx.types.as_type_database(),
+                        declared_type,
+                    ) && !self.is_literal_sensitive_assignment_target(target)
+                    {
+                        return Some(widened_display);
+                    }
                     return Some(literal_display);
                 }
             }

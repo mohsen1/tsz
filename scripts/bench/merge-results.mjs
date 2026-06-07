@@ -79,6 +79,9 @@ function mergeCompatibilityCanaries(results, compatibilityJsonlFiles) {
       if (!canaryNames.has(name)) continue;
       const existing = byName.get(name);
       if (existing) {
+        if (REQUIRED_PROJECT_ROW_SET.has(name)) {
+          continue;
+        }
         existing.compatibility = compatibility;
         existing.status ||= "compile canary tracked in CI; not timed by vs-tsgo benchmarks";
         continue;

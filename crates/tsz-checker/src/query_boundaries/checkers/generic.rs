@@ -1,6 +1,6 @@
 use crate::state::CheckerState;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::{DefinitionStore, TypeId, TypeParamInfo};
+use tsz_solver::{DefId, DefinitionStore, TypeId, TypeParamInfo};
 
 pub(crate) use super::super::common::{
     callable_shape_for_type, contains_free_type_parameters, contains_generic_type_parameters,
@@ -678,6 +678,84 @@ pub(crate) fn application_base_def_and_args(
     let app = db.type_application(app_id);
     let base_def = tsz_solver::visitor::lazy_def_id(db, app.base);
     Some((base_def, app.args.clone()))
+}
+
+pub(crate) fn alias_application_satisfies_object_constraint(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    type_arg: TypeId,
+) -> bool {
+    alias_application_body_is_object_like(db, definitions, type_arg, &mut Vec::new(), 0)
+}
+
+fn alias_application_body_is_object_like(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    type_id: TypeId,
+    stack: &mut Vec<DefId>,
+    depth: usize,
+) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    let Some(base_def) = application_base_def_id(db, type_id) else {
+        return type_surface_is_object_like(db, definitions, type_id, stack, depth + 1);
+    };
+    let Some(def) = definitions.get(base_def) else {
+        return false;
+    };
+    if def.kind != tsz_solver::def::DefKind::TypeAlias || stack.contains(&base_def) {
+        return false;
+    }
+    let Some(body) = definitions.get_body(base_def) else {
+        return false;
+    };
+    stack.push(base_def);
+    let result = type_surface_is_object_like(db, definitions, body, stack, depth + 1);
+    stack.pop();
+    result
+}
+
+fn type_surface_is_object_like(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    type_id: TypeId,
+    stack: &mut Vec<DefId>,
+    depth: usize,
+) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    if matches!(type_id, TypeId::OBJECT | TypeId::NEVER) {
+        return true;
+    }
+    if crate::query_boundaries::common::is_mapped_type(db, type_id)
+        || crate::query_boundaries::common::object_shape_for_type(db, type_id).is_some()
+    {
+        return true;
+    }
+    if let Some(constraint) =
+        crate::query_boundaries::common::type_parameter_constraint(db, type_id)
+    {
+        return type_surface_is_object_like(db, definitions, constraint, stack, depth + 1);
+    }
+    if let Some(members) = crate::query_boundaries::common::union_members(db, type_id) {
+        return members
+            .iter()
+            .all(|&member| type_surface_is_object_like(db, definitions, member, stack, depth + 1));
+    }
+    if let Some(members) = crate::query_boundaries::common::intersection_members(db, type_id) {
+        return members
+            .iter()
+            .all(|&member| type_surface_is_object_like(db, definitions, member, stack, depth + 1));
+    }
+    if let Some((_check, _extends, true_type, false_type)) =
+        full_conditional_type_components(db, type_id)
+    {
+        return type_surface_is_object_like(db, definitions, true_type, stack, depth + 1)
+            && type_surface_is_object_like(db, definitions, false_type, stack, depth + 1);
+    }
+    alias_application_body_is_object_like(db, definitions, type_id, stack, depth + 1)
 }
 
 // =========================================================================

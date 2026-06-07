@@ -432,6 +432,8 @@ run_lint() {
   python3 scripts/ci/test_gcp_full_ci_emit_metrics.py || return $?
   python3 scripts/ci/test_refresh_readme.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
+  python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
+  python3 scripts/conformance/lib/test_accepted_regressions.py || return $?
   python3 scripts/emit/test_query_emit_families.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/

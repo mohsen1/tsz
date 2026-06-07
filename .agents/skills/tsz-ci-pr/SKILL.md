@@ -36,7 +36,9 @@ now.
    `gh pr ready <pr>`.
 4. Queue with GitHub's native merge queue only when exact-head PR-head checks
    such as `CI Summary` pass and policy permits:
-   `gh pr merge --queue <pr>`.
+   `gh pr merge <pr> --match-head-commit <sha>`.
+   Do not pass `--auto`; with branch protection and passing checks, current
+   `gh` adds the PR to the native merge queue directly.
 5. Inspect `merge_group` CI runs if queue validation stalls.
 6. Verify final merge:
    `gh pr view <pr> --json state,mergedAt,mergedBy,url`.

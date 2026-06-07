@@ -1145,7 +1145,11 @@ impl<'a> RecursiveTypeCollector<'a> {
         }
 
         self.collected.insert(type_id);
-        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.visit_key(&key));
+        // Shared cross-operation stack-frame breaker (issue #7574). When the
+        // combined solver recursion budget is exhausted `with_solver_frame`
+        // returns `None` and skips the descent; the node itself is already
+        // recorded in `collected`.
+        let _ = crate::recursion::with_solver_frame(|| self.visit_key(&key));
         self.guard.leave(type_id);
     }
 

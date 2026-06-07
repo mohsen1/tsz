@@ -354,6 +354,19 @@ pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// `true` when `type_id` is an anonymous object/mapped shape — an object,
+/// object-with-index, or mapped type. Used as the "renders structurally" gate
+/// for reducing-bodied alias applications (issue #10914).
+pub fn is_object_or_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_) | TypeData::Mapped(_))
+    )
+}
+
 /// `true` when `type_id` is an anonymous object type, or a union / intersection
 /// that contains one (recursing only through nested unions / intersections).
 ///

@@ -1044,12 +1044,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // line and hides which member fails.
                 //
                 // The set is intentionally limited to member-failure shapes whose
-                // render composes exactly with `tsc` here. Notably excluded:
-                //   * `TupleElementMismatch` (fixed-arity count mismatch) — its
-                //     nested `TS2618`/`TS2619` (`Source has N element(s) but
-                //     target requires/allows only M`) leaf render is owned
-                //     separately; surfacing it before that lands emits a non-tsc
-                //     line.
+                // render composes exactly with `tsc` here.
+                //
+                // Tuple fixed-arity (`TupleElementMismatch`) and variadic-arity
+                // (`TupleArityMismatch`) count mismatches are header-led leaves:
+                // their `TS2618`/`TS2619` (`Source has N element(s) but target
+                // requires/allows only M`) text carries no member name, so the
+                // union renderer supplies the `Type 'M' is not assignable to type
+                // 'T'.` member header (via `union_member_nested_needs_header`)
+                // before drilling the arity leaf — matching tsc:
+                //   Type '[2, 3] | [4]' is not assignable to type '[number]'.
+                //     Type '[2, 3]' is not assignable to type '[number]'.
+                //       Source has 2 element(s) but target allows only 1.
+                //
+                // Notably excluded:
                 //   * `OptionalPropertyRequired`/`ReadonlyPropertyMismatch` — `tsc`
                 //     leads these with the member header (and they only arise in
                 //     narrow `exactOptionalPropertyTypes` / readonly-index shapes),
@@ -1064,6 +1072,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             | SubtypeFailureReason::MissingProperty { .. }
                             | SubtypeFailureReason::MissingProperties { .. }
                             | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                            | SubtypeFailureReason::TupleElementMismatch { .. }
+                            | SubtypeFailureReason::TupleArityMismatch(_)
                             | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
                             | SubtypeFailureReason::PropertyTypeMismatch { .. }
                             | SubtypeFailureReason::ArrayElementMismatch { .. }

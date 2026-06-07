@@ -1123,7 +1123,6 @@ impl<'a> Printer<'a> {
                 .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
                 && !auto_accessor_storage_reserved
                 && self.es5_computed_name_needs_temp(name_node)
-                && can_externalize_private_storage
             {
                 decls.push(format!(
                     "_{class_name}_{}_accessor_storage",

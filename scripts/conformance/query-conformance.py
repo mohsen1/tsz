@@ -61,6 +61,9 @@ from lib.conformance_query import (
     load_detail,
 )
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from accepted_regressions import normalized_entries  # noqa: E402  (path injected above)
+
 DEFAULT_TSC_CACHE_PATH = Path(__file__).with_name("tsc-cache-full.json")
 
 # =============================================================================
@@ -253,13 +256,13 @@ def load_accepted_regressions(path=DEFAULT_ACCEPTED_REGRESSIONS_PATH):
     if not os.path.exists(path):
         return {"path": path, "exists": False, "entries": []}
 
-    entries = []
     with open(path, encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            entries.append(line)
+        text = handle.read()
+
+    # Deduplicate on the normalized form so the visible counter matches the set
+    # the CI aggregate matcher actually treats as accepted. dict.fromkeys keeps
+    # first-occurrence order for stable display.
+    entries = list(dict.fromkeys(normalized_entries(text)))
     return {"path": path, "exists": True, "entries": entries}
 
 

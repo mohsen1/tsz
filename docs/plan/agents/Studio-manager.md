@@ -114,5 +114,6 @@ follow-up instead of posting one comment per PR.
 - Use `node scripts/ci/pr-ownership-report.mjs` for PR topology.
 - Use `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json` for label hygiene.
 - Use `scripts/ci/check-wip-state-comments.mjs` when changing WIP state.
-- Use GitHub PR-head check status before queueing with `gh pr merge --queue`.
+- Use GitHub PR-head check status before queueing with
+  `gh pr merge <pr> --match-head-commit <sha>`.
 - No compiler suite is needed for metadata-only cleanup.

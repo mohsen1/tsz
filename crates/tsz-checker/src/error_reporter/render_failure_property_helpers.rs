@@ -1,4 +1,5 @@
 use super::*;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 
 impl<'a> CheckerState<'a> {
     // Extracted from `render_failure.rs` to keep property rendering helpers under the file-size cap.
@@ -75,7 +76,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // `Record<E, V>`-style applications carry the enum as a type argument.
-        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, target)?;
+        let (_, args) = diagnostic_query::application_info(self.ctx.types, target)?;
         args.into_iter()
             .find_map(|arg| self.enum_key_property_name_for_display(&property_key, arg))
     }
@@ -102,7 +103,7 @@ impl<'a> CheckerState<'a> {
         ];
         let mapped_id = candidates
             .into_iter()
-            .find_map(|t| crate::query_boundaries::common::mapped_type_id(self.ctx.types, t))?;
+            .find_map(|t| diagnostic_query::mapped_type_id(self.ctx.types, t))?;
         Some(self.ctx.types.mapped_type(mapped_id).constraint)
     }
 
@@ -111,16 +112,14 @@ impl<'a> CheckerState<'a> {
         property_key: &str,
         key_type: TypeId,
     ) -> Option<String> {
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, key_type)
-        {
+        if let Some(members) = diagnostic_query::union_members(self.ctx.types, key_type) {
             return members
                 .iter()
                 .find_map(|&member| self.enum_key_property_name_for_display(property_key, member));
         }
 
-        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, key_type)
-            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, key_type))?;
+        let def_id = diagnostic_query::enum_def_id(self.ctx.types, key_type)
+            .or_else(|| diagnostic_query::lazy_def_id(self.ctx.types, key_type))?;
         let def = self.ctx.definition_store.get(def_id)?;
         if def.kind == tsz_solver::def::DefKind::Enum && !def.enum_members.is_empty() {
             return self.enum_property_name_from_parent_def(property_key, &def);
@@ -183,9 +182,8 @@ impl<'a> CheckerState<'a> {
         property_key: &str,
     ) -> bool {
         let value_type =
-            crate::query_boundaries::common::enum_member_type(self.ctx.types, member_type)
-                .unwrap_or(member_type);
-        crate::query_boundaries::common::literal_value(self.ctx.types, value_type)
+            diagnostic_query::enum_member_type(self.ctx.types, member_type).unwrap_or(member_type);
+        diagnostic_query::literal_value(self.ctx.types, value_type)
             .and_then(|literal| self.literal_property_key_text(literal))
             .is_some_and(|key| key == property_key)
     }
@@ -297,8 +295,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let source_shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)?;
+        let source_shape = diagnostic_query::object_shape_for_type(self.ctx.types, source)?;
         let source_symbol = self.ctx.binder.get_symbol(source_shape.symbol?)?;
         let source_declarations = source_symbol.declarations.clone();
 
@@ -806,7 +803,7 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_env(target);
         if let Some(direct) = [evaluated, target, target_type]
             .into_iter()
-            .find(|&t| crate::query_boundaries::common::is_intersection_type(self.ctx.types, t))
+            .find(|&t| diagnostic_query::is_intersection_type(self.ctx.types, t))
         {
             return Some((direct, false));
         }
@@ -827,8 +824,7 @@ impl<'a> CheckerState<'a> {
         }
         [evaluated, target, target_type].into_iter().find_map(|t| {
             let alias = self.ctx.types.get_display_alias(t)?;
-            crate::query_boundaries::common::is_intersection_type(self.ctx.types, alias)
-                .then_some((alias, true))
+            diagnostic_query::is_intersection_type(self.ctx.types, alias).then_some((alias, true))
         })
     }
 
@@ -862,6 +858,6 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_env(target);
         [evaluated, target]
             .into_iter()
-            .any(|t| crate::query_boundaries::common::is_intersection_type(self.ctx.types, t))
+            .any(|t| diagnostic_query::is_intersection_type(self.ctx.types, t))
     }
 }

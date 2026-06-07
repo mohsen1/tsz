@@ -69,6 +69,39 @@ fn tuple_type_missing_comma_reports_comma_without_bracket_cascade() {
 }
 
 #[test]
+fn indexed_access_private_name_tail_does_not_emit_ts1128() {
+    let source = r##"
+class C {
+    #bar = 3;
+    constructor() {
+        const value: C[#bar] = 3;
+    }
+}
+"##;
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| { d.code == diagnostic_codes::EXPECTED && d.message == "',' expected." }),
+        "expected TS1005 comma recovery for `C[#bar]`, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED),
+        "expected TS1134 declaration-list recovery for `C[#bar]`, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "indexed-access private-name recovery should not cascade into TS1128, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_optional_tuple_element() {
     // [T?] should parse correctly without TS1005/TS1110
     let source = r"

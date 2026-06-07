@@ -3,7 +3,7 @@
 use crate::construction::TypeDatabase;
 use crate::types::IntrinsicKind;
 use crate::{TypeData, TypeId};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
 
 use super::predicate_pool::with_predicate_buffers;
@@ -890,6 +890,259 @@ impl<'a> FreeTypeParamChecker<'a> {
             TypeData::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
             TypeData::Enum(_def_id, member_type) => self.check(*member_type),
         }
+    }
+}
+
+/// Collect the `TypeId`s of every `TypeParameter`/`Infer` that occurs *free*
+/// across `roots`, i.e. not bound by an enclosing generic function/callable
+/// signature.
+///
+/// Type parameters in tsz are interned structurally by name, so two unrelated
+/// `T`s share a `TypeId`. Callers that compare against a specific parameter's
+/// identity must therefore only consider free occurrences: a parameter *bound*
+/// by a nested generic signature in the traversed type is a distinct
+/// declaration that merely shares an interned name, and must not be reported.
+///
+/// This mirrors [`FreeTypeParamChecker`]'s binder handling — the body of a
+/// nested generic signature is skipped wholesale rather than re-scoped — but
+/// returns the set of free parameter ids instead of a boolean. The result is a
+/// pure function of the input types and is memoized across all `roots` in a
+/// single pass (so e.g. a signature's parameters and return type share the
+/// walk); the walk is `stacker`-guarded because it runs inside the (already
+/// deep) subtype relation.
+///
+/// A `TypeParameter`'s `constraint`/`default` are metadata, not free uses, so
+/// they are not traversed — matching the rest of the free-parameter walkers.
+pub fn free_type_parameter_ids_in(
+    types: &dyn TypeDatabase,
+    roots: impl IntoIterator<Item = TypeId>,
+) -> FxHashSet<TypeId> {
+    let mut collector = FreeTypeParamCollector {
+        types,
+        memo: FxHashMap::default(),
+        guard: crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        ),
+    };
+    let mut out = FxHashSet::default();
+    for root in roots {
+        out.extend(collector.free(root));
+    }
+    out
+}
+
+struct FreeTypeParamCollector<'a> {
+    types: &'a dyn TypeDatabase,
+    /// Memoized free-parameter set per `TypeId`. Freeness is a pure function of
+    /// the type (a generic signature contributes nothing; everything else is the
+    /// union of its children), so it can be cached without an ambient scope.
+    /// Memoization also keeps the walk linear over a shared type DAG — without it
+    /// a signature reused across many positions would be re-expanded and can
+    /// overflow the stack on real-world types.
+    memo: FxHashMap<TypeId, FxHashSet<TypeId>>,
+    guard: crate::recursion::RecursionGuard<TypeId>,
+}
+
+impl<'a> FreeTypeParamCollector<'a> {
+    fn free(&mut self, type_id: TypeId) -> FxHashSet<TypeId> {
+        if type_id.is_intrinsic() {
+            return FxHashSet::default();
+        }
+        if let Some(cached) = self.memo.get(&type_id) {
+            return cached.clone();
+        }
+        let Some(key) = self.types.lookup(type_id) else {
+            return FxHashSet::default();
+        };
+        // Terminal-kind fast path: these variants have no children and contribute
+        // no free parameters, so skip the recursion-guard/memo bookkeeping
+        // entirely. Mirrors `FreeTypeParamChecker::check`. `TypeParameter`/`Infer`
+        // are intentionally excluded — they are the leaves we collect.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            return FxHashSet::default();
+        }
+        // Cycle back-edges contribute no new free parameters (the parameter is
+        // already reachable from the ancestor on the stack), so return empty on
+        // re-entry and do not memoize the partial result.
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return FxHashSet::default(),
+        }
+        // Grow the native stack on demand: this walk runs *inside* the already
+        // deep subtype-relation recursion, so a deeply nested type can otherwise
+        // overflow. Mirrors `RecursiveTypeCollector::visit`.
+        let result =
+            stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.free_key(type_id, &key));
+        self.guard.leave(type_id);
+        self.memo.insert(type_id, result.clone());
+        result
+    }
+
+    /// Free parameters of a signature. A *generic* signature binds its own type
+    /// parameters, so its body is skipped entirely — mirroring
+    /// [`FreeTypeParamChecker`]. This intentionally does not descend into a
+    /// generic signature to recover an outer parameter threaded through it; that
+    /// extra precision is unnecessary for the identity-sharing decision this
+    /// helper drives, and descending makes the walk dramatically deeper on
+    /// real-world recursive signature graphs. A *non-generic* signature binds
+    /// nothing, so its children's free parameters pass through.
+    fn free_signature(
+        &mut self,
+        is_generic: bool,
+        params: impl Iterator<Item = TypeId>,
+        return_type: TypeId,
+        this_type: Option<TypeId>,
+    ) -> FxHashSet<TypeId> {
+        let mut set = FxHashSet::default();
+        if is_generic {
+            return set;
+        }
+        for p in params {
+            set.extend(self.free(p));
+        }
+        set.extend(self.free(return_type));
+        if let Some(t) = this_type {
+            set.extend(self.free(t));
+        }
+        set
+    }
+
+    fn free_key(&mut self, type_id: TypeId, key: &TypeData) -> FxHashSet<TypeId> {
+        let mut set = FxHashSet::default();
+        match key {
+            TypeData::TypeParameter(_) | TypeData::Infer(_) => {
+                // A free occurrence. Its constraint/default are metadata, not
+                // free uses, so they are intentionally not traversed.
+                set.insert(type_id);
+            }
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                // `object_shape` returns an owned `Arc`, so the iteration borrow
+                // is independent of `&mut self` and needs no intermediate Vec.
+                let shape = self.types.object_shape(*shape_id);
+                for child in shape
+                    .properties
+                    .iter()
+                    .map(|p| p.type_id)
+                    .chain(shape.string_index.as_ref().map(|i| i.value_type))
+                    .chain(shape.number_index.as_ref().map(|i| i.value_type))
+                {
+                    set.extend(self.free(child));
+                }
+            }
+            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                let members = self.types.type_list(*list_id);
+                for &m in members.iter() {
+                    set.extend(self.free(m));
+                }
+            }
+            TypeData::Array(elem) => set.extend(self.free(*elem)),
+            TypeData::Tuple(list_id) => {
+                let elems = self.types.tuple_list(*list_id);
+                for e in elems.iter() {
+                    set.extend(self.free(e.type_id));
+                }
+            }
+            TypeData::Function(shape_id) => {
+                let shape = self.types.function_shape(*shape_id);
+                set = self.free_signature(
+                    !shape.type_params.is_empty(),
+                    shape.params.iter().map(|p| p.type_id),
+                    shape.return_type,
+                    shape.this_type,
+                );
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = self.types.callable_shape(*shape_id);
+                for s in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    set.extend(self.free_signature(
+                        !s.type_params.is_empty(),
+                        s.params.iter().map(|p| p.type_id),
+                        s.return_type,
+                        s.this_type,
+                    ));
+                }
+                for p in shape.properties.iter() {
+                    set.extend(self.free(p.type_id));
+                }
+            }
+            TypeData::Application(app_id) => {
+                let app = self.types.type_application(*app_id);
+                for &a in app.args.iter() {
+                    set.extend(self.free(a));
+                }
+            }
+            TypeData::Conditional(cond_id) => {
+                let cond = self.types.get_conditional(*cond_id);
+                let parts = [
+                    cond.check_type,
+                    cond.extends_type,
+                    cond.true_type,
+                    cond.false_type,
+                ];
+                for part in parts {
+                    set.extend(self.free(part));
+                }
+            }
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.types.get_mapped(*mapped_id);
+                for part in [
+                    Some(mapped.constraint),
+                    Some(mapped.template),
+                    mapped.name_type,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    set.extend(self.free(part));
+                }
+            }
+            TypeData::IndexAccess(obj, idx) => {
+                set.extend(self.free(*obj));
+                set.extend(self.free(*idx));
+            }
+            TypeData::TemplateLiteral(list_id) => {
+                let spans = self.types.template_list(*list_id);
+                for span in spans.iter() {
+                    if let crate::types::TemplateSpan::Type(t) = span {
+                        set.extend(self.free(*t));
+                    }
+                }
+            }
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+                set.extend(self.free(*inner));
+            }
+            TypeData::StringIntrinsic { type_arg, .. } => set.extend(self.free(*type_arg)),
+            TypeData::Enum(_def_id, member_type) => set.extend(self.free(*member_type)),
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Error
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_) => {}
+        }
+        set
     }
 }
 

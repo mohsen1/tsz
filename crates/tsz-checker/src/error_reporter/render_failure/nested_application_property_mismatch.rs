@@ -962,6 +962,12 @@ impl<'a> CheckerState<'a> {
             reason,
             tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+                // Tuple fixed-/variadic-arity count leaves (`Source has N
+                // element(s) …`) carry no member name, so the union renderer
+                // emits the `Type 'M' is not assignable to type 'T'.` header
+                // before drilling the arity leaf.
+                | tsz_solver::SubtypeFailureReason::TupleElementMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::TupleArityMismatch(_)
                 | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::ReturnTypeMismatch { .. }

@@ -33,3 +33,20 @@ pub(crate) mod lib_scoped_heritage;
 pub(crate) mod type_only;
 mod type_only_module_exports;
 mod type_only_reexports;
+
+fn with_type_only_query_path<F>(
+    visited: &mut rustc_hash::FxHashSet<(usize, String)>,
+    key: (usize, String),
+    query: F,
+) -> bool
+where
+    F: FnOnce(&mut rustc_hash::FxHashSet<(usize, String)>) -> bool,
+{
+    if !visited.insert(key.clone()) {
+        return false;
+    }
+
+    let result = query(visited);
+    visited.remove(&key);
+    result
+}
