@@ -13,6 +13,14 @@
 //! comparison. A concrete implementation whose result merely satisfies the
 //! constraint was then wrongly accepted, hiding the TS2322 that `tsc` reports.
 //!
+//! The fix extends the covariant guard from bare occurrences (`T`, `T[]`,
+//! `T | null`) to *application-mediated* ones (`Box<T>`, `Cell<T>`) by asking
+//! the variance computer whether the parameter is observable covariantly (or
+//! invariantly) through the return type. Purely contravariant (`FBox<T>` with
+//! `apply(value: T)`) and phantom occurrences carry no covariant bit, so they
+//! stay erasable; the overloaded-builder row stays accepted through the
+//! separate multi-signature erase-to-`any` retry.
+//!
 //! The structural rule (verified against `tsc` 6.0.2): erasing a target method
 //! type parameter to its constraint *widens* it. That is safe in a
 //! contravariant (parameter) position — method-parameter bivariance already
@@ -145,35 +153,64 @@ fn keeps_2322_array_element_context() {
 }
 
 // ---------------------------------------------------------------------------
-// Known remaining gap (documented, not yet at parity).
-//
-// When the method type parameter appears in the return type *only* as a generic
-// application argument (`Box<T>`, `RawBuilder<A>`, `PromiseLike<T>`, …), tsz
-// still erases it to its constraint, so the concrete member is accepted even
-// though `tsc` reports TS2322. That erase path is load-bearing for generic
-// inference and overloaded-builder rows (a `PromiseLike<TResult>` return drives
-// `Promise.then` inference, for instance), so widening the covariant guard to
-// cover application-mediated returns is deferred to dedicated follow-up work.
-// These tests pin the *current* behavior so a future fix surfaces here.
+// Application-mediated covariant return positions: the method type parameter
+// appears in the return type *only* as a generic application argument
+// (`Box<T>`, `RawBuilder<A>`, …) whose enclosing generic reads it out. The
+// caller still observes the parameter covariantly, so a concrete member is not
+// a valid implementation and `tsc` reports TS2322 — matched now via the
+// variance-aware covariant guard. (Previously a documented gap.)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn known_gap_application_mediated_covariant_return_box() {
-    // `tsc` 6.0.2 reports TS2322 here; tsz currently does not.
-    assert_no_2322(
+fn keeps_2322_application_mediated_covariant_return_box() {
+    assert_has_2322(
         "interface Box<V> { v: V }
          type A = { m<T extends string>(): Box<T> };
          const a: A = { m(): Box<string> { return { v: '' }; } };",
     );
 }
 
+// Renamed parameters — proves the guard reads structure, not identifiers.
 #[test]
-fn known_gap_application_mediated_covariant_return_builder() {
-    // `tsc` 6.0.2 reports TS2322 here; tsz currently does not.
-    assert_no_2322(
+fn keeps_2322_application_mediated_covariant_return_box_renamed() {
+    assert_has_2322(
+        "interface Holder<W> { w: W }
+         type A = { m<K extends string>(): Holder<K> };
+         const a: A = { m(): Holder<string> { return { w: '' }; } };",
+    );
+}
+
+#[test]
+fn keeps_2322_application_mediated_covariant_return_builder() {
+    assert_has_2322(
         "interface RawBuilder<O> { o: O }
          interface DB { raw<A extends object>(): RawBuilder<A>; }
          const db: DB = { raw(): RawBuilder<object> { return { o: {} }; } };",
+    );
+}
+
+// Invariant application (`Cell<T>` reads and writes `T`) is also observable
+// covariantly, so it stays opaque and the concrete member is rejected.
+#[test]
+fn keeps_2322_application_mediated_invariant_return_cell() {
+    assert_has_2322(
+        "interface Cell<P extends string> { read: P; write(v: P): void }
+         type A = { m<T extends string>(x: number): Cell<T> };
+         const a: A = { m(x: number): Cell<string> { return {} as any; } };",
+    );
+}
+
+// Application-mediated covariant return nested one level deeper inside another
+// covariant application (`Wrap<Box<T>>`) — kept lib-independent with two
+// user-defined covariant wrappers so the variance composition is exercised
+// without depending on the test harness's global lib surface.
+#[test]
+fn keeps_2322_application_mediated_covariant_return_nested() {
+    assert_has_2322(
+        "interface Box<V> { v: V }
+         interface Wrap<X> { x: X }
+         type A = { m<T extends string>(): Wrap<Box<T>> };
+         const a: A = { m(): Wrap<Box<string>> { return { x: { v: '' } }; } };",
     );
 }
 
@@ -209,6 +246,21 @@ fn no_false_2322_contravariant_parameter_wrapped() {
         "interface Box<O> { o: O }
          interface DB { take<A extends object>(b: Box<A>): void; }
          const db: DB = { take(b: Box<object>): void {} };",
+    );
+}
+
+// Contravariant application-mediated *return* position: `FBox<T>` only writes
+// `T` (`apply(value: T)`), so the parameter is observed contravariantly and
+// carries no covariant bit. The concrete `FBox<string>` member is a valid
+// implementation — method-parameter bivariance covers it — and must stay
+// accepted, proving the covariant guard discriminates by variance rather than
+// blanket-rejecting every application-mediated return occurrence.
+#[test]
+fn no_false_2322_application_mediated_contravariant_return() {
+    assert_no_2322(
+        "interface FBox<P extends string> { apply(value: P): void }
+         type A = { m<T extends string>(x: number): FBox<T> };
+         const a: A = { m(x: number): FBox<string> { return {} as any; } };",
     );
 }
 
