@@ -1082,6 +1082,19 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Whether `sym_id` is a library interface whose most recent resolution left
+    /// an incomplete heritage body — a base interface was dropped while it was
+    /// itself mid-resolution (the `Element`/`HTMLElement` ⇒ `Node` DOM diamond in
+    /// #12299). Such a partial body must not be cached: the symbol caches are not
+    /// invalidated when the base later completes, so a frozen partial shape would
+    /// keep producing false missing-member / non-assignability errors. Leaving it
+    /// uncached makes the next lookup recompute the full shape.
+    fn lib_symbol_heritage_incomplete(&self, sym_id: SymbolId) -> bool {
+        self.get_cross_file_symbol(sym_id)
+            .filter(|symbol| symbol.has_any_flags(symbol_flags::INTERFACE))
+            .is_some_and(|symbol| self.lib_name_heritage_incomplete(&symbol.escaped_name))
+    }
+
     fn get_type_of_symbol_inner(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_solver::SymbolRef;
         let factory = self.ctx.types.factory();
@@ -1307,20 +1320,27 @@ impl<'a> CheckerState<'a> {
                 .zip(self.ctx.get_existing_def_id(sym_id))
                 .is_some_and(|(ld, od)| ld == od)
         };
+        // An incomplete lib-interface heritage body (#12299) must not be frozen
+        // into any symbol cache; those caches are never invalidated when the
+        // dropped base finishes resolving.
+        let lib_heritage_incomplete = self.lib_symbol_heritage_incomplete(sym_id);
         if let Some(file_idx) = cross_file_owner_idx {
-            self.ctx.cache_cross_file_symbol_type(
-                sym_id,
-                file_idx as u32,
-                result,
-                type_params.clone(),
-            );
+            if !lib_heritage_incomplete {
+                self.ctx.cache_cross_file_symbol_type(
+                    sym_id,
+                    file_idx as u32,
+                    result,
+                    type_params.clone(),
+                );
+            }
         } else {
-            let result_cached_locally = if result_is_lazy_to_self
-                && self
-                    .ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
+            let result_cached_locally = if lib_heritage_incomplete
+                || (result_is_lazy_to_self
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS)))
             {
                 self.ctx.symbol_types.remove(&sym_id);
                 false

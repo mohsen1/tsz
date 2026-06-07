@@ -735,13 +735,25 @@ impl<'a> CheckerState<'a> {
         // base declared in the same namespace. The body-only lowerings above
         // drop them; this runs the namespace-aware heritage merge keyed by the
         // qualified name so the base interface members are instantiated in.
-        let (direct_type, params) = match heritage_merge_name {
+        let (direct_type, params, incomplete) = match heritage_merge_name {
             Some(merge_name) => {
-                let merged = self.merge_lib_interface_heritage(direct_type, &merge_name).0;
-                (merged, params)
+                let (merged, incomplete) =
+                    self.merge_lib_interface_heritage(direct_type, &merge_name);
+                (merged, params, incomplete)
             }
-            None => (direct_type, params),
+            // `direct_type` came from `resolve_lib_type_by_name(&name)` above, which
+            // records an incomplete heritage merge (a base dropped mid-resolution)
+            // via the lib-resolution marker.
+            None => (direct_type, params, self.lib_name_heritage_incomplete(&name)),
         };
+        if incomplete {
+            // Do not freeze an incomplete heritage body (missing inherited
+            // members from an in-progress base — the #12299 DOM diamond) into the
+            // symbol/delegation caches, which are never invalidated when the base
+            // finishes. Serve this query but leave the caches empty so the next
+            // request recomputes the full shape.
+            return Some((direct_type, params));
+        }
         self.ctx.symbol_types.insert(sym_id, direct_type);
         self.ctx
             .lib_delegation_cache

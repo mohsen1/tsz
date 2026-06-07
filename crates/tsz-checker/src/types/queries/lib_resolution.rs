@@ -1041,7 +1041,16 @@ impl<'a> CheckerState<'a> {
         // Finalize after heritage merge — `merge_lib_interface_heritage`
         // above may have produced a new TypeId; helper rewires type→def
         // and the DefId body so literal and annotation paths agree.
-        if let Some(ty) = lib_type_id {
+        //
+        // Skip this entirely when the heritage merge was incomplete: a body that
+        // dropped an in-progress base (the DOM `Element`/`HTMLElement` ⇒ `Node`
+        // diamond in #12299) is missing inherited members, and freezing it into
+        // the def store / `symbol_types` lets that incomplete shape outlive the
+        // cycle — the recompute the old code relied on does not reliably overwrite
+        // a frozen def body. Persisting only complete bodies keeps the incomplete
+        // shape out of every store, so the next request recomputes it in full once
+        // the base has finished resolving.
+        if !heritage_incomplete && let Some(ty) = lib_type_id {
             self.register_finalized_lib_body(name, ty);
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId
@@ -1070,9 +1079,9 @@ impl<'a> CheckerState<'a> {
             // `lib_type_id` is missing inherited members. Mark `name` incomplete
             // and do NOT persist the type: remove the local slot and skip the
             // shared cache so the next request recomputes once the base has
-            // completed. The def body / `symbol_types` entries written above are
-            // overwritten by that recompute (`register_finalized_lib_body`
-            // rewires the body and clears eval caches). See #12299.
+            // completed. The finalize block above is skipped while incomplete, so
+            // no def body / `symbol_types` entry is frozen for this name. See
+            // #12299.
             set_lib_resolution_mark(name, LibResolutionMark::Incomplete);
             self.ctx.lib_type_resolution_cache.remove(name);
             return lib_type_id;

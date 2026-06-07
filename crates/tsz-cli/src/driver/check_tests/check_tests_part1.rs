@@ -1198,6 +1198,47 @@ const instance: HTMLElement = new mod.HTML5Element();
         );
     }
 
+    /// Program-mode regression for #12299: when the DOM lib is checked as source
+    /// files, `Element`/`HTMLElement` reach `Node` both directly and through
+    /// `ChildNode`/`ParentNode` (a diamond). A heritage base resolved while it is
+    /// itself mid-resolution used to be frozen into the symbol/def caches as an
+    /// incomplete body, dropping every inherited member. After honoring the
+    /// existing incomplete-heritage signal at the cross-arena freeze sites, the
+    /// inherited members are visible to `keyof` and indexed access again.
+    #[test]
+    fn dom_element_keyof_and_indexed_access_see_inherited_node_members_12299() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5/dom libs must be available for this regression"
+        );
+
+        // `appendChild`/`cloneNode` are declared on `Node`; `Element` and
+        // `HTMLElement` inherit them through the heritage diamond. `keyof` and
+        // indexed access must therefore accept these inherited keys.
+        let files = [(
+            "/p/dom.ts",
+            r#"
+const ek: keyof Element = "appendChild";
+const hk: keyof HTMLElement = "cloneNode";
+type EAppend = Element["appendChild"];
+type HClone = HTMLElement["cloneNode"];
+"#,
+        )];
+        let diagnostics = collect_test_diagnostics_with_lib_files(&files, &lib_files);
+        // No "not assignable to keyof" (TS2322) and no "property does not exist on
+        // type" indexed-access failures (TS2536) for the inherited members.
+        let offending: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2339 | 2536))
+            .collect();
+        assert!(
+            offending.is_empty(),
+            "Element/HTMLElement must expose inherited Node members to keyof/indexed access \
+             in program mode (#12299). Got: {offending:?}. All: {diagnostics:?}"
+        );
+    }
+
     #[test]
     fn class_extends_identity_shortcut_preserves_member_relation_checks() {
         let diagnostics = collect_test_diagnostics(&[(

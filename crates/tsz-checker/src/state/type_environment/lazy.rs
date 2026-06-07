@@ -1608,7 +1608,14 @@ impl<'a> CheckerState<'a> {
             && self.ctx.has_lib_loaded()
         {
             if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
-                self.try_insert_def_in_type_env(def_id, resolved);
+                // Do not freeze an incomplete heritage body (a base dropped while
+                // mid-resolution — the #12299 DOM diamond) into `type_env`: that
+                // def-body cache is not invalidated when the base completes, so
+                // the partial shape would be reused. Serve this query but leave
+                // the def body unset so the next resolution recomputes in full.
+                if !self.lib_name_heritage_incomplete(&name) {
+                    self.try_insert_def_in_type_env(def_id, resolved);
+                }
                 return Some(resolved);
             }
             return Some(self.ctx.types.lazy(def_id));
