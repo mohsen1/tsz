@@ -3,6 +3,7 @@ mod contextual_arity;
 mod function_name_diagnostics;
 mod js_prototype;
 mod jsx_body_context;
+mod literal_context;
 
 use super::function_type_helpers::{
     ExpressionBodyReturnCheckCtx, FunctionBodyReturnTypeCtx, FunctionFinalReturnTypeCtx,
@@ -1889,12 +1890,12 @@ impl<'a> CheckerState<'a> {
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
                 if !skip_body_check {
-                    let body_request = if body_is_expression {
-                        TypingRequest::NONE.contextual_opt(effective_body_ctx)
-                    } else {
-                        TypingRequest::NONE
-                    };
-                    self.check_statement_with_request(body, &body_request);
+                    let body_request = self
+                        .function_body_statement_request(body_is_expression, effective_body_ctx);
+                    self.check_function_body_statement_with_own_literal_context(
+                        body,
+                        &body_request,
+                    );
                 }
                 if let Some(snap) = diag_snap {
                     snap.rollback(&mut self.ctx.diagnostic_state());
