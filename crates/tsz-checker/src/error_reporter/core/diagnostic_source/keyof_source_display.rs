@@ -73,16 +73,15 @@ impl<'a> CheckerState<'a> {
                 return Some(name);
             }
         }
-        if let Some(shape) = diagnostic_query::object_shape_for_type(self.ctx.types, operand) {
-            if let Some(sym_id) = shape.symbol
-                && let Some(symbol) = self.get_cross_file_symbol(sym_id)
-                && symbol.has_any_flags(
-                    tsz_binder::symbol_flags::INTERFACE | tsz_binder::symbol_flags::CLASS,
-                )
-                && !symbol.escaped_name.is_empty()
-            {
-                return Some(symbol.escaped_name.clone());
-            }
+        if let Some(shape) = diagnostic_query::object_shape_for_type(self.ctx.types, operand)
+            && let Some(sym_id) = shape.symbol
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            && symbol.has_any_flags(
+                tsz_binder::symbol_flags::INTERFACE | tsz_binder::symbol_flags::CLASS,
+            )
+            && !symbol.escaped_name.is_empty()
+        {
+            return Some(symbol.escaped_name.clone());
         }
         None
     }
