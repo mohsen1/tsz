@@ -32,40 +32,6 @@ pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
     tsz_solver::is_compiler_managed_type(name)
 }
 
-/// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
-/// canonical self-keyof indexed-access shape `Foo[keyof Foo]`, return the
-/// body `TypeId` so the caller can evaluate it with a resolver-equipped
-/// evaluator. Otherwise return `None`.
-///
-/// tsc loses the outer alias when this reduction collapses to a concrete type.
-/// The match is intentionally narrow: generic indexed-access aliases and
-/// non-self-keyof aliases stay opaque to avoid recursion-fuel blowups and
-/// spurious TS2589s.
-pub(crate) fn indexed_access_alias_body(
-    db: &dyn TypeDatabase,
-    def_store: &tsz_solver::def::DefinitionStore,
-    ty: TypeId,
-) -> Option<TypeId> {
-    let def_id = tsz_solver::type_queries::get_lazy_def_id(db, ty)?;
-    let def = def_store.get(def_id)?;
-    if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
-        return None;
-    }
-    let body = def.body?;
-    // Only match the `Foo[keyof Foo]` self-keyof shape — narrower than
-    // "any IndexAccess" to avoid evaluating legitimately-deferred forms.
-    tsz_solver::type_queries::indexed_access_self_keyof(db, body)?;
-    Some(body)
-}
-
-/// Returns true if `ty` is still a deferred form (`Lazy` or `IndexAccess`)
-/// that the solver could not reduce. Used after attempting a full evaluate
-/// to decide whether to keep the original alias display or use the resolved
-/// form.
-pub(crate) fn is_unresolved_for_display(db: &dyn TypeDatabase, ty: TypeId) -> bool {
-    tsz_solver::type_queries::is_deferred_lazy_or_indexed_access(db, ty)
-}
-
 /// Thin wrapper around `tsz_solver::deep_reduce_for_display`.
 ///
 /// Deeply reduce meta-type applications (e.g. `InstanceType<typeof Foo>`)
@@ -159,10 +125,6 @@ pub(crate) fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 
 pub(crate) fn has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
     tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
-}
-
-pub(crate) fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::type_may_display_iterator_protocol(db, type_id)
 }
 
 pub(crate) fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
@@ -1251,31 +1213,6 @@ pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 
 pub(crate) fn is_type_query_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_type_query_type(db, type_id)
-}
-
-/// Return `true` if `type_id` resolves to a `Function` shape — or a
-/// `Callable` whose call signatures collectively — carry a `TypeQuery`
-/// in any param or return position. Used by display-side normalization
-/// to skip `evaluate_type_for_assignability` on self-referential
-/// `typeof X` shapes (so the inner reference stays as `typeof X`
-/// rather than being expanded into another wrapper of the same shape).
-pub(crate) fn function_signature_has_typeof(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(shape) = function_shape_for_type(db, type_id)
-        && (is_type_query_type(db, shape.return_type)
-            || shape
-                .params
-                .iter()
-                .any(|p| is_type_query_type(db, p.type_id)))
-    {
-        return true;
-    }
-    if let Some(shape) = callable_shape_for_type(db, type_id) {
-        return shape.call_signatures.iter().any(|sig| {
-            is_type_query_type(db, sig.return_type)
-                || sig.params.iter().any(|p| is_type_query_type(db, p.type_id))
-        });
-    }
-    false
 }
 
 pub(crate) fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
