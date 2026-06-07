@@ -45,8 +45,9 @@ as campaigns instead of isolated conformance picks.
 ## Current Public Metrics
 
 Sources: checked-in conformance artifacts, `scripts/conformance/query-conformance.py
---dashboard`, `scripts/emit/query-emit.py --families`, live GitHub orientation on
-2026-06-04, `scripts/bench/project-row-summary.mjs`, public README metrics, and
+--dashboard` (accepted-regression count refreshed on 2026-06-06),
+`scripts/emit/query-emit.py --families`, live GitHub orientation on 2026-06-04,
+`scripts/bench/project-row-summary.mjs`, public README metrics, and
 `scripts/emit/audit-output-surgery.py`.
 Release planning uses exact artifact numerators and denominators; stale detail
 artifacts are triage inputs only, not current public truth.
@@ -54,7 +55,7 @@ artifacts are triage inputs only, not current public truth.
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | checked detail is `100.0%` exact (`12,585 / 12,585`) |
-| Accepted-regression strictness | `30` listed tests in `conformance-accepted-regressions.txt`; the dashboard remains exact, but strictness debt must be justified or paid down before treating the runway as retired |
+| Accepted-regression strictness | `15` listed tests in `conformance-accepted-regressions.txt`; the dashboard remains exact, but strictness debt must be justified or paid down before treating the runway as retired |
 | JavaScript emit | `100.0%` exact (`13,530 / 13,530`) in README/public aggregate and checked detail |
 | Declaration emit | `100.0%` exact (`1,669 / 1,669`) in README/public aggregate and checked detail |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
@@ -71,7 +72,7 @@ The exact conformance snapshot does not by itself mean the conformance runway
 is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
 remains a separate gate-strictness artifact and must be kept empty or
 explicitly justified by current CI evidence before agents treat conformance
-cleanup as complete. It currently lists `30` accepted-regression entries even
+cleanup as complete. It currently lists `15` accepted-regression entries even
 though the dashboard is exact, so the strictness gate is non-empty and each
 entry should be paid down or re-justified in follow-up PRs. A checked-in detail
 snapshot that no longer lists these tests as failures is not enough to retire
@@ -162,7 +163,8 @@ GitHub is the coordination surface.
    Address other agents by `AgentName` when coordination matters.
 8. Use only canonical ownership labels from `docs/plan/agents/README.md`.
    Replace generated runner labels or `agnet:*` typos with the correct lane
-   before marking a PR ready or queueing it with `gh pr merge --queue`.
+   before marking a PR ready or queueing it with
+   `gh pr merge <pr> --match-head-commit <sha>`.
 9. Never merge work that is still draft, labeled `WIP`, titled with `[WIP]`, or
    described as not ready.
 10. Treat `ready` plus a `WIP` label as WIP. Remove the label before merge.

@@ -132,6 +132,9 @@ mod class_extends_generic_override_variance_tests;
 #[path = "tests/class_extends_index_relation_routing_arch_tests.rs"]
 mod class_extends_index_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/class_implements_generic_override_variance_tests.rs"]
+mod class_implements_generic_override_variance_tests;
+#[cfg(test)]
 #[path = "tests/class_implements_index_relation_routing_arch_tests.rs"]
 mod class_implements_index_relation_routing_arch_tests;
 #[cfg(test)]
@@ -215,6 +218,9 @@ mod generic_callable_outer_type_param_mismatch_tests;
 #[cfg(test)]
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
+#[cfg(test)]
+#[path = "tests/generic_method_member_variance_assignability_tests.rs"]
+mod generic_method_member_variance_assignability_tests;
 #[cfg(test)]
 #[path = "tests/generic_method_override_variance_tests.rs"]
 mod generic_method_override_variance_tests;
@@ -759,6 +765,9 @@ mod generic_class_constructor_literal_preservation_tests;
 #[path = "tests/generic_class_self_ref_method_param_tests.rs"]
 mod generic_class_self_ref_method_param_tests;
 #[cfg(test)]
+#[path = "tests/generic_function_param_name_collision_assignability_tests.rs"]
+mod generic_function_param_name_collision_assignability_tests;
+#[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
@@ -1106,6 +1115,9 @@ mod recursive_generic_arrow_tests;
 #[cfg(test)]
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;
+#[cfg(test)]
+#[path = "tests/recursive_tuple_alias_diagnostic_display_tests.rs"]
+mod recursive_tuple_alias_diagnostic_display_tests;
 #[cfg(test)]
 #[path = "tests/ref_type_params_cache_tests.rs"]
 mod ref_type_params_cache_tests;

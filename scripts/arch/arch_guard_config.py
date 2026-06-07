@@ -233,7 +233,20 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `common` barrel). It is an existing request-shaped helper already used
         # throughout this file — no new quarantine entry.
         # Ratcheted 3278→3202 after current arch-smoke caught live-count slack.
-        3202,
+        #
+        # Ratcheted 3202→3197 after generic predicate-target instantiation
+        # moved five flow/narrowing substitution queries through
+        # query_boundaries::flow_analysis instead of the broad common barrel.
+        #
+        # Ratcheted 3197→3191 after assignment flow operator/property/literal
+        # queries moved through query_boundaries::flow_analysis.
+        #
+        # Ratcheted 3191→3174 after assignment numeric display shape queries
+        # moved through query_boundaries::diagnostics.
+        #
+        # Ratcheted 3174→3163 after missing-property display shape queries
+        # moved through query_boundaries::diagnostics.
+        3163,
     ),
 ]
 

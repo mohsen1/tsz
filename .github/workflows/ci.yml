@@ -1151,6 +1151,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Validate accepted-regression ledger integrity
+        # Runs on every event (pull_request, merge_group, push): the ledger
+        # must stay canonical (no duplicate / non-normalized / malformed
+        # entries) so the visible counter and the CI aggregate matcher agree.
+        # Needs only HEAD, so no base fetch is required.
+        run: |
+          python3 scripts/conformance/check-accepted-regression-growth.py --integrity-only
       - name: Compare conformance snapshots with PR base
         if: github.event_name == 'pull_request'
         run: |

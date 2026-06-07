@@ -1433,6 +1433,7 @@ impl<'a> CheckerState<'a> {
 }
 
 mod array_like_constraint_helpers;
+mod bare_param_constraint_helpers;
 mod boolean_probe_constraints;
 mod callable_constraint_helpers;
 mod conditional_constraint_helpers;
@@ -1447,6 +1448,8 @@ mod infer_conditional_helpers;
 mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;
 mod merged_interface_constraints;
+mod object_alias_constraint_helpers;
 mod recursive_heritage_constraint;
 mod symbol_declaration_helpers;
+mod type_arg_error_helpers;
 mod union_constraint_helpers;

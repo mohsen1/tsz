@@ -1659,3 +1659,6 @@ path = "tests/index_signature_type_check_probe_tests.rs"
 [[test]]
 name = "fuel_budget_callback_context_tests"
 path = "tests/fuel_budget_callback_context_tests.rs"
+[[test]]
+name = "union_property_optional_modifier_tests"
+path = "tests/union_property_optional_modifier_tests.rs"

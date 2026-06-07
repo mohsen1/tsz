@@ -1456,6 +1456,14 @@ fn build_path_mappings(paths: &FxHashMap<String, Vec<String>>) -> Vec<PathMappin
         right
             .specificity()
             .cmp(&left.specificity())
+            // tsc's `matchPatternOrExact` returns an exact, wildcard-free key
+            // equal to the specifier *before* it consults any wildcard pattern
+            // via `findBestPatternMatch`. An exact key always has a prefix as
+            // long as the specifier, so it can only tie (never lose) on
+            // `specificity` against a matching wildcard; break that tie in
+            // favour of the literal key so the pre-sorted "first match wins"
+            // selection mirrors tsc's exact-beats-wildcard precedence.
+            .then_with(|| left.pattern.contains('*').cmp(&right.pattern.contains('*')))
             .then_with(|| right.pattern.len().cmp(&left.pattern.len()))
             .then_with(|| left.pattern.cmp(&right.pattern))
     });

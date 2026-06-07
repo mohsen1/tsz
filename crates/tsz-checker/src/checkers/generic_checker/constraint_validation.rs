@@ -5,36 +5,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Returns true when an arity diagnostic was emitted inside `type_arg_idx`.
-    fn type_arg_subtree_has_arity_error(&self, type_arg_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(type_arg_idx) else {
-            return false;
-        };
-        let (start, end) = (node.pos, node.end);
-        if end <= start {
-            return false;
-        }
-        self.ctx
-            .diagnostics
-            .iter()
-            .any(|d| matches!(d.code, 2314 | 2315 | 2707) && d.start >= start && d.start < end)
-    }
-
-    fn type_arg_subtree_has_value_used_as_type_error(&self, type_arg_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(type_arg_idx) else {
-            return false;
-        };
-        let (start, end) = (node.pos, node.end);
-        if end <= start {
-            return false;
-        }
-        let code = crate::diagnostics::diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
-        self.ctx
-            .diagnostics
-            .iter()
-            .any(|d| d.code == code && d.start >= start && d.start < end)
-    }
-
     /// Validate each type argument against its corresponding type parameter
     /// constraint. Reports TS2344 when a type argument doesn't satisfy its
     /// constraint. Shared by call expressions, new expressions, and type refs.
@@ -364,6 +334,18 @@ impl<'a> CheckerState<'a> {
                 if type_arg_contains_type_parameters
                     && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
                 {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let inst_constraint = self.instantiate_constraint_with_type_args(
+                        constraint_resolved,
+                        type_params,
+                        &type_args,
+                    );
+                    if self.generic_alias_application_satisfies_object_constraint(
+                        type_arg,
+                        inst_constraint,
+                    ) {
+                        continue;
+                    }
                     let evaluated_arg = self.evaluate_type_for_assignability(type_arg);
                     if evaluated_arg != type_arg
                         && !matches!(
@@ -372,12 +354,6 @@ impl<'a> CheckerState<'a> {
                         )
                         && !query::contains_type_parameters(self.ctx.types, evaluated_arg)
                     {
-                        let constraint_resolved = self.resolve_lazy_type(constraint);
-                        let inst_constraint = self.instantiate_constraint_with_type_args(
-                            constraint_resolved,
-                            type_params,
-                            &type_args,
-                        );
                         if self.conditional_result_branches_satisfy_constraint(
                             type_arg,
                             inst_constraint,
@@ -504,6 +480,18 @@ impl<'a> CheckerState<'a> {
                 {
                     base_constraint_type = Some(ast_base);
                     base_constraint_from_indexed_access_ast = true;
+                }
+                if type_arg_contains_type_parameters
+                    && let Some(base) = base_constraint_type
+                    && self.bare_type_param_base_satisfies_instantiated_constraint(
+                        type_arg,
+                        base,
+                        constraint,
+                        type_params,
+                        &type_args,
+                    )
+                {
+                    continue;
                 }
                 if type_arg_contains_type_parameters {
                     let constraint_resolved = self.resolve_lazy_type(constraint);

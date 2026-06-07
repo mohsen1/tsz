@@ -5,6 +5,7 @@
 //! orchestration-shaped.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::mem;
 
 use crate::code_actions::{ImportCandidate, ImportCandidateKind};
 
@@ -75,6 +76,14 @@ impl<'a> AutoImportCandidateContext<'a> {
 
     pub(super) fn request_file_name(&self) -> &str {
         self.from_file.file_name()
+    }
+
+    pub(super) fn module_specifiers_cache_entries(&self) -> usize {
+        self.module_specifiers_cache.len()
+    }
+
+    pub(super) fn module_specifiers_cache_estimated_size_bytes(&self) -> usize {
+        module_specifiers_cache_estimated_size_bytes(&self.module_specifiers_cache)
     }
 
     pub(super) fn is_regular_file_excluded(&self, file_name: &str) -> bool {
@@ -160,5 +169,45 @@ fn import_candidate_kind_key(kind: &ImportCandidateKind) -> String {
         ImportCandidateKind::Named { export_name } => format!("named:{export_name}"),
         ImportCandidateKind::Default => "default".to_string(),
         ImportCandidateKind::Namespace => "namespace".to_string(),
+    }
+}
+
+fn module_specifiers_cache_estimated_size_bytes(cache: &FxHashMap<String, Vec<String>>) -> usize {
+    let entries_size = cache.capacity().saturating_mul(
+        mem::size_of::<String>()
+            .saturating_add(mem::size_of::<Vec<String>>())
+            .saturating_add(8),
+    );
+    let key_size = cache.keys().map(String::len).sum::<usize>();
+    let value_size = cache
+        .values()
+        .map(|specifiers| {
+            specifiers
+                .capacity()
+                .saturating_mul(mem::size_of::<String>())
+                .saturating_add(specifiers.iter().map(String::len).sum::<usize>())
+        })
+        .sum::<usize>();
+    entries_size
+        .saturating_add(key_size)
+        .saturating_add(value_size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn module_specifiers_cache_statistics_report_entries_and_size() {
+        let mut cache = FxHashMap::default();
+        assert_eq!(module_specifiers_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert(
+            "/workspace/src/source.ts".to_string(),
+            vec!["./source".to_string(), "pkg/source".to_string()],
+        );
+
+        assert_eq!(cache.len(), 1);
+        assert!(module_specifiers_cache_estimated_size_bytes(&cache) > 0);
     }
 }

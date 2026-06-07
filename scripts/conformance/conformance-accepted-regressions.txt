@@ -41,30 +41,24 @@
 #   circularReference.ts resolved after rebasing on current main. It also found
 #   privateNamesAndIndexedAccess.ts as a new unlisted row; that row is tracked
 #   in an issue instead of growing this ledger.
+# - PR #12822 run 27068748412 at synthetic merge 7260874ab3 found three
+#   non-compiler rows resolved; the compiler/* rows still appear in the
+#   exact-head aggregate and stay listed.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
-TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
-TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
-TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
-TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts
-TypeScript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts
-TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
-TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
-TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
@@ -77,3 +71,13 @@ TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varia
 # (store_parametric_structural_back_reference). Provenance is now recorded for
 # those instances, so display matches tsc. Covered by
 # recursive_generic_interface_application_display_tests.
+# indexedAccessAndNullableNarrowing.ts: RESOLVED. A false TS2322 fired on
+# `T[K] = Partial<T>[K] & ({} | null)` because `(X | undefined) & ({} | null)`
+# was kept as an unsimplified intersection-of-unions: neither constituent is a
+# subtype of `X`, so the relation rejected it. tsc forms the distributed cross
+# product and drops its `never` constituents (`undefined & {}` and
+# `undefined & null`), leaving `(X & {}) | (X & null)`, which is assignable to
+# `X`. The all-union distribution gate now accepts a distributed result that
+# eliminated at least one impossible arm. Covered by
+# intersection_type_param_tests::
+# test_type_param_union_undefined_intersect_empty_or_null_assignable_to_type_param.

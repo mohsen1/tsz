@@ -28,7 +28,9 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-const { createTsgoWinnerReport } = await import(pathToFileURL(SCRIPT));
+const { createTsgoWinnerReport, renderMissingAttributionPlanMarkdown } = await import(
+  pathToFileURL(SCRIPT)
+);
 
 {
   const report = createTsgoWinnerReport(
@@ -51,6 +53,7 @@ const { createTsgoWinnerReport } = await import(pathToFileURL(SCRIPT));
 withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
   const output = path.join(dir, "report.json");
+  const attributionPlan = path.join(dir, "missing-attribution.md");
   writeJson(input, {
     benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
     quick_mode: true,
@@ -188,11 +191,12 @@ withTempDir((dir) => {
     ],
   });
 
-  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+  const result = spawnSync(process.execPath, [SCRIPT, input, output, attributionPlan], {
     cwd: ROOT,
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /missing attribution plan:/);
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.source.quick_mode, true);
@@ -205,7 +209,7 @@ withTempDir((dir) => {
   assert.equal(report.totals.green_tsgo_winners_with_attribution, 1);
   assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
-  assert.match(result.stdout, /2x target gaps with attribution commands: 1\/3/);
+  assert.match(result.stdout, /2x target gaps with attribution commands: 2\/3/);
   assert.deepEqual(report.two_x_target, {
     tsz_speedup_target: 2,
     eligible_green_rows: 4,
@@ -215,7 +219,7 @@ withTempDir((dir) => {
     project_rows_below_target: 2,
     rows_with_attribution: 1,
     missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
-    rows_with_attribution_command: 1,
+    rows_with_attribution_command: 2,
     missing_attribution_plan: [
       {
         name: "vite-vanilla-ts-app",
@@ -248,6 +252,14 @@ withTempDir((dir) => {
     report.target_gaps.map((row) => row.name),
     ["ts-toolbelt-project", "vite-vanilla-ts-app", "single-file-loss"],
   );
+  const planMarkdown = fs.readFileSync(attributionPlan, "utf8");
+  assert.match(planMarkdown, /^# 2x Target Gap Attribution Plan/m);
+  assert.match(planMarkdown, /Rows below 2x target \| 3/);
+  assert.match(planMarkdown, /## 1\. vite-vanilla-ts-app/);
+  assert.match(planMarkdown, /## 2\. single-file-loss/);
+  assert.match(planMarkdown, /Attribution command:/);
+  assert.match(planMarkdown, /vite-vanilla-ts-app\.perf\.json/);
+  assert.match(planMarkdown, /Attribution command: n\/a/);
   assert.equal(report.target_gaps[0].semantic_owner_family, "recursive type evaluation pressure");
   assert.equal(report.target_gaps[0].tsz_speedup_vs_tsgo, 106.15 / 873.92);
   assert.equal(report.target_gaps[0].target_gap_factor, 2 / (106.15 / 873.92));
@@ -273,6 +285,8 @@ withTempDir((dir) => {
     owner: "Track 1/2 recursive type evaluation",
     operation: "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
     command: "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
+    attribution_command:
+      "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-toolbelt-project.perf.json --noEmit -p .target-bench/external/ts-toolbelt/tsconfig.flat.json",
     issue: 8356,
     url: "https://github.com/tsz-org/tsz/issues/8356",
   });
@@ -323,6 +337,21 @@ withTempDir((dir) => {
   assert.equal(importedReport.totals.green_tsgo_winners, 3);
   assert.equal(importedReport.worst.name, "ts-toolbelt-project");
 });
+
+{
+  const markdown = renderMissingAttributionPlanMarkdown({
+    generated_at: "2026-06-06T00:00:00.000Z",
+    source: { path: "bench-results.json" },
+    two_x_target: {
+      eligible_green_rows: 1,
+      rows_below_target: 0,
+      project_rows_below_target: 0,
+      rows_with_attribution: 0,
+      missing_attribution_plan: [],
+    },
+  });
+  assert.match(markdown, /All current 2x target gap rows have attribution evidence\./);
+}
 
 withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
@@ -823,6 +852,7 @@ withTempDir((dir) => {
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.two_x_target.rows_below_target, 1);
   assert.equal(report.two_x_target.rows_with_attribution, 1);
+  assert.equal(report.two_x_target.rows_with_attribution_command, 1);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, []);
   assert.deepEqual(report.target_gaps[0].attribution_status, {
     present: true,
@@ -901,7 +931,7 @@ withTempDir((dir) => {
   assert.equal(report.two_x_target.rows_below_target, 2);
   assert.equal(report.two_x_target.rows_with_attribution, 1);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, ["vite-vanilla-ts-app"]);
-  assert.equal(report.two_x_target.rows_with_attribution_command, 1);
+  assert.equal(report.two_x_target.rows_with_attribution_command, 2);
   assert.deepEqual(report.two_x_target.missing_attribution_plan.map((row) => row.name), [
     "vite-vanilla-ts-app",
   ]);
@@ -982,13 +1012,13 @@ withTempDir((dir) => {
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
 assert.match(
   benchWorkflow,
-  /node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"/,
+  /node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-missing-attribution\.md"/,
   "bench workflow should generate the green tsgo winner report from merged results",
 );
 assert.match(
   benchWorkflow,
-  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json/,
-  "merged benchmark artifact should upload the green tsgo winner report",
+  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json\s*\n\s+bench-results-missing-attribution\.md/,
+  "merged benchmark artifact should upload the green tsgo winner report and attribution plan",
 );
 assert.match(
   benchWorkflow,
@@ -997,8 +1027,18 @@ assert.match(
 );
 assert.match(
   benchWorkflow,
+  /bench-runs\/\$\{TIMESTAMP\}\.missing-attribution\.md/,
+  "benchmark publish step should write timestamped missing-attribution plans",
+);
+assert.match(
+  benchWorkflow,
   /bench-runs\/latest\.tsgo-winners\.json/,
   "benchmark publish step should write latest green tsgo winner reports",
+);
+assert.match(
+  benchWorkflow,
+  /bench-runs\/latest\.missing-attribution\.md/,
+  "benchmark publish step should write latest missing-attribution plans",
 );
 assert.match(
   benchWorkflow,

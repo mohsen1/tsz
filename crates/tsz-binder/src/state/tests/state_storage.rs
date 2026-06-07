@@ -1,4 +1,5 @@
 use super::*;
+use crate::ScopeId;
 
 #[test]
 fn semantic_defs_identity_stable_with_changed_bodies() {
@@ -426,17 +427,35 @@ declare module \"virtual:env\" {
             .is_empty(),
         "resolved_identifier_cache must be empty after deserialize"
     );
+    assert!(
+        restored
+            .resolved_export_type_only_cache
+            .read()
+            .expect("RwLock should not be poisoned")
+            .is_empty(),
+        "resolved_export_type_only_cache must be empty after deserialize"
+    );
+    assert!(
+        restored
+            .find_enclosing_scope_cache
+            .read()
+            .expect("RwLock should not be poisoned")
+            .is_empty(),
+        "find_enclosing_scope_cache must be empty after deserialize"
+    );
 }
 
 #[test]
 fn binder_resolution_cache_statistics_track_entries_and_clear() {
     let mut binder = BinderState::new();
-    seed_both_caches(&mut binder);
+    seed_resolution_caches(&mut binder);
 
     let stats = binder.resolution_cache_statistics();
     assert_eq!(stats.export_cache_entries, 1);
+    assert_eq!(stats.export_type_only_cache_entries, 1);
     assert_eq!(stats.identifier_cache_entries, 1);
-    assert_eq!(stats.total_entries(), 2);
+    assert_eq!(stats.enclosing_scope_cache_entries, 1);
+    assert_eq!(stats.total_entries(), 4);
     assert!(stats.estimated_size_bytes() > 0);
 
     binder.clear_resolution_caches();
@@ -480,13 +499,13 @@ fn next_persistent_scope_id_reserves_none_sentinel() {
 // Resolution cache invariants across rebind
 //
 // The export cache maps (module_specifier, export_name) -> SymbolId.  After
-// any rebind the SymbolIds for declarations may change, so both resolution
-// caches must be cleared at the start of every bind entry-point.  Failing to
+// any rebind the SymbolIds for declarations may change, so resolution caches
+// must be cleared at the start of every bind entry-point. Failing to
 // do so lets callers observe stale SymbolIds ("binder-7-20" family of bench
 // regressions reported in issues #11465, #11566, #11627).
 // =============================================================================
 
-fn seed_both_caches(binder: &mut BinderState) {
+fn seed_resolution_caches(binder: &mut BinderState) {
     binder
         .resolved_export_cache
         .write()
@@ -497,18 +516,39 @@ fn seed_both_caches(binder: &mut BinderState) {
         .write()
         .expect("not poisoned")
         .insert((0xdead, 0xbeef), Some(SymbolId(77)));
+    binder
+        .resolved_export_type_only_cache
+        .write()
+        .expect("not poisoned")
+        .insert(
+            ("stub.ts".to_string(), "T".to_string()),
+            Some((SymbolId(88), true)),
+        );
+    binder
+        .find_enclosing_scope_cache
+        .write()
+        .expect("not poisoned")
+        .insert((0xcafe, 0xbabe), ScopeId(66));
 }
 
-fn assert_both_caches_cleared(binder: &BinderState, ctx: &str) {
+fn assert_resolution_caches_cleared(binder: &BinderState, ctx: &str) {
     let s = binder.resolution_cache_statistics();
     assert_eq!(s.export_cache_entries, 0, "{ctx}: export cache not cleared");
+    assert_eq!(
+        s.export_type_only_cache_entries, 0,
+        "{ctx}: export type-only cache not cleared"
+    );
     assert_eq!(
         s.identifier_cache_entries, 0,
         "{ctx}: identifier cache not cleared"
     );
+    assert_eq!(
+        s.enclosing_scope_cache_entries, 0,
+        "{ctx}: enclosing scope cache not cleared"
+    );
 }
 
-/// `bind_source_file` must clear both caches so a second bind of the same
+/// `bind_source_file` must clear resolution caches so a second bind of the same
 /// binder state never returns `SymbolId`s from the previous pass.
 #[test]
 fn bind_source_file_clears_both_caches() {
@@ -520,12 +560,12 @@ fn bind_source_file_clears_both_caches() {
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    seed_both_caches(&mut binder);
+    seed_resolution_caches(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
-    assert_both_caches_cleared(&binder, "bind_source_file");
+    assert_resolution_caches_cleared(&binder, "bind_source_file");
 }
 
-/// `bind_source_file_incremental` must clear both caches even on the early-
+/// `bind_source_file_incremental` must clear resolution caches even on the early-
 /// return path (empty prefix), so no rebind path can leave a stale entry.
 #[test]
 fn bind_source_file_incremental_clears_both_caches() {
@@ -537,7 +577,7 @@ fn bind_source_file_incremental_clears_both_caches() {
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    seed_both_caches(&mut binder);
+    seed_resolution_caches(&mut binder);
 
     // Empty prefix triggers the early-return path; caches must still be cleared.
     let ok = binder.bind_source_file_incremental(parser.get_arena(), root, &[], &[], &[], 0);
@@ -546,17 +586,17 @@ fn bind_source_file_incremental_clears_both_caches() {
         "empty prefix must cause bind_source_file_incremental to return false"
     );
 
-    assert_both_caches_cleared(&binder, "bind_source_file_incremental");
+    assert_resolution_caches_cleared(&binder, "bind_source_file_incremental");
 }
 
-/// `merge_lib_contexts_into_binder` must clear both caches because the merge
+/// `merge_lib_contexts_into_binder` must clear resolution caches because the merge
 /// reassigns `SymbolId`s; any cached (module, name) → `old_id` mapping is invalid.
 #[test]
 fn merge_lib_contexts_into_binder_clears_both_caches() {
     let mut binder = BinderState::new();
 
-    seed_both_caches(&mut binder);
+    seed_resolution_caches(&mut binder);
     binder.merge_lib_contexts_into_binder(&[]);
 
-    assert_both_caches_cleared(&binder, "merge_lib_contexts_into_binder");
+    assert_resolution_caches_cleared(&binder, "merge_lib_contexts_into_binder");
 }

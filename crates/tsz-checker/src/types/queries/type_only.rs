@@ -1454,9 +1454,6 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         visited: &mut rustc_hash::FxHashSet<(usize, String)>,
     ) -> bool {
-        const PURE_TYPE: u32 =
-            symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
-
         // Resolve the specifier to a target file index
         let Some(target_file_idx) = self
             .ctx
@@ -1466,9 +1463,19 @@ impl<'a> CheckerState<'a> {
         };
 
         let key = (target_file_idx, export_name.to_string());
-        if !visited.insert(key) {
-            return false; // cycle
-        }
+        super::with_type_only_query_path(visited, key, |visited| {
+            self.is_export_type_only_in_resolved_file(target_file_idx, export_name, visited)
+        })
+    }
+
+    fn is_export_type_only_in_resolved_file(
+        &self,
+        target_file_idx: usize,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
+    ) -> bool {
+        const PURE_TYPE: u32 =
+            symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
 
         let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
             return false;
@@ -1724,22 +1731,18 @@ impl<'a> CheckerState<'a> {
                     continue; // Skip type-only wildcards in pass 1
                 }
                 // Non-type-only wildcard: check if name exists as a value in source.
-                // Use a separate visited set for the existence + type-only check
-                // to avoid polluting the main cycle detection.
-                let mut exists_visited = visited.clone();
                 let exists_in_source = self.name_exists_in_module_exports(
                     target_file_idx,
                     source_module,
                     export_name,
-                    &mut exists_visited,
+                    visited,
                 );
                 if exists_in_source {
-                    let mut type_only_visited = visited.clone();
                     let is_type_only_in_source = self.is_export_type_only_in_file(
                         target_file_idx,
                         source_module,
                         export_name,
-                        &mut type_only_visited,
+                        visited,
                     );
                     if !is_type_only_in_source {
                         // Value export found — name is NOT type-only

@@ -1204,3 +1204,137 @@ fn reset_clears_iteration_exceeded_flag() {
     assert_eq!(guard.enter(1u32), RecursionResult::Entered);
     guard.leave(1);
 }
+
+// ===================================================================
+// Cross-operation solver stack-frame breaker tests (issue #7574)
+// ===================================================================
+
+#[test]
+fn solver_frame_depth_starts_and_returns_to_zero() {
+    reset_solver_stack_frames();
+    assert_eq!(solver_stack_frame_depth(), 0);
+    {
+        let _f = try_enter_solver_frame().expect("budget available");
+        assert_eq!(solver_stack_frame_depth(), 1);
+    }
+    // RAII drop decrements the counter.
+    assert_eq!(solver_stack_frame_depth(), 0);
+}
+
+#[test]
+fn solver_frame_nesting_counts_active_frames() {
+    reset_solver_stack_frames();
+    let a = try_enter_solver_frame().expect("frame 1");
+    let b = try_enter_solver_frame().expect("frame 2");
+    let c = try_enter_solver_frame().expect("frame 3");
+    assert_eq!(solver_stack_frame_depth(), 3);
+    drop(c);
+    assert_eq!(solver_stack_frame_depth(), 2);
+    drop(b);
+    drop(a);
+    assert_eq!(solver_stack_frame_depth(), 0);
+}
+
+#[test]
+fn solver_frame_budget_is_exhausted_at_cap() {
+    reset_solver_stack_frames();
+    // Hold the full budget. `MAX_SOLVER_STACK_FRAMES` guards must be live
+    // simultaneously, so keep them in a vector rather than dropping each.
+    let mut held = Vec::new();
+    for _ in 0..MAX_SOLVER_STACK_FRAMES {
+        held.push(try_enter_solver_frame().expect("under cap"));
+    }
+    assert_eq!(solver_stack_frame_depth(), MAX_SOLVER_STACK_FRAMES);
+
+    // The next acquisition is refused — this is the bail edge the recursive
+    // solver entry points hit instead of overflowing the OS stack.
+    assert!(
+        try_enter_solver_frame().is_none(),
+        "frame budget must be refused once MAX_SOLVER_STACK_FRAMES are active"
+    );
+
+    // Releasing one frame restores headroom for exactly one more.
+    held.pop();
+    let recovered = try_enter_solver_frame();
+    assert!(
+        recovered.is_some(),
+        "releasing a frame must restore one unit of budget"
+    );
+
+    drop(recovered);
+    held.clear();
+    assert_eq!(solver_stack_frame_depth(), 0);
+}
+
+#[test]
+fn solver_frame_decrements_even_when_inner_panics() {
+    reset_solver_stack_frames();
+    let _outer = try_enter_solver_frame().expect("outer frame");
+    assert_eq!(solver_stack_frame_depth(), 1);
+
+    // A panic unwinding through an active frame must still run its Drop and
+    // restore the budget — otherwise a single caught panic would permanently
+    // poison the thread with a depleted budget.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _inner = try_enter_solver_frame().expect("inner frame");
+        assert_eq!(solver_stack_frame_depth(), 2);
+        panic!("boom");
+    }));
+    assert!(result.is_err(), "inner closure should have panicked");
+    assert_eq!(
+        solver_stack_frame_depth(),
+        1,
+        "inner frame must be released by unwind; outer frame remains"
+    );
+}
+
+#[test]
+fn reset_solver_stack_frames_clears_residue() {
+    reset_solver_stack_frames();
+    // Simulate residue from a swallowed panic by leaking a guard's count.
+    std::mem::forget(try_enter_solver_frame().expect("frame"));
+    assert_eq!(solver_stack_frame_depth(), 1);
+    reset_solver_stack_frames();
+    assert_eq!(
+        solver_stack_frame_depth(),
+        0,
+        "reset must zero the thread-local frame counter"
+    );
+}
+
+#[test]
+fn with_solver_frame_runs_body_and_balances_depth() {
+    reset_solver_stack_frames();
+    let mut ran = false;
+    let out = with_solver_frame(|| {
+        ran = true;
+        // Inside the body the frame is accounted for.
+        assert_eq!(solver_stack_frame_depth(), 1);
+        42u32
+    });
+    assert!(ran, "body must run when budget is available");
+    assert_eq!(out, Some(42));
+    // Frame released after the call returns.
+    assert_eq!(solver_stack_frame_depth(), 0);
+}
+
+#[test]
+fn with_solver_frame_skips_body_and_returns_none_when_exhausted() {
+    reset_solver_stack_frames();
+    let mut held = Vec::new();
+    for _ in 0..MAX_SOLVER_STACK_FRAMES {
+        held.push(try_enter_solver_frame().expect("under cap"));
+    }
+    let mut ran = false;
+    let out: Option<u32> = with_solver_frame(|| {
+        ran = true;
+        7
+    });
+    assert!(!ran, "body must NOT run once the frame budget is exhausted");
+    assert_eq!(
+        out, None,
+        "exhausted budget yields None so the caller can bail"
+    );
+    held.clear();
+    assert_eq!(solver_stack_frame_depth(), 0);
+}

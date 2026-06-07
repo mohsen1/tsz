@@ -418,12 +418,23 @@ impl<'a> TypeInstantiator<'a> {
             return TypeId::ERROR;
         }
 
-        self.depth += 1;
-        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
-            self.instantiate_inner(type_id)
-        });
-        self.depth -= 1;
-        result
+        // Shared cross-operation stack-frame breaker. The per-instance `depth`
+        // guard above resets whenever a fresh `TypeInstantiator` is built mid
+        // `evaluate -> instantiate -> evaluate` cycle; this thread-local frame
+        // budget bounds the combined recursion that no single instance sees
+        // (issue #7574). On exhaustion bail like the depth-limit path above.
+        // `depth` is adjusted inside the body so it only counts frames we
+        // actually descend into, never the exhausted-bail path.
+        crate::recursion::with_solver_frame(|| {
+            self.depth += 1;
+            let result = self.instantiate_inner(type_id);
+            self.depth -= 1;
+            result
+        })
+        .unwrap_or_else(|| {
+            self.depth_exceeded = true;
+            TypeId::ERROR
+        })
     }
 
     fn instantiate_inner(&mut self, type_id: TypeId) -> TypeId {
