@@ -224,13 +224,13 @@ pub(crate) struct RelationRequest {
     pub source: TypeId,
     /// Prepared target type for the relation.
     pub target: TypeId,
-    /// Diagnostic/tracing context. Currently advisory only.
+    /// Diagnostic/tracing context and relation-mode selector.
     pub kind: RelationKind,
-    /// Requested excess-property policy. Currently advisory.
+    /// Requested excess-property policy for boundary-level property analysis.
     pub excess_property_mode: ExcessPropertyMode,
-    /// Requested missing-property policy. Currently advisory.
+    /// Requested missing-property policy for boundary-level property analysis.
     pub missing_property_mode: MissingPropertyMode,
-    /// Fresh object literal marker. Currently advisory.
+    /// Fresh object literal marker for excess-property classification.
     pub source_is_fresh: bool,
     /// Allow targeted erased-signature retry for interface property compatibility.
     pub allow_erased_generic_signature_retry: bool,
@@ -675,6 +675,19 @@ impl RelationRequest {
     pub(crate) const fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self {
         self.missing_property_mode = mode;
         self
+    }
+
+    pub(crate) const fn requires_property_classification(&self) -> bool {
+        let checks_excess_properties = match self.excess_property_mode {
+            ExcessPropertyMode::Skip => false,
+            ExcessPropertyMode::Check | ExcessPropertyMode::CheckExplicitOnly => true,
+        };
+        let reports_missing_properties = match self.missing_property_mode {
+            MissingPropertyMode::Report => true,
+            MissingPropertyMode::Suppress => false,
+        };
+
+        self.source_is_fresh || checks_excess_properties || reports_missing_properties
     }
 
     /// Allow a failed generic-signature inference to retry with erased signatures.
