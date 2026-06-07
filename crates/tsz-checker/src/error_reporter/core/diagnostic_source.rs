@@ -6,6 +6,7 @@ mod compound_assignment_context;
 mod computed_index_source_display;
 mod contextual_index_display;
 mod generic_source_display;
+mod keyof_source_display;
 mod literal_surface;
 mod literal_widening_helpers;
 mod literal_widening_policy;
