@@ -5,7 +5,7 @@
 //! `DefKind::TypeAlias` is transparent: `tsc` never compares two applications of
 //! a type alias nominally — it substitutes the arguments and relates the
 //! resulting structural types. For an alias whose body is an `IndexAccess`
-//! transform — the TypeBox shape `Static<T> = T['static']` /
+//! transform — the `TypeBox` shape `Static<T> = T['static']` /
 //! `Static<T,P> = (T & {params:P})['static']` — tsz previously took the same-base
 //! variance fast path, comparing the raw arguments. Through their nested
 //! same-base applications that comparison hit the coinductive cycle assumption
@@ -116,7 +116,7 @@ const bad: Resolve<Wide> = null as any as Resolve<Narrow>;
 }
 
 /// A two-parameter indexed-access alias over an intersection
-/// (`Static<T,P> = (T & {params:P})['static']`, the full TypeBox `Static`) must
+/// (`Static<T,P> = (T & {params:P})['static']`, the full `TypeBox` `Static`) must
 /// still expand structurally for the relation and reject a nested mismatch.
 #[test]
 fn indexed_access_alias_application_two_param_intersection_rejects_mismatch() {
