@@ -2,6 +2,7 @@
 //! interface type construction, and type-reference-with-params computation.
 
 use crate::query_boundaries::state::type_resolution as query;
+use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
@@ -11,7 +12,6 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {

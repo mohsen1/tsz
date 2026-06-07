@@ -134,3 +134,4 @@ include!("architecture_contract_tests_parts/part_01.rs");
 include!("architecture_contract_tests_parts/part_02.rs");
 include!("architecture_contract_tests_parts/part_03.rs");
 include!("architecture_contract_tests_parts/part_04.rs");
+include!("architecture_contract_tests_parts/part_05.rs");

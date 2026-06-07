@@ -8,6 +8,7 @@
 //! This module extends `CheckerState` with additional methods for symbol-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
@@ -18,7 +19,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::is_compiler_managed_type;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TypeSymbolResolution {
