@@ -148,6 +148,78 @@ export {};
     );
 }
 
+/// A chained read through a member that is itself typed as a simple lib
+/// interface (e.g. `document.body: HTMLElement`) resolves each link lazily and
+/// types correctly. `document.body.innerHTML` is `string`. Before the
+/// lib-interface-reference member stayed lazy, the intermediate `body` forced
+/// full materialization of `HTMLElement`; this asserts the chain still
+/// type-checks cleanly.
+#[test]
+fn chained_lib_interface_reference_member_resolves_without_diagnostics() {
+    let codes = dom_codes(
+        r#"
+declare const d: Document;
+const html: string = d.body.innerHTML;
+const cls: string = d.body.className;
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "chained lib-interface-reference member reads should not produce diagnostics, got {codes:?}",
+    );
+}
+
+/// A type mismatch on a chained lib-interface-reference member read must still
+/// report TS2322 — keeping the intermediate member lazy does not widen the
+/// leaf member type.
+#[test]
+fn chained_lib_interface_reference_member_type_mismatch_still_errors() {
+    let codes = dom_codes(
+        r#"
+declare const d: Document;
+const wrong: number = d.body.innerHTML;
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "string leaf member assigned to number should report TS2322, got {codes:?}",
+    );
+}
+
+/// A missing member reached through a chained lib-interface-reference member
+/// (`d.body.__nope__`, where `body: HTMLElement`) must produce the exact same
+/// diagnostic as a missing member on a direct `HTMLElement` receiver
+/// (`h.__nope__`). Keeping the intermediate `body` lazy makes the chained
+/// receiver resolve to the identical `HTMLElement` reference a type-position
+/// annotation produces (PR #8638), so the absent-member error is unchanged.
+#[test]
+fn chained_lib_interface_reference_missing_leaf_matches_direct_receiver() {
+    let chained = dom_codes(
+        r#"
+declare const d: Document;
+const x = d.body.definitelyNotARealDomMember;
+export {};
+"#,
+    );
+    let direct = dom_codes(
+        r#"
+declare const h: HTMLElement;
+const x = h.definitelyNotARealDomMember;
+export {};
+"#,
+    );
+    assert!(
+        !chained.is_empty(),
+        "an absent leaf member on a chained reference must still produce a diagnostic",
+    );
+    assert_eq!(
+        chained, direct,
+        "missing-member access through `d.body` should match a direct `HTMLElement` receiver, got chained={chained:?} direct={direct:?}",
+    );
+}
+
 /// A type mismatch on an own member read through a global value receiver must
 /// still report TS2322 — preserving the lazy receiver does not widen the member.
 #[test]
