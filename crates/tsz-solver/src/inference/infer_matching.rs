@@ -26,6 +26,17 @@ use super::infer::{InferenceContext, InferenceError, InferenceVar};
 use super::template_anchor::{find_leftmost_occurrence, find_next_anchor_alternatives};
 use super::template_segment_prefix::match_template_segment_prefix;
 
+/// Coarse outer structural kind used to decide whether a source member and a
+/// union target arm share enough structure to be inferred against each other.
+/// Array and tuple collapse to [`StructuralKind::ArrayLike`]; function and
+/// callable collapse to [`StructuralKind::Callable`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StructuralKind {
+    ArrayLike,
+    Object,
+    Callable,
+}
+
 impl<'a> InferenceContext<'a> {
     /// Perform structural type inference from a source type to a target type.
     ///
@@ -1379,22 +1390,44 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        let naked_priority = if structured_params.is_empty() {
-            priority
-        } else {
-            InferencePriority::LowPriority
-        };
-        for &source_ty in resolved_sources.iter() {
-            if fixed.contains(&source_ty) || structurally_matched_sources.contains(&source_ty) {
-                continue;
-            }
+        let unmatched: Vec<TypeId> = resolved_sources
+            .iter()
+            .copied()
+            .filter(|source_ty| {
+                !fixed.contains(source_ty) && !structurally_matched_sources.contains(source_ty)
+            })
+            .collect();
 
-            if naked_params.is_empty() {
-                continue;
-            }
-
-            for &target_ty in &naked_params {
-                self.infer_from_types(source_ty, target_ty, naked_priority)?;
+        if naked_params.len() == 1 && !unmatched.is_empty() {
+            // tsc's `inferToMultipleTypes`: when the union target has exactly one
+            // naked inference variable, the source constituents that did not
+            // match a structured arm are *unioned* and inferred against that
+            // variable as a single candidate (`inferFromTypes(getUnionType(
+            // unmatched), nakedTypeVariable)`). Inferring them individually would
+            // let common-supertype resolution — which governs the
+            // `NakedTypeVariable` priority these candidates carry — keep only the
+            // leftmost branch and silently drop the rest, e.g. collapsing the
+            // element inference for `flat([1, 'a', [2]])` from `string | number`
+            // down to `string` and reporting a spurious `TS2322`.
+            let unioned = crate::operations::widening::union_unmatched_naked_candidate(
+                self.interner,
+                unmatched,
+                self.in_readonly_source_context,
+            );
+            self.infer_from_types(unioned, naked_params[0], priority)?;
+        } else if !naked_params.is_empty() {
+            // Multiple naked variables (or none matched): preserve the existing
+            // per-source decomposition. With more than one naked variable tsc
+            // does not perform the single-variable union reduction.
+            let naked_priority = if structured_params.is_empty() {
+                priority
+            } else {
+                InferencePriority::LowPriority
+            };
+            for &source_ty in unmatched.iter() {
+                for &target_ty in &naked_params {
+                    self.infer_from_types(source_ty, target_ty, naked_priority)?;
+                }
             }
         }
 
@@ -1493,6 +1526,60 @@ impl<'a> InferenceContext<'a> {
             | (TypeData::Array(_), TypeData::Array(_))
             | (TypeData::Literal(LiteralValue::String(_)), TypeData::TemplateLiteral(_))
             | (TypeData::TemplateLiteral(_), TypeData::TemplateLiteral(_)) => true,
+            // One side is a type-alias application / lazy reference whose
+            // structural form matches the other side's kind. This is the key
+            // case for recursive array utilities: a target arm like
+            // `RecArray<T> = Array<T | RecArray<T>>` is stored as an
+            // `Application`, so a `number[]` source would otherwise look
+            // unrelated and be routed to the naked type variable instead of
+            // being decomposed through the array arm. Comparing the *evaluated*
+            // structural kinds lets such aliases participate in structured
+            // inference just like their expanded forms.
+            _ => self.evaluated_structural_kinds_match(source, target),
+        }
+    }
+
+    /// Best-effort structural kind of `type_id`, expanding a single layer of
+    /// type-alias application / lazy reference so that aliases compare equal to
+    /// the structural type they evaluate to (e.g. `RecArray<T>` -> array-like).
+    ///
+    /// This is the `InferenceContext` counterpart of the constraint walker's
+    /// `types_share_outer_structure_for_constraint`. It is intentionally coarse:
+    /// it does not special-case promise-like (`then`) shapes the way the walker
+    /// does, because those flow through dedicated arms in this engine. Returns
+    /// `None` for intrinsics, unions, type parameters, and anything without an
+    /// outer structural shape.
+    fn evaluated_structural_kind(&self, type_id: TypeId) -> Option<StructuralKind> {
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        let mut key = self.interner.lookup(type_id)?;
+        if matches!(key, TypeData::Application(_) | TypeData::Lazy(_)) {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
+            if evaluated != type_id {
+                key = self.interner.lookup(evaluated)?;
+            }
+        }
+        match key {
+            // Array and tuple are both array-like for inference decomposition.
+            TypeData::Array(_) | TypeData::Tuple(_) => Some(StructuralKind::ArrayLike),
+            TypeData::Object(_) | TypeData::ObjectWithIndex(_) => Some(StructuralKind::Object),
+            // Function and callable are both signature-bearing.
+            TypeData::Function(_) | TypeData::Callable(_) => Some(StructuralKind::Callable),
+            _ => None,
+        }
+    }
+
+    /// True when `source` and `target` resolve to the same coarse structural
+    /// kind after expanding a single alias layer. Used as a fallback in
+    /// [`Self::types_share_outer_structure`] so alias arms route through
+    /// structured inference rather than the naked type variable.
+    fn evaluated_structural_kinds_match(&self, source: TypeId, target: TypeId) -> bool {
+        match (
+            self.evaluated_structural_kind(source),
+            self.evaluated_structural_kind(target),
+        ) {
+            (Some(source_kind), Some(target_kind)) => source_kind == target_kind,
             _ => false,
         }
     }

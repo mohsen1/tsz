@@ -108,6 +108,9 @@ path = "tests/async_iterable_type_param_element_tests.rs"
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
 [[test]]
+name = "recursive_array_utility_inference_tests"
+path = "tests/recursive_array_utility_inference_tests.rs"
+[[test]]
 name = "homomorphic_mapped_keyof_modifier_tests"
 path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
 [[test]]
