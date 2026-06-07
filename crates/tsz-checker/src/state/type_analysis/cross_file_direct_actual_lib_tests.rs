@@ -213,10 +213,37 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         crate::query_boundaries::common::lazy_def_id(state.ctx.types, html_div_ty).is_some(),
         "HTMLDivElement should use a type-position Lazy ref",
     );
+
+    let document_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("document")
+        .expect("document should resolve to a dom lib variable");
+    let document_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&document_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("document should have a delegate arena");
+    let (document_ty, document_params) = state
+        .direct_actual_lib_symbol_type(
+            document_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(document_arena),
+            false,
+        )
+        .expect("builtin DOM variables with simple type-reference annotations should stay lazy");
+    assert!(document_params.is_empty());
+    assert!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, document_ty).is_some(),
+        "document should use a type-position Lazy ref",
+    );
 }
 
 #[test]
-fn direct_actual_lib_symbol_type_keeps_dom_alias_bodies_on_fallback() {
+fn direct_actual_lib_symbol_type_lowers_builtin_dom_alias_bodies() {
     let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
@@ -264,16 +291,19 @@ fn direct_actual_lib_symbol_type_keeps_dom_alias_bodies_on_fallback() {
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref)
             .unwrap_or_else(|| panic!("{name} should have a delegate arena"));
+        let (ty, params) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(delegate_arena),
+                false,
+            )
+            .unwrap_or_else(|| panic!("{name} should lower through the direct builtin alias path"));
+        assert_ne!(ty, TypeId::UNKNOWN, "{name} must not lower to unknown");
+        assert_ne!(ty, TypeId::ERROR, "{name} must not lower to error");
         assert!(
-            state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    Some(delegate_arena),
-                    false,
-                )
-                .is_none(),
-            "{name} should stay on child-checker fallback until DOM alias direct answers preserve conformance fingerprints",
+            params.is_empty(),
+            "{name} should not synthesize type params"
         );
     }
 }
