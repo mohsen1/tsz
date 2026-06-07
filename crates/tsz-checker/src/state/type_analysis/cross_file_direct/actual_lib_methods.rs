@@ -390,7 +390,8 @@ impl<'a> CheckerState<'a> {
             .get(type_ref.type_name)
             .and_then(|name_node| arena.get_identifier(name_node))
             .map(|ident| ident.escaped_text.as_str())?;
-        if common::is_compiler_managed_type(name) || self.ctx.file_local_type_shadow_for_lib_name(name)
+        if crate::query_boundaries::type_predicates::is_compiler_managed_type(name)
+            || self.ctx.file_local_type_shadow_for_lib_name(name)
         {
             return None;
         }
@@ -521,7 +522,7 @@ impl<'a> CheckerState<'a> {
                 // marker and get their structural representation at use sites.
                 // This helper is restricted to compiler-managed built-ins and
                 // still runs after actual-lib declaration proof above.
-                || common::is_compiler_managed_type(name));
+                || crate::query_boundaries::type_predicates::is_compiler_managed_type(name));
         let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
             DirectActualLibAliasBodyOutcome::Success
         } else if !params.is_empty() {

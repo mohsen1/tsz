@@ -48,7 +48,6 @@ fn test_solver_imports_go_through_query_boundaries() {
         "recursion::RecursionResult",
         // Misc free functions used by a small number of checker files
         // (all others must go through query_boundaries/)
-        "is_compiler_managed_type",
         "type_contains_undefined",
     ];
 
