@@ -26,6 +26,7 @@ mod duplicate_identifiers_export_surface;
 mod duplicate_identifiers_global_augmentation;
 mod duplicate_identifiers_helpers;
 mod duplicate_identifiers_remote_lib;
+mod duplicate_identifiers_symbol_set;
 mod duplicate_index_signatures;
 mod global;
 mod indexed_access;
