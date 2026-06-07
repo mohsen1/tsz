@@ -277,7 +277,7 @@ impl<'a> CheckerState<'a> {
         target_param: TypeId,
         inner_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) {
-        use crate::query_boundaries::common::SubtypeFailureReason;
+        use tsz_solver::SubtypeFailureReason;
 
         let (source, target, idx, depth) = (rctx.source, rctx.target, rctx.idx, rctx.depth);
         if self
@@ -428,7 +428,7 @@ impl<'a> CheckerState<'a> {
     const fn contravariant_param_leaf_supported(
         leaf_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> bool {
-        use crate::query_boundaries::common::SubtypeFailureReason;
+        use tsz_solver::SubtypeFailureReason;
         match leaf_reason {
             None => true,
             Some(reason) => matches!(
@@ -665,7 +665,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         depth: u32,
     ) -> Diagnostic {
-        use crate::query_boundaries::common::SubtypeFailureReason;
+        use tsz_solver::SubtypeFailureReason;
 
         let source = self.recover_unknown_array_source_type_for_display(source, idx, depth);
         let (start, length) = self
