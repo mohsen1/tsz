@@ -1,8 +1,10 @@
 //! Generic type-parameter constraint helpers for function subtype checks.
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::variance::compute_variance_with_resolver;
 use crate::type_param_info;
-use crate::types::{TypeData, TypeId, TypeParamInfo};
+use crate::types::{TypeData, TypeId, TypeParamInfo, Variance};
+use tsz_common::interner::Atom;
 
 use super::super::super::super::{SubtypeChecker, TypeResolver};
 
@@ -131,6 +133,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // erased -- this preserves existing relation behavior for those shapes.
             _ => true,
         }
+    }
+
+    /// Whether `tp_name` is observable with *covariant* (or *invariant*)
+    /// polarity through a signature's return type -- including application-only
+    /// occurrences such as `Box<T>` whose enclosing generic reads `T` out
+    /// (`{ tag: T }`), `Cell<T>` that both reads and writes it, `T[]`, or
+    /// `T | null`.
+    ///
+    /// A target method-local type parameter a caller can observe covariantly
+    /// through the result must stay opaque when a concrete (non-generic) member
+    /// is related against the generic target in general assignability: erasing
+    /// it to its constraint would silently accept a concrete `(): Box<string>`
+    /// for a universally quantified `<T extends string>(): Box<T>`, where tsc
+    /// reports TS2322 (`'T' could be instantiated with a different subtype of
+    /// constraint 'string'`). Purely contravariant occurrences (`FBox<T>` with
+    /// `apply(value: T)`) and phantom occurrences (`PBox<T>` with `T` unused)
+    /// carry no covariant bit, so they remain erasable -- matching tsc's
+    /// `getErasedSignature` leniency. The overloaded-builder escape hatch is
+    /// unaffected: that path retries through the multi-signature erase-to-`any`
+    /// route rather than this constraint erase. (Issue #10812.)
+    pub(super) fn type_param_covariant_in_return(
+        &self,
+        return_type: TypeId,
+        tp_name: Atom,
+    ) -> bool {
+        compute_variance_with_resolver(self.interner, self.resolver, return_type, tp_name)
+            .contains(Variance::COVARIANT)
     }
 
     /// Walk a chain of single-argument generic applications (e.g. `Array<Array<T>>`)

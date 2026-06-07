@@ -564,7 +564,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 .this_type
                                 .is_some_and(|t| self.type_param_appears_bare(t, tp_id))
                             || self.type_param_appears_bare(target_instantiated.return_type, tp_id);
-                        if !appears_bare {
+                        // Even when the parameter never appears bare, an
+                        // application-mediated covariant (or invariant) occurrence
+                        // in the return -- `Box<T>`, `Cell<T>`, `T[]`, `T | null`
+                        // -- keeps the parameter observable to a caller, so it must
+                        // stay opaque to match tsc's per-signature variance
+                        // comparison. Only purely contravariant or phantom
+                        // occurrences remain erasable. The variance walk runs only
+                        // when the cheaper syntactic check already permits erasure.
+                        // (Issue #10812.)
+                        if !appears_bare
+                            && !self.type_param_covariant_in_return(
+                                target_instantiated.return_type,
+                                tp.name,
+                            )
+                        {
                             target_canonical.insert(tp.name, constraint);
                         }
                     }
