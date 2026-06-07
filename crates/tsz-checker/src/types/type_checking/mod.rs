@@ -28,6 +28,7 @@ mod duplicate_identifiers_helpers;
 mod duplicate_identifiers_remote_lib;
 mod duplicate_identifiers_symbol_set;
 mod duplicate_index_signatures;
+mod duplicate_property_modifiers;
 mod global;
 mod indexed_access;
 mod property_init;

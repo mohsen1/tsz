@@ -1104,6 +1104,12 @@ impl<'a> CheckerState<'a> {
         // (literal property name), false when it required evaluating a computed expression.
         let mut seen: rustc_hash::FxHashMap<String, (NodeIndex, NodeIndex, bool)> =
             rustc_hash::FxHashMap::default();
+        // Canonical name -> property-signature member nodes (source order) for
+        // names that occur more than once. Only populated on a duplicate hit, so
+        // the common (no-duplicate) type literal allocates nothing extra. Feeds
+        // the TS2687 modifier-agreement check after the duplicate scan.
+        let mut duplicate_groups: rustc_hash::FxHashMap<String, Vec<NodeIndex>> =
+            rustc_hash::FxHashMap::default();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -1133,6 +1139,13 @@ impl<'a> CheckerState<'a> {
 
             if let Some(&(prev_idx, prev_type_ann, prev_syntactic)) = seen.get(&name) {
                 let name_idx = sig.name;
+
+                // Record the full duplicate group (first declaration once, then
+                // each subsequent one) for the TS2687 modifier check below.
+                duplicate_groups
+                    .entry(name.clone())
+                    .or_insert_with(|| vec![prev_idx])
+                    .push(member_idx);
 
                 // TS2300 "Duplicate identifier" only when both declarations use
                 // syntactic (literal) names. Computed property names that resolve
@@ -1191,6 +1204,10 @@ impl<'a> CheckerState<'a> {
             } else {
                 seen.insert(name, (member_idx, type_ann, is_syntactic));
             }
+        }
+
+        for (name, member_nodes) in &duplicate_groups {
+            self.report_property_modifier_disagreements(name, member_nodes);
         }
     }
 
