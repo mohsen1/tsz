@@ -2,7 +2,8 @@
 
 use crate::caches::db::{QueryDatabase, TypeApplicationEvalCache};
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
-use crate::caches::query_cache::{QueryCache, QueryCacheStatistics, SharedQueryCache};
+use crate::caches::query_cache::{QueryCache, SharedQueryCache};
+use crate::caches::query_cache_statistics::QueryCacheStatistics;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::types::{RelationCacheConfig, RelationCacheKey, TypeId};
