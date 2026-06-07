@@ -54,10 +54,6 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/compiler/promisesWithConstraints.ts
-TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
-TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
-TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormIsTypeOnInterfaces.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
