@@ -125,7 +125,7 @@ fn set_lib_resolution_draining(value: bool) {
 }
 
 /// Whether any name is currently marked `Incomplete`. A cheap, allocation-free
-/// gate for the hot outermost-call path before the `collect` scan below.
+/// gate for the hot outermost-call path before the `collect` scan.
 fn has_incomplete_lib_names() -> bool {
     LIB_RESOLUTION_MARKS.with(|marks| {
         marks
@@ -574,26 +574,29 @@ impl<'a> CheckerState<'a> {
         lib_resolution_mark(name) == Some(LibResolutionMark::Incomplete)
     }
 
-    /// Resolve a library type by name, draining any heritage cycles at the
+    /// Resolve a library type by name, draining cycle-incomplete names at the
     /// outermost call boundary.
     ///
     /// `resolve_lib_type_by_name_inner` resolves one name, but a mutual lib
     /// heritage cycle (the DOM `Element` ↔ `Node` ↔ `HTMLElement` diamond,
     /// #12299) has no resolution order in which every base is already complete:
     /// whichever interface resolves first sees the other still in-progress and
-    /// drops it, producing a base-less (`Incomplete`) body. Once the whole call
-    /// stack unwinds (`depth == 0`) nothing is in-progress, so re-resolving each
-    /// `Incomplete` name now finds its bases cached and merges them into a
-    /// flattened body. The flattened (not intersection) shape keeps generic
-    /// inference over DOM types intact.
+    /// drops it, producing a base-less (`Incomplete`) body. The dropped base is
+    /// often a *nested* interface (`Element` reached through `Node`), not the
+    /// requested name, so the trigger is "any name was left incomplete", not
+    /// "this name". Once the whole call stack unwinds (`depth == 0`) nothing is
+    /// in-progress, so re-resolving each `Incomplete` name finds its bases
+    /// resolvable and merges them into a flattened body. The flattened (not
+    /// intersection) shape keeps generic inference over DOM types intact.
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         enter_lib_resolution();
         let result = self.resolve_lib_type_by_name_inner(name);
         let depth_after = leave_lib_resolution();
 
         // Only the outermost call drains, never while already draining, and only
-        // when the resolution actually left a cycle-incomplete name behind (the
-        // cheap predicate avoids a map scan + allocation on the common path).
+        // when the cascade left some cycle-incomplete name behind. A nested
+        // interface (the DOM `Element` reached through `Node`) is rarely the
+        // outermost request, so the trigger is "any incomplete", not "this name".
         if depth_after != 0 || lib_resolution_is_draining() || !has_incomplete_lib_names() {
             return result;
         }
@@ -618,9 +621,6 @@ impl<'a> CheckerState<'a> {
     /// suppresses a recursive drain. Bounded by the number of names left
     /// incomplete to guarantee termination even if a genuine gap never resolves.
     fn drain_incomplete_lib_heritage(&mut self, mut incomplete: Vec<String>) {
-        // Each pass that makes progress clears at least one name; cap the number
-        // of passes at the initial backlog size so a name that can never
-        // complete (e.g. a truly missing transitive base) cannot loop forever.
         let max_passes = incomplete.len().saturating_add(1);
         for _ in 0..max_passes {
             if incomplete.is_empty() {
@@ -635,8 +635,7 @@ impl<'a> CheckerState<'a> {
             if remaining.len() >= incomplete.len() {
                 // No name cleared this pass — re-resolving cannot make further
                 // progress (a base is genuinely unresolvable). Clear the stale
-                // markers so later top-level resolutions do not re-drain the same
-                // unresolvable names on every call.
+                // markers so later top-level resolutions do not re-drain them.
                 for lib_name in &remaining {
                     clear_lib_resolution_mark(lib_name);
                 }
