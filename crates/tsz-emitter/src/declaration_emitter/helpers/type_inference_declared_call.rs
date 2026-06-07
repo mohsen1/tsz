@@ -508,10 +508,17 @@ impl<'a> DeclarationEmitter<'a> {
                     let decl_node = source_arena.get(decl_idx)?;
                     let callable = Self::callable_decl_parts_from_node(source_arena, decl_node)?;
                     callable.type_annotation.is_some().then(|| {
+                        // A single, top-level conditional type-alias reference is
+                        // preserved as-written by declaration emit (see
+                        // `return_annotation_is_preservable_local_conditional_alias`),
+                        // so it must not be diverted onto the expand-the-body path.
                         self.source_type_contains_conditional_alias_application(
                             source_arena,
                             callable.type_annotation,
                             0,
+                        ) && !self.return_annotation_is_preservable_local_conditional_alias(
+                            source_arena,
+                            callable.type_annotation,
                         )
                     })
                 })

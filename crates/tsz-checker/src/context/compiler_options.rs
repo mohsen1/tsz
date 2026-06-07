@@ -164,8 +164,11 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Check if isolatedModules is enabled.
+    ///
+    /// Returns `true` when `isolatedModules` or `verbatimModuleSyntax` is set,
+    /// mirroring tsc's `isIsolatedModules()` which treats both as equivalent.
     pub const fn isolated_modules(&self) -> bool {
-        self.compiler_options.isolated_modules
+        self.compiler_options.isolated_modules || self.compiler_options.verbatim_module_syntax
     }
 
     /// Check if isolatedDeclarations is enabled.

@@ -87,7 +87,7 @@ fn class_boundary_no_erase_generic_probes_use_relation_outcome_boundary() {
 }
 
 #[test]
-fn interface_heritage_member_fallbacks_use_named_diagnostic_relation_guards() {
+fn interface_heritage_member_fallbacks_use_relation_outcome_boundaries() {
     let source = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src/classes/interface_heritage_index_compat.rs"),
@@ -100,20 +100,23 @@ fn interface_heritage_member_fallbacks_use_named_diagnostic_relation_guards() {
         .and_then(|tail| tail.split("fn single_call_signature_return_type").next())
         .expect("failed to isolate nongeneric override fallback helper");
     assert!(
-        nongeneric_override_helper
-            .contains("diagnostic_relation_boolean_guard_bivariant(derived, base)"),
-        "non-generic override fallback should name the bivariant diagnostic boolean guard"
+        nongeneric_override_helper.contains("bivariant_callbacks_relation_outcome(derived, base)")
+            && nongeneric_override_helper.contains(".related"),
+        "non-generic override fallback should route the bivariant probe through RelationOutcome"
     );
     assert!(
-        nongeneric_override_helper.contains(
-            "diagnostic_relation_boolean_guard_no_erase_generics(derived_return, base_return)"
-        ),
-        "non-generic override fallback should name the no-erase return diagnostic boolean guard"
+        nongeneric_override_helper
+            .contains("no_erase_generics_relation_outcome(derived_return, base_return)")
+            && nongeneric_override_helper.contains(".related"),
+        "non-generic override fallback should route the no-erase return probe through RelationOutcome"
     );
     assert!(
         !nongeneric_override_helper.contains("is_assignable_to_bivariant(")
-            && !nongeneric_override_helper.contains("is_assignable_to_no_erase_generics("),
-        "non-generic override fallback should not embed raw relation predicates"
+            && !nongeneric_override_helper.contains("is_assignable_to_no_erase_generics(")
+            && !nongeneric_override_helper.contains("diagnostic_relation_boolean_guard_bivariant(")
+            && !nongeneric_override_helper
+                .contains("diagnostic_relation_boolean_guard_no_erase_generics("),
+        "non-generic override fallback should not embed raw relation predicates or boolean guards"
     );
 
     let this_member_helper = source
@@ -122,13 +125,14 @@ fn interface_heritage_member_fallbacks_use_named_diagnostic_relation_guards() {
         .and_then(|tail| tail.split("pub(super) fn type_base_def_id").next())
         .expect("failed to isolate polymorphic this fallback helper");
     assert!(
-        this_member_helper
-            .contains("diagnostic_relation_boolean_guard_no_erase_generics(derived, base_member)"),
-        "polymorphic-this fallback should name the no-erase diagnostic boolean guard"
+        this_member_helper.contains("no_erase_generics_relation_outcome(derived, base_member)")
+            && this_member_helper.contains(".related"),
+        "polymorphic-this fallback should route the no-erase probe through RelationOutcome"
     );
     assert!(
-        !this_member_helper.contains("is_assignable_to_no_erase_generics("),
-        "polymorphic-this fallback should not embed a raw no-erase relation predicate"
+        !this_member_helper.contains("is_assignable_to_no_erase_generics(")
+            && !this_member_helper.contains("diagnostic_relation_boolean_guard_no_erase_generics("),
+        "polymorphic-this fallback should not embed a raw no-erase relation predicate or boolean guard"
     );
 }
 

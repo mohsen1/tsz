@@ -589,7 +589,8 @@ impl<'a> CheckerState<'a> {
         }
         let widened = crate::query_boundaries::common::widen_freshness(self.ctx.types, source);
         matches!(
-            self.assign_relation_outcome(widened, target).failure,
+            self.mapped_object_literal_excess_value_relation_outcome(widened, target)
+                .failure,
             Some(crate::query_boundaries::relation_types::RelationFailure::IncompatiblePropertyValue {
                 target_property_type,
                 ..

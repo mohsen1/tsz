@@ -213,6 +213,13 @@ impl<'a> TypeFormatter<'a> {
                     return self.format(distributed);
                 }
 
+                // A non-distributive conditional-bodied alias application that
+                // resolves renders its resolved type structurally, not
+                // `Name<Args>` (issue #10914).
+                if let Some(evaluated) = self.reducing_conditional_application_display(type_id) {
+                    return self.format(evaluated);
+                }
+
                 // A variadic (spread) tuple alias instantiated with concrete
                 // arguments loses its alias symbol in tsc (spreading produces a
                 // fresh tuple), so render the flattened tuple form.

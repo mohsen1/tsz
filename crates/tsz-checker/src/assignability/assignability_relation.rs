@@ -115,7 +115,12 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .find(|source_prop| source_prop.name == target_prop.name)
                 .is_some_and(|source_prop| {
-                    !self.is_assignable_to(source_prop.type_id, target_prop.type_id)
+                    !self
+                        .namespace_property_mismatch_relation_outcome(
+                            source_prop.type_id,
+                            target_prop.type_id,
+                        )
+                        .related
                 })
         })
     }
@@ -135,14 +140,8 @@ impl<'a> CheckerState<'a> {
         (source, target)
     }
 
-    /// Execute a `RelationRequest` through the canonical boundary, returning
-    /// a structured `RelationOutcome`.
-    ///
-    /// This is the single authoritative checker-level entry point for relation
-    /// queries that need both the assignability result AND structured failure
-    /// information. It replaces the pattern of calling `is_assignable_to` +
-    /// `analyze_assignability_failure` + `is_weak_union_violation` separately.
-    ///
+    /// Execute a `RelationRequest` through the canonical boundary, returning a
+    /// structured `RelationOutcome` for diagnostic-bearing relation queries.
     /// The request must contain **prepared** (evaluated) source/target types.
     pub(crate) fn execute_relation_request(
         &mut self,
@@ -308,7 +307,7 @@ impl<'a> CheckerState<'a> {
             property_classification: None,
         };
 
-        if source == target || self.is_assignable_to_with_env(source, target) {
+        if source == target || self.diagnostic_relation_boolean_guard_with_env(source, target) {
             return outcome(true);
         }
 

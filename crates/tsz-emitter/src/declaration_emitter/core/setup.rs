@@ -30,7 +30,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_source_file_idx: None,
             type_interner: None,
             binder: None,
-            export_surface: None,
+            declaration_summary: None,
             used_symbols: None,
             foreign_symbols: None,
             current_arena: None,
@@ -158,7 +158,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_source_file_idx: None,
             type_interner: Some(type_interner),
             binder: Some(binder),
-            export_surface: None,
+            declaration_summary: None,
             used_symbols: None,
             foreign_symbols: None,
             current_arena: None,
@@ -309,12 +309,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.binder = binder;
     }
 
-    /// Set a precomputed export surface summary.
+    /// Set precomputed declaration-emission facts.
     ///
-    /// When set, the emitter uses the summary's overload pre-scan instead
-    /// of discovering overloads incrementally during the emit walk.
+    /// When set, the emitter uses the summary's exported-surface overload
+    /// pre-scan instead of discovering top-level overload groups
+    /// incrementally during the emit walk.
+    pub fn set_declaration_summary(&mut self, summary: tsz_binder::DeclarationSummary) {
+        self.declaration_summary = Some(summary);
+    }
+
+    /// Compatibility shim for callers that still construct only an
+    /// `ExportSurface`.
     pub fn set_export_surface(&mut self, surface: tsz_binder::ExportSurface) {
-        self.export_surface = Some(surface);
+        self.set_declaration_summary(tsz_binder::DeclarationSummary::from_export_surface(surface));
     }
 
     /// Set the current file's arena and path for distinguishing local vs foreign symbols.

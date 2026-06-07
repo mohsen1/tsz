@@ -1,6 +1,7 @@
 //! Generic type-parameter constraint helpers for function subtype checks.
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::type_param_info;
 use crate::types::{TypeData, TypeId, TypeParamInfo};
 
 use super::super::super::super::{SubtypeChecker, TypeResolver};
@@ -36,12 +37,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// bare parameters must stay opaque because the caller controls them, while
     /// application-only parameters reduce to their constraint like tsc's
     /// `getBaseSignature`.
-    pub(super) fn type_param_appears_bare(&self, type_id: TypeId, tp_id: TypeId) -> bool {
+    /// Whether `type_id` denotes the same logical type parameter as `tp_id`.
+    ///
+    /// Identity is by `TypeId` first, then by type-parameter *name*: a
+    /// signature's body and its `type_params` list can carry distinct `TypeId`s
+    /// for the same parameter (the list is re-interned during property read /
+    /// instantiation while the body keeps its original reference). The erase
+    /// substitution that consumes [`Self::type_param_appears_bare`] is keyed on
+    /// the name, so occurrence detection must agree.
+    fn is_same_type_param(&self, type_id: TypeId, tp_id: TypeId) -> bool {
         if type_id == tp_id {
             return true;
         }
+        match (
+            type_param_info(self.interner, type_id),
+            type_param_info(self.interner, tp_id),
+        ) {
+            (Some(a), Some(b)) => a.name == b.name,
+            _ => false,
+        }
+    }
+
+    pub(super) fn type_param_appears_bare(&self, type_id: TypeId, tp_id: TypeId) -> bool {
+        if self.is_same_type_param(type_id, tp_id) {
+            return true;
+        }
         // Cheap pruning: if the parameter does not occur at all, it is not bare.
-        if !crate::visitor::collect_all_types(self.interner, type_id).contains(&tp_id) {
+        // Match by name as well as `TypeId` (see `is_same_type_param`): the body
+        // of a signature can reference a type parameter through a different
+        // `TypeId` than the one in its `type_params` list, and a `TypeId`-only
+        // scan would wrongly conclude the parameter is absent.
+        if !crate::visitor::collect_all_types(self.interner, type_id)
+            .iter()
+            .any(|&t| self.is_same_type_param(t, tp_id))
+        {
             return false;
         }
         match self.interner.lookup(type_id) {
@@ -53,9 +82,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // A direct type argument equal to `tp_id` is mediated by the
                 // application's variance and is not a bare occurrence; deeper
                 // structure inside an argument still counts.
-                app.args
-                    .iter()
-                    .any(|&arg| arg != tp_id && self.type_param_appears_bare(arg, tp_id))
+                app.args.iter().any(|&arg| {
+                    !self.is_same_type_param(arg, tp_id) && self.type_param_appears_bare(arg, tp_id)
+                })
             }
             Some(TypeData::Array(elem)) => self.type_param_appears_bare(elem, tp_id),
             Some(TypeData::ReadonlyType(inner)) => self.type_param_appears_bare(inner, tp_id),

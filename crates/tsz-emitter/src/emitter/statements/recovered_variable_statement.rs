@@ -124,110 +124,46 @@ impl<'a> Printer<'a> {
         // Only recover when every declaration in the statement lacks an initializer.
         // If any declaration has an initializer, .typeof( is a valid property call
         // in a value expression that was already emitted — not a type-annotation tail.
-        if let Some(var_stmt) = self.arena.get_variable(node) {
-            if !self.all_declarations_lack_initializer(&var_stmt.declarations) {
-                return;
-            }
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return;
+        };
+        if !self.all_declarations_lack_initializer(&var_stmt.declarations) {
+            return;
+        }
+        let recovered_calls: Vec<_> = var_stmt
+            .declarations
+            .nodes
+            .iter()
+            .filter_map(|decl_list| {
+                self.arena
+                    .get(*decl_list)
+                    .and_then(|node| self.arena.get_variable(node))
+            })
+            .flat_map(|decl_list| decl_list.recovered_typeof_member_calls.clone())
+            .collect();
+        if recovered_calls.is_empty() {
+            return;
         }
 
         let Some(text) = self.source_text else {
             return;
         };
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let end = std::cmp::min(node.end as usize, text.len());
-        if start >= end {
-            return;
-        }
-        let Some(typeof_pos) = self.find_source_pattern_outside_quoted_text(start, end, ".typeof(")
-        else {
-            return;
-        };
-        let open = typeof_pos + ".typeof".len();
-        let Some(close) = self.find_matching_source_paren(open, end) else {
-            return;
-        };
-        let argument = text[open + 1..close].trim();
-        if argument.is_empty() {
-            return;
-        }
-
-        self.write_line();
-        self.write("typeof (");
-        self.write(argument);
-        self.write(");");
-    }
-
-    fn find_source_pattern_outside_quoted_text(
-        &self,
-        start: usize,
-        limit: usize,
-        pattern: &str,
-    ) -> Option<usize> {
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let pattern = pattern.as_bytes();
-        let mut i = start;
-        let limit = limit.min(bytes.len());
-        while i + pattern.len() <= limit {
-            match bytes[i] {
-                b'\'' | b'"' | b'`' => {
-                    i = self.skip_quoted_source_text(i, limit);
-                    continue;
-                }
-                _ if bytes.get(i..i + pattern.len()) == Some(pattern) => return Some(i),
-                _ => i += 1,
-            }
-        }
-        None
-    }
-
-    fn find_matching_source_paren(&self, open: usize, limit: usize) -> Option<usize> {
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        if bytes.get(open) != Some(&b'(') {
-            return None;
-        }
-
-        let mut depth = 1u32;
-        let mut i = open + 1;
-        while i < limit && i < bytes.len() {
-            match bytes[i] {
-                b'\'' | b'"' | b'`' => {
-                    i = self.skip_quoted_source_text(i, limit);
-                    continue;
-                }
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(i);
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        None
-    }
-
-    fn skip_quoted_source_text(&self, quote_start: usize, limit: usize) -> usize {
-        let Some(text) = self.source_text else {
-            return quote_start + 1;
-        };
-        let bytes = text.as_bytes();
-        let quote = bytes[quote_start];
-        let mut i = quote_start + 1;
-        while i < limit && i < bytes.len() {
-            if bytes[i] == b'\\' {
-                i = (i + 2).min(limit);
+        for recovered_call in recovered_calls {
+            let argument_start = recovered_call.argument_pos as usize;
+            let argument_end = recovered_call.argument_end as usize;
+            if argument_start > argument_end || argument_end > text.len() {
                 continue;
             }
-            if bytes[i] == quote {
-                return i + 1;
+            let argument = text[argument_start..argument_end].trim();
+            if argument.is_empty() {
+                continue;
             }
-            i += 1;
+
+            self.write_line();
+            self.write("typeof (");
+            self.write(argument);
+            self.write(");");
         }
-        i
     }
 
     fn source_text_with_quoted_spans_masked(segment: &str) -> String {

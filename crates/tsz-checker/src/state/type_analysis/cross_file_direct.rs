@@ -81,3 +81,7 @@ mod tests;
 #[cfg(test)]
 #[path = "cross_file_direct_source_option_bag_tests.rs"]
 mod source_option_bag_tests;
+
+#[cfg(test)]
+#[path = "cross_file_direct_source_heritage_tests.rs"]
+mod source_heritage_tests;

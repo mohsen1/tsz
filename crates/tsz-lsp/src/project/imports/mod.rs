@@ -150,6 +150,12 @@ impl Project {
                 &mut sink,
             );
         }
+        tracing::trace!(
+            module_specifiers_cache_entries = context.module_specifiers_cache_entries(),
+            module_specifiers_cache_estimated_size_bytes =
+                context.module_specifiers_cache_estimated_size_bytes(),
+            "auto-import module specifier cache"
+        );
     }
 
     /// Collect import candidates for symbols matching a prefix.
@@ -230,6 +236,12 @@ impl Project {
                 &mut sink,
             );
         }
+        tracing::trace!(
+            module_specifiers_cache_entries = context.module_specifiers_cache_entries(),
+            module_specifiers_cache_estimated_size_bytes =
+                context.module_specifiers_cache_estimated_size_bytes(),
+            "auto-import prefix module specifier cache"
+        );
     }
 }
 

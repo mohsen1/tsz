@@ -1260,7 +1260,20 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # source-display query.
         #
         # Ratcheted 3213→3202 after current arch-smoke caught live-count slack.
-        3202,
+        #
+        # Ratcheted 3202→3197 after generic predicate-target instantiation
+        # moved five flow/narrowing substitution queries through
+        # query_boundaries::flow_analysis instead of the broad common barrel.
+        #
+        # Ratcheted 3197→3191 after assignment flow operator/property/literal
+        # queries moved through query_boundaries::flow_analysis.
+        #
+        # Ratcheted 3191→3174 after assignment numeric display shape queries
+        # moved through query_boundaries::diagnostics.
+        #
+        # Ratcheted 3174→3163 after missing-property display shape queries
+        # moved through query_boundaries::diagnostics.
+        3163,
     ),
 ]
 
@@ -1390,7 +1403,39 @@ REGEX_LINE_COUNT_CHECKS = [
         "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
-        6,
+        0,
+    ),
+    (
+        "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "emitter"
+            / "statements"
+            / "recovered_variable_statement.rs"
+        ],
+        re.compile(
+            r"\b(?:find_source_pattern_outside_quoted_text|find_matching_source_paren|skip_quoted_source_text)\b"
+        ),
+        0,
+    ),
+    (
+        # The async ES5 lowering path still has one source-text fallback for
+        # recovered `yield` detection. Keep it visible so the future parser- or
+        # lowering-owned fact can ratchet this to zero in the same PR.
+        "Emitter boundary: async yield source-text fallback (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "transforms"
+            / "async_es5_ir_discovery.rs"
+        ],
+        re.compile(r"\bfn\s+node_text_contains_yield\s*\("),
+        1,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",

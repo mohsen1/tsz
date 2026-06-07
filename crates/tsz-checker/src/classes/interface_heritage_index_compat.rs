@@ -209,7 +209,10 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::class::generic_erasure_fallback_is_safe(self, derived, base) {
             return false;
         }
-        if !self.diagnostic_relation_boolean_guard_bivariant(derived, base) {
+        if !self
+            .bivariant_callbacks_relation_outcome(derived, base)
+            .related
+        {
             return false;
         }
         let (Some(derived_return), Some(base_return)) = (
@@ -218,7 +221,8 @@ impl<'a> CheckerState<'a> {
         ) else {
             return false;
         };
-        self.diagnostic_relation_boolean_guard_no_erase_generics(derived_return, base_return)
+        self.no_erase_generics_relation_outcome(derived_return, base_return)
+            .related
     }
 
     /// Return type of a callable member that has exactly one call signature and
@@ -277,7 +281,8 @@ impl<'a> CheckerState<'a> {
         )
         .map(|p| p.type_id)
         .unwrap_or(raw_derived_member);
-        self.diagnostic_relation_boolean_guard_no_erase_generics(derived, base_member)
+        self.no_erase_generics_relation_outcome(derived, base_member)
+            .related
     }
 
     pub(super) fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {

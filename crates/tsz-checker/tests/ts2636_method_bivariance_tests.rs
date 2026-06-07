@@ -12,7 +12,7 @@
 //! > callback) position. Purely method-bivariant occurrences satisfy both
 //! > `in T` and `out T` declarations and must not emit TS2636.
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::test_utils::{check_source_codes, check_source_diagnostics, diagnostic_count};
 
 // =========================================================================
 // Issue repro — purely method-bivariant T with `in` annotation
@@ -107,5 +107,76 @@ fn invariant_annotation_always_ok() {
         !diags.contains(&2636),
         "in out T must not emit TS2636; got: {:?}",
         diags.to_vec(),
+    );
+}
+
+#[test]
+fn conflicting_merged_interface_annotations_are_invariant() {
+    let source = r#"
+interface Channel<out T> {}
+interface Channel<in T> {}
+
+declare let wide: Channel<unknown>;
+declare let narrow: Channel<string>;
+
+wide = narrow;
+narrow = wide;
+"#;
+
+    let diags = check_source_diagnostics(source);
+
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        2,
+        "out+in merged interface annotations must reject both assignment directions; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn matching_merged_interface_annotations_keep_direction() {
+    let covariant_source = r#"
+interface Reader<out T> {}
+interface Reader<out T> {}
+
+declare let wide: Reader<unknown>;
+declare let narrow: Reader<string>;
+
+wide = narrow;
+narrow = wide;
+"#;
+    let covariant_diags = check_source_diagnostics(covariant_source);
+    assert_eq!(
+        diagnostic_count(&covariant_diags, 2322),
+        1,
+        "out+out merged interface annotations must remain covariant; got: {:?}",
+        covariant_diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+
+    let contravariant_source = r#"
+interface Sink<in T> {}
+interface Sink<in T> {}
+
+declare let wide: Sink<unknown>;
+declare let narrow: Sink<string>;
+
+wide = narrow;
+narrow = wide;
+"#;
+    let contravariant_diags = check_source_diagnostics(contravariant_source);
+    assert_eq!(
+        diagnostic_count(&contravariant_diags, 2322),
+        1,
+        "in+in merged interface annotations must remain contravariant; got: {:?}",
+        contravariant_diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
     );
 }

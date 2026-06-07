@@ -228,6 +228,41 @@ impl PathMapping {
     pub const fn specificity(&self) -> usize {
         self.prefix.len()
     }
+
+    /// Select the single tsc-best mapping in `mappings` for `specifier`,
+    /// mirroring tsc's `matchPatternOrExact` -> `findBestPatternMatch`.
+    ///
+    /// An exact, wildcard-free key equal to the specifier wins outright;
+    /// otherwise the matching wildcard with the longest prefix (highest
+    /// [`specificity`](Self::specificity)) is chosen, keeping the first such
+    /// mapping on a tie. The selection is computed explicitly, so it is correct
+    /// for any ordering — it does not rely on `mappings` being pre-sorted by
+    /// `build_path_mappings`. Returns the winning mapping's index together with
+    /// the captured wildcard text (the substring the `*` matched, or an empty
+    /// string for an exact key), so callers can both reference the mapping and
+    /// cache the result by index.
+    ///
+    /// Both module resolvers (the `tsz-core` checker resolver and the CLI
+    /// driver) route pattern selection through this one helper so the
+    /// "exactly one pattern, no fall-through" rule has a single owner.
+    pub fn select_best(mappings: &[PathMapping], specifier: &str) -> Option<(usize, String)> {
+        let mut best: Option<(usize, String)> = None;
+        let mut best_specificity = 0;
+        for (idx, mapping) in mappings.iter().enumerate() {
+            let Some(star_match) = mapping.match_specifier(specifier) else {
+                continue;
+            };
+            if !mapping.pattern.contains('*') {
+                // Exact wildcard-free key equal to the specifier wins outright.
+                return Some((idx, star_match));
+            }
+            if best.is_none() || mapping.specificity() > best_specificity {
+                best_specificity = mapping.specificity();
+                best = Some((idx, star_match));
+            }
+        }
+        best
+    }
 }
 
 impl ResolvedCompilerOptions {
@@ -869,4 +904,66 @@ pub fn resolve_compiler_options(
     }
 
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod path_mapping_selection_tests {
+    use super::PathMapping;
+
+    fn mapping(pattern: &str, targets: &[&str]) -> PathMapping {
+        let (prefix, suffix) = match pattern.find('*') {
+            Some(star) => (pattern[..star].to_string(), pattern[star + 1..].to_string()),
+            None => (pattern.to_string(), String::new()),
+        };
+        PathMapping {
+            pattern: pattern.to_string(),
+            prefix,
+            suffix,
+            targets: targets.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn exact_key_beats_equal_prefix_wildcard_regardless_of_order() {
+        // `matchPatternOrExact` returns an exact wildcard-free key before any
+        // wildcard. `"alias"` and `"alias*"` tie on prefix length for the
+        // specifier `"alias"`; the literal key must win in either ordering.
+        for order in [
+            vec![
+                mapping("alias", &["./exact"]),
+                mapping("alias*", &["./wild"]),
+            ],
+            vec![
+                mapping("alias*", &["./wild"]),
+                mapping("alias", &["./exact"]),
+            ],
+        ] {
+            let (idx, star) =
+                PathMapping::select_best(&order, "alias").expect("a mapping must be selected");
+            assert_eq!(order[idx].pattern, "alias", "exact key must win the tie");
+            assert_eq!(star, "");
+        }
+    }
+
+    #[test]
+    fn longest_prefix_wildcard_wins_independent_of_order() {
+        // The longest-prefix wildcard is chosen even when the input is not
+        // pre-sorted by specificity, proving the selection does not depend on
+        // `build_path_mappings`' ordering.
+        let unsorted = vec![
+            mapping("*", &["./external.d.ts"]),
+            mapping("next/dist/*", &["./src/*"]),
+            mapping("next/dist/compiled/*", &["./compiled/*"]),
+        ];
+        let (idx, star) = PathMapping::select_best(&unsorted, "next/dist/compiled/react")
+            .expect("a wildcard must be selected");
+        assert_eq!(unsorted[idx].pattern, "next/dist/compiled/*");
+        assert_eq!(star, "react");
+    }
+
+    #[test]
+    fn no_match_returns_none() {
+        let mappings = vec![mapping("@app/*", &["./src/*"])];
+        assert!(PathMapping::select_best(&mappings, "unrelated/thing").is_none());
+    }
 }
