@@ -37,6 +37,37 @@ fn intersection_merge_cache_is_visible_in_statistics_and_size_estimate() {
 }
 
 #[test]
+fn closed_eval_cache_is_visible_in_statistics_and_size_estimate() {
+    // Structural rule: `closed_eval_cache` is a per-`QueryCache`
+    // substitution-independent evaluation cache. It is cleared with the rest
+    // of the query cache and is safe to observe through aggregate residency
+    // stats without changing its key, eligibility gate, or sharing behavior.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let before = db.statistics();
+
+    assert_eq!(before.closed_eval_cache_entries, 0);
+
+    assert_eq!(db.lookup_closed_eval_cache(TypeId::STRING, false), None);
+    db.insert_closed_eval_cache(TypeId::STRING, false, TypeId::NUMBER);
+    assert_eq!(
+        db.lookup_closed_eval_cache(TypeId::STRING, false),
+        Some(TypeId::NUMBER)
+    );
+
+    let after = db.statistics();
+    assert_eq!(after.closed_eval_cache_entries, 1);
+    assert!(after.estimated_size_bytes() > before.estimated_size_bytes());
+    assert!(db.estimated_size_bytes() > before.estimated_size_bytes());
+
+    let rendered = after.to_string();
+    assert!(rendered.contains("closed_eval_cache"));
+
+    db.clear();
+    assert_eq!(db.statistics().closed_eval_cache_entries, 0);
+}
+
+#[test]
 fn application_eval_cache_is_per_file_isolated() {
     // Structural rule: `application_eval_cache` is intentionally NOT shared
     // cross-file. Parallel file checking can observe incomplete lib-merge state
@@ -279,4 +310,20 @@ fn query_cache_statistics_merge_includes_intersection_merge_cache() {
     assert_eq!(left.intersection_merge_cache_entries, 9);
     assert_eq!(left.intersection_merge_cache_hits, 14);
     assert_eq!(left.intersection_merge_cache_misses, 18);
+}
+
+#[test]
+fn query_cache_statistics_merge_includes_closed_eval_cache() {
+    let mut left = QueryCacheStatistics {
+        closed_eval_cache_entries: 2,
+        ..Default::default()
+    };
+    let right = QueryCacheStatistics {
+        closed_eval_cache_entries: 7,
+        ..Default::default()
+    };
+
+    left.merge(&right);
+
+    assert_eq!(left.closed_eval_cache_entries, 9);
 }

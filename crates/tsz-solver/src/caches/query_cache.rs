@@ -172,6 +172,8 @@ pub struct RelationCacheStats {
 pub struct QueryCacheStatistics {
     /// Number of memoized `evaluate_type` results.
     pub eval_cache_entries: usize,
+    /// Number of memoized substitution-independent evaluation results.
+    pub closed_eval_cache_entries: usize,
     /// Number of memoized application evaluation results.
     pub application_eval_cache_entries: usize,
     /// Number of times the application eval cache returned a hit.
@@ -214,6 +216,7 @@ impl QueryCacheStatistics {
     /// Merge another snapshot into this one (for aggregating per-file caches in parallel builds).
     pub const fn merge(&mut self, other: &QueryCacheStatistics) {
         self.eval_cache_entries += other.eval_cache_entries;
+        self.closed_eval_cache_entries += other.closed_eval_cache_entries;
         self.application_eval_cache_entries += other.application_eval_cache_entries;
         self.application_eval_cache_hits += other.application_eval_cache_hits;
         self.application_eval_cache_misses += other.application_eval_cache_misses;
@@ -250,30 +253,21 @@ impl QueryCacheStatistics {
         const BUCKET_OVERHEAD: usize = 64;
 
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
-
+        let closed_eval = self.closed_eval_cache_entries * (BUCKET_OVERHEAD + 13);
         let app_eval = self.application_eval_cache_entries * (BUCKET_OVERHEAD + 37);
-
         let elem = self.element_access_cache_entries * (BUCKET_OVERHEAD + 21);
-
         let spread = self.object_spread_cache_entries * (BUCKET_OVERHEAD + 4 + 24 + 256);
-
         let prop = self.property_cache_entries * (BUCKET_OVERHEAD + 25);
-
         let variance = self.variance_cache_entries * (BUCKET_OVERHEAD + 16);
-
         let canonical = self.canonical_cache_entries * (BUCKET_OVERHEAD + 8);
-
         let intersection_merge = self.intersection_merge_cache_entries * (BUCKET_OVERHEAD + 12);
-
         let subtype = self.relation.subtype_entries * (BUCKET_OVERHEAD + 13);
-
         let assignability = self.relation.assignability_entries * (BUCKET_OVERHEAD + 13);
-
         let instantiation = self.instantiation_cache_entries * (BUCKET_OVERHEAD + 65);
-
         let subtype_reduction = self.subtype_reduction_cache_entries * (BUCKET_OVERHEAD + 73);
 
-        eval + app_eval
+        eval + closed_eval
+            + app_eval
             + elem
             + spread
             + prop
@@ -291,6 +285,11 @@ impl std::fmt::Display for QueryCacheStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "QueryCache statistics:")?;
         writeln!(f, "  eval_cache:             {}", self.eval_cache_entries)?;
+        writeln!(
+            f,
+            "  closed_eval_cache:      {}",
+            self.closed_eval_cache_entries
+        )?;
         writeln!(
             f,
             "  application_eval_cache: {} entries ({} hits, {} misses)",
@@ -514,6 +513,7 @@ impl<'a> QueryCache<'a> {
     pub fn statistics(&self) -> QueryCacheStatistics {
         QueryCacheStatistics {
             eval_cache_entries: self.eval_cache.borrow().len(),
+            closed_eval_cache_entries: self.closed_eval_cache.borrow().len(),
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
             application_eval_cache_hits: self.application_eval_cache_hits.get(),
             application_eval_cache_misses: self.application_eval_cache_misses.get(),
@@ -553,6 +553,15 @@ impl<'a> QueryCache<'a> {
         // eval_cache: (TypeId, bool) -> TypeId
         {
             let map = self.eval_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<EvaluationCacheKey>()
+                    + std::mem::size_of::<TypeId>());
+        }
+
+        // closed_eval_cache: (TypeId, bool) -> TypeId
+        {
+            let map = self.closed_eval_cache.borrow();
             size += map.capacity()
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<EvaluationCacheKey>()
