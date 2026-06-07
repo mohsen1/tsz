@@ -14,7 +14,7 @@ fn target_displays(source: &str) -> Vec<String> {
     check_source_diagnostics(source)
         .into_iter()
         .filter(|d| d.code == 2322)
-        .map(|d| d.message_text.clone())
+        .map(|d| d.message_text)
         .collect()
 }
 
