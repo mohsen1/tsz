@@ -471,12 +471,15 @@ pub(crate) fn should_report_member_type_mismatch(
     true
 }
 
-/// Check interface trailing overload compatibility through the class relation boundary.
+/// Check whether a derived interface member's overload set is assignable to a
+/// base member's overload set, through the class relation boundary.
 ///
-/// The strict path uses `no_erase_generics` to preserve overload compatibility
-/// behavior. The optional retry mirrors `tsc`'s fresh generic instantiation for
-/// equivalent method-local generic overload shapes.
-pub(crate) fn interface_overload_trailing_signature_assignable(
+/// `source` and `target` are the full overload callables for the member (see
+/// `build_method_overload_callable`), so the strict `no_erase_generics` probe
+/// applies tsc's N×M `signaturesRelatedTo` rule. The optional retry mirrors
+/// `tsc`'s fresh generic instantiation for equivalent method-local generic
+/// overload shapes.
+pub(crate) fn interface_overload_set_assignable(
     checker: &mut CheckerState<'_>,
     source: TypeId,
     target: TypeId,
@@ -929,10 +932,31 @@ pub(crate) fn combine_overloaded_method_callable(
     member_object_types: &[TypeId],
     name: &str,
 ) -> Option<TypeId> {
+    build_method_overload_callable(db, member_object_types.iter().copied(), name, 2)
+}
+
+/// Build a single `Callable` carrying the call signatures contributed by each
+/// member-wrapper object type in `member_object_types`. Each entry is a
+/// `{ name(...): ... }` wrapper (or already a function/callable), so the result
+/// is the full overload set for the method `name`.
+///
+/// `min_signatures` is the floor below which `None` is returned:
+///   - `2` builds a callable only for genuinely overloaded members
+///     (`combine_overloaded_method_callable`).
+///   - `1` keeps a single-signature member as a one-signature callable, which
+///     the interface-heritage overload-coverage check needs for the derived
+///     side: a derived interface may legitimately collapse a base's overload
+///     set down to a single compatible signature.
+pub(crate) fn build_method_overload_callable(
+    db: &dyn QueryDatabase,
+    member_object_types: impl IntoIterator<Item = TypeId>,
+    name: &str,
+    min_signatures: usize,
+) -> Option<TypeId> {
     use tsz_solver::types::{CallSignature, CallableShape};
     let tdb = db.as_type_database();
     let mut call_signatures: Vec<CallSignature> = Vec::new();
-    for &object_ty in member_object_types {
+    for object_ty in member_object_types {
         let fn_ty = crate::query_boundaries::common::find_property_by_str(tdb, object_ty, name)
             .map(|p| p.type_id)
             .unwrap_or(object_ty);
@@ -950,7 +974,7 @@ pub(crate) fn combine_overloaded_method_callable(
             call_signatures.extend(shape.call_signatures.iter().cloned());
         }
     }
-    if call_signatures.len() < 2 {
+    if call_signatures.len() < min_signatures {
         return None;
     }
     Some(db.factory().callable(CallableShape {

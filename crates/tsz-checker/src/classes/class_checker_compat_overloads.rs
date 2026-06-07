@@ -16,69 +16,6 @@ pub(crate) struct InterfaceOverloadCoverageCtx<'a> {
     pub(crate) interface_self_type: Option<TypeId>,
 }
 
-fn overload_method_wrapper_value_type(
-    types: &dyn tsz_solver::construction::QueryDatabase,
-    type_id: TypeId,
-) -> Option<TypeId> {
-    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(types, type_id)
-        && shape.properties.len() == 1
-        && shape.properties[0].is_method
-    {
-        return Some(shape.properties[0].type_id);
-    }
-    None
-}
-
-fn function_signature_uses_own_type_params(
-    checker: &CheckerState<'_>,
-    shape: &tsz_solver::FunctionShape,
-) -> bool {
-    let own_type_params = shape
-        .type_params
-        .iter()
-        .map(|param| checker.ctx.types.type_param(*param))
-        .collect::<Vec<_>>();
-    if own_type_params.is_empty() {
-        return false;
-    }
-
-    let contains_own_param = |type_id: TypeId| {
-        own_type_params.iter().copied().any(|param_type| {
-            crate::query_boundaries::common::contains_type_by_id(
-                checker.ctx.types,
-                type_id,
-                param_type,
-            )
-        })
-    };
-
-    shape
-        .params
-        .iter()
-        .any(|param| contains_own_param(param.type_id))
-        || shape.this_type.is_some_and(contains_own_param)
-        || contains_own_param(shape.return_type)
-}
-
-fn can_use_fresh_generic_overload_assignability(
-    checker: &CheckerState<'_>,
-    source: TypeId,
-    target: TypeId,
-) -> bool {
-    let (Some(source_shape), Some(target_shape)) = (
-        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, source),
-        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, target),
-    ) else {
-        return false;
-    };
-
-    !source_shape.type_params.is_empty()
-        && source_shape.type_params.len() == target_shape.type_params.len()
-        && source_shape.params.len() == target_shape.params.len()
-        && function_signature_uses_own_type_params(checker, &source_shape)
-        && function_signature_uses_own_type_params(checker, &target_shape)
-}
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_interface_overload_coverage(
         &mut self,
@@ -145,112 +82,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let signature_has_literal_parameter = |type_id: TypeId| -> bool {
-            let has_literal_param = |params: &[crate::query_boundaries::common::ParamInfo]| {
-                params.iter().any(|param| {
-                    crate::query_boundaries::common::is_literal_type(self.ctx.types, param.type_id)
-                })
-            };
-
-            if let Some(signatures) =
-                crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
-            {
-                return signatures
-                    .iter()
-                    .any(|signature| has_literal_param(&signature.params));
-            }
-
-            if let Some(shape) =
-                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-            {
-                return has_literal_param(&shape.params);
-            }
-
-            if let Some(shape) =
-                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-            {
-                return shape
-                    .call_signatures
-                    .iter()
-                    .any(|signature| has_literal_param(&signature.params));
-            }
-
-            if let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                && shape.properties.len() == 1
-                && shape.properties[0].is_method
-            {
-                let method_type = shape.properties[0].type_id;
-                if let Some(signatures) = crate::query_boundaries::common::call_signatures_for_type(
-                    self.ctx.types,
-                    method_type,
-                ) {
-                    return signatures
-                        .iter()
-                        .any(|signature| has_literal_param(&signature.params));
-                }
-                if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                    self.ctx.types,
-                    method_type,
-                ) {
-                    return has_literal_param(&shape.params);
-                }
-                if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
-                    self.ctx.types,
-                    method_type,
-                ) {
-                    return shape
-                        .call_signatures
-                        .iter()
-                        .any(|signature| has_literal_param(&signature.params));
-                }
-            }
-
-            false
-        };
-
-        let select_implementation_signature = |signatures: &[TypeId]| -> Option<TypeId> {
-            if signatures.is_empty() {
-                return None;
-            }
-
-            let mut last_non_specialized: Option<TypeId> = None;
-            for &signature in signatures {
-                if !signature_has_literal_parameter(signature) {
-                    last_non_specialized = Some(signature);
-                }
-            }
-
-            last_non_specialized.or_else(|| signatures.last().copied())
-        };
-
-        let has_non_specialized_signature = |signatures: &[TypeId]| -> bool {
-            signatures
-                .iter()
-                .any(|&signature| !signature_has_literal_parameter(signature))
-        };
-
-        let select_implementation_signature_with_node =
-            |signatures: &[(TypeId, NodeIndex)]| -> Option<(TypeId, NodeIndex)> {
-                if signatures.is_empty() {
-                    return None;
-                }
-
-                let mut last_non_specialized: Option<(TypeId, NodeIndex)> = None;
-                for &(signature, node_idx) in signatures {
-                    if !signature_has_literal_parameter(signature) {
-                        last_non_specialized = Some((signature, node_idx));
-                    }
-                }
-
-                last_non_specialized.or_else(|| signatures.last().copied())
-            };
-
-        let has_non_specialized_signature_with_node = |signatures: &[(TypeId, NodeIndex)]| -> bool {
-            signatures
-                .iter()
-                .any(|&(signature, _)| !signature_has_literal_parameter(signature))
-        };
         let signature_contains_error = |signature: TypeId| {
             crate::query_boundaries::common::contains_error_type_in_args(self.ctx.types, signature)
         };
@@ -263,8 +94,23 @@ impl<'a> CheckerState<'a> {
             "overload coverage check"
         );
 
-        // For overloaded method inheritance, tsc compatibility hinges on the trailing
-        // implementation signature.
+        // tsc checks interface heritage with `checkTypeAssignableTo(derived, base)`:
+        // the derived member's *entire* overload set must be assignable to the
+        // base member's entire overload set. For overloaded function/method types
+        // that is `signaturesRelatedTo`'s N×M rule — every base (target)
+        // signature must be matched by some derived (source) signature, with
+        // method signatures compared bivariantly.
+        //
+        // Comparing only a single "trailing" signature per side (the previous
+        // heuristic) was wrong in both directions: it missed real mismatches
+        // (a derived set that drops a base overload it cannot service, e.g. a
+        // derived `pipe(op1, op2)` that no longer covers the base's one-argument
+        // `pipe(op1)`), and it raised false `TS2430`s (a valid generic, specialized,
+        // or superset override whose trailing signature happened not to relate to
+        // the base's trailing signature). Build the full overload callables for
+        // both sides and route them through the standard relation, which already
+        // implements the N×M rule (`check_callable_subtype`), including method
+        // bivariance and method-local generic erasure for multi-signature shapes.
         'overload_check: for (method_name, base_sigs) in &base_method_overloads {
             let Some(derived_sigs) = derived_method_overloads.get(method_name) else {
                 tracing::debug!(method = method_name, "no derived overloads found");
@@ -277,61 +123,56 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
-            if has_non_specialized_signature(base_sigs)
-                && !has_non_specialized_signature_with_node(derived_sigs)
-            {
-                tracing::debug!(
-                    method = method_name,
-                    "base has non-specialized but derived does not -> error"
-                );
-                self.error_at_node(
-                    iface_name,
-                    &format!(
-                        "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
-                    ),
-                    diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                );
-                break 'overload_check;
-            }
-            let Some(base_trailing_sig) = select_implementation_signature(base_sigs) else {
+
+            let Some(base_callable) =
+                crate::query_boundaries::class::combine_overloaded_method_callable(
+                    self.ctx.types,
+                    base_sigs,
+                    method_name,
+                )
+            else {
                 continue;
             };
-            let Some((derived_trailing_sig, derived_trailing_idx)) =
-                select_implementation_signature_with_node(derived_sigs)
+            let Some(derived_callable) =
+                crate::query_boundaries::class::build_method_overload_callable(
+                    self.ctx.types,
+                    derived_sigs.iter().map(|(sig, _)| *sig),
+                    method_name,
+                    1,
+                )
             else {
                 continue;
             };
 
-            let derived_method_value =
-                overload_method_wrapper_value_type(self.ctx.types, derived_trailing_sig);
-            let base_method_value =
-                overload_method_wrapper_value_type(self.ctx.types, base_trailing_sig);
-            let (derived_compare_sig, base_compare_sig) =
-                match (derived_method_value, base_method_value) {
-                    (Some(derived), None) => (derived, base_trailing_sig),
-                    (None, Some(base)) => (derived_trailing_sig, base),
-                    _ => (derived_trailing_sig, base_trailing_sig),
-                };
+            // Identical interned overload sets (a derived interface re-declaring
+            // the inherited signatures verbatim) are trivially assignable.
+            if derived_callable == base_callable {
+                continue;
+            }
 
-            // When the no-erase check fails for equivalent generic trailing
-            // overload signatures, allow the normal relation to fresh-instantiate
-            // the method-local type params. Keep this gated to matching generic
-            // shapes so ordinary TS2430 overload mismatches still report.
-            let assignable =
-                crate::query_boundaries::class::interface_overload_trailing_signature_assignable(
-                    self,
-                    derived_compare_sig,
-                    base_compare_sig,
-                    can_use_fresh_generic_overload_assignability(
-                        self,
-                        derived_compare_sig,
-                        base_compare_sig,
-                    ),
-                );
+            // The override is valid when the derived overload set is assignable to
+            // the base overload set. Allow the fresh method-local generic retry so
+            // alpha-equivalent generic overloads (rxjs/kysely-style builders whose
+            // method-local type parameters carry different `TypeId`s on each side)
+            // are accepted, mirroring tsc's `compareSignaturesRelated`.
+            let assignable = crate::query_boundaries::class::interface_overload_set_assignable(
+                self,
+                derived_callable,
+                base_callable,
+                true,
+            );
+
+            // Anchor parse-recovery suppression on the last derived signature
+            // node (non-empty: `build_method_overload_callable(.., 1)` above
+            // returned `Some`, which requires at least one gathered signature).
+            let derived_anchor_idx = derived_sigs
+                .last()
+                .expect("derived overload set is non-empty")
+                .1;
             if !assignable
                 && !self.should_suppress_assignability_for_parse_recovery(
-                    derived_trailing_idx,
-                    derived_trailing_idx,
+                    derived_anchor_idx,
+                    derived_anchor_idx,
                 )
             {
                 self.error_at_node(

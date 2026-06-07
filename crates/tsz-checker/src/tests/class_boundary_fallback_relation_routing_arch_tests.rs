@@ -9,7 +9,7 @@ fn class_member_fallback_relations_use_relation_outcome_boundary() {
     .expect("failed to read class.rs");
 
     let overload_helper = source
-        .split("pub(crate) fn interface_overload_trailing_signature_assignable")
+        .split("pub(crate) fn interface_overload_set_assignable")
         .nth(1)
         .and_then(|tail| {
             tail.split("pub(crate) fn should_report_own_member_type_mismatch")
