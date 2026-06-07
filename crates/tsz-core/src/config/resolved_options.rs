@@ -212,6 +212,10 @@ impl PathMapping {
             return (self.pattern == specifier).then(String::new);
         }
 
+        // Keys with more than one `*` are rejected up front by
+        // `build_path_mappings` (mirroring tsc's `tryParsePattern`), so every
+        // mapping that reaches here has exactly one `*` and a well-formed
+        // `prefix`/`suffix`.
         if !specifier.starts_with(&self.prefix) || !specifier.ends_with(&self.suffix) {
             return None;
         }
@@ -227,6 +231,32 @@ impl PathMapping {
 
     pub const fn specificity(&self) -> usize {
         self.prefix.len()
+    }
+
+    /// Substitute the wildcard text captured by [`match_specifier`](Self::match_specifier)
+    /// into one of this mapping's targets, mirroring tsc's
+    /// `tryLoadModuleUsingPaths`:
+    ///
+    /// - For a wildcard key, tsc computes `subst.replace("*", matchedStar)`.
+    ///   JavaScript's `String.prototype.replace` with a string pattern replaces
+    ///   only the **first** `*`, so a target like `"./gen/*/*.js"` becomes
+    ///   `"./gen/<star>/*.js"` — the trailing `*` is left untouched. A target
+    ///   with no `*` is used verbatim.
+    /// - For an exact, wildcard-free key, tsc leaves `matchedStar` undefined and
+    ///   uses the target verbatim (`path = subst`), so a literal `*` in the
+    ///   target is preserved rather than stripped.
+    ///
+    /// Both the `tsz-core` resolver and the CLI driver route tsconfig-`paths`
+    /// target substitution through this one method so the substituted path — and
+    /// thus the file identity it resolves to — cannot drift between them. (Node
+    /// package `exports`/`imports` substitution is a separate Node-spec concern
+    /// and does not use this method.)
+    pub fn substitute_target(&self, target: &str, captured: &str) -> String {
+        if self.pattern.contains('*') {
+            target.replacen('*', captured, 1)
+        } else {
+            target.to_string()
+        }
     }
 
     /// Select the single tsc-best mapping in `mappings` for `specifier`,
@@ -965,5 +995,80 @@ mod path_mapping_selection_tests {
     fn no_match_returns_none() {
         let mappings = vec![mapping("@app/*", &["./src/*"])];
         assert!(PathMapping::select_best(&mappings, "unrelated/thing").is_none());
+    }
+
+    #[test]
+    fn multi_star_key_is_dropped_at_build_like_tsc_try_parse_pattern() {
+        use super::build_path_mappings;
+        use rustc_hash::FxHashMap;
+
+        // tsc's `tryParsePattern` returns `undefined` for a key with two `*`, so
+        // `tryParsePatterns` never builds a mapping for it. `build_path_mappings`
+        // must drop it at the parser so it can never match a specifier (which it
+        // would, on its mis-derived first-`*` `prefix`/`suffix`).
+        let mut paths: FxHashMap<String, Vec<String>> = FxHashMap::default();
+        paths.insert("a/*/*".to_string(), vec!["./wrong/*".to_string()]);
+        paths.insert("*".to_string(), vec!["./types/*".to_string()]);
+
+        let mappings = build_path_mappings(&paths);
+        assert!(
+            mappings.iter().all(|m| m.pattern != "a/*/*"),
+            "multi-`*` key must be dropped at build time"
+        );
+
+        // With the malformed key gone, only the valid catch-all can match.
+        let (idx, star) =
+            PathMapping::select_best(&mappings, "a/foo/bar").expect("catch-all must match");
+        assert_eq!(mappings[idx].pattern, "*");
+        assert_eq!(star, "a/foo/bar");
+    }
+
+    #[test]
+    fn single_star_key_still_matches() {
+        // The multi-`*` guard must not regress an ordinary single-`*` wildcard.
+        let one_star = mapping("@app/*", &["./src/*"]);
+        assert_eq!(
+            one_star.match_specifier("@app/util"),
+            Some("util".to_string())
+        );
+    }
+
+    #[test]
+    fn wildcard_target_substitutes_only_first_star() {
+        // tsc uses `subst.replace("*", matchedStar)`, which replaces only the
+        // first `*`. A target with a second `*` keeps it verbatim.
+        let m = mapping("@gen/*", &["./gen/*/*.js"]);
+        let star = m.match_specifier("@gen/foo").expect("wildcard matches");
+        assert_eq!(m.substitute_target(&m.targets[0], &star), "./gen/foo/*.js");
+    }
+
+    #[test]
+    fn wildcard_target_without_star_is_used_verbatim() {
+        let m = mapping("@fallback/*", &["./shim.d.ts"]);
+        let star = m
+            .match_specifier("@fallback/anything")
+            .expect("wildcard matches");
+        assert_eq!(m.substitute_target(&m.targets[0], &star), "./shim.d.ts");
+    }
+
+    #[test]
+    fn wildcard_target_with_empty_capture_substitutes_empty() {
+        // Specifier equal to prefix+suffix captures an empty `*`; tsc still
+        // substitutes (the empty string), unlike an exact key.
+        let m = mapping("@app/*", &["./src/*"]);
+        let star = m.match_specifier("@app/").expect("empty capture matches");
+        assert_eq!(star, "");
+        assert_eq!(m.substitute_target(&m.targets[0], &star), "./src/");
+    }
+
+    #[test]
+    fn exact_key_target_is_used_verbatim_keeping_literal_star() {
+        // For an exact, wildcard-free key tsc leaves `matchedStar` undefined and
+        // uses the target verbatim (`path = subst`), so a literal `*` in the
+        // target is preserved rather than stripped.
+        let m = mapping("foo", &["./bar/*"]);
+        let star = m.match_specifier("foo").expect("exact key matches");
+        assert_eq!(star, "");
+        assert_eq!(m.substitute_target(&m.targets[0], &star), "./bar/*");
     }
 }

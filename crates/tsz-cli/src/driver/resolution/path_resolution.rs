@@ -250,7 +250,12 @@ fn paths_mapping_candidates(
     let base = options.base_url.as_deref().unwrap_or(base_dir);
     let mut candidates = Vec::new();
     for target in &mapping.targets {
-        let substituted = substitute_path_target(target, &wildcard);
+        // Route through the shared `PathMapping::substitute_target` so the
+        // driver and the `tsz-core` resolver substitute wildcard targets
+        // identically (tsc replaces only the first `*`; an exact-key target is
+        // used verbatim). A divergent replace-all here would mint a different
+        // file identity than the resolver for any target with two `*`.
+        let substituted = mapping.substitute_target(target, &wildcard);
         let path = if Path::new(&substituted).is_absolute() {
             PathBuf::from(substituted)
         } else {
@@ -338,14 +343,6 @@ pub(crate) fn select_path_mapping(
     // through to a less-specific pattern when the chosen one's targets are
     // missing on disk.
     PathMapping::select_best(mappings, specifier)
-}
-
-pub(crate) fn substitute_path_target(target: &str, wildcard: &str) -> String {
-    if target.contains('*') {
-        target.replace('*', wildcard)
-    } else {
-        target.to_string()
-    }
 }
 
 pub(crate) fn expand_module_path_candidates(

@@ -2,7 +2,6 @@
 
 use super::{ModuleExtension, ModuleResolver, PackageType, ResolvedModule};
 use crate::config::PathMapping;
-use crate::resolution::helpers::apply_wildcard_substitution;
 use std::path::Path;
 
 pub(super) struct PathMappingAttempt {
@@ -52,7 +51,11 @@ impl ModuleResolver {
         // Only the chosen pattern's targets are probed; a miss does not fall
         // through to any other pattern.
         for target in &mapping.targets {
-            let substituted = apply_wildcard_substitution(target, &star_match, false);
+            // tsc's `tryLoadModuleUsingPaths` replaces only the first `*` of a
+            // wildcard target and uses an exact-key target verbatim; the shared
+            // `PathMapping::substitute_target` owns that rule so this resolver
+            // and the CLI driver cannot drift.
+            let substituted = mapping.substitute_target(target, &star_match);
             let candidate = base.join(&substituted);
 
             if let Some(resolved) = self.try_file_or_directory(&candidate, importer_package_type) {
