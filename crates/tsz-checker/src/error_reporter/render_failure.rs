@@ -24,6 +24,13 @@ mod render_failure_missing_property;
 mod render_failure_property_helpers;
 mod type_mismatch;
 
+/// Depth at which the shared property-type-mismatch renderer
+/// ([`CheckerState::render_property_type_mismatch`]) stops recursing into a
+/// nested reason. A contravariant callback chain whose object property leaf
+/// would render at or beyond this depth is left to the prior signature-only
+/// rendering rather than emitted with its final relation line truncated.
+const PROPERTY_MISMATCH_RENDER_DEPTH_CAP: u32 = 5;
+
 /// Parameters shared across all `render_*` dispatch helpers.
 pub(in crate::error_reporter) struct RenderContext {
     pub source: TypeId,
@@ -181,6 +188,64 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Emit a single `Types of parameters 'a' and 'b' are incompatible.` frame
+    /// for the parameter at `param_index` of the `source_fn`/`target_fn` pair at
+    /// elaboration `depth`. The argument order mirrors tsc's
+    /// `compareSignaturesRelated`, which reports the *source* signature's
+    /// parameter name first and the *target* signature's second.
+    fn push_types_of_parameters_frame(
+        &mut self,
+        diag: &mut Diagnostic,
+        source_fn: TypeId,
+        target_fn: TypeId,
+        param_index: usize,
+        depth: u32,
+    ) {
+        let source_name = self
+            .callable_param_name_at(source_fn, param_index)
+            .unwrap_or_else(|| format!("arg{param_index}"));
+        let target_name = self
+            .callable_param_name_at(target_fn, param_index)
+            .unwrap_or_else(|| format!("arg{param_index}"));
+        let frame = format_message(
+            diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+            &[&source_name, &target_name],
+        );
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: diag.file.clone(),
+            start: diag.start,
+            length: diag.length,
+            message_text: frame,
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+            depth: depth.min(u8::MAX as u32) as u8,
+        });
+    }
+
+    /// Emit a `Type 'S' is not assignable to type 'T'.` callback signature
+    /// relation line for the `source_fn`/`target_fn` pair at elaboration
+    /// `depth`. tsc re-prints this line for the current callback signature at
+    /// every second contravariance flip while drilling into nested callback
+    /// parameters.
+    fn push_callback_signature_relation_line(
+        &mut self,
+        diag: &mut Diagnostic,
+        source_fn: TypeId,
+        target_fn: TypeId,
+        depth: u32,
+    ) {
+        let message = self.element_mismatch_message(source_fn, target_fn);
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: diag.file.clone(),
+            start: diag.start,
+            length: diag.length,
+            message_text: message,
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            depth: depth.min(u8::MAX as u32) as u8,
+        });
+    }
+
     /// Append tsc's signature-mismatch elaboration beneath a function-to-function
     /// relation line: a `Types of parameters 'a' and 'b' are incompatible.` frame
     /// followed by the contravariant leaf relation for the offending parameter.
@@ -190,6 +255,19 @@ impl<'a> CheckerState<'a> {
     /// leaf rendered directly. Parameters are contravariant, so the leaf is
     /// `Type '<target param>' is not assignable to type '<source param>'.`; the
     /// solver's `inner_reason` already carries that orientation.
+    ///
+    /// When the offending parameter is itself a callback, the contravariant
+    /// relation between the two callbacks is again a signature comparison whose
+    /// failure is another `ParameterTypeMismatch`. tsc keeps descending — one
+    /// `Types of parameters` frame per callback nesting level, flipping the
+    /// source/target orientation at each flip — and re-prints the current
+    /// callback signature relation line before every second frame. This walks
+    /// the solver's nested `inner_reason` chain and reproduces that layout
+    /// exactly. The chain must bottom out in a non-callable parameter relation
+    /// whose leaf layout is reproduced exactly (scalar, missing-property, or
+    /// object property-type mismatch); for anything else (e.g. the callback
+    /// differs on its return type) nothing is appended so the previous
+    /// signature-line-only rendering is preserved.
     fn push_parameter_mismatch_elaboration(
         &mut self,
         diag: &mut Diagnostic,
@@ -199,6 +277,8 @@ impl<'a> CheckerState<'a> {
         target_param: TypeId,
         inner_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) {
+        use tsz_solver::SubtypeFailureReason;
+
         let (source, target, idx, depth) = (rctx.source, rctx.target, rctx.idx, rctx.depth);
         if self
             .callable_type_after_display_evaluation(source)
@@ -209,61 +289,172 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // When the offending parameter is itself a function (a callback), tsc
-        // elides intermediate signature lines between successive
-        // `Types of parameters` frames in a way that depends on the
-        // contravariance nesting depth. That elision is non-trivial to
-        // reproduce, so restrict the elaboration to the single-flip case where
-        // the parameter is a non-callable type — the contravariant leaf is then
-        // a plain relation that matches tsc directly. Callback parameters keep
-        // their previous (signature-line-only) rendering.
-        if self
-            .callable_type_after_display_evaluation(source_param)
-            .is_some()
-            || self
-                .callable_type_after_display_evaluation(target_param)
-                .is_some()
-        {
-            return;
+
+        // Phase 1: walk the contravariant chain, collecting one
+        // `(source_fn, target_fn, param_index)` frame per callback nesting level
+        // and the terminating scalar leaf. Validate the whole chain before
+        // emitting anything so a non-callback / non-parameter failure falls back
+        // to the previous (signature-line-only) rendering instead of leaving a
+        // dangling frame.
+        let mut frames: Vec<(TypeId, TypeId, usize)> = vec![(source, target, param_index)];
+        let mut src_param = source_param;
+        let mut tgt_param = target_param;
+        let mut inner = inner_reason;
+        // Leaf relation `tgt_param <: src_param` (parameters are contravariant).
+        let leaf_src;
+        let leaf_tgt;
+        let leaf_reason;
+        loop {
+            let src_callable = self
+                .callable_type_after_display_evaluation(src_param)
+                .is_some();
+            let tgt_callable = self
+                .callable_type_after_display_evaluation(tgt_param)
+                .is_some();
+            if !src_callable && !tgt_callable {
+                // The chain bottoms out in a non-callable parameter relation.
+                // Only emit when the leaf reason is one whose tsc layout is
+                // reproduced exactly here (a scalar/missing-property self-heading
+                // leaf, or an object property-type mismatch that takes an
+                // explicit header); otherwise preserve the prior no-op so an
+                // unverified leaf shape is never rendered almost-right.
+                if !Self::contravariant_param_leaf_supported(inner) {
+                    return;
+                }
+                leaf_src = tgt_param;
+                leaf_tgt = src_param;
+                leaf_reason = inner;
+                break;
+            }
+            if !(src_callable && tgt_callable) {
+                // Mixed callable/non-callable parameter: not a chain tsc renders
+                // with the nested-callback layout. Preserve prior behavior.
+                return;
+            }
+            // Descend into the next callback signature pair. The relation
+            // between the two callbacks is `tgt_param <: src_param`, so the next
+            // pair's source is `tgt_param` and its target is `src_param`; its
+            // failure must be the carried `ParameterTypeMismatch`.
+            let Some(SubtypeFailureReason::ParameterTypeMismatch {
+                param_index: next_index,
+                source_param: next_source_param,
+                target_param: next_target_param,
+                inner_reason: next_inner,
+            }) = inner
+            else {
+                return;
+            };
+            frames.push((tgt_param, src_param, *next_index));
+            src_param = *next_source_param;
+            tgt_param = *next_target_param;
+            inner = next_inner.as_deref();
+            // Function nesting is finite, but guard against pathological inputs.
+            if frames.len() > 16 {
+                return;
+            }
         }
-        let source_name = self
-            .callable_param_name_at(source, param_index)
-            .unwrap_or_else(|| format!("arg{param_index}"));
-        let target_name = self
-            .callable_param_name_at(target, param_index)
-            .unwrap_or_else(|| format!("arg{param_index}"));
-        let frame = format_message(
-            diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
-            &[&source_name, &target_name],
-        );
-        // At depth 0 the parent line is the primary diagnostic message (indent
-        // level 0), so its first elaboration sits at field 0. At depth > 0 the
-        // parent line is itself a related entry at field `depth`, so its
+
+        // Phase 2: emit. At depth 0 the parent line is the primary diagnostic
+        // (indent level 0), so its first elaboration sits at field 0. At depth
+        // > 0 the parent line is itself a related entry at field `depth`, so its
         // elaboration sits one level deeper.
         let frame_depth = if depth == 0 { 0 } else { depth + 1 };
-        let leaf_depth = frame_depth + 1;
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: diag.file.clone(),
-            start: diag.start,
-            length: diag.length,
-            message_text: frame,
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
-            depth: frame_depth.min(u8::MAX as u32) as u8,
-        });
-        // Parameters are contravariant, so the leaf compares the target
-        // parameter against the source parameter. `push_property_chain_leaf`
-        // renders the structured `inner_reason` when present (keeping
-        // intrinsic/literal display accurate) and otherwise emits the plain
-        // `Type 'S' is not assignable to type 'T'.` line.
-        self.push_property_chain_leaf(
-            diag,
-            inner_reason,
-            target_param,
-            source_param,
-            idx,
-            leaf_depth,
-        );
+
+        // An object property-type leaf drills through the shared property
+        // renderer, which caps its own recursion at depth 5. Compute the leaf's
+        // emission depth and bail (preserving the prior no-op) when that drill
+        // would be truncated, so a deep object leaf is never rendered with its
+        // final relation line dropped. Each frame advances one level, plus one
+        // extra level for every signature reprint (before frames k = 2, 4, …),
+        // i.e. `(frames - 1) / 2` reprints.
+        if Self::contravariant_param_leaf_needs_header(leaf_reason) {
+            let reprints = (frames.len().saturating_sub(1) / 2) as u32;
+            let leaf_depth = frame_depth + frames.len() as u32 + reprints;
+            // The leaf reason renders one level beneath the object header.
+            if leaf_depth + 1 >= PROPERTY_MISMATCH_RENDER_DEPTH_CAP {
+                return;
+            }
+        }
+
+        let mut next_depth = frame_depth;
+        for (k, &(source_fn, target_fn, frame_param_index)) in frames.iter().enumerate() {
+            // tsc re-prints the current callback signature relation line before
+            // every second frame (k = 2, 4, …); the outermost frame (k = 0) sits
+            // directly beneath the already-emitted parent signature line.
+            if k > 0 && k.is_multiple_of(2) {
+                self.push_callback_signature_relation_line(diag, source_fn, target_fn, next_depth);
+                next_depth += 1;
+            }
+            self.push_types_of_parameters_frame(
+                diag,
+                source_fn,
+                target_fn,
+                frame_param_index,
+                next_depth,
+            );
+            next_depth += 1;
+        }
+
+        // Parameters are contravariant, so the leaf compares the (innermost)
+        // target parameter against the source parameter.
+        if Self::contravariant_param_leaf_needs_header(leaf_reason) {
+            // A structural object property-type mismatch leads with an explicit
+            // `Type 'S' is not assignable to type 'T'.` object header before the
+            // `Types of property 'p' …` drill — exactly like a top-level object
+            // relation — so emit that header here and render the structured
+            // reason one level deeper.
+            self.push_callback_signature_relation_line(diag, leaf_src, leaf_tgt, next_depth);
+            if let Some(leaf) = leaf_reason {
+                let (s, t) = Self::nested_failure_display_types(leaf, leaf_src, leaf_tgt);
+                let leaf_diag = self.render_failure_reason(leaf, s, t, idx, next_depth + 1);
+                Self::push_nested_chain(diag, leaf_diag, next_depth + 1);
+            }
+        } else {
+            // `push_property_chain_leaf` renders the structured leaf reason when
+            // present (keeping intrinsic/literal display accurate) and otherwise
+            // emits the plain `Type 'S' is not assignable to type 'T'.` line.
+            // Scalar and missing-property leaves self-head through this path.
+            self.push_property_chain_leaf(diag, leaf_reason, leaf_src, leaf_tgt, idx, next_depth);
+        }
+    }
+
+    /// Whether the contravariant callback-parameter chain's terminating leaf
+    /// reason has a tsc layout reproduced exactly by
+    /// [`Self::push_parameter_mismatch_elaboration`]. Plain scalar/literal leaves
+    /// and the `MissingProperty`/`MissingProperties` summaries self-head through
+    /// [`Self::push_property_chain_leaf`]; an object `PropertyTypeMismatch` is
+    /// rendered with an explicit object header. Any other leaf shape is left to
+    /// the prior signature-line-only rendering.
+    const fn contravariant_param_leaf_supported(
+        leaf_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> bool {
+        use tsz_solver::SubtypeFailureReason;
+        match leaf_reason {
+            None => true,
+            Some(reason) => matches!(
+                reason,
+                SubtypeFailureReason::TypeMismatch { .. }
+                    | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                    | SubtypeFailureReason::LiteralTypeMismatch { .. }
+                    | SubtypeFailureReason::ErrorType { .. }
+                    | SubtypeFailureReason::MissingProperty { .. }
+                    | SubtypeFailureReason::MissingProperties { .. }
+                    | SubtypeFailureReason::PropertyTypeMismatch { .. }
+            ),
+        }
+    }
+
+    /// Whether the terminating leaf reason needs an explicit object
+    /// `Type 'S' is not assignable to type 'T'.` header emitted before its drill.
+    /// Only the object `PropertyTypeMismatch` leaf does; scalar and
+    /// missing-property leaves self-head.
+    const fn contravariant_param_leaf_needs_header(
+        leaf_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> bool {
+        matches!(
+            leaf_reason,
+            Some(tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. })
+        )
     }
 
     fn no_union_member_matches_switch_source_display(
@@ -474,7 +665,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         depth: u32,
     ) -> Diagnostic {
-        use crate::query_boundaries::common::SubtypeFailureReason;
+        use tsz_solver::SubtypeFailureReason;
 
         let source = self.recover_unknown_array_source_type_for_display(source, idx, depth);
         let (start, length) = self

@@ -508,7 +508,7 @@ impl<'a> CheckerState<'a> {
             Diagnostic::error(file_name, start, length, message, reason.diagnostic_code());
 
         if let Some(nested) = nested_reason
-            && depth < 5
+            && depth < super::PROPERTY_MISMATCH_RENDER_DEPTH_CAP
         {
             let (nested_source, nested_target) = Self::nested_failure_display_types(
                 nested,
@@ -1389,7 +1389,11 @@ impl<'a> CheckerState<'a> {
     /// can indent each chain level by 2 more spaces than its parent, matching
     /// `tsc`. The nested diagnostic's own related chain already carries absolute
     /// depths from its render, so it is appended unchanged.
-    fn push_nested_chain(diag: &mut Diagnostic, nested_diag: Diagnostic, child_depth: u32) {
+    pub(super) fn push_nested_chain(
+        diag: &mut Diagnostic,
+        nested_diag: Diagnostic,
+        child_depth: u32,
+    ) {
         diag.related_information.push(DiagnosticRelatedInformation {
             file: nested_diag.file,
             start: nested_diag.start,
@@ -1518,7 +1522,7 @@ impl<'a> CheckerState<'a> {
     /// element-type pair, disambiguating same-named types (e.g. `N.Token` vs
     /// `M.Token`) so the line is never the ambiguous
     /// `Type 'Token' is not assignable to type 'Token'.`, matching `tsc`.
-    fn element_mismatch_message(
+    pub(super) fn element_mismatch_message(
         &mut self,
         source_element: TypeId,
         target_element: TypeId,
