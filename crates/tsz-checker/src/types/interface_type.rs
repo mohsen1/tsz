@@ -1223,6 +1223,34 @@ impl<'a> CheckerState<'a> {
             {
                 factory.intersection2(derived, base_resolved)
             }
+            // A heritage base that resolves to a deferred nominal reference
+            // (`Lazy(DefId)`, or an `Application` whose base is `Lazy`) cannot be
+            // flattened at merge time. This happens when the base interface is
+            // reached while it is itself mid-resolution -- e.g. the DOM
+            // `Element`/`HTMLElement` -> `Node` diamond via `ChildNode`/`ParentNode`,
+            // where `Node` is still resolving when the derived interface is built.
+            // Dropping the base here loses every inherited member and freezes an
+            // incomplete structural shape (false `TS2339` on inherited methods and
+            // false `TS2740` for the derived assigned to its base -- #12299).
+            // Preserve it as an intersection instead, mirroring the array / mapped /
+            // generic-application arms above: the deferred constituent is resolved at
+            // access/relation time once the base completes, so the materialization
+            // order of the cycle no longer changes the result.
+            (_, InterfaceMergeKind::Other)
+                if (crate::query_boundaries::common::lazy_def_id(
+                    self.ctx.types,
+                    base_resolved,
+                )
+                .is_some()
+                    || crate::query_boundaries::common::get_application_lazy_def_id(
+                        self.ctx.types,
+                        base_resolved,
+                    )
+                    .is_some())
+                    && derived != TypeId::ANY =>
+            {
+                factory.intersection2(derived, base_resolved)
+            }
             _ => derived,
         }
     }

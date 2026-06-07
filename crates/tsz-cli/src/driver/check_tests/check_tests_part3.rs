@@ -1201,3 +1201,33 @@ interface Node {
             "expected no TS6504 when allowJs is enabled, got: {diagnostics:?}"
         );
     }
+
+    /// Regression for #12299: DOM `Element`/`HTMLElement` extend `Node` both
+    /// directly and through `ChildNode`/`ParentNode` (a diamond). When the lib
+    /// is checked as a program source file and the `Node` base is reached while
+    /// it is itself mid-resolution, the heritage merge previously dropped the
+    /// base entirely, producing false `TS2339` on inherited `Node` methods
+    /// (`appendChild`, `cloneNode`, ...) and false `TS2740` for
+    /// `Element`/`HTMLElement` assigned to `Node`.
+    #[test]
+    fn dom_element_inherits_node_members_through_diamond_heritage_12299() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+declare const h: HTMLElement;
+const add = h.appendChild;
+const clone = h.cloneNode;
+declare const e: Element;
+const n: Node = e;
+"#,
+        );
+        let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+        let ts2740: Vec<_> = diagnostics.iter().filter(|d| d.code == 2740).collect();
+        assert!(
+            ts2339.is_empty(),
+            "unexpected TS2339 (inherited Node members dropped): {diagnostics:?}"
+        );
+        assert!(
+            ts2740.is_empty(),
+            "unexpected TS2740 (Element not assignable to Node): {diagnostics:?}"
+        );
+    }

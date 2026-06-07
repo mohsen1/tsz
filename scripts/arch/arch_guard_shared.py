@@ -1273,7 +1273,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3174→3163 after missing-property display shape queries
         # moved through query_boundaries::diagnostics.
-        3163,
+        #
+        # Bumped 3163→3165 for the #12299 lib-interface heritage-cycle fix:
+        # `merge_interface_types_impl` preserves a deferred heritage base that is
+        # still mid-resolution (`Lazy(DefId)` / `Application(Lazy)`) as an
+        # intersection constituent instead of dropping it, guarded by two
+        # existing request-shaped helpers (`lazy_def_id`,
+        # `get_application_lazy_def_id`) already exposed on the common barrel.
+        # No new quarantine entry; removal condition remains #8225.
+        3165,
     ),
 ]
 
