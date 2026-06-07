@@ -1201,3 +1201,69 @@ interface Node {
             "expected no TS6504 when allowJs is enabled, got: {diagnostics:?}"
         );
     }
+
+    /// Regression for #12299: in program mode (the lib is checked as a source
+    /// file — the default es2015 lib set includes `lib.dom.d.ts`), a DOM
+    /// interface that extends `Node` both directly and through
+    /// `ChildNode`/`ParentNode` (the `Element`/`HTMLElement` diamond) was built
+    /// without any `Node` members when a heritage base was dropped while it was
+    /// itself mid-resolution. That produced false TS2339 on inherited methods
+    /// (`appendChild`, `cloneNode`, ...) and false TS2740 for
+    /// `Element`-is-not-assignable-to-`Node`.
+    ///
+    /// This drives the program-file interface-lowering path
+    /// (`compute_type_of_symbol` -> `merge_interface_heritage_types`), which the
+    /// `LibContext`-based `lib_heritage_cycle_dom_tests` harness cannot reach.
+    ///
+    /// IGNORED pending a correct fix (#12299). The incomplete `Element` body is
+    /// produced and persisted to `type_env` through several resolution paths
+    /// (`resolve_lib_type_by_name` -> `register_finalized_lib_body`,
+    /// `ensure_relation_input_ready` -> `resolve_and_insert_def_type`, cross-arena
+    /// delegation). A blunt "never shrink a lib-interface body" guard at the
+    /// `type_env` write chokepoints DOES make this pass, but it regresses ~25
+    /// conformance fixtures (declaration-emit, conditional-types, variance, …)
+    /// because it cannot tell a real incomplete-heritage drop from a legitimate
+    /// instantiation/contextual re-registration of the same lib interface. The
+    /// correct fix is the precise incomplete-heritage discipline (only refuse to
+    /// persist a body whose heritage base was itself mid-resolution) extended to
+    /// every persistence site — a dedicated campaign, not a single guard.
+    #[ignore = "pending correct #12299 program-file heritage fix; see PR discussion"]
+    #[test]
+    fn dom_element_inherits_node_members_in_program_mode_12299() {
+        // Vary the receiver binder name and element type so a fix keyed to a
+        // single identifier or resolution order would not satisfy this.
+        for (recv, ty) in [
+            ("el", "Element"),
+            ("widget", "HTMLElement"),
+            ("vec", "SVGElement"),
+        ] {
+            let src =
+                format!("declare const {recv}: {ty};\n{recv}.appendChild({recv});\n{recv}.cloneNode();\n");
+            let diagnostics = collect_es2015_default_lib_diagnostics(&src);
+            assert!(
+                !diagnostics.iter().any(|diag| diag.code == 2339),
+                "{ty}.appendChild/cloneNode must resolve through Node heritage in program mode: {diagnostics:?}"
+            );
+        }
+
+        // Element is assignable to Node (it extends Node directly and via
+        // ChildNode/ParentNode); the incomplete body previously dropped that.
+        let assignable = collect_es2015_default_lib_diagnostics(
+            "declare const e: Element;\nconst n: Node = e;\n",
+        );
+        assert!(
+            !assignable
+                .iter()
+                .any(|diag| diag.code == 2740 || diag.code == 2322),
+            "Element must be assignable to Node in program mode: {assignable:?}"
+        );
+
+        // Guard against over-correction: a genuinely missing member still errors.
+        let bogus = collect_es2015_default_lib_diagnostics(
+            "declare const el: Element;\nel.totallyBogusMember();\n",
+        );
+        assert!(
+            bogus.iter().any(|diag| diag.code == 2339),
+            "a genuinely missing member must still report TS2339: {bogus:?}"
+        );
+    }
