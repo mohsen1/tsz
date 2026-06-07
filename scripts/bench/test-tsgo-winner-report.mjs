@@ -209,7 +209,7 @@ withTempDir((dir) => {
   assert.equal(report.totals.green_tsgo_winners_with_attribution, 1);
   assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
-  assert.match(result.stdout, /2x target gaps with attribution commands: 1\/3/);
+  assert.match(result.stdout, /2x target gaps with attribution commands: 2\/3/);
   assert.deepEqual(report.two_x_target, {
     tsz_speedup_target: 2,
     eligible_green_rows: 4,
@@ -219,7 +219,7 @@ withTempDir((dir) => {
     project_rows_below_target: 2,
     rows_with_attribution: 1,
     missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
-    rows_with_attribution_command: 1,
+    rows_with_attribution_command: 2,
     missing_attribution_plan: [
       {
         name: "vite-vanilla-ts-app",
@@ -285,6 +285,8 @@ withTempDir((dir) => {
     owner: "Track 1/2 recursive type evaluation",
     operation: "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
     command: "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
+    attribution_command:
+      "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.ts-toolbelt-project.perf.json --noEmit -p .target-bench/external/ts-toolbelt/tsconfig.flat.json",
     issue: 8356,
     url: "https://github.com/tsz-org/tsz/issues/8356",
   });
@@ -850,6 +852,7 @@ withTempDir((dir) => {
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.two_x_target.rows_below_target, 1);
   assert.equal(report.two_x_target.rows_with_attribution, 1);
+  assert.equal(report.two_x_target.rows_with_attribution_command, 1);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, []);
   assert.deepEqual(report.target_gaps[0].attribution_status, {
     present: true,
@@ -928,7 +931,7 @@ withTempDir((dir) => {
   assert.equal(report.two_x_target.rows_below_target, 2);
   assert.equal(report.two_x_target.rows_with_attribution, 1);
   assert.deepEqual(report.two_x_target.missing_attribution_rows, ["vite-vanilla-ts-app"]);
-  assert.equal(report.two_x_target.rows_with_attribution_command, 1);
+  assert.equal(report.two_x_target.rows_with_attribution_command, 2);
   assert.deepEqual(report.two_x_target.missing_attribution_plan.map((row) => row.name), [
     "vite-vanilla-ts-app",
   ]);
