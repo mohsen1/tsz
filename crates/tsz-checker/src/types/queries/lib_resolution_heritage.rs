@@ -236,26 +236,13 @@ impl<'a> CheckerState<'a> {
             // (its `resolve_lib_type_by_name` is on the stack) must not be silently
             // dropped — that loses every inherited member and the gap gets cached
             // (e.g. `Element extends Node` resolved while `Node` is in-progress, the
-            // DOM diamond in #12299). Instead of dropping it, merge a deferred
-            // `Lazy(DefId)` reference to the base: `merge_interface_types` preserves
-            // it as an intersection constituent that is resolved at access / relation
-            // time once the base completes, so the result is correct regardless of
-            // the materialization order of the cycle and can be cached safely (the
-            // `Lazy` reference is self-healing). A genuinely-missing base (a typo
-            // `extends Foo`) still resolves to `None` with no in-progress marker and
-            // is correctly dropped. A base that resolved to an already-incomplete
-            // type taints this type too (kept as a fallback signal).
-            if base_type.is_none() && self.lib_name_resolution_in_progress(&base.name) {
-                if let Some(base_sym) = namespace_base_sym
-                    .or_else(|| self.resolve_lib_symbol_by_entity_name(&base.name))
-                {
-                    let def_id = self.ctx.get_lib_def_id(base_sym);
-                    base_type = Some(self.ctx.types.factory().lazy(def_id));
-                } else {
-                    incomplete = true;
-                }
-            } else if base_type.is_some() && self.lib_name_heritage_incomplete(&base.name) {
-                incomplete = true;
+            // DOM diamond in #12299). Distinguish that from a genuinely-missing base
+            // (a typo `extends Foo`), which is correctly dropped. Likewise, a base
+            // that resolved to an already-incomplete type taints this type too.
+            match base_type {
+                None if self.lib_name_resolution_in_progress(&base.name) => incomplete = true,
+                Some(_) if self.lib_name_heritage_incomplete(&base.name) => incomplete = true,
+                _ => {}
             }
 
             if let Some(mut base_type) = base_type {
