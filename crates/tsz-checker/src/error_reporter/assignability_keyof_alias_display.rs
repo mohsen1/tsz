@@ -246,19 +246,106 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(rest.len());
         let operand = rest[..end].trim();
+        // This textual fallback only validly reconstructs a *bare named* operand
+        // (`type X = keyof Foo`). A compound operand cannot be stitched together
+        // from source text: the scan above stops at the first `{`, so a
+        // parenthesized operand such as `keyof ({ a: 1 } & { b: 2 })` would
+        // otherwise leave a dangling `(` and emit the malformed `keyof (`.
+        //
+        // For such an alias `tsc` renders the *evaluated key set* (`"a" | "b"`),
+        // because the `keyof` of an anonymous composite carries no writable name.
+        // Eager `keyof` evaluation has already erased the operator from the alias
+        // body, but the source spelling here proves the alias is a `keyof`, so
+        // render the reduced literal key union directly.
         if operand.is_empty()
             || operand.contains('|')
             || operand.contains('&')
             || operand.contains('[')
             || operand.contains('{')
+            || operand.contains('(')
+            || operand.contains(')')
             || operand.contains("=>")
         {
-            return None;
+            return self.keyof_alias_reduced_keyset_display(name);
         }
         Some(format!(
             "keyof {}",
             self.format_annotation_like_type(operand)
         ))
+    }
+
+    /// Render the evaluated key set of a non-generic `keyof` type alias by its
+    /// members (`"a" | "b"`), matching how `tsc` displays the `keyof` of an
+    /// anonymous composite operand whose result has no writable `keyof Name`
+    /// form. Returns `None` unless the alias body reduces to a finite union (or
+    /// a single instance) of string/number literal keys.
+    fn keyof_alias_reduced_keyset_display(&mut self, name: &str) -> Option<String> {
+        let name_atom = self.ctx.types.intern_string(name);
+        let def_id = self
+            .ctx
+            .definition_store
+            .find_defs_by_name(name_atom)?
+            .into_iter()
+            .find(|&def_id| {
+                self.ctx.definition_store.get(def_id).is_some_and(|def| {
+                    def.kind == tsz_solver::def::DefKind::TypeAlias
+                        && def.type_params.is_empty()
+                        && def.name == name_atom
+                })
+            })?;
+        let body = self.ctx.definition_store.get(def_id)?.body?;
+        let evaluated = self.evaluate_type_for_assignability(body);
+        self.finite_literal_keyset_display(evaluated)
+    }
+
+    /// Format `ty` as a literal key union (`"a" | "b"`) when it is a finite union
+    /// (or a single instance) of string/number literals. Members are rendered
+    /// directly from their literal values rather than through the type formatter,
+    /// so an unrelated global `union -> keyof Name` display alias on a shared
+    /// literal cannot repaint a reduced key. Returns `None` for any other shape.
+    fn finite_literal_keyset_display(&mut self, ty: TypeId) -> Option<String> {
+        if let Some(value) = crate::query_boundaries::common::literal_value(self.ctx.types, ty) {
+            return self.literal_key_display(value);
+        }
+        let members: Vec<TypeId> =
+            crate::query_boundaries::common::union_members(self.ctx.types, ty)?
+                .iter()
+                .copied()
+                .collect();
+        if members.is_empty() {
+            return None;
+        }
+        let mut parts = Vec::with_capacity(members.len());
+        for member in members {
+            let value = crate::query_boundaries::common::literal_value(self.ctx.types, member)?;
+            parts.push(self.literal_key_display(value)?);
+        }
+        Some(parts.join(" | "))
+    }
+
+    /// Render a single literal key as `tsc` does in a key union: string keys are
+    /// quoted (`"a"`), number keys are bare (`0`). Non-key literals (`boolean`)
+    /// return `None`.
+    fn literal_key_display(&self, value: tsz_solver::LiteralValue) -> Option<String> {
+        match value {
+            tsz_solver::LiteralValue::String(atom) => {
+                Some(format!("\"{}\"", self.ctx.types.resolve_atom_ref(atom)))
+            }
+            tsz_solver::LiteralValue::Number(value) => {
+                let value = value.0;
+                if value == 0.0 {
+                    Some("0".to_string())
+                } else if value.is_finite() && value.fract() == 0.0 {
+                    Some(format!("{value:.0}"))
+                } else {
+                    Some(value.to_string())
+                }
+            }
+            tsz_solver::LiteralValue::BigInt(atom) => {
+                Some(format!("{}n", self.ctx.types.resolve_atom_ref(atom)))
+            }
+            tsz_solver::LiteralValue::Boolean(_) => None,
+        }
     }
 }
 
