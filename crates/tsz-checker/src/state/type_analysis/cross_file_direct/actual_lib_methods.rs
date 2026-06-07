@@ -272,7 +272,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn symbol_type_alias_declarations_are_proven_actual_lib_only(
+    fn symbol_type_alias_declarations_are_proven_builtin_lib_only(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -284,7 +284,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                     return !arenas.is_empty()
                         && arenas.iter().all(|arena| {
-                            is_direct_actual_lib_declaration_arena(arena.as_ref())
+                            is_builtin_lib_declaration_arena(arena.as_ref())
                                 && Self::lib_type_alias_declaration_name_matches(
                                     arena.as_ref(),
                                     decl_idx,
@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
                         });
                 }
 
-                is_direct_actual_lib_declaration_arena(delegate_arena)
+                is_builtin_lib_declaration_arena(delegate_arena)
                     && Self::lib_type_alias_declaration_name_matches(delegate_arena, decl_idx, name)
             })
     }
@@ -424,7 +424,7 @@ impl<'a> CheckerState<'a> {
             );
             return None;
         }
-        if !self.symbol_type_alias_declarations_are_proven_actual_lib_only(
+        if !self.symbol_type_alias_declarations_are_proven_builtin_lib_only(
             sym_id,
             symbol,
             name,
@@ -462,7 +462,7 @@ impl<'a> CheckerState<'a> {
                     .map(|arenas| arenas.iter().map(std::convert::AsRef::as_ref).collect())
                     .unwrap_or_else(|| vec![delegate_arena]);
                 for decl_arena in decl_arenas {
-                    if !is_direct_actual_lib_declaration_arena(decl_arena) {
+                    if !is_builtin_lib_declaration_arena(decl_arena) {
                         continue;
                     }
                     let Some(node) = decl_arena.get(decl_idx) else {
@@ -577,7 +577,10 @@ impl<'a> CheckerState<'a> {
         {
             return Some(result);
         }
-        if !is_direct_actual_lib_declaration_arena(delegate_arena) {
+        let is_type_alias = symbol.has_any_flags(symbol_flags::TYPE_ALIAS);
+        if !(is_direct_actual_lib_declaration_arena(delegate_arena)
+            || is_type_alias && is_builtin_lib_declaration_arena(delegate_arena))
+        {
             return None;
         }
         let intl_namespace_export =

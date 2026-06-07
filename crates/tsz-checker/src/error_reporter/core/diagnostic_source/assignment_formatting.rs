@@ -188,6 +188,16 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // A `keyof <operand>` source reduces to its key set in tsc diagnostics:
+        // the literal members are preserved against a literal-sensitive target
+        // (`"a" | "b"`, `2 | 1`) and the `keyof Name` spelling is kept for a named
+        // operand. tsz otherwise leaks an unreduced `keyof { … }`, a widened
+        // `string`, or the alias name depending on how the source was built;
+        // normalize all three before the generic widening fallbacks below.
+        if let Some(display) = self.keyof_source_assignment_display(source, target) {
+            return display;
+        }
+
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx)
             && let Some(display) =
                 self.array_literal_tuple_source_type_display(expr_idx, source, target)
