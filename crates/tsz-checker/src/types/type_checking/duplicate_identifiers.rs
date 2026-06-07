@@ -46,61 +46,19 @@ impl<'a> CheckerState<'a> {
             .and_then(|m| crate::context::lookup_is_external_module_in_map(m, &self.ctx.file_name))
             .unwrap_or_else(|| self.ctx.binder.is_external_module());
 
-        // When libs are loaded, scope tables contain ~2000+ merged lib symbols alongside
-        // user symbols. Processing all of them in the loops below is a 40-50ms bottleneck
-        // per file due to HashMap lookups for each symbol's declarations.
-        // Optimization: pre-build a set of user-code symbols from node_symbols, then
-        // intersect with non-class scope symbols to preserve the Class-scope exclusion.
-        let mut symbol_ids: FxHashSet<tsz_binder::SymbolId> = if has_libs {
-            let user_syms: FxHashSet<tsz_binder::SymbolId> =
-                self.ctx.binder.node_symbols.values().copied().collect();
-            let mut result = FxHashSet::default();
-            if !self.ctx.binder.scopes.is_empty() {
-                for scope in self.ctx.binder.scopes.iter() {
-                    if scope.kind == tsz_binder::ContainerKind::Class {
-                        continue;
-                    }
-                    for (_, &id) in scope.table.iter() {
-                        if user_syms.contains(&id) {
-                            result.insert(id);
-                        }
-                    }
-                }
-            } else {
-                for (_, &id) in self.ctx.binder.file_locals.iter() {
-                    if user_syms.contains(&id) {
-                        result.insert(id);
-                    }
-                }
-            }
-            result
-        } else {
-            // No libs: use scope tables or file_locals (all are user symbols)
-            let mut result = FxHashSet::default();
-            if !self.ctx.binder.scopes.is_empty() {
-                for scope in self.ctx.binder.scopes.iter() {
-                    if scope.kind == tsz_binder::ContainerKind::Class {
-                        continue;
-                    }
-                    for (_, &id) in scope.table.iter() {
-                        result.insert(id);
-                    }
-                }
-            } else {
-                for (_, &id) in self.ctx.binder.file_locals.iter() {
-                    result.insert(id);
-                }
-            }
-            result
-        };
+        // Collect the user-code symbols this file's pass must examine. When libs
+        // are loaded this skips the merged lib symbols that share the scope tables
+        // (see `collect_duplicate_check_symbol_ids`).
+        let mut symbol_ids = self.collect_duplicate_check_symbol_ids(has_libs);
 
         // Declarations inside `declare module {}` / `declare global {}` blocks are not
         // guaranteed to appear in top-level scope tables, but they still participate in
         // duplicate-name checks for the current file.
         self.extend_duplicate_symbol_ids_with_local_augmentation_decls(&mut symbol_ids);
         let mut cross_file_conflicts = Vec::new();
+        // One entry per distinct symbol name; bounded by the symbol set (#11617).
         let mut global_scope_conflict_cache: FxHashMap<String, DuplicateDeclList> =
-            FxHashMap::default();
+            FxHashMap::with_capacity_and_hasher(symbol_ids.len(), Default::default());
         let may_have_default_import_alias_conflicts = !is_external_module
             && self.ctx.all_arenas.is_some()
             && self.current_file_has_named_default_export_identifier();
@@ -725,8 +683,12 @@ impl<'a> CheckerState<'a> {
                             .collect();
 
                         type ScopeGroupEntry = (NodeIndex, u32, u32, bool);
+                        // At most one distinct scope per declaration (#11617).
                         let mut scope_groups: FxHashMap<NodeIndex, Vec<ScopeGroupEntry>> =
-                            FxHashMap::default();
+                            FxHashMap::with_capacity_and_hasher(
+                                decl_info.len(),
+                                Default::default(),
+                            );
                         for &(decl_idx, flags, space, exported, scope) in &decl_info {
                             scope_groups
                                 .entry(scope)
@@ -799,7 +761,7 @@ impl<'a> CheckerState<'a> {
             if interface_decls.len() > 1 {
                 use tsz_binder::SymbolId;
                 let mut interface_decls_by_scope: FxHashMap<SymbolId, Vec<NodeIndex>> =
-                    FxHashMap::default();
+                    FxHashMap::with_capacity_and_hasher(interface_decls.len(), Default::default());
                 for &decl_idx in &interface_decls {
                     let scope = self.get_enclosing_namespace_symbol(decl_idx);
                     interface_decls_by_scope
@@ -842,7 +804,11 @@ impl<'a> CheckerState<'a> {
                 .collect();
             if class_interface_decls.len() > 1 {
                 use tsz_binder::SymbolId;
-                let mut decls_by_scope: FxHashMap<SymbolId, Vec<NodeIndex>> = FxHashMap::default();
+                let mut decls_by_scope: FxHashMap<SymbolId, Vec<NodeIndex>> =
+                    FxHashMap::with_capacity_and_hasher(
+                        class_interface_decls.len(),
+                        Default::default(),
+                    );
                 for &decl_idx in &class_interface_decls {
                     let scope = self.get_enclosing_namespace_symbol(decl_idx);
                     decls_by_scope.entry(scope).or_default().push(decl_idx);
@@ -1533,8 +1499,14 @@ impl<'a> CheckerState<'a> {
                     .map(|(idx, _, _, _, _)| (*idx, self.get_enclosing_block_scope(*idx)))
                     .collect();
 
-                let mut scope_groups: std::collections::HashMap<NodeIndex, Vec<NodeIndex>> =
-                    std::collections::HashMap::new();
+                // Group duplicate function implementations by block scope via the
+                // fast `FxHashMap` (not the default SipHash map), pre-sized to the
+                // candidate count (#11617).
+                let mut scope_groups: FxHashMap<NodeIndex, Vec<NodeIndex>> =
+                    FxHashMap::with_capacity_and_hasher(
+                        func_impls_with_scope.len(),
+                        Default::default(),
+                    );
                 for &(idx, scope) in &func_impls_with_scope {
                     scope_groups.entry(scope).or_default().push(idx);
                 }
