@@ -1974,7 +1974,7 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        derived_type = self.merge_interface_types(derived_type, base_type);
+                        derived_type = self.merge_interface_types_heritage(derived_type, base_type);
                     }
                 }
             }
