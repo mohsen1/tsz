@@ -84,6 +84,10 @@ pub(crate) fn evaluated_alias_application_has_concrete_display(
         && !super::common::contains_type_parameters(db, evaluated)
 }
 
+pub(crate) fn is_object_or_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_object_or_mapped_type(db, type_id)
+}
+
 fn alias_body_reduces_through_conditional_or_indexed(
     db: &dyn TypeDatabase,
     definitions: &DefinitionStore,

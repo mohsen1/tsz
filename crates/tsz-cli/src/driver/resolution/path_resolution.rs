@@ -331,17 +331,13 @@ pub(crate) fn select_path_mapping(
     mappings: &[PathMapping],
     specifier: &str,
 ) -> Option<(usize, String)> {
-    // `build_path_mappings` sorts by TypeScript precedence:
-    // longest prefix, then longest pattern, then lexical pattern. The first
-    // match is therefore the best match.
-    for (idx, mapping) in mappings.iter().enumerate() {
-        let Some(wildcard) = mapping.match_specifier(specifier) else {
-            continue;
-        };
-        return Some((idx, wildcard));
-    }
-
-    None
+    // Route through the shared `PathMapping::select_best` so the driver and the
+    // `tsz-core` checker resolver pick the same single tsc-best pattern
+    // (`matchPatternOrExact` -> `findBestPatternMatch`): an exact wildcard-free
+    // key wins outright, otherwise the longest-prefix wildcard. Neither falls
+    // through to a less-specific pattern when the chosen one's targets are
+    // missing on disk.
+    PathMapping::select_best(mappings, specifier)
 }
 
 pub(crate) fn substitute_path_target(target: &str, wildcard: &str) -> String {

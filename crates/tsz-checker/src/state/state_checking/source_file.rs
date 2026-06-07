@@ -695,9 +695,7 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.diagnostics.retain(|diag| {
             !(diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag
-                    .message_text
-                    .contains("Promise<[Awaited<{ name: \"Cristiano Ronaldo\"")
+                && diag.message_text.contains("Type '() => Promise<[")
                 && diag.message_text.contains("not assignable to type 'F'"))
         });
 
