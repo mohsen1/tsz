@@ -472,11 +472,6 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if let Some(recovered) = self.recovered_return_object_literal_text(node) {
-            self.write(&recovered);
-            return;
-        }
-
         let emitted_properties: Vec<NodeIndex> = obj
             .elements
             .nodes
@@ -708,7 +703,11 @@ impl<'a> Printer<'a> {
             }
         }
 
-        let should_emit_single_line = source_single_line && !has_multiline_object_member;
+        let has_shorthand_before_generator = emitted_properties.windows(2).any(|pair| {
+            self.object_literal_needs_newline_after_shorthand_before_generator(pair[0], pair[1])
+        });
+        let should_emit_single_line =
+            source_single_line && !has_multiline_object_member && !has_shorthand_before_generator;
         if should_emit_single_line {
             self.write("{ ");
             let mut i = 0;
@@ -790,12 +789,16 @@ impl<'a> Printer<'a> {
                 let recovery_tail = if i + 1 < emitted_properties.len() {
                     self.object_literal_shorthand_continuation_tail(prop, emitted_properties[i + 1])
                 } else {
-                    None
+                    self.object_literal_last_shorthand_continuation_tail(prop, node)
                 };
                 let unit_end_index = if let Some(tail) = recovery_tail {
                     self.write(", ");
                     self.write(&tail);
-                    i + 1
+                    if i + 1 < emitted_properties.len() {
+                        i + 1
+                    } else {
+                        i
+                    }
                 } else {
                     i
                 };
@@ -864,10 +867,15 @@ impl<'a> Printer<'a> {
                         }
                     });
                     let same_line = self.are_on_same_line_in_source(unit_end_prop, next_prop);
+                    let needs_token_break = self
+                        .object_literal_needs_newline_after_shorthand_before_generator(
+                            unit_end_prop,
+                            next_prop,
+                        );
                     if has_same_line_comment {
                         // Same-line trailing comment after comma: space before comment
                         self.write(" ");
-                    } else if !same_line {
+                    } else if !same_line || needs_token_break {
                         // Properties are on different lines and any comment is on
                         // a subsequent line — write a newline first so the comment
                         // appears on its own line (matching tsc).
@@ -876,7 +884,7 @@ impl<'a> Printer<'a> {
                     let wrote_newline = self.emit_unemitted_comments_between(token_end, next_pos);
                     if wrote_newline {
                         // Comment emission already wrote the trailing newline
-                    } else if same_line {
+                    } else if same_line && !needs_token_break {
                         // Keep on same line
                         self.write(" ");
                     } else if !has_same_line_comment {
@@ -1181,7 +1189,7 @@ impl<'a> Printer<'a> {
         }
         if is_computed {
             self.emit(prop.name);
-        } else {
+        } else if !self.emit_recovered_root_js_object_private_property_name(node, prop) {
             self.emit_property_key_name(prop.name);
         }
         self.write(": ");
@@ -1209,6 +1217,63 @@ impl<'a> Printer<'a> {
             return;
         }
         self.emit_expression(prop.initializer);
+    }
+
+    fn emit_recovered_root_js_object_private_property_name(
+        &mut self,
+        node: &Node,
+        prop: &tsz_parser::parser::node::PropertyAssignmentData,
+    ) -> bool {
+        if prop.name.is_some() || !self.should_emit_recovered_root_js_declaration_modifiers() {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(init_node) = self.arena.get(prop.initializer) else {
+            return false;
+        };
+        let Some(header) =
+            self.recovered_root_js_object_property_header_before_initializer(text, node, init_node)
+        else {
+            return false;
+        };
+        let Some((name, _)) = header.split_once(':') else {
+            return false;
+        };
+        let name = name.trim();
+        if !name.starts_with('#') {
+            return false;
+        }
+        self.write(name);
+        true
+    }
+
+    fn recovered_root_js_object_property_header_before_initializer<'b>(
+        &self,
+        text: &'b str,
+        node: &Node,
+        init_node: &Node,
+    ) -> Option<&'b str> {
+        if init_node.pos > node.pos
+            && let Ok(header) =
+                crate::safe_slice::slice(text, node.pos as usize, init_node.pos as usize)
+            && header
+                .split_once(':')
+                .is_some_and(|(name, _)| name.trim().starts_with('#'))
+        {
+            return Some(header);
+        }
+
+        let init_pos = std::cmp::min(init_node.pos as usize, text.len());
+        let start = text[..init_pos]
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| {
+                matches!(ch, '\n' | '\r' | ',' | '{').then_some(idx + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        crate::safe_slice::slice(text, start, init_pos).ok()
     }
 
     pub(in crate::emitter) fn emit_shorthand_property(&mut self, node: &Node) {
@@ -1486,30 +1551,6 @@ impl<'a> Printer<'a> {
     fn node_text_contains_newline(&self, start: usize, end: usize) -> bool {
         self.source_text
             .is_some_and(|text| start < end && end <= text.len() && text[start..end].contains('\n'))
-    }
-
-    fn recovered_return_object_literal_text(&self, node: &Node) -> Option<String> {
-        let text = self.source_text?;
-        let open = self.find_block_opening_brace_pos(node)? as usize;
-        let close_end = self.find_block_closing_brace_end(node) as usize;
-        if close_end <= open + 1 || close_end > text.len() {
-            return None;
-        }
-
-        let inner = text[open + 1..close_end - 1].trim();
-        if inner.contains(':') {
-            return None;
-        }
-        let rest = inner.strip_prefix("return")?;
-        if !rest.starts_with(char::is_whitespace) {
-            return None;
-        }
-        let value = rest.trim().trim_end_matches(';').trim();
-        if value.is_empty() {
-            return None;
-        }
-
-        Some(format!("{{ return: {value} }}"))
     }
 
     /// Emit object literal with spread elements as `Object.assign()` for pre-ES2018 targets.

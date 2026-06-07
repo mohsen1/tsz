@@ -70,6 +70,21 @@ fn parse_and_emit_nodenext_cjs_es2015(source: &str, file_name: &str) -> String {
 }
 
 #[test]
+fn recovered_catch_dangling_question_does_not_emit_extra_semicolon() {
+    let source = "for (var x in { x: 0 }) {\n    !\n    try { throw null; }\n    catch (Exception) ?\n}\nfinally { try { } catch (Exception) { } }\n";
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("catch (Exception) { }\n}"),
+        "Recovered catch should close the for body without an extra semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("catch (Exception) { }\n    ;"),
+        "Dangling `?` after a missing catch block must not emit as a separate semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_top_level_accessor_modifier_comes_from_parser_fact() {
     let output = parse_and_emit_strict_target(
         "accessor /* recovered */ function F() {}\n",
@@ -1447,6 +1462,22 @@ fn recovered_typeof_member_type_tail_emits_as_statement() {
     assert!(
         output.contains("typeof (this.foo);"),
         "Recovered `.typeof(...)` type tail should emit as a runtime typeof statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn recovered_typeof_member_tail_emits_from_parser_recorded_span() {
+    let source = r#"class C {
+    foo() {
+        const x: "".typeof(/* keep */ this.foo);
+    }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("typeof (/* keep */ this.foo);"),
+        "Recovered `.typeof(...)` should reproduce the parser-recorded argument span.\nOutput:\n{output}"
     );
 }
 

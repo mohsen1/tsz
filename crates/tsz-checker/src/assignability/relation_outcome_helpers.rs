@@ -19,6 +19,16 @@ impl<'a> CheckerState<'a> {
                 property_classification: None,
             };
         }
+        if self.empty_object_deferred_keyof_index_access_accepts(source, target) {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
         if let Some(outcome) = self.variance_accepted_relation_outcome(source, target) {
             return outcome;
         }
@@ -648,6 +658,32 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    pub(crate) fn broad_mapped_index_signature_display_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::broad_mapped_index_signature_display(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    pub(crate) fn mapped_object_literal_excess_value_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::mapped_object_literal_excess_value(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing polymorphic `this` receiver relation for raw
     /// checker types, preserving the canonical receiver request shape.
     pub(crate) fn polymorphic_this_receiver_relation_outcome(
@@ -1252,6 +1288,21 @@ impl<'a> CheckerState<'a> {
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::function_type_compatibility(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a namespace-module property mismatch relation for raw checker
+    /// types, preserving the canonical downgrade request shape.
+    pub(crate) fn namespace_property_mismatch_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::namespace_property_mismatch(
                 source, target,
             );
         self.execute_relation_request(&request)

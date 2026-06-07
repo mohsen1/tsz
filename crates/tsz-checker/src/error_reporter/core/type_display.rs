@@ -1,7 +1,11 @@
 //! Core type display and formatting utilities for error reporting.
 
+mod annotation_format;
+mod recursion_guard;
+
 use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
+pub(in crate::error_reporter::core) use recursion_guard::DisplayRecursionGuard;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -310,23 +314,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> TypeId {
-        let Some(app) = query::type_application(self.ctx.types, ty) else {
+        // Bound the structural / lazy-resolution recursion so deeply
+        // self-expanding generic types cannot overflow the stack while a
+        // diagnostic type is normalized for display (issue #12455). The
+        // downstream formatter truncates nested printing well below this depth,
+        // so leaving the type unchanged at the cap never alters rendered output.
+        let Some(_display_guard) = DisplayRecursionGuard::enter() else {
             return ty;
         };
-        let args: Vec<_> = app
-            .args
-            .iter()
-            .map(|&arg| self.normalize_property_receiver_application_display_arg(arg))
-            .collect();
-
-        if args == app.args {
-            ty
-        } else {
-            self.ctx.types.factory().application(app.base, args)
-        }
-    }
-
-    fn normalize_property_receiver_application_display_alias(&mut self, ty: TypeId) -> TypeId {
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
@@ -344,6 +339,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_property_receiver_application_display_arg(&mut self, ty: TypeId) -> TypeId {
+        let Some(_display_guard) = DisplayRecursionGuard::enter() else {
+            return ty;
+        };
         // Only resolve `Lazy(DefId)` references via the type environment.
         // Calling `evaluate_type_with_env` on richer shapes (e.g. `keyof T`,
         // `T[K]`, conditional types) eagerly expands them to their evaluated
@@ -457,7 +455,7 @@ impl<'a> CheckerState<'a> {
             let new_ty = self.ctx.types.factory().object_with_index(normalized_shape);
             if let Some(alias_origin) = self.ctx.types.get_display_alias(ty) {
                 let alias_origin =
-                    self.normalize_property_receiver_application_display_alias(alias_origin);
+                    self.normalize_property_receiver_application_display_type(alias_origin);
                 if query::type_application(self.ctx.types, alias_origin).is_some() {
                     self.ctx
                         .types
@@ -472,37 +470,16 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn terminal_assignment_source_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
-        let mut current = expr_idx;
-        let mut guard = 0;
-
-        loop {
-            guard += 1;
-            if guard > 256 {
-                return current;
-            }
-
-            let expr = self.ctx.arena.skip_parenthesized(current);
-            let Some(node) = self.ctx.arena.get(expr) else {
-                return current;
-            };
-            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                return expr;
-            }
-            let Some(bin) = self.ctx.arena.get_binary_expr(node) else {
-                return expr;
-            };
-            if !self.is_assignment_operator(bin.operator_token) {
-                return expr;
-            }
-            current = bin.right;
-        }
-    }
-
     pub(in crate::error_reporter::core) fn normalize_excess_display_type(
         &self,
         ty: TypeId,
     ) -> TypeId {
+        // Bound the recursion so deeply self-expanding generic types cannot
+        // overflow the stack while an excess-property diagnostic type is
+        // normalized for display (issue #12455).
+        let Some(_display_guard) = DisplayRecursionGuard::enter() else {
+            return ty;
+        };
         let ty = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
         if let Some(app) = query::type_application(self.ctx.types, ty) {
             let args: Vec<_> = app
@@ -1197,6 +1174,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn materialize_finite_mapped_type_for_display(&mut self, ty: TypeId) -> Option<TypeId> {
+        // Bound the recursion so deeply self-expanding generic types cannot
+        // overflow the stack while materializing a finite mapped type for
+        // display (issue #12455).
+        let _display_guard = DisplayRecursionGuard::enter()?;
         if let Some((mapped_id, mapped)) = query::mapped_type(self.ctx.types, ty) {
             let names =
                 crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
@@ -1411,157 +1392,6 @@ impl<'a> CheckerState<'a> {
         formatted
     }
 
-    /// Convert `Array<T>` to `T[]` and `ReadonlyArray<T>` to `readonly T[]`
-    /// in annotation text to match tsc's diagnostic display.
-    ///
-    /// Do not normalize when the generic array appears directly in a type
-    /// parameter `extends` clause; tsc preserves `Array<T>` there.
-    pub(crate) fn normalize_array_generic_to_shorthand(text: &str) -> String {
-        if !text.contains("Array<") {
-            return text.to_string();
-        }
-        let is_extends_constraint_position = |s: &str, start: usize| -> bool {
-            let prefix_start = start.saturating_sub(32);
-            let prefix = &s[prefix_start..start];
-            prefix.trim_end().ends_with("extends")
-        };
-        let mut out = String::with_capacity(text.len());
-        let mut i = 0usize;
-
-        while i < text.len() {
-            let slice = &text[i..];
-
-            // Process ReadonlyArray<T> first to avoid matching inner Array<T>.
-            if slice.starts_with("ReadonlyArray<")
-                && (i == 0 || !text.as_bytes()[i - 1].is_ascii_alphanumeric())
-                && let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 14)
-            {
-                let end = i + 14 + inner.len() + 1; // "ReadonlyArray<" + inner + ">"
-                if is_extends_constraint_position(text, i) {
-                    out.push_str(&text[i..end]);
-                } else {
-                    let needs_parens = inner.contains("=>") || inner.contains(" | ");
-                    if needs_parens {
-                        out.push_str(&format!("readonly ({inner})[]"));
-                    } else {
-                        out.push_str(&format!("readonly {inner}[]"));
-                    }
-                }
-                i = end;
-                continue;
-            }
-
-            if slice.starts_with("Array<")
-                && (i == 0 || !text.as_bytes()[i - 1].is_ascii_alphanumeric())
-                && let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 6)
-            {
-                let end = i + 6 + inner.len() + 1; // "Array<" + inner + ">"
-                if is_extends_constraint_position(text, i) {
-                    out.push_str(&text[i..end]);
-                } else {
-                    let needs_parens = inner.contains("=>") || inner.contains(" | ");
-                    if needs_parens {
-                        out.push_str(&format!("({inner})[]"));
-                    } else {
-                        out.push_str(&format!("{inner}[]"));
-                    }
-                }
-                i = end;
-                continue;
-            }
-
-            if let Some(ch) = slice.chars().next() {
-                out.push(ch);
-                i += ch.len_utf8();
-            } else {
-                break;
-            }
-        }
-
-        out
-    }
-
-    /// Extract content between balanced angle brackets starting at `pos`.
-    /// `pos` should point to the character right after the opening `<`.
-    /// Returns the inner content (without brackets) if balanced.
-    pub(crate) fn extract_balanced_angle_bracket_content(text: &str, pos: usize) -> Option<String> {
-        let bytes = text.as_bytes();
-        let mut depth = 1;
-        let mut i = pos;
-        while i < bytes.len() && depth > 0 {
-            match bytes[i] {
-                b'<' => depth += 1,
-                b'>' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(text[pos..i].to_string());
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        None
-    }
-
-    /// Normalize inline object type braces in annotation text to match TSC's
-    /// formatting: `{prop: type}` → `{ prop: type; }`.
-    fn normalize_inline_object_braces(text: &str) -> String {
-        let mut result = String::with_capacity(text.len() + 8);
-        let chars: Vec<char> = text.chars().collect();
-        let len = chars.len();
-        let mut i = 0;
-        while i < len {
-            if chars[i] == '{' {
-                // Find the matching closing brace
-                let mut depth = 1;
-                let mut j = i + 1;
-                while j < len && depth > 0 {
-                    if chars[j] == '{' {
-                        depth += 1;
-                    } else if chars[j] == '}' {
-                        depth -= 1;
-                    }
-                    j += 1;
-                }
-                if depth > 0 {
-                    result.extend(chars[i..].iter());
-                    break;
-                }
-                // j now points past the closing '}'
-                let inner_start = i + 1;
-                let inner_end = j - 1;
-                let inner: String = chars[inner_start..inner_end].iter().collect();
-                let trimmed = inner.trim();
-
-                if trimmed.is_empty() {
-                    result.push_str("{}");
-                } else {
-                    let normalized_inner =
-                        super::annotation_text::normalize_inline_object_member_separators(trimmed);
-                    // Ensure `{ ... }` spacing
-                    let needs_space_start =
-                        !trimmed.is_empty() && (i + 1 >= len || chars[i + 1] != ' ');
-                    let needs_semicolon = !normalized_inner.ends_with(';')
-                        && !normalized_inner.ends_with("};")
-                        && normalized_inner.contains(':');
-                    result.push_str("{ ");
-                    result.push_str(&normalized_inner);
-                    if needs_semicolon {
-                        result.push(';');
-                    }
-                    let _ = needs_space_start;
-                    result.push_str(" }");
-                }
-                i = j;
-            } else {
-                result.push(chars[i]);
-                i += 1;
-            }
-        }
-        result
-    }
-
     pub(in crate::error_reporter) fn should_use_evaluated_assignability_display(
         &self,
         ty: TypeId,
@@ -1720,6 +1550,34 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::type_contains_string_literal(self.ctx.types, type_id)
     }
 
+    /// True when `type_id` is — or, recursively, has a union member that is — a
+    /// unit literal type whose widened primitive base equals `primitive_base`
+    /// (one of `string` / `number` / `boolean` / `bigint`).
+    ///
+    /// Generalizes the string-literal-only acceptance test used when deciding
+    /// whether to preserve a fresh source literal in an assignment mismatch
+    /// display. It mirrors the per-kind constituent check in tsc's
+    /// `isLiteralOfContextualType`: the source literal is kept only when the
+    /// contextual target carries a literal of the matching primitive base, so a
+    /// numeric source against a string-literal target still widens.
+    ///
+    /// When `primitive_base` is not itself a primitive base (e.g. the source was
+    /// not a literal) no literal member can match and this returns `false`,
+    /// preserving the prior widening behavior for non-literal sources.
+    pub(in crate::error_reporter) fn type_contains_literal_of_primitive_base(
+        &self,
+        type_id: TypeId,
+        primitive_base: TypeId,
+    ) -> bool {
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
+            return members.iter().any(|&member| {
+                self.type_contains_literal_of_primitive_base(member, primitive_base)
+            });
+        }
+        let widened = query::widen_literal_to_primitive(self.ctx.types, type_id);
+        widened != type_id && widened == primitive_base
+    }
+
     pub(in crate::error_reporter) fn literal_expression_display(
         &self,
         expr_idx: NodeIndex,
@@ -1750,7 +1608,15 @@ impl<'a> CheckerState<'a> {
                     .replace('\t', "\\t");
                 Some(format!("\"{escaped}\""))
             }
-            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+            // Numeric and bigint literals render from their scanned token text
+            // verbatim. The bigint token value carries the trailing `n` (e.g.
+            // `1n`), matching tsc; without the bigint case a fresh object-literal
+            // `bigint` property (interned in widened form) could not have its
+            // literal text resurrected and displayed as `bigint` where tsc shows
+            // `1n`.
+            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16 =>
+            {
                 let lit = self.ctx.arena.get_literal(node)?;
                 Some(lit.text.clone())
             }
@@ -1782,167 +1648,5 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
-    }
-
-    pub(in crate::error_reporter) fn assignment_source_expression(
-        &self,
-        anchor_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let mut current = anchor_idx;
-        let mut guard = 0;
-
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-
-            let node = self.ctx.arena.get(current)?;
-            match node.kind {
-                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                    let bin = self.ctx.arena.get_binary_expr(node)?;
-                    if self.is_assignment_operator(bin.operator_token) {
-                        return Some(self.terminal_assignment_source_expression(bin.right));
-                    }
-                }
-                k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
-                    let stmt = self.ctx.arena.get_expression_statement(node)?;
-                    let expr = self.ctx.arena.get(stmt.expression)?;
-                    let bin = self.ctx.arena.get_binary_expr(expr)?;
-                    return self
-                        .is_assignment_operator(bin.operator_token)
-                        .then_some(self.terminal_assignment_source_expression(bin.right));
-                }
-                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                    let decl = self.ctx.arena.get_variable_declaration(node)?;
-                    return decl
-                        .initializer
-                        .is_some()
-                        .then_some(self.terminal_assignment_source_expression(decl.initializer));
-                }
-                k if k == syntax_kind_ext::BINDING_ELEMENT => {
-                    let elem = self.ctx.arena.get_binding_element(node)?;
-                    if elem.initializer.is_some() {
-                        return Some(self.terminal_assignment_source_expression(elem.initializer));
-                    }
-                    // Fall through to walk further up if the binding element has
-                    // no own default — the parameter / variable initializer is
-                    // the relevant source.
-                }
-                k if k == syntax_kind_ext::PARAMETER => {
-                    let param = self.ctx.arena.get_parameter(node)?;
-                    return param
-                        .initializer
-                        .is_some()
-                        .then_some(self.terminal_assignment_source_expression(param.initializer));
-                }
-                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                    let prop = self.ctx.arena.get_property_assignment(node)?;
-                    return prop.initializer.is_some().then_some(prop.initializer);
-                }
-                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                    let prop = self.ctx.arena.get_shorthand_property(node)?;
-                    return prop.name.is_some().then_some(prop.name);
-                }
-                k if k == syntax_kind_ext::RETURN_STATEMENT => {
-                    let ret = self.ctx.arena.get_return_statement(node)?;
-                    return ret.expression.is_some().then_some(ret.expression);
-                }
-                _ => {}
-            }
-
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
-        }
-
-        None
-    }
-
-    pub(in crate::error_reporter) fn assignment_target_expression(
-        &self,
-        anchor_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let mut current = anchor_idx;
-        let mut guard = 0;
-
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-
-            let node = self.ctx.arena.get(current)?;
-            match node.kind {
-                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                    let bin = self.ctx.arena.get_binary_expr(node)?;
-                    if self.is_assignment_operator(bin.operator_token) {
-                        return Some(bin.left);
-                    }
-                }
-                k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
-                    let stmt = self.ctx.arena.get_expression_statement(node)?;
-                    let expr = self.ctx.arena.get(stmt.expression)?;
-                    let bin = self.ctx.arena.get_binary_expr(expr)?;
-                    return self
-                        .is_assignment_operator(bin.operator_token)
-                        .then_some(bin.left);
-                }
-                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                    let decl = self.ctx.arena.get_variable_declaration(node)?;
-                    return decl.name.is_some().then_some(decl.name);
-                }
-                k if k == syntax_kind_ext::PARAMETER => {
-                    let param = self.ctx.arena.get_parameter(node)?;
-                    return param.name.is_some().then_some(param.name);
-                }
-                _ => {}
-            }
-
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
-        }
-
-        None
-    }
-
-    pub(crate) fn assignment_source_is_return_expression(&self, anchor_idx: NodeIndex) -> bool {
-        let mut current = anchor_idx;
-        let mut guard = 0;
-
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-            let Some(node) = self.ctx.arena.get(current) else {
-                break;
-            };
-            if node.kind == syntax_kind_ext::RETURN_STATEMENT {
-                return true;
-            }
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            if let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                && parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                && let Some(func) = self.ctx.arena.get_function(parent_node)
-                && func.body == current
-                && node.kind != syntax_kind_ext::BLOCK
-            {
-                return true;
-            }
-            current = ext.parent;
-        }
-
-        false
     }
 }

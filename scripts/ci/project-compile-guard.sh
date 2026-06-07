@@ -78,11 +78,10 @@ if [[ ! -x "$TSZ_BIN" ]]; then
   exit 1
 fi
 
-# Stable sha256 hash of a file (Linux sha256sum / macOS shasum).
-sha256_of_file() {
-  sha256sum "$1" 2>/dev/null | awk '{print $1}' \
-    || shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' || true
-}
+# Result-cache fingerprint helpers (sha256_of_file, compute_compile_fingerprint,
+# hash_source_tree). Sourced so the no-op fast-path key has one tested home.
+# shellcheck source=scripts/ci/lib/project-compile-fingerprint.sh
+source "$ROOT_DIR/scripts/ci/lib/project-compile-fingerprint.sh"
 
 # Compute tsz binary hash once at startup for all per-project fingerprints.
 _TSZ_BINARY_HASH="$(sha256_of_file "$TSZ_BIN")"
@@ -498,24 +497,6 @@ write_compile_cache() {
     && mv "${_cf}.tmp" "$_cf" 2>/dev/null || true
 }
 
-# Fingerprint for a check_project invocation.
-# Key: tsz binary hash (computed once at startup) + tsconfig content + fixture git HEAD.
-# Returns empty on failure — callers treat empty as "caching unavailable".
-compute_compile_fingerprint() {
-  local name="$1" tsconfig="$2"
-  # The key is composed of fixed-length hashes — no need to hash it again.
-  # Return empty if critical components are missing so callers disable caching.
-  [[ -z "$_TSZ_BINARY_HASH" ]] && return
-  local tsconfig_hash=""
-  [[ -f "$tsconfig" ]] && tsconfig_hash="$(sha256_of_file "$tsconfig")"
-  [[ -f "$tsconfig" && -z "$tsconfig_hash" ]] && return
-  # git -C already performs the upward .git search, handles worktrees (.git files),
-  # and returns empty (non-zero exit suppressed) when outside any repo.
-  local git_ref=""
-  git_ref="$(git -C "$(dirname "$tsconfig")" rev-parse HEAD 2>/dev/null || true)"
-  printf '%s' "${name}|${_TSZ_BINARY_HASH}|${tsconfig_hash}|${git_ref}"
-}
-
 check_project() {
   local name="$1"
   local tsconfig="$2"
@@ -523,13 +504,14 @@ check_project() {
   local tsc_exit_codes="${4:-}"
   local log="$FIXTURE_ROOT/${name}.log"
 
-  # Result cache: skip recompilation when tsz binary, tsconfig content, and
-  # fixture git HEAD are all unchanged from a prior run. The cache file is named
+  # Result cache: skip recompilation when the tsz binary, tsconfig content, and
+  # compiled-source identity are all unchanged from a prior run (see
+  # scripts/ci/lib/project-compile-fingerprint.sh). The cache file is named
   # per-project; the stored fingerprint is validated on read so stale entries are
   # overwritten rather than accumulated. Disable with TSZ_PROJECT_COMPILE_RESULT_CACHE=0.
   local _fp="" _cache_file=""
   if [[ "${TSZ_PROJECT_COMPILE_RESULT_CACHE:-1}" == "1" ]]; then
-    _fp="$(compute_compile_fingerprint "$name" "$tsconfig" 2>/dev/null || true)"
+    _fp="$(compute_compile_fingerprint "$name" "$tsconfig" "$src_dir" 2>/dev/null || true)"
     [[ -n "$_fp" ]] && _cache_file="$RESULT_CACHE_DIR/${name}"
   fi
 
@@ -680,6 +662,41 @@ run_project_row() {
       elif [[ "$ALLOW_FAILURES" == "1" ]]; then
         echo "::warning::type-challenges-solutions-project tsc oracle failed; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
       fi
+      ;;
+    valibot-project)
+      ensure_git_fixture "valibot" "$VALIBOT_REPO" "$VALIBOT_REF" "$FIXTURE_ROOT/valibot"
+      tsz_write_valibot_config "$FIXTURE_ROOT/valibot/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/valibot/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/valibot/library/src"
+      ;;
+    msw-project)
+      ensure_git_fixture "msw" "$MSW_REPO" "$MSW_REF" "$FIXTURE_ROOT/msw"
+      tsz_write_msw_config "$FIXTURE_ROOT/msw/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/msw/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/msw/src"
+      ;;
+    comlink-project)
+      ensure_git_fixture "comlink" "$COMLINK_REPO" "$COMLINK_REF" "$FIXTURE_ROOT/comlink"
+      tsz_write_comlink_config "$FIXTURE_ROOT/comlink/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/comlink/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/comlink/src"
+      ;;
+    effect-project)
+      ensure_git_fixture "effect" "$EFFECT_REPO" "$EFFECT_REF" "$FIXTURE_ROOT/effect"
+      tsz_write_effect_config "$FIXTURE_ROOT/effect/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/effect/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/effect/packages/effect/src"
+      ;;
+    drizzle-orm-project)
+      ensure_git_fixture "drizzle-orm" "$DRIZZLE_ORM_REPO" "$DRIZZLE_ORM_REF" "$FIXTURE_ROOT/drizzle-orm"
+      tsz_write_drizzle_orm_config "$FIXTURE_ROOT/drizzle-orm/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/drizzle-orm/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/drizzle-orm/drizzle-orm/src"
+      ;;
+    ts-rest-project)
+      ensure_git_fixture "ts-rest" "$TS_REST_REPO" "$TS_REST_REF" "$FIXTURE_ROOT/ts-rest"
+      tsz_write_ts_rest_config "$FIXTURE_ROOT/ts-rest/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/ts-rest/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-rest/libs/ts-rest/core/src"
+      ;;
+    ofetch-project)
+      ensure_git_fixture "ofetch" "$OFETCH_REPO" "$OFETCH_REF" "$FIXTURE_ROOT/ofetch"
+      tsz_write_ofetch_config "$FIXTURE_ROOT/ofetch/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/ofetch/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ofetch/src"
       ;;
     vite-vanilla-ts-app)
       if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then

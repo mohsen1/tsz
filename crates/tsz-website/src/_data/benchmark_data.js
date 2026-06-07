@@ -8,7 +8,6 @@ import {
   PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
-import { benchReadinessMessages } from "../../../../scripts/bench/bench-readiness-banner.mjs";
 import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
@@ -809,17 +808,6 @@ function readJsonIfExists(p) {
   }
 }
 
-function benchReadinessBanner(readiness, winnerReport) {
-  const messages = benchReadinessMessages(readiness, winnerReport);
-  if (messages.length === 0) return "";
-  return `<p class="bench-readiness-warning">⚠️ ${escapeHtml(messages.join(" "))}</p>`;
-}
-
-let _benchReadinessStatus;
-let _benchmarkSourceKind = null;
-let _benchmarkArtifactPath = null;
-let _benchWinnerReport;
-
 function benchmarkArtifactFiles() {
   const artifactsDir = path.join(ROOT, "artifacts");
   const ciLatest = [
@@ -841,27 +829,6 @@ function benchmarkArtifactFiles() {
   }
 }
 
-function loadBenchReadinessStatus() {
-  if (_benchReadinessStatus === undefined) {
-    _benchReadinessStatus = readJsonIfExists(path.join(ROOT, "artifacts", "bench-readiness-status.json")) ?? null;
-  }
-  if (_benchReadinessStatus) return _benchReadinessStatus;
-  if (_benchmarkSourceKind === "snapshot") return { artifact_absent: true };
-  return null;
-}
-
-function loadBenchWinnerReport() {
-  if (_benchWinnerReport !== undefined) return _benchWinnerReport;
-  if (!_benchmarkArtifactPath) {
-    _benchWinnerReport = null;
-    return _benchWinnerReport;
-  }
-
-  const winnerPath = _benchmarkArtifactPath.replace(/\.json$/, ".tsgo-winners.json");
-  _benchWinnerReport = readJsonIfExists(winnerPath) ?? null;
-  return _benchWinnerReport;
-}
-
 function sanitizeLegacyBenchmarkData(data) {
   if (data?.validation?.hyperfine_exit_codes_required === true) {
     return data;
@@ -880,8 +847,6 @@ function loadBenchmarks() {
   if (overrideArtifact) {
     const data = readJsonIfExists(overrideArtifact);
     if (data?.results) {
-      _benchmarkSourceKind = "override";
-      _benchmarkArtifactPath = overrideArtifact;
       return sanitizeLegacyBenchmarkData(data);
     }
   }
@@ -890,15 +855,11 @@ function loadBenchmarks() {
   const selectedArtifact = selectLatestBenchmarkArtifact([
     ...benchmarkArtifactFiles(),
     snapshotPath,
-  ]);
+  ], { minimumProjectTimingPairs: 1 });
   if (selectedArtifact) {
-    _benchmarkSourceKind = selectedArtifact.file === snapshotPath ? "snapshot" : "artifact";
-    _benchmarkArtifactPath = selectedArtifact.file;
     return sanitizeLegacyBenchmarkData(selectedArtifact.data);
   }
 
-  _benchmarkSourceKind = null;
-  _benchmarkArtifactPath = null;
   return null;
 }
 
@@ -1742,13 +1703,9 @@ export function getProjectCompatibilityDashboard() {
 })();
 </script>`;
 
-  const readiness = loadBenchReadinessStatus();
-  const artifactBanner = benchReadinessBanner(readiness, loadBenchWinnerReport());
-
   return `<section class="compat-dashboard">
   <h2>Project compatibility</h2>
-  ${artifactBanner}
-  <p class="compat-dashboard-intro">These rows track real project fixtures that <code>tsc</code> accepts. A green row means <code>tsz</code> completed the same project check; red or yellow rows identify the current blocker before timing claims are treated as release evidence.</p>
+  <p class="compat-dashboard-intro">These rows track real project fixtures that <code>tsc</code> accepts. A green row means <code>tsz</code> completed the same project check; red or yellow rows identify the current compatibility blocker.</p>
   <div class="compat-table-wrap">
     <table class="compat-table" data-compat-sortable>
       <thead>

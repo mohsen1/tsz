@@ -1857,4 +1857,67 @@ const neighbors: GraphNode[] = g.edges;
             "Cross-file F-bounded (param K): inherited edges should resolve, got: {diagnostics:?}"
         );
     }
+
+    #[test]
+    fn union_of_differing_arity_tuples_preserves_literal_element() {
+        // Regression: a fresh literal array element typed against a union of
+        // tuples whose members have DIFFERENT arity must keep its literal type.
+        //
+        // The per-position contextual type for index 0 of
+        // `[number, boolean] | [2]` is `number | 2`. tsc derives this with
+        // `UnionReduction.None`, so the literal arm `2` survives alongside its
+        // base primitive `number`. Reducing to `number` (subtype/literal
+        // absorption) dropped the literal arm, widened the fresh `2` to
+        // `number`, and produced a spurious TS2322 because `[number]` matches
+        // neither `[number, boolean]` (arity) nor `[2]` (literal). Vary the
+        // literal kind and tuple shape so the fix is structural, not pinned to
+        // one element type.
+        let source = r#"
+const numPair: [number, boolean] | [2] = [2];
+const numPairSwapped: [2] | [number, boolean] = [2];
+const strCase: [string, string] | ["x"] = ["x"];
+const bigintCase: [bigint, bigint] | [2n] = [2n];
+const longerArmFirst: [number, number, number] | [number, 7] = [3, 7];
+"#;
+        let errors = check_strict_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "literal element typed against a union of differing-arity tuples must be preserved (no spurious TS2322), got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn union_of_differing_arity_tuples_via_conditional_preserves_literal() {
+        // The same rule must hold when the tuple union is produced by a
+        // distributive conditional (issue #10864 family). `Tail<T>` over
+        // `[string, number, boolean] | [1, 2]` yields `[number, boolean] | [2]`;
+        // assigning the literal `[2]` must match the `[2]` arm. Renamed infer
+        // binders guard against a fixture-name fast path.
+        let source = r#"
+type DropFirst<Items> = Items extends [unknown, ...infer Remainder] ? Remainder : never;
+type Mixed = [string, number, boolean] | [1, 2];
+const tail: DropFirst<Mixed> = [2];
+"#;
+        let errors = check_strict_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "literal element typed against a conditional-derived tuple union must be preserved, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn union_of_tuples_still_rejects_non_member_literal() {
+        // Control: preserving literal arms must not over-accept. `[3]` matches
+        // neither arm of `[number, boolean] | [2]` (arity 1 but value 3 != 2),
+        // so TS2322 is still expected — confirming the fix does not blanket the
+        // union into an array.
+        let source = r#"
+const bad: [number, boolean] | [2] = [3];
+"#;
+        let errors = check_strict_codes(source);
+        assert!(
+            errors.contains(&2322),
+            "a literal that matches no tuple arm must still be rejected, got: {errors:?}"
+        );
+    }
 }

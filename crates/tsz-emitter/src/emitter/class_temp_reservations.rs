@@ -48,6 +48,11 @@ impl<'a> Printer<'a> {
                 || k == super::syntax_kind_ext::CONSTRUCTOR
                 || k == super::syntax_kind_ext::GET_ACCESSOR
                 || k == super::syntax_kind_ext::SET_ACCESSOR
+                || k == super::syntax_kind_ext::FOR_STATEMENT
+                || k == super::syntax_kind_ext::WHILE_STATEMENT
+                || k == super::syntax_kind_ext::DO_STATEMENT
+                || k == super::syntax_kind_ext::FOR_IN_STATEMENT
+                || k == super::syntax_kind_ext::FOR_OF_STATEMENT
         ) {
             return;
         }
@@ -245,8 +250,12 @@ impl<'a> Printer<'a> {
                     member.kind == super::syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
                 })
             });
+        let has_static_computed_method_or_accessor =
+            self.class_has_static_computed_method_or_accessor_comma_expr(class, class_idx, true);
 
-        has_static_field_comma_expr || has_static_block_comma_expr
+        has_static_field_comma_expr
+            || has_static_block_comma_expr
+            || has_static_computed_method_or_accessor
     }
 
     fn estimate_class_expression_static_comma_computed_temp_count(

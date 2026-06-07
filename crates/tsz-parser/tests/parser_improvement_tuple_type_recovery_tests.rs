@@ -1,6 +1,6 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives — tuple type recovery.
 
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{assert_span, parse_source};
 use tsz_common::diagnostics::diagnostic_codes;
 
 #[test]
@@ -65,6 +65,39 @@ fn tuple_type_missing_comma_reports_comma_without_bracket_cascade() {
         diagnostics.iter().all(|d| d.message != "']' expected."
             && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "Expected no bracket/TS1128 cascade, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn indexed_access_private_name_tail_does_not_emit_ts1128() {
+    let source = r##"
+class C {
+    #bar = 3;
+    constructor() {
+        const value: C[#bar] = 3;
+    }
+}
+"##;
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| { d.code == diagnostic_codes::EXPECTED && d.message == "',' expected." }),
+        "expected TS1005 comma recovery for `C[#bar]`, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED),
+        "expected TS1134 declaration-list recovery for `C[#bar]`, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "indexed-access private-name recovery should not cascade into TS1128, got {diagnostics:?}",
     );
 }
 
@@ -215,6 +248,60 @@ fn tuple_with_double_bar_token_reports_comma_expected_without_cascade() {
             && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "expected no `]`/TS1128 cascade, got {diagnostics:?}",
     );
+}
+
+/// A named tuple member label is an *identifier name*: tsc parses it with
+/// `parseIdentifierName`, so every keyword and reserved word is a legal label.
+/// Before the fix, `parse_named_tuple_member` used `parse_identifier`, which
+/// rejected reserved words with a spurious TS1359
+/// ("'<word>' is a reserved word that cannot be used here").
+///
+/// The matrix below varies the label across reserved words (`in`, `function`,
+/// `new`, `delete`, `for`, `if`, `typeof`, `void`, `return`), the contextual
+/// keyword `readonly`, and a plain identifier so a fix that special-cases a
+/// single spelling — or only the contextual-keyword case that already worked —
+/// fails. Each shape covers the plain, optional, and labeled-rest forms.
+const KEYWORD_TUPLE_LABELS: &[&str] = &[
+    "in", "function", "new", "delete", "for", "if", "typeof", "void", "return", "readonly",
+    "yield", "await", "label",
+];
+
+#[test]
+fn named_tuple_member_keyword_labels_do_not_emit_ts1359() {
+    for label in KEYWORD_TUPLE_LABELS {
+        for source in [
+            format!("type T = [{label}: string];"),
+            format!("type T = [{label}?: string];"),
+            format!("type T = [...{label}: string[]];"),
+            format!("type T = [head: number, {label}: string];"),
+        ] {
+            let (parser, _root) = parse_source(&source);
+            let diagnostics = parser.get_diagnostics();
+            // A clean parse is the strongest guarantee — it subsumes the absence
+            // of the TS1359 ("reserved word that cannot be used here") that the
+            // pre-fix `parse_identifier` raised for keyword labels.
+            assert!(
+                diagnostics.is_empty(),
+                "named tuple label {label:?} should parse cleanly (no TS1359) in {source:?}, got {diagnostics:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn named_tuple_member_keyword_label_span_covers_member_text() {
+    use crate::parser::syntax_kind_ext;
+    // The named-tuple-member node must span exactly `label: Type` (not overshoot
+    // into the surrounding `[]`/`;`), regardless of whether the label is a
+    // keyword or a plain identifier.
+    for (source, member_text) in [
+        ("type T = [in: string];", "in: string"),
+        ("type T = [function: number];", "function: number"),
+        ("type T = [...new: string[]];", "...new: string[]"),
+        ("type T = [plain: string];", "plain: string"),
+    ] {
+        assert_span(source, syntax_kind_ext::NAMED_TUPLE_MEMBER, member_text);
+    }
 }
 
 #[test]

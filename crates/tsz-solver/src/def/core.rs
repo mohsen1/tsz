@@ -324,6 +324,15 @@ pub struct DefinitionStore {
     /// `"a"|"b"` but tsc shows the expanded union, not `T2`).
     computed_alias_bodies: DefDashSet<TypeId>,
 
+    /// Set of body `TypeId`s that are the constructive body of at least one
+    /// *non-computed* type alias (`type Direct = { a: 1 }`), so they must keep
+    /// their alias name even when an unrelated *computed* alias resolves to the
+    /// same interned shape. Because structurally-identical types share one
+    /// `TypeId`, marking that shape computed (for the computed alias) would
+    /// otherwise strip the name from the directly-written alias too. "Direct
+    /// wins": a shape recorded here is never reported as a computed body.
+    directly_named_alias_bodies: DefDashSet<TypeId>,
+
     /// Set of type-alias `DefId`s whose instantiation is unconditionally
     /// infinite (e.g. `type A<T> = T extends infer X ? A<X & B> : never`).
     /// The checker records these when it emits TS2589 at the alias definition;
@@ -589,6 +598,7 @@ impl DefinitionStore {
             symbol_mappings_snapshot: Mutex::new(None),
             body_to_alias: DefDashMap::default(),
             computed_alias_bodies: DefDashSet::default(),
+            directly_named_alias_bodies: DefDashSet::default(),
             depth_poisoned_defs: DefDashSet::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
@@ -1027,6 +1037,7 @@ impl DefinitionStore {
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
         self.computed_alias_bodies.clear();
+        self.directly_named_alias_bodies.clear();
         self.shape_to_def.clear();
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
@@ -1164,6 +1175,15 @@ impl DefinitionStore {
         self.definitions.get(&id).map(|r| r.name)
     }
 
+    /// The declaring file id of a definition, if known.
+    ///
+    /// Reads the single field directly rather than cloning the whole
+    /// `DefinitionInfo` (as `get` does), matching `get_kind`/`get_name`. Lib
+    /// definitions use the `u32::MAX` sentinel.
+    pub fn get_file_id(&self, id: DefId) -> Option<u32> {
+        self.definitions.get(&id).and_then(|r| r.file_id)
+    }
+
     /// Add an export to an existing definition.
     pub fn add_export(&self, id: DefId, name: Atom, export_def: DefId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
@@ -1298,8 +1318,10 @@ impl DefinitionStore {
     pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
         // Skip bodies that were marked as "computed" (produced by intersection
         // reduction, conditional evaluation, etc.). tsc does not preserve alias
-        // names for such types.
-        if self.computed_alias_bodies.contains(&type_id) {
+        // names for such types. A shape that is also the constructive body of a
+        // directly-written alias keeps its name ("direct wins"), so it is not
+        // skipped here.
+        if self.is_computed_body(type_id) {
             return None;
         }
         self.body_to_alias.get(&type_id).map(|r| *r)
@@ -1313,9 +1335,23 @@ impl DefinitionStore {
         self.bump_generation();
     }
 
-    /// Check if a body `TypeId` was marked as "computed".
+    /// Record `body` as the constructive body of a non-computed type alias, so
+    /// it keeps its alias name even if a computed alias resolves to the same
+    /// interned shape ("direct wins"). See [`Self::directly_named_alias_bodies`].
+    pub fn mark_body_as_directly_named(&self, body: TypeId) {
+        self.directly_named_alias_bodies.insert(body);
+        self.bump_generation();
+    }
+
+    /// Check if a body `TypeId` should be displayed structurally because it was
+    /// produced by a reducing operator (conditional/indexed-access/intersection)
+    /// that carries no `aliasSymbol` in tsc. A shape that is also the body of a
+    /// directly-written alias is excluded ("direct wins"): that alias must keep
+    /// its name, and because tsz interns structurally-identical types to one
+    /// `TypeId`, the shared shape cannot be reported as computed.
     pub fn is_computed_body(&self, body: TypeId) -> bool {
         self.computed_alias_bodies.contains(&body)
+            && !self.directly_named_alias_bodies.contains(&body)
     }
 
     /// Find all `DefId`s registered under the given name.

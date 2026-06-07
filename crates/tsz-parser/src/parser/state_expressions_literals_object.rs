@@ -95,6 +95,9 @@ impl ParserState {
                 {
                     break;
                 } else {
+                    if self.is_token(SyntaxKind::DotToken) {
+                        self.recovered_object_literal_dot_tail_once = true;
+                    }
                     self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
                     self.next_token();
                 }

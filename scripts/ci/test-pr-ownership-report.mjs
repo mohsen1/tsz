@@ -109,10 +109,10 @@ withTempDir((dir) => {
       mergeStateStatus: "BLOCKED",
       mergeable: "MERGEABLE",
       autoMergeRequest: null,
+      isInMergeQueue: true,
       labels: ["agent:epsilon"],
       statusCheckRollup: [
         { name: "CI Summary", status: "COMPLETED", conclusion: "SUCCESS" },
-        { name: "GitGuardian Security Checks", status: "COMPLETED", conclusion: "SUCCESS" },
       ],
       body: "AgentName: epsilon\n",
     },
@@ -155,15 +155,20 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Open PR Ownership Report/);
   assert.match(result.stdout, /AgentName\/label mismatches: 1/);
-  assert.match(result.stdout, /queue candidates: 1/);
+  assert.match(result.stdout, /queue candidates: 0/);
+  assert.match(
+    result.stdout,
+    /Manager Next Actions[\s\S]*P0 rebase-ready #18: rebase or hand off conflicting ready PR; comment: comment only if taking over or handing off; reason: DIRTY\/CONFLICTING[\s\S]*P1 rebase-draft #19: refresh, supersede, or close conflicting draft; comment: prefer PR body; comment for handoff\/closure evidence; reason: DIRTY\/CONFLICTING/,
+  );
   assert.match(
     result.stdout,
     /Owner Summary[\s\S]*\| agent:delta \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| agent:zeta \| 2 \| 1 \| 1 \| 0 \| 0 \| 0 \| 1 \| 1 \| 0 \|[\s\S]*\| unowned \| 2 \| 0 \| 2 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \|[\s\S]*\| delta \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \|/,
   );
   assert.match(
     result.stdout,
-    /Queue Admission[\s\S]*#17 \| agent:epsilon \| yes \| BLOCKED\/MERGEABLE \| CI Summary=pass, GitGuardian Security Checks=pass[\s\S]*#18 \| agent:zeta \| no \| DIRTY\/CONFLICTING \| CI Summary=missing, GitGuardian Security Checks=missing/,
+    /Queue Admission[\s\S]*#18 \| agent:zeta \| no \| DIRTY\/CONFLICTING \| CI Summary=missing/,
   );
+  assert.doesNotMatch(result.stdout, /Queue Admission[\s\S]*#17 \| agent:epsilon/);
   assert.match(
     result.stdout,
     /Draft Parking Risks[\s\S]*agent:delta: drafts 2; unstacked 2; stale 1; within budget; oldest updated 2026-05-22 \(4d 3h\)[\s\S]*#19: agent:delta; updated 2026-05-22; age 99h; fix\(checker\): conflicting draft branch/,
@@ -209,11 +214,12 @@ withTempDir((dir) => {
     stacked: 2,
     missingAgentName: 2,
     agentLabelMismatches: 1,
-    mergeQueued: 0,
-    readyMissingQueueLabel: 2,
-    queueCandidates: 1,
+    nativeQueued: 1,
+    readyNotQueued: 1,
+    queueCandidates: 0,
     draftParkingOwners: 1,
     staleDraftPrs: 1,
+    staleWipPrs: 0,
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
@@ -339,22 +345,8 @@ withTempDir((dir) => {
       title: "fix(checker): conflicting draft branch",
     },
   ]);
-  assert.deepEqual(report.readyMainMissingQueueLabelPrs, [
-    {
-      number: 17,
-      agentName: "epsilon",
-      agentLabel: "agent:epsilon",
-      updatedAt: "2026-05-23T09:15:00Z",
-      mergeStateStatus: "BLOCKED",
-      mergeable: "MERGEABLE",
-      checks: [
-        { name: "CI Summary", bucket: "pass" },
-        { name: "GitGuardian Security Checks", bucket: "pass" },
-      ],
-      checkSummary: "CI Summary=pass, GitGuardian Security Checks=pass",
-      queueCandidate: true,
-      title: "fix(checker): ready but blocked",
-    },
+  assert.deepEqual(report.staleWipPrs, []);
+  assert.deepEqual(report.readyMainNotQueuedPrs, [
     {
       number: 18,
       agentName: "zeta",
@@ -364,11 +356,39 @@ withTempDir((dir) => {
       mergeable: "CONFLICTING",
       checks: [
         { name: "CI Summary", bucket: "missing" },
-        { name: "GitGuardian Security Checks", bucket: "missing" },
       ],
-      checkSummary: "CI Summary=missing, GitGuardian Security Checks=missing",
+      checkSummary: "CI Summary=missing",
       queueCandidate: false,
       title: "fix(solver): conflicting ready branch",
+    },
+  ]);
+  assert.deepEqual(report.managerActions, [
+    {
+      priority: "P0",
+      kind: "rebase-ready",
+      number: 18,
+      owner: "agent:zeta",
+      action: "rebase or hand off conflicting ready PR",
+      commentPolicy: "comment only if taking over or handing off",
+      reason: "DIRTY/CONFLICTING",
+    },
+    {
+      priority: "P1",
+      kind: "rebase-draft",
+      number: 19,
+      owner: "agent:delta",
+      action: "refresh, supersede, or close conflicting draft",
+      commentPolicy: "prefer PR body; comment for handoff/closure evidence",
+      reason: "DIRTY/CONFLICTING",
+    },
+    {
+      priority: "P2",
+      kind: "duplicate-drafts",
+      number: null,
+      owner: "mixed",
+      action: "deduplicate draft PRs for one issue",
+      commentPolicy: "comment only on PRs closed or handed off",
+      reason: "issue #42: #10, #11",
     },
   ]);
   assert.deepEqual(report.stacks, [
@@ -494,4 +514,62 @@ withTempDir((dir) => {
   assert.equal(report.prs.find((pr) => pr.number === 10).stackRole, "stack root");
   assert.equal(report.prs.find((pr) => pr.number === 12).stackRole, "stack child");
   assert.equal(report.prs.find((pr) => pr.number === 11).stackRole, null);
+});
+
+withTempDir((dir) => {
+  const fixture = path.join(dir, "prs.json");
+  const output = path.join(dir, "report.json");
+  writeJson(fixture, [
+    {
+      number: 20,
+      title: "[WIP] fix(checker): preserve lib heritage",
+      isDraft: true,
+      updatedAt: "2026-05-24T08:00:00Z",
+      baseRefName: "main",
+      headRefName: "agent/stale-wip",
+      labels: ["WIP", "agent:omega"],
+      body: "AgentName: omega\n",
+    },
+  ]);
+
+  const result = spawnSync(process.execPath, [SCRIPT, "--fixture", fixture, "--json", output], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_PR_OWNERSHIP_REPORT_NOW: "2026-05-26T11:15:00Z",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /Manager Next Actions[\s\S]*P1 stale-wip #20: refresh WIP blocker or split durable follow-up issue; comment: one signed blocker\/handoff comment if keeping WIP open; reason: WIP age 51h/,
+  );
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.counts.staleDraftPrs, 0);
+  assert.equal(report.counts.staleWipPrs, 1);
+  assert.deepEqual(report.staleWipPrs, [
+    {
+      number: 20,
+      agentName: "omega",
+      agentLabel: "agent:omega",
+      updatedAt: "2026-05-24T08:00:00Z",
+      ageHours: 51,
+      stackRole: null,
+      markers: ["label", "title"],
+      title: "[WIP] fix(checker): preserve lib heritage",
+    },
+  ]);
+  assert.deepEqual(report.managerActions, [
+    {
+      priority: "P1",
+      kind: "stale-wip",
+      number: 20,
+      owner: "agent:omega",
+      action: "refresh WIP blocker or split durable follow-up issue",
+      commentPolicy: "one signed blocker/handoff comment if keeping WIP open",
+      reason: "WIP age 51h",
+    },
+  ]);
 });

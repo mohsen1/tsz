@@ -33,7 +33,7 @@ function makeCompatibility(state) {
     source_commit: "abcdef1234567890",
     workflow_name: "Bench",
     workflow_run_id: "12345",
-    workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/12345",
+    workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/12345",
     workflow_run_attempt: "1",
     run_status: "completed",
     state,
@@ -72,9 +72,9 @@ function makeRow(name, state = "green", opts = {}) {
     name,
     lines: 100,
     kb: 10,
-    tsz_ms: opts.tsz_ms ?? 50,
-    tsgo_ms: opts.tsgo_ms ?? 40,
-    winner: opts.winner ?? "tsgo",
+    tsz_ms: Object.hasOwn(opts, "tsz_ms") ? opts.tsz_ms : 50,
+    tsgo_ms: Object.hasOwn(opts, "tsgo_ms") ? opts.tsgo_ms : 40,
+    winner: Object.hasOwn(opts, "winner") ? opts.winner : "tsgo",
     ratio: 1.25,
     ...(opts.errorStatus ? { status: opts.errorStatus } : {}),
     compatibility: makeCompatibility(state),
@@ -87,7 +87,7 @@ function makeArtifact(rows, extraMeta = {}) {
     source_commit: "abcdef1234567890abcd",
     workflow_name: "Bench",
     workflow_run_id: "99999",
-    workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/99999",
+    workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/99999",
     workflow_run_attempt: "1",
     run_status: "completed",
     benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
@@ -171,6 +171,40 @@ withTempDir((dir) => {
   assert.match(result.stderr, /PGO training.*123456abcdef/, "should show PGO training fingerprint");
 });
 console.log("✅ complete all-green artifact exits 0");
+
+// ---------------------------------------------------------------------------
+// Test: --require-project-timing-pairs accepts a present artifact with at least
+// one successful project timing row.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, ["--json", "--require-project-timing-pairs=1"]);
+  assert.equal(result.status, 0, `project timing pair gate should pass on green timed rows:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(
+    parsed.successful_project_timing_pairs,
+    REQUIRED_PROJECT_ROWS.length,
+    "JSON should count successful project timing pairs",
+  );
+});
+console.log("✅ --require-project-timing-pairs passes with project timing data");
+
+// ---------------------------------------------------------------------------
+// Test: bare --require-project-timing-pairs defaults to one timing pair without
+// consuming the artifact path as a value.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json", "--require-project-timing-pairs"]);
+  assert.equal(result.status, 0, `bare project timing pair gate should pass:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.required_project_timing_pairs, 1);
+});
+console.log("✅ bare --require-project-timing-pairs defaults to one pair");
 
 // ---------------------------------------------------------------------------
 // Test: expected source commit marks an artifact current when it matches.
@@ -383,6 +417,25 @@ withTempDir((dir) => {
   );
 });
 console.log("✅ red row present in artifact exits 0 (not missing)");
+
+// ---------------------------------------------------------------------------
+// Test: --require-project-timing-pairs fails an otherwise complete artifact
+// when every project row crashed before timing.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) =>
+    makeRow(name, "red", { errorStatus: "tsz error; tsc ok", tsz_ms: null, tsgo_ms: null, winner: "error" }),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json", "--require-project-timing-pairs=1"]);
+  assert.equal(result.status, 1, "publish gate should fail when no project timing pairs succeeded");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.successful_project_timing_pairs, 0, "JSON should show zero successful project timings");
+  assert.equal(parsed.required_project_timing_pairs, 1, "JSON should include the requested timing-pair floor");
+  assert.match(result.stderr, /0 successful project timing pair\(s\); required 1/);
+});
+console.log("✅ --require-project-timing-pairs fails all-crashed project artifacts");
 
 // ---------------------------------------------------------------------------
 // Test: --require-green fails when any present required row is red.

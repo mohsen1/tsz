@@ -14,9 +14,11 @@ SCRIPT = ROOT / "scripts" / "agents" / "ensure-agent-labels.sh"
 CANONICAL_AGENT_LABELS = [
     "agent:M1-A",
     "agent:M1-B",
+    "agent:M1-D",
     "agent:M1-Opus",
     "agent:M4-A",
     "agent:M4-B",
+    "agent:M4-C",
     "agent:M4-Opus",
     "agent:Studio-A",
     "agent:Studio-B",
@@ -101,7 +103,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "isDraft": True,
                     "labels": [],
                     "body": "Coordination Notes\n- No canonical agent lane was assigned.",
-                    "url": "https://github.com/mohsen1/tsz/pull/1",
+                    "url": "https://github.com/tsz-org/tsz/pull/1",
                 },
                 {
                     "number": 2,
@@ -109,7 +111,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "isDraft": False,
                     "labels": [{"name": "agent:Studio-manager"}],
                     "body": "AgentName: Studio-manager",
-                    "url": "https://github.com/mohsen1/tsz/pull/2",
+                    "url": "https://github.com/tsz-org/tsz/pull/2",
                 },
             ]
         )
@@ -124,7 +126,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("Open PRs Intentionally Unassigned", output)
         self.assertIn("Open Draft PRs Intentionally Unassigned", output)
         self.assertIn(
-            "#1 chore: intentionally unassigned https://github.com/mohsen1/tsz/pull/1",
+            "#1 chore: intentionally unassigned https://github.com/tsz-org/tsz/pull/1",
             output,
         )
 
@@ -137,7 +139,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "isDraft": False,
                     "labels": [],
                     "body": "AgentName: `Studio-manager`",
-                    "url": "https://github.com/mohsen1/tsz/pull/3",
+                    "url": "https://github.com/tsz-org/tsz/pull/3",
                 }
             ]
         )
@@ -148,7 +150,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("agent_label_audit_warnings=0", output)
         self.assertIn("agent_label_audit_status=fail", output)
         self.assertIn(
-            "#3 fix: missing label https://github.com/mohsen1/tsz/pull/3",
+            "#3 fix: missing label https://github.com/tsz-org/tsz/pull/3",
             output,
         )
         self.assertIn("AgentName=Studio-manager", output)
@@ -162,7 +164,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "isDraft": False,
                     "labels": [],
                     "body": "AgentName: Studio-manager",
-                    "url": "https://github.com/mohsen1/tsz/pull/4",
+                    "url": "https://github.com/tsz-org/tsz/pull/4",
                 }
             ],
             args=["--audit", "--strict"],
@@ -183,7 +185,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "isDraft": False,
                     "labels": [],
                     "body": "Coordination Notes\n- No canonical agent lane was assigned.",
-                    "url": "https://github.com/mohsen1/tsz/pull/5",
+                    "url": "https://github.com/tsz-org/tsz/pull/5",
                 }
             ],
             args=["--audit", "--strict"],
@@ -208,7 +210,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "isDraft": False,
                         "labels": [],
                         "body": "Coordination Notes\n- No canonical agent lane was assigned.",
-                        "url": "https://github.com/mohsen1/tsz/pull/6",
+                        "url": "https://github.com/tsz-org/tsz/pull/6",
                     },
                     {
                         "number": 7,
@@ -216,7 +218,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "isDraft": True,
                         "labels": [],
                         "body": "Coordination Notes\n- No canonical agent lane was assigned.",
-                        "url": "https://github.com/mohsen1/tsz/pull/7",
+                        "url": "https://github.com/tsz-org/tsz/pull/7",
                     },
                 ],
                 args=["--audit", "--json-report", str(report_path)],
@@ -243,7 +245,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 6,
                     "title": "fix: ready unassigned",
-                    "url": "https://github.com/mohsen1/tsz/pull/6",
+                    "url": "https://github.com/tsz-org/tsz/pull/6",
                     "is_draft": False,
                 }
             ],
@@ -254,7 +256,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 7,
                     "title": "fix: draft unassigned",
-                    "url": "https://github.com/mohsen1/tsz/pull/7",
+                    "url": "https://github.com/tsz-org/tsz/pull/7",
                     "is_draft": True,
                 }
             ],
@@ -269,13 +271,13 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "number": 10,
                     "title": "bug: missing owner",
                     "labels": [{"name": "bug"}],
-                    "url": "https://github.com/mohsen1/tsz/issues/10",
+                    "url": "https://github.com/tsz-org/tsz/issues/10",
                 },
                 {
                     "number": 11,
                     "title": "perf: intake context",
                     "labels": [{"name": "performance"}],
-                    "url": "https://github.com/mohsen1/tsz/issues/11",
+                    "url": "https://github.com/tsz-org/tsz/issues/11",
                 },
                 {
                     "number": 12,
@@ -284,7 +286,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         {"name": "accepted-regression"},
                         {"name": "agent:M1-Opus"},
                     ],
-                    "url": "https://github.com/mohsen1/tsz/issues/12",
+                    "url": "https://github.com/tsz-org/tsz/issues/12",
                 },
             ],
         )
@@ -292,7 +294,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("open_release_issues_missing_agent_label=1", output)
         self.assertIn("Open Release Issues Missing Agent Label", output)
         self.assertIn(
-            "#10 bug: missing owner https://github.com/mohsen1/tsz/issues/10",
+            "#10 bug: missing owner https://github.com/tsz-org/tsz/issues/10",
             output,
         )
         self.assertNotIn("perf: intake context", output)
@@ -308,13 +310,13 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         {"name": "agent:M1-A"},
                         {"name": "agent:M1-B"},
                     ],
-                    "url": "https://github.com/mohsen1/tsz/issues/20",
+                    "url": "https://github.com/tsz-org/tsz/issues/20",
                 },
                 {
                     "number": 21,
                     "title": "issue with generated owner",
                     "labels": [{"name": "agent:claude-sonnet"}],
-                    "url": "https://github.com/mohsen1/tsz/issues/21",
+                    "url": "https://github.com/tsz-org/tsz/issues/21",
                 },
             ],
         )
@@ -322,11 +324,11 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("open_issues_multiple_agent_labels=1", output)
         self.assertIn("open_issues_noncanonical_agent_label=1", output)
         self.assertIn(
-            "#20 agent:M1-A, agent:M1-B issue with too many owners https://github.com/mohsen1/tsz/issues/20",
+            "#20 agent:M1-A, agent:M1-B issue with too many owners https://github.com/tsz-org/tsz/issues/20",
             output,
         )
         self.assertIn(
-            "#21 agent:claude-sonnet issue with generated owner https://github.com/mohsen1/tsz/issues/21",
+            "#21 agent:claude-sonnet issue with generated owner https://github.com/tsz-org/tsz/issues/21",
             output,
         )
 
@@ -341,7 +343,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "isDraft": False,
                         "labels": [],
                         "body": "AgentName: `Studio-manager`",
-                        "url": "https://github.com/mohsen1/tsz/pull/30",
+                        "url": "https://github.com/tsz-org/tsz/pull/30",
                     },
                     {
                         "number": 31,
@@ -349,7 +351,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "isDraft": False,
                         "labels": [{"name": "agent:dreamy-runner"}],
                         "body": "AgentName: Studio-manager",
-                        "url": "https://github.com/mohsen1/tsz/pull/31",
+                        "url": "https://github.com/tsz-org/tsz/pull/31",
                     },
                 ],
                 args=["--audit", "--json-report", str(report_path)],
@@ -377,7 +379,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 30,
                     "title": "fix: missing owner",
-                    "url": "https://github.com/mohsen1/tsz/pull/30",
+                    "url": "https://github.com/tsz-org/tsz/pull/30",
                     "agent_name": "Studio-manager",
                 }
             ],
@@ -388,7 +390,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 31,
                     "title": "fix: generated owner",
-                    "url": "https://github.com/mohsen1/tsz/pull/31",
+                    "url": "https://github.com/tsz-org/tsz/pull/31",
                     "agent_labels": ["agent:dreamy-runner"],
                 }
             ],
@@ -406,7 +408,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "isDraft": False,
                         "labels": [{"name": "agent:Studio-manager"}],
                         "body": "AgentName: Studio-manager",
-                        "url": "https://github.com/mohsen1/tsz/pull/32",
+                        "url": "https://github.com/tsz-org/tsz/pull/32",
                     }
                 ],
                 args=["--audit", "--json-report", str(report_path)],

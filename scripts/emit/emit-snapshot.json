@@ -1,15 +1,17 @@
 {
+  "detailFingerprint": "sha256:0972b18fe9f1f02a5b7aaf6bb834f6933abb0f6f284be419cc522f992a888437",
+  "detailResultCount": 13531,
   "summary": {
     "jsTotal": 13530,
-    "jsPass": 13468,
-    "jsFail": 62,
+    "jsPass": 13530,
+    "jsFail": 0,
     "jsSkip": 1,
     "jsTimeout": 0,
-    "jsPassRate": 99.5,
+    "jsPassRate": 100,
     "dtsTotal": 1669,
-    "dtsPass": 1661,
-    "dtsFail": 8,
+    "dtsPass": 1669,
+    "dtsFail": 0,
     "dtsSkip": 11862,
-    "dtsPassRate": 99.5
+    "dtsPassRate": 100
   }
 }

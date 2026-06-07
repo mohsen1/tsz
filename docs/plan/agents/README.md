@@ -36,8 +36,8 @@ Each session owns work through exactly one GitHub label:
 
 | Group | Sessions |
 | --- | --- |
-| M1 | `agent:M1-A`, `agent:M1-B`, `agent:M1-Opus` |
-| M4 | `agent:M4-A`, `agent:M4-B`, `agent:M4-Opus` |
+| M1 | `agent:M1-A`, `agent:M1-B`, `agent:M1-D`, `agent:M1-Opus` |
+| M4 | `agent:M4-A`, `agent:M4-B`, `agent:M4-C`, `agent:M4-Opus` |
 | Studio | `agent:Studio-A`, `agent:Studio-B`, `agent:Studio-C`, `agent:Studio-Opus` |
 | PR manager/reviewer | `agent:Studio-manager` |
 
@@ -55,7 +55,7 @@ Rules:
 5. Draft PRs are active runway, not storage. Do not merge work that is draft,
    labelled `WIP`, titled `[WIP]`, or described as blocked/not ready.
 6. A session drains owned PRs before opening unrelated new PRs. Valid runway
-   outcomes are: landed on `main`, `merge-queue`, ready with verified PR-head
+   outcomes are: landed on `main`, native merge queue, ready with verified PR-head
    checks, refreshed draft/WIP with a signed blocker, signed handoff, or
    evidence-linked duplicate/superseded closure.
 7. Keep draft runway small: at most two unstacked draft PRs per `agent:*`
@@ -66,6 +66,20 @@ Rules:
 9. If a session pauses or abandons work, leave a signed comment with findings,
    blocker or reason, verification already run, and next owner/action.
 
+Comment budget:
+
+- Use the PR body as the routine state surface: scope, current blocker,
+  verification, Project Corpus Impact, and Coordination Notes.
+- Do not leave heartbeat comments for "checking", "waiting", "still running",
+  or unchanged CI/queue state. The ownership report and GitHub checks already
+  carry that state.
+- Leave at most one signed PR conversation comment for a state transition:
+  draft/WIP change, blocker, handoff/takeover, closure/superseded evidence,
+  queue failure root cause, or readiness risk.
+- Prefer submitted review comments for code findings. Use a PR conversation
+  comment only for cross-file scope, metadata, queue, blocker, or handoff
+  decisions.
+
 ## Live Intake Rule
 
 Every lane starts with its live PRs. Owned PRs are the work queue; issues are
@@ -74,11 +88,13 @@ intake only after that queue is drained, queued, or explicitly blocked.
 1. Run the lane's `Start Every Cycle` commands.
 2. If open PRs carry the lane label, inspect each one and move it to the next
    concrete state before starting new issue work: fix/rebase it, mark it ready,
-   add `merge-queue`, restore draft/WIP with a signed blocker, hand it off, or
-   close it only as duplicate/superseded with evidence.
-3. If an owned ready `main` PR has passing PR-head `CI Summary` and
-   `GitGuardian Security Checks`, is not dirty/conflicting, and is not WIP or
-   blocked, add `merge-queue` or ask `Studio-manager` to queue it.
+   queue it with `gh pr merge <pr> --match-head-commit <sha>`, restore
+   draft/WIP with a signed blocker, hand it off, or close it only as
+   duplicate/superseded with evidence.
+3. If an owned ready `main` PR has passing PR-head `CI Summary`, is not
+   dirty/conflicting, and is not WIP or blocked, queue it with
+   `gh pr merge <pr> --match-head-commit <sha>` or ask `Studio-manager` to
+   queue it.
 4. Treat stale drafts as live debt. Drafts older than 24 hours without fresh
    commits/comments, and owners over two unstacked drafts, must be refreshed,
    handed off, marked help-wanted, or documented as blocked before new PRs.
@@ -96,8 +112,13 @@ scripts/agents/list-owned-work.sh --all
 scripts/agents/list-owned-work.sh --pr-state Studio-manager
 node scripts/ci/pr-ownership-report.mjs
 node scripts/ci/pr-ownership-report.mjs --json /tmp/tsz-pr-ownership.json
-gh issue list --repo mohsen1/tsz --state open --limit 200 --json number,title,labels,updatedAt,url
+gh issue list --repo tsz-org/tsz --state open --limit 200 --json number,title,labels,updatedAt,url
 ```
+
+The `Manager Next Actions` section from `node scripts/ci/pr-ownership-report.mjs`
+is the default triage queue. Follow it before posting new PR comments; when an
+entry says `comment: none`, act through queueing, CI inspection, rebasing, or
+PR-body updates instead.
 
 ## Source-Of-Truth Goal Loop
 
@@ -144,9 +165,11 @@ Rules:
 | --- | --- | --- |
 | `M1-A` | Checker diagnostics | Diagnostic conformance, accepted-regression burn-down, rendered/source-text diagnostic debt |
 | `M1-B` | Checker orchestration | Relation diagnostic routing, flow/narrowing handoff, query-boundary cleanup |
+| `M1-D` | Flow narrowing | Solver-owned narrowing predicates, flow graph parity, and Kysely/Zod guard reductions |
 | `M1-Opus` | M1 deep debt | Cross-cutting checker architecture debt that blocks tests, bugs, project rows, or conformance strictness |
 | `M4-A` | Solver evaluation | Recursive conditional, mapped, template, `infer`, indexed-access, and key-space evaluation |
 | `M4-B` | Solver relations | Relation policy, inference/session state, stable identity, variance, and cache contracts |
+| `M4-C` | Inference sessions | Contextual typing, overloads, constructors, and instantiation-state project blockers |
 | `M4-Opus` | M4 deep debt | Solver substrate rewrites and cache/identity architecture needed for parity plus speed |
 | `Studio-A` | Project corpus | Release metric truth, project-row green status, benchmark artifact validity, bug intake routing |
 | `Studio-B` | Performance | Green-row residency and timing until every eligible row is at least `2x` faster than `tsgo` |

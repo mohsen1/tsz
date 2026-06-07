@@ -331,17 +331,13 @@ pub(crate) fn select_path_mapping(
     mappings: &[PathMapping],
     specifier: &str,
 ) -> Option<(usize, String)> {
-    // `build_path_mappings` sorts by TypeScript precedence:
-    // longest prefix, then longest pattern, then lexical pattern. The first
-    // match is therefore the best match.
-    for (idx, mapping) in mappings.iter().enumerate() {
-        let Some(wildcard) = mapping.match_specifier(specifier) else {
-            continue;
-        };
-        return Some((idx, wildcard));
-    }
-
-    None
+    // Route through the shared `PathMapping::select_best` so the driver and the
+    // `tsz-core` checker resolver pick the same single tsc-best pattern
+    // (`matchPatternOrExact` -> `findBestPatternMatch`): an exact wildcard-free
+    // key wins outright, otherwise the longest-prefix wildcard. Neither falls
+    // through to a less-specific pattern when the chosen one's targets are
+    // missing on disk.
+    PathMapping::select_best(mappings, specifier)
 }
 
 pub(crate) fn substitute_path_target(target: &str, wildcard: &str) -> String {
@@ -531,39 +527,46 @@ pub(crate) const fn extension_candidates_for_resolution(
     }
 }
 
+/// Lexically normalize a path: collapse `.`, resolve `..` against the
+/// preceding *named* segment, and leave the path otherwise untouched. This is
+/// purely textual — it never touches the filesystem — so it is the stable
+/// identity key for files that cannot be canonicalized.
+///
+/// Two corrections over a naive `PathBuf::pop` loop, both of which otherwise
+/// let one logical file mint several distinct identity keys:
+/// - `..` clamps at the filesystem root / drive prefix (matching `tsc`/Node)
+///   instead of popping past it, so an absolute `/a/../../b` stays absolute
+///   (`/b`) rather than degrading to a relative `b`.
+/// - leading `..` on a relative path is preserved (`../foo` stays `../foo`)
+///   instead of being silently dropped.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            std::path::Component::RootDir
-            | std::path::Component::Normal(_)
-            | std::path::Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-
-    normalized
+    // The collapse algorithm is shared with the `tsz-core` resolver's
+    // `normalize_path_segments` via `tsz_common` so the driver's canonical file
+    // identity and the resolver's textual identity cannot drift.
+    tsz_common::module_resolution::path_identity::normalize_segments(path)
 }
 
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
     let normalized = normalize_path(path);
     if options.preserve_symlinks {
+        return normalized;
+    }
+    // When the path cannot be canonicalized (missing or transiently
+    // unreadable file, relative anchor), the lexically-normalized path is the
+    // only deterministic identity key. Falling back to the *raw* input — as a
+    // bare `canonicalize_or_owned` would — lets `./a/b.ts`, `a/b.ts`, and
+    // `a/b.ts/` resolve to three distinct IDs for one file, which is precisely
+    // the "unstable canonical IDs" symptom. The real-path branch only matters
+    // when canonicalization actually succeeds.
+    let Ok(canonical) = std::fs::canonicalize(path) else {
+        return normalized;
+    };
+    let preserve_package_link_identity = path_has_symlinked_package_ancestor(path)
+        || (!has_node_modules_component(path) && has_node_modules_component(&canonical));
+    if preserve_package_link_identity {
         normalized
     } else {
-        let canonical = canonicalize_or_owned(path);
-        let preserve_package_link_identity = path_has_symlinked_package_ancestor(path)
-            || (!has_node_modules_component(path) && has_node_modules_component(&canonical));
-        if preserve_package_link_identity {
-            normalized
-        } else {
-            canonical
-        }
+        canonical
     }
 }
 
@@ -626,6 +629,54 @@ pub(crate) fn has_node_modules_component(path: &Path) -> bool {
             std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
         )
     })
+}
+
+/// Directory from which a `node_modules` walk-up should begin for resolutions
+/// originating in `from_file`.
+///
+/// `tsc` performs module resolution relative to the *real* on-disk location of
+/// a file (`preserveSymlinks: false`, the default). When a package is installed
+/// through a symlink — pnpm hoists `node_modules/<pkg>` to a symlink whose
+/// target lives in an isolated `.pnpm/<pkg>@<version>/node_modules` sandbox —
+/// that sandbox holds the package's private (transitive) dependencies. Walking
+/// up from the *symlink* path only reaches the top-level `node_modules`, so
+/// transitive `@types/*` siblings referenced via `/// <reference types="..." />`
+/// or bare `import`/`require` from inside the package are missed, producing
+/// spurious `TS2688`/`TS2307`.
+///
+/// Resolving the real path of the containing directory restores parity: the
+/// walk-up then traverses the sandbox and finds the siblings. The file's
+/// program identity (its symlink-relative display path) is untouched — only the
+/// lookup anchor changes, mirroring how `tsc` separates module identity from
+/// the realpath used for resolution.
+///
+/// The probe is gated so ordinary project files never pay a `realpath` syscall:
+/// `preserveSymlinks` disables it (matching `tsc`), and the `realpath` is only
+/// taken when the file actually lives inside a symlinked `node_modules` package.
+///
+/// Use this only for *cross-package* walk-ups — resolving a different package
+/// (a bare specifier or a `/// <reference types>` sibling). Walk-ups that stay
+/// *inside* the containing package (package.json `imports`, self-reference,
+/// nearest-`package.json` mode detection) must keep the symlink-relative anchor
+/// so intra-package files retain their symlink identity (see
+/// `normalize_resolved_path`); those paths are fully reachable through the
+/// symlink and have no sandbox blind spot.
+pub(crate) fn node_modules_walkup_dir(
+    from_file: &Path,
+    base_dir: &Path,
+    options: &ResolvedCompilerOptions,
+) -> PathBuf {
+    let dir = from_file.parent().unwrap_or(base_dir);
+    // The cheap `node_modules` path scan short-circuits the per-ancestor
+    // symlink probe for ordinary project files.
+    let needs_realpath = !options.preserve_symlinks
+        && has_node_modules_component(from_file)
+        && path_has_symlinked_package_ancestor(from_file);
+    if needs_realpath {
+        canonicalize_or_owned(dir)
+    } else {
+        dir.to_path_buf()
+    }
 }
 
 pub(crate) fn is_root_alias_symlink(dir: &Path) -> bool {
@@ -788,3 +839,7 @@ pub(crate) const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
 #[cfg(test)]
 #[path = "paths_imports_tests.rs"]
 mod paths_imports_tests;
+
+#[cfg(test)]
+#[path = "canonical_id_tests.rs"]
+mod canonical_id_tests;

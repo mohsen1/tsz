@@ -95,6 +95,26 @@ impl<'a> CheckerState<'a> {
             }
             _ => ty,
         };
+        // Recursive tuple aliases (e.g. `T2<U>` for
+        // `type T2<T> = [42, T2<{ x: T }>]`) cannot be expanded structurally
+        // without producing an unbounded tuple display. Preserve those alias
+        // applications before the role-specific tuple fallbacks evaluate the
+        // application into its self-referential body. Recursive object/mapped
+        // aliases still flow through the normal role-specific formatters: those
+        // paths can reduce property values through mapped type substitutions
+        // where tsc displays the concrete value type instead of the alias.
+        if matches!(
+            role,
+            DiagnosticTypeDisplayRole::Assignability
+                | DiagnosticTypeDisplayRole::AssignmentSource { .. }
+                | DiagnosticTypeDisplayRole::AssignmentTarget { .. }
+                | DiagnosticTypeDisplayRole::CallArgument { .. }
+                | DiagnosticTypeDisplayRole::CallParameter { .. }
+                | DiagnosticTypeDisplayRole::WeakCallParameter { .. }
+        ) && self.is_recursive_tuple_alias_application_for_diagnostic(ty)
+        {
+            return self.format_type_diagnostic(ty);
+        }
         match role {
             DiagnosticTypeDisplayRole::DefaultDiagnostic => self.format_type_diagnostic(ty),
             DiagnosticTypeDisplayRole::WidenedDiagnostic => self.format_type_diagnostic_widened(ty),
@@ -152,5 +172,15 @@ impl<'a> CheckerState<'a> {
                 self.format_property_receiver_type_for_diagnostic(ty)
             }
         }
+    }
+
+    fn is_recursive_tuple_alias_application_for_diagnostic(&mut self, ty: TypeId) -> bool {
+        let evaluated = self.evaluate_type_with_env(ty);
+        crate::query_boundaries::recursive_alias::is_recursive_tuple_type_alias_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            ty,
+            evaluated,
+        )
     }
 }

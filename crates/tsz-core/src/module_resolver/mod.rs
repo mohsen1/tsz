@@ -588,8 +588,17 @@ impl ModuleResolver {
             );
         }
 
-        // Step 5: Try baseUrl fallback for non-relative specifiers
-        if let Some(base_url) = &self.base_url {
+        // Step 5: Try baseUrl fallback for non-relative specifiers.
+        //
+        // tsc only reaches the bare `baseUrl` join when *no* `paths` pattern
+        // matched the specifier: `tryLoadModuleUsingOptionalResolutionSettings`
+        // returns the matched-pattern result (even when it found nothing on
+        // disk) before it ever consults `tryLoadModuleUsingBaseUrl`. When a
+        // pattern matched but its targets were missing, tsc commits to that
+        // pattern and skips baseUrl, continuing only to `node_modules`. Gating
+        // on `!path_mapping_attempted` mirrors that and keeps this resolver
+        // consistent with the driver's `candidates.is_empty()` guard.
+        if !path_mapping_attempted && let Some(base_url) = &self.base_url {
             let candidate = base_url.join(specifier);
             if let Some(resolved) = self.try_file_or_directory(&candidate, importer_package_type) {
                 return (

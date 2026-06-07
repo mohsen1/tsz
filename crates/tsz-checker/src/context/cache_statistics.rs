@@ -3,8 +3,8 @@
 use rustc_hash::FxHashMap;
 use std::mem;
 use tsz_binder::SymbolId;
-use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
+use tsz_solver::{TypeId, TypeParamInfo};
 
 use super::{CheckerContext, cross_file_type_params_cache_statistics};
 
@@ -20,6 +20,8 @@ const DASH_MAP_ENTRY_OVERHEAD_ESTIMATE: usize = 64;
 pub struct CheckerContextCacheStatistics {
     pub cross_file_type_params_cache_entries: usize,
     pub cross_file_type_params_cache_estimated_size_bytes: usize,
+    pub type_param_node_cache_entries: usize,
+    pub type_param_node_cache_estimated_size_bytes: usize,
     pub lib_type_resolution_cache_entries: usize,
     pub lib_type_resolution_cache_estimated_size_bytes: usize,
     pub symbol_name_candidates_cache_entries: usize,
@@ -63,6 +65,7 @@ impl CheckerContextCacheStatistics {
     #[must_use]
     pub const fn estimated_size_bytes(self) -> usize {
         self.cross_file_type_params_cache_estimated_size_bytes
+            + self.type_param_node_cache_estimated_size_bytes
             + self.lib_type_resolution_cache_estimated_size_bytes
             + self.symbol_name_candidates_cache_estimated_size_bytes
             + self.lowering_entity_name_resolution_cache_estimated_size_bytes
@@ -137,6 +140,10 @@ impl<'a> CheckerContext<'a> {
         CheckerContextCacheStatistics {
             cross_file_type_params_cache_entries,
             cross_file_type_params_cache_estimated_size_bytes,
+            type_param_node_cache_entries: self.type_param_node_cache.len(),
+            type_param_node_cache_estimated_size_bytes: type_param_node_cache_estimated_size_bytes(
+                &self.type_param_node_cache,
+            ),
             lib_type_resolution_cache_entries: self.lib_type_resolution_cache.len(),
             lib_type_resolution_cache_estimated_size_bytes:
                 string_option_type_cache_estimated_size_bytes(&self.lib_type_resolution_cache),
@@ -215,6 +222,12 @@ fn fx_hash_map_estimated_size_bytes<K, V>(cache: &FxHashMap<K, V>) -> usize {
     )
 }
 
+fn type_param_node_cache_estimated_size_bytes(
+    cache: &FxHashMap<(u32, TypeParamInfo), TypeId>,
+) -> usize {
+    fx_hash_map_estimated_size_bytes(cache)
+}
+
 fn string_option_type_cache_estimated_size_bytes(
     cache: &FxHashMap<String, Option<TypeId>>,
 ) -> usize {
@@ -240,4 +253,21 @@ fn string_symbol_vec_cache_estimated_size_bytes(cache: &FxHashMap<String, Vec<Sy
 fn string_option_def_cache_estimated_size_bytes(cache: &FxHashMap<String, Option<DefId>>) -> usize {
     fx_hash_map_estimated_size_bytes(cache)
         .saturating_add(cache.keys().map(String::len).sum::<usize>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_common::interner::Atom;
+
+    #[test]
+    fn type_param_node_cache_statistics_report_entries_and_size() {
+        let mut cache = FxHashMap::default();
+        assert_eq!(type_param_node_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert((7, TypeParamInfo::simple(Atom(1))), TypeId::STRING);
+
+        assert_eq!(cache.len(), 1);
+        assert!(type_param_node_cache_estimated_size_bytes(&cache) > 0);
+    }
 }

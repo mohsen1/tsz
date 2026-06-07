@@ -537,6 +537,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && !self.call_expression_declared_return_has_source_conditional_alias(initializer)
                 && let Some(type_text) =
                     self.call_expression_reused_type_text(initializer)
                         .filter(|text| {
@@ -552,6 +553,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && !self.call_expression_declared_return_has_source_conditional_alias(initializer)
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
             {
                 let reused_type_text = self.call_expression_reused_type_text(initializer);
@@ -1322,23 +1324,56 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let &type_idx = heritage.types.nodes.first()?;
-            if self.is_entity_name_heritage(type_idx)
-                && (!self.js_entity_extends_needs_synthetic_alias(type_idx)
-                    || self.heritage_type_is_bare_array(type_idx))
-            {
-                return None;
-            }
-
             let expr_idx = self
                 .arena
                 .get(type_idx)
                 .and_then(|type_node| self.arena.get_expr_type_args(type_node))
                 .map(|eta| eta.expression)
                 .unwrap_or(type_idx);
+            if self.is_entity_name_heritage(type_idx)
+                && (!self.js_entity_extends_needs_synthetic_alias(type_idx)
+                    || self.heritage_type_is_bare_array(type_idx)
+                    || self.js_entity_extends_inferred_typeof_reference_is_nameable(
+                        type_idx, expr_idx,
+                    ))
+            {
+                return None;
+            }
+
             return Some((type_idx, expr_idx));
         }
 
         None
+    }
+
+    fn js_entity_extends_inferred_typeof_reference_is_nameable(
+        &self,
+        type_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(type_id) = self.get_node_type_or_names(&[expr_idx, type_idx]) else {
+            return false;
+        };
+        if type_id == tsz_solver::types::TypeId::ANY {
+            return false;
+        }
+        let type_text = self.print_type_id(type_id);
+        let Some(reference) = type_text.strip_prefix("typeof ") else {
+            return false;
+        };
+        reference.split('.').all(Self::is_plain_identifier_part)
+    }
+
+    fn is_plain_identifier_part(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     pub(in crate::declaration_emitter) fn js_entity_extends_needs_synthetic_alias(
@@ -1370,15 +1405,6 @@ impl<'a> DeclarationEmitter<'a> {
             if binder.lib_symbol_ids.contains(&sym_id) {
                 return true;
             }
-            // A value import is already a public, nameable heritage surface.
-            // Even when package `export *` metadata fails to resolve the target
-            // class, tsc keeps `extends ImportedName` instead of synthesizing
-            // `Derived_base`.
-            if binder.symbols.get(sym_id).is_some_and(|symbol| {
-                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some()
-            }) {
-                return true;
-            }
 
             // The heritage reference may be an import alias (e.g.
             // `import { EventEmitter } from "events"`) or a re-export alias
@@ -1394,6 +1420,27 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return true;
             }
+
+            // When `declare module "M"` lives in the same file as `import { X } from "M"`,
+            // the binder treats the declaration as a module augmentation and does not
+            // populate `module_exports["M"]`. The portability chain above cannot resolve
+            // the alias, so we fall back to an arena scan keyed on the *exported* name
+            // (i.e. `symbol.import_name`) rather than the possibly-renamed local binding.
+            // This lets `import { LitElement as LE }` correctly find `class LitElement`
+            // in the module body, while a non-class export (`let Probe: number`) does not
+            // produce a false positive.
+            if let Some(symbol) = binder.symbols.get(sym_id)
+                && symbol.has_any_flags(symbol_flags::ALIAS)
+                && let Some(module_specifier) = symbol.import_module.as_deref()
+            {
+                let export_name = symbol
+                    .import_name
+                    .as_deref()
+                    .unwrap_or(symbol.escaped_name.as_str());
+                if self.ambient_module_contains_class(module_specifier, export_name) {
+                    return true;
+                }
+            }
         }
 
         let Some(expr_name) = self.get_identifier_text(expr_idx) else {
@@ -1404,6 +1451,51 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_identifier_text(class.name).as_deref() == Some(expr_name.as_str())
             })
         })
+    }
+
+    /// Whether the arena contains a class declaration named `class_name` inside
+    /// an ambient `declare module "module_specifier"` body. Used as a fallback
+    /// when the module is treated as an augmentation (same-file import + declaration)
+    /// and its exports are absent from the portability resolution table.
+    fn ambient_module_contains_class(&self, module_specifier: &str, class_name: &str) -> bool {
+        self.arena
+            .nodes
+            .iter()
+            .enumerate()
+            .any(|(raw_idx, decl_node)| {
+                let Some(class) = self.arena.get_class(decl_node) else {
+                    return false;
+                };
+                if self.get_identifier_text(class.name).as_deref() != Some(class_name) {
+                    return false;
+                }
+                // Walk up the parent chain to find an ambient module with the right specifier.
+                // Identifier-named namespaces are MODULE_DECLARATION nodes too, so skip them
+                // and keep walking; stop only when a string-literal MODULE_DECLARATION is found.
+                let mut current = NodeIndex(raw_idx as u32);
+                while let Some(parent_idx) = self.arena.parent_of(current) {
+                    if parent_idx.is_none() {
+                        break;
+                    }
+                    let Some(parent_node) = self.arena.get(parent_idx) else {
+                        break;
+                    };
+                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        if let Some(module) = self.arena.get_module(parent_node)
+                            && let Some(name_node) = self.arena.get(module.name)
+                            && name_node.kind == SyntaxKind::StringLiteral as u16
+                        {
+                            return self
+                                .arena
+                                .get_literal(name_node)
+                                .is_some_and(|lit| lit.text == module_specifier);
+                        }
+                        // Identifier-named namespace: keep walking upward.
+                    }
+                    current = parent_idx;
+                }
+                false
+            })
     }
 
     /// Whether `sym_id` denotes a class constructor value: it carries the
@@ -1762,10 +1854,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .map(|type_text| self.jsdoc_type_text_for_declaration_emit(&type_text))
             });
         let prefer_source_text = type_text == "never"
-            || source_type_text.as_ref().is_some_and(|source_text| {
-                source_text.contains(" & ")
-                    || (Self::is_constructor_object_type_text(source_text)
-                        && Self::type_text_has_conditional_infer_surface(&type_text))
+            || source_type_text.as_ref().is_some_and(|source_type_text| {
+                Self::should_prefer_synthetic_extends_source_type_text(source_type_text, &type_text)
             });
         let type_text = if prefer_source_text {
             source_type_text.unwrap_or(type_text)
@@ -1778,6 +1868,15 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_non_exported_declaration = true;
 
         Some(alias_name)
+    }
+
+    fn should_prefer_synthetic_extends_source_type_text(
+        source_type_text: &str,
+        printed_type_text: &str,
+    ) -> bool {
+        source_type_text.contains(" & ")
+            || (Self::is_constructor_object_type_text(source_type_text)
+                && Self::type_text_has_conditional_infer_surface(printed_type_text))
     }
 
     fn enum_member_literal_initializer_value(
@@ -1807,5 +1906,37 @@ impl<'a> DeclarationEmitter<'a> {
                 self.primitive_literal_argument_type_text(arg).as_deref() == Some(type_text)
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::DeclarationEmitter;
+
+    #[test]
+    fn synthetic_extends_source_type_policy_prefers_intersections() {
+        assert!(
+            DeclarationEmitter::should_prefer_synthetic_extends_source_type_text(
+                "CtorA & CtorB",
+                "CtorA",
+            )
+        );
+    }
+
+    #[test]
+    fn synthetic_extends_source_type_policy_prefers_constructor_object_for_conditional_infer() {
+        assert!(
+            DeclarationEmitter::should_prefer_synthetic_extends_source_type_text(
+                "{ new (): X; prototype: X }",
+                "T extends U ? infer R : never",
+            )
+        );
+    }
+
+    #[test]
+    fn synthetic_extends_source_type_policy_keeps_plain_printed_type() {
+        assert!(
+            !DeclarationEmitter::should_prefer_synthetic_extends_source_type_text("Ctor", "Ctor",)
+        );
     }
 }

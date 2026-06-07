@@ -904,6 +904,30 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
         return interner.union(widened);
     }
 
+    // Resolver-backed class/interface BCT: sibling class instances that share
+    // an `extends` chain should collapse to the nearest common base before we
+    // enter the tournament and fallback subtype-reduction paths. This matches
+    // the solver inference BCT path and avoids doing O(N²) pairwise relation
+    // work for wide sibling-class arrays such as `BCT candidates=200`.
+    if let Some(res) = resolver
+        && let Some(common_base) = common_base_class_for_bct(interner, &widened, res)
+    {
+        return common_base;
+    }
+
+    // If every object candidate has a required primitive field name that no
+    // sibling has, no candidate can be a supertype of all siblings: every other
+    // sibling is missing that required field. The fallback subtype-reduction
+    // pass would keep the same list, so skip both the tournament and the
+    // fallback pairwise walk for wide disjoint object candidate sets.
+    if bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(interner, &widened) {
+        if resolver.is_some() {
+            let reduced = remove_subtypes_for_bct(interner, query_db, &widened, resolver);
+            return interner.union(reduced.to_vec());
+        }
+        return interner.union(widened);
+    }
+
     // Step 2: Find the best common type from the candidate types
     // TypeScript rule: The best common type must be one of the input types
     // For example: [Dog, Cat] -> Dog | Cat (NOT Animal, even if both extend Animal)
@@ -983,6 +1007,81 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     interner.union(reduced.to_vec())
 }
 
+fn common_base_class_for_bct<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: &R,
+) -> Option<TypeId> {
+    if types.len() < 2 {
+        return None;
+    }
+
+    let mut candidates = nominal_hierarchy_for_bct(interner, types[0], resolver)?;
+    // A single-entry hierarchy means the first candidate has no resolver-visible
+    // base. Existing tournament/subtype-reduction logic handles those cases.
+    if candidates.len() <= 1 {
+        return None;
+    }
+
+    for &ty in types.iter().skip(1) {
+        candidates.retain(|&candidate| nominally_extends_or_is(interner, ty, candidate, resolver));
+        if candidates.is_empty() {
+            return None;
+        }
+    }
+
+    // `nominal_hierarchy_for_bct` is ordered most-derived to most-base, so the
+    // first surviving candidate is the nearest common base.
+    candidates.first().copied()
+}
+
+fn nominal_hierarchy_for_bct<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    resolver: &R,
+) -> Option<Vec<TypeId>> {
+    let mut hierarchy = Vec::new();
+    let mut current = type_id;
+    for _ in 0..32 {
+        if hierarchy.contains(&current) {
+            break;
+        }
+        hierarchy.push(current);
+        let Some(base) = resolver.get_base_type(current, interner) else {
+            break;
+        };
+        current = base;
+    }
+
+    (!hierarchy.is_empty()).then_some(hierarchy)
+}
+
+fn nominally_extends_or_is<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    resolver: &R,
+) -> bool {
+    if source == target {
+        return true;
+    }
+
+    let mut current = source;
+    for _ in 0..32 {
+        let Some(base) = resolver.get_base_type(current, interner) else {
+            return false;
+        };
+        if base == target {
+            return true;
+        }
+        if base == current {
+            return false;
+        }
+        current = base;
+    }
+    false
+}
+
 /// Remove subtypes from a type list using the full `SubtypeChecker`.
 ///
 /// For each pair (i, j), if types[i] <: types[j] and i != j, types[i] is
@@ -1025,7 +1124,7 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         return hit;
     }
 
-    if subtype_reduction_proven_noop_by_unique_required_fields(interner, types) {
+    if bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(interner, types) {
         let result: Arc<[TypeId]> = Arc::from(types.to_vec());
         if let (Some(db), Some(key)) = (query_db, cache_key) {
             db.insert_subtype_reduction_cache(key, result.clone());
@@ -1092,7 +1191,7 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
     result
 }
 
-fn subtype_reduction_proven_noop_by_unique_required_fields(
+fn bct_candidates_proven_pairwise_incomparable_by_unique_required_fields(
     interner: &dyn TypeDatabase,
     types: &[TypeId],
 ) -> bool {

@@ -355,7 +355,54 @@ fn anchor_relative_selector(selector: &mut String, base_dir: &Path) {
     if candidate.is_absolute() {
         return;
     }
-    *selector = base_dir.join(candidate).to_string_lossy().into_owned();
+    let joined = base_dir.join(candidate);
+    *selector = lexically_normalize_selector(&joined)
+        .to_string_lossy()
+        .into_owned();
+}
+
+/// Lexically collapse `.` and `..` components in an anchored selector path
+/// without touching the filesystem.
+///
+/// Anchoring a relative `include`/`exclude`/`files` selector onto its
+/// declaring config's directory via [`Path::join`] preserves any leading
+/// `./` (or embedded `..`) the selector carried — e.g. a base config's
+/// `"./global.d.ts"` becomes `<dir>/./global.d.ts`. That is a valid
+/// filesystem path but an *unmatchable glob*: during glob matching the `.`
+/// is a literal path component, so the pattern never matches the real
+/// `<dir>/global.d.ts` and discovery reports zero inputs (a false `TS18003`).
+///
+/// This rebuilds the path from [`Path::components`], which preserves glob
+/// metacharacters such as `**`/`*.ts` (unlike [`std::fs::canonicalize`], which
+/// hits the filesystem) and removes the `.`/`..` segments. The sibling
+/// `resolution::helpers::normalize_path_segments` is deliberately *not* reused
+/// here: it short-circuits to the original string when `components()` surfaces
+/// no `.`/`..`, but `components()` silently drops *embedded* `.` segments, so a
+/// joined `<dir>/./glob` would be returned with its `/./` intact.
+fn lexically_normalize_selector(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Resolve `..` against a preceding concrete component only.
+                // Never pop a root/prefix, and keep `..` when there is nothing
+                // ordinary to cancel (it would otherwise change the meaning).
+                if matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                ) {
+                    normalized.pop();
+                } else {
+                    normalized.push("..");
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 pub(super) fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
@@ -614,6 +661,66 @@ mod tests {
         );
         let files = config.files.as_ref().unwrap();
         assert_eq!(files[0], parent_abs.join("entry.ts").to_string_lossy());
+    }
+
+    #[test]
+    fn anchor_inherited_root_selectors_normalizes_dot_segments() {
+        // Regression for the false TS18003 on a references-only root that
+        // inherits `"include": ["./global.d.ts"]` from a base config (the
+        // `mswjs/msw` shape). `Path::join` keeps the leading `./`, producing
+        // an unmatchable glob `<dir>/./global.d.ts`; anchoring must collapse
+        // `.`/`..` while leaving glob metacharacters intact.
+        let temp = tempdir().unwrap();
+        let config_dir = temp.path().join("project");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let config_path = config_dir.join("tsconfig.base.json");
+
+        let mut config = TsConfig {
+            include: Some(vec![
+                "./global.d.ts".to_string(),
+                "./src/**/*.ts".to_string(),
+            ]),
+            exclude: Some(vec!["./node_modules".to_string()]),
+            files: Some(vec!["../shared/entry.ts".to_string()]),
+            ..Default::default()
+        };
+
+        anchor_inherited_root_selectors(&mut config, &config_path);
+        let parent_abs = std::fs::canonicalize(&config_dir).unwrap_or_else(|_| config_dir.clone());
+
+        let include = config.include.as_ref().unwrap();
+        assert_eq!(
+            include[0],
+            parent_abs.join("global.d.ts").to_string_lossy(),
+            "leading ./ must be collapsed so the glob matches the real file"
+        );
+        assert_eq!(
+            include[1],
+            parent_abs.join("src/**/*.ts").to_string_lossy(),
+            "glob metacharacters must survive normalization"
+        );
+        let exclude = config.exclude.as_ref().unwrap();
+        assert_eq!(
+            exclude[0],
+            parent_abs.join("node_modules").to_string_lossy()
+        );
+        let files = config.files.as_ref().unwrap();
+        assert_eq!(
+            files[0],
+            parent_abs
+                .parent()
+                .unwrap()
+                .join("shared/entry.ts")
+                .to_string_lossy(),
+            ".. must resolve against the declaring config's directory"
+        );
+
+        for selector in include.iter().chain(exclude).chain(files) {
+            assert!(
+                !selector.contains("/./") && !selector.contains("/../"),
+                "anchored selector must not retain dot segments: {selector}"
+            );
+        }
     }
 
     #[test]

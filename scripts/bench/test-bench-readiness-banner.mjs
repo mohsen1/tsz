@@ -13,6 +13,20 @@ assert.deepEqual(benchReadinessMessages(null), []);
 
 assert.match(
   benchReadinessMessages(null, {
+    measurement_profile: {
+      warning: "release-pgo metadata missing profile fingerprint",
+    },
+    two_x_target: {
+      eligible_green_rows: 2,
+      rows_below_target: 0,
+      missing_attribution_rows: [],
+    },
+  }).join(" "),
+  /measurement profile warning: release-pgo metadata missing profile fingerprint/,
+);
+
+assert.match(
+  benchReadinessMessages(null, {
     two_x_target: {
       eligible_green_rows: 2,
       rows_below_target: 1,
@@ -103,13 +117,18 @@ const websiteBenchmarkData = fs.readFileSync(
 );
 assert.match(
   websiteBenchmarkData,
-  /benchReadinessBanner\(readiness, loadBenchWinnerReport\(\)\)/,
-  "website compatibility dashboard should pass the tsgo winner companion report into the readiness banner",
+  /current compatibility blocker/,
+  "website compatibility dashboard should frame project rows as compatibility blockers",
 );
-assert.match(
+assert.doesNotMatch(
   websiteBenchmarkData,
-  /replace\(\/\\\.json\$\/, "\.tsgo-winners\.json"\)/,
-  "website compatibility dashboard should load the selected artifact's tsgo winner companion report",
+  /benchReadinessBanner|loadBenchReadinessStatus|loadBenchWinnerReport|bench-readiness-warning/,
+  "website compatibility dashboard should not render benchmark readiness warnings",
+);
+assert.doesNotMatch(
+  websiteBenchmarkData,
+  /current release truth|public speed claims|2x target gap/,
+  "website compatibility dashboard should not include benchmark launch messaging",
 );
 
 console.log("bench readiness banner tests passed");

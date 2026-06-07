@@ -19,6 +19,7 @@
 //! ```
 
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::fmt::Write;
 use std::sync::Arc;
 
@@ -30,6 +31,8 @@ mod ir_printer_generator_state;
 mod ir_printer_helpers;
 #[path = "ir_printer_namespace.rs"]
 mod ir_printer_namespace;
+#[path = "ir_printer/node_predicates.rs"]
+mod ir_printer_node_predicates;
 #[path = "ir_printer_recovery.rs"]
 mod ir_printer_recovery;
 use ir_printer_namespace::NamespaceIifeContext;
@@ -95,43 +98,6 @@ pub struct IRPrinter<'a> {
 }
 
 impl<'a> IRPrinter<'a> {
-    /// Check if a generator switch case should stay on the `case N:` line.
-    fn is_generator_inline_case_statement(node: &IRNode) -> bool {
-        match node {
-            IRNode::ThrowStatement(expr) => Self::is_generator_inline_throw_expression(expr),
-            IRNode::ReturnStatement(Some(expr)) => {
-                matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
-            }
-            _ => false,
-        }
-    }
-
-    fn is_generator_break_return(node: &IRNode) -> bool {
-        matches!(
-            node,
-            IRNode::ReturnStatement(Some(expr))
-                if matches!(expr.as_ref(), IRNode::GeneratorOp { opcode: 3, .. })
-        )
-    }
-
-    fn is_generator_sent_assignment(node: &IRNode) -> bool {
-        matches!(
-            node,
-            IRNode::ExpressionStatement(expr)
-                if matches!(
-                    expr.as_ref(),
-                    IRNode::BinaryExpr { right, .. } if matches!(right.as_ref(), IRNode::GeneratorSent)
-                )
-        )
-    }
-
-    const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
-        matches!(
-            expr,
-            IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent
-        )
-    }
-
     pub(crate) fn emit_es5_class_expression(
         &mut self,
         name: &str,
@@ -236,16 +202,6 @@ impl<'a> IRPrinter<'a> {
         )
     }
 
-    fn should_indent_sequence_child(node: &IRNode) -> bool {
-        match node {
-            IRNode::NamespaceIIFE {
-                skip_sequence_indent,
-                ..
-            } => !skip_sequence_indent,
-            _ => true,
-        }
-    }
-
     fn generator_state_name_for_function_body(body: &[IRNode]) -> Option<&'static str> {
         if !body
             .iter()
@@ -271,15 +227,6 @@ impl<'a> IRPrinter<'a> {
         }
 
         (!hoisted_vars.is_empty()).then(|| Self::generator_state_name_for_hoisted(&hoisted_vars))
-    }
-
-    fn is_noop_statement(node: &IRNode) -> bool {
-        match node {
-            IRNode::Sequence(nodes) if nodes.is_empty() => true,
-            IRNode::EmptyStatement => true,
-            IRNode::Raw(text) => text.trim().is_empty(),
-            _ => false,
-        }
     }
 
     fn write_embedded_output(&mut self, output: &str) {
@@ -1764,11 +1711,15 @@ impl<'a> IRPrinter<'a> {
                     let mut printer = self.build_nested_ast_printer(arena);
                     printer.scoped_static_this_alias = Some(Arc::<str>::from(this_alias.as_ref()));
                     if let Some(counter) = Self::temp_counter_after_name(this_alias.as_ref()) {
+                        let class_temp = Self::temp_name_for_counter(counter);
+                        printer
+                            .file_level_class_temp_reservations
+                            .insert(*node, VecDeque::from([class_temp]));
                         printer.ctx.destructuring_state.temp_var_counter = printer
                             .ctx
                             .destructuring_state
                             .temp_var_counter
-                            .max(counter);
+                            .max(counter + 1);
                     }
                     printer.emit_expression(*node);
                     self.merge_ast_printer_block_scope_reserved_names(&printer);

@@ -118,7 +118,7 @@ assert.deepEqual(wipStateFindings([{
         "AgentName: M1-A",
         "Converted this PR back to draft because the current ready head is blocked.",
         "Blockers: CI Summary is red and the latest review still flags output surgery.",
-        "Next owner/action: Studio-Opus should keep merge-queue off and fix the blocker.",
+        "Next owner/action: Studio-Opus should leave the PR unqueued and fix the blocker.",
       ].join("\n"),
     })],
   },

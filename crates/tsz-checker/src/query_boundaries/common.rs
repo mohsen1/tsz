@@ -173,19 +173,9 @@ pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::contains_error_type_db(db, type_id)
 }
 
-/// Like `contains_error_type` but also detects `TypeId::ERROR` nested inside
-/// Application type arguments.
-///
-/// `contains_error_type_db` delegates to `contains_type_matching` which uses
-/// `is_intrinsic()` as a fast-path. `TypeId::ERROR` (value 1) IS intrinsic, so
-/// `contains_type_matching` returns false for errors buried in Application args like
-/// `Application(Vector, [ERROR])`. The visitor's `contains_error_type_recursive`
-/// checks `type_id == TypeId::ERROR` BEFORE the intrinsic guard, correctly
-/// traversing Application argument lists.
-///
-/// Use this in contexts where manually-lowered types may contain `TypeId::ERROR`
-/// as a type argument (e.g., overload compatibility where class type params are
-/// not in scope during lowering).
+/// Like `contains_error_type`, but also detects `TypeId::ERROR` nested in
+/// Application arguments. The visitor checks the error sentinel before the
+/// intrinsic fast path, which is needed for manually-lowered overload types.
 pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::contains_error_type(db, type_id)
 }

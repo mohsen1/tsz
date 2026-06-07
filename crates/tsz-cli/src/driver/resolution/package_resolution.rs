@@ -32,20 +32,15 @@ pub(crate) struct PackageJson {
     pub(super) types_versions: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) struct SemVer {
-    pub(super) major: u32,
-    pub(super) minor: u32,
-    pub(super) patch: u32,
-}
+// `SemVer` and the `typesVersions` algorithm live in
+// `tsz_common::module_resolution::types_versions` (re-exported via the sibling
+// `exports_imports` module). Keep only the CLI-specific compiler-version
+// plumbing here.
 
 // NOTE: Keep this in sync with the TypeScript version this compiler targets.
 // TODO: Make this configurable once CLI plumbing is available.
-pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {
-    major: 6,
-    minor: 0,
-    patch: 3,
-};
+pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer =
+    tsz_common::module_resolution::types_versions::DEFAULT_COMPILER_VERSION;
 
 pub(crate) fn types_versions_compiler_version(options: &ResolvedCompilerOptions) -> SemVer {
     options
@@ -233,7 +228,11 @@ pub(crate) fn resolve_node_module_specifier(
         }
     }
 
-    let mut current = from_file.parent().unwrap_or(base_dir);
+    // Anchor the walk-up at the containing file's real path so bare imports
+    // from inside a symlinked package (pnpm's `.pnpm` sandbox) can reach the
+    // package's private/transitive dependencies. See `node_modules_walkup_dir`.
+    let start_dir = node_modules_walkup_dir(from_file, base_dir, options);
+    let mut current = start_dir.as_path();
 
     loop {
         // 1. Look for the package itself in node_modules

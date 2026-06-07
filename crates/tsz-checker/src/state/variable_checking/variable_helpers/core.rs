@@ -1394,6 +1394,15 @@ impl<'a> CheckerState<'a> {
         if initializer_is_object_assign {
             return;
         }
+        if initializer.is_some()
+            && self
+                .ctx
+                .arena
+                .get(initializer)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION)
+        {
+            return;
+        }
 
         if name == "globalThis"
             && initializer.is_some()

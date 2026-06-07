@@ -189,7 +189,7 @@ pub(crate) fn emit_outputs(
     let root_file_paths: FxHashSet<String> = context
         .root_file_paths
         .iter()
-        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        .map(|path| canonicalize_or_owned(path.as_path()))
         .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect();
     let file_lookup = build_program_file_lookup(context.program);
@@ -608,16 +608,16 @@ pub(crate) fn emit_outputs(
                 // direct imports (TS2307) but doesn't suppress the portability
                 // check on inferred types in declaration emit.
 
-                // Precompute the export surface summary for this file.
-                // This seeds the overload pre-scan so the emitter doesn't
+                // Precompute declaration facts for this file. This seeds the
+                // exported-surface overload pre-scan so the emitter doesn't
                 // need to discover overloads incrementally during the walk.
-                let surface = tsz_binder::ExportSurface::from_binder(
+                let summary = tsz_binder::DeclarationSummary::from_binder(
                     &binder,
                     &file.arena,
                     &file.file_name,
                     file.source_file,
                 );
-                emitter.set_export_surface(surface);
+                emitter.set_declaration_summary(summary);
                 if !duplicate_global_var_names.is_empty() {
                     emitter.set_bundled_duplicate_global_var_types(
                         bundled_duplicate_global_var_types_for_file(

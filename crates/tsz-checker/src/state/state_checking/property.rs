@@ -163,19 +163,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn track_earliest_excess(
-        &self,
-        current: &mut Option<(Atom, NodeIndex, u32)>,
-        name: Atom,
-        report_idx: NodeIndex,
-    ) {
-        let pos = self.ctx.arena.get(report_idx).map_or(u32::MAX, |n| n.pos);
-        if current.is_none_or(|(_, _, best)| pos < best) {
-            *current = Some((name, report_idx, pos));
-        }
-    }
-
-    fn emit_tracked_excess_property(
+    pub(super) fn emit_tracked_excess_property(
         &mut self,
         tracked: Option<(Atom, NodeIndex, u32)>,
         target: TypeId,
@@ -381,6 +369,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.report_concrete_mapped_target_excess_property(
+            target,
+            evaluated_target,
+            source_props,
+            explicit_property_names.as_ref(),
+            object_literal_idx,
+        ) {
+            return;
+        }
+
         if let Some(members) = query::intersection_members(self.ctx.types, union_check_target) {
             let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
             for source_prop in source_props {
@@ -406,9 +404,11 @@ impl<'a> CheckerState<'a> {
                         accepted = true;
                         break;
                     }
-                    if self
-                        .generic_mapped_receiver_lacks_explicit_property(member, prop_name.as_ref())
-                        || self.generic_mapped_receiver_lacks_explicit_property(
+                    if self.generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
+                        member,
+                        prop_name.as_ref(),
+                    ) || self
+                        .generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
                             resolved_member,
                             prop_name.as_ref(),
                         )
@@ -1462,7 +1462,6 @@ const c: TaggedCategory = { name: "root", tag: "top", parent: { name: "child", t
 
     #[test]
     fn ts2353_debug_structural_type_alias_recursive_intersection() {
-        // DEBUG: structural type alias (not interface) recursive intersection
         let diags = check_source_diagnostics(
             r#"
 type Chain = { data: string; rest?: Chain; };

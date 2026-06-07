@@ -153,6 +153,15 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // Preserve the as-written reference for a generic interface/class source
+        // (`O<T>`, `OwnerList<T>`) before the widening / structural-display
+        // fallbacks below collapse it and re-derive an over-instantiated type
+        // argument from the instantiated members. See
+        // `generic_nominal_application_source_display` for the full rationale.
+        if let Some(display) = self.generic_nominal_application_source_display(source) {
+            return display;
+        }
+
         let has_optional_callable_param =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
                 .is_some_and(|shape| shape.params.iter().any(|param| param.optional))
@@ -176,6 +185,16 @@ impl<'a> CheckerState<'a> {
         // before the widening fallbacks below; see
         // `assertion_source_literal_display`.
         if let Some(display) = self.assertion_source_literal_display(anchor_idx, source, target) {
+            return display;
+        }
+
+        // A `keyof <operand>` source reduces to its key set in tsc diagnostics:
+        // the literal members are preserved against a literal-sensitive target
+        // (`"a" | "b"`, `2 | 1`) and the `keyof Name` spelling is kept for a named
+        // operand. tsz otherwise leaks an unreduced `keyof { … }`, a widened
+        // `string`, or the alias name depending on how the source was built;
+        // normalize all three before the generic widening fallbacks below.
+        if let Some(display) = self.keyof_source_assignment_display(source, target) {
             return display;
         }
 
@@ -1803,7 +1822,10 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
-        if self.assign_relation_outcome(source, target).related {
+        if self
+            .broad_mapped_index_signature_display_relation_outcome(source, target)
+            .related
+        {
             return None;
         }
 
@@ -1965,84 +1987,5 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|target_idx| {
                 self.ctx.arena.skip_parenthesized_and_assertions(target_idx) == object_idx
             })
-    }
-
-    pub(in crate::error_reporter) fn computed_index_signature_object_literal_source_display(
-        &mut self,
-        expr_idx: NodeIndex,
-        target: Option<TypeId>,
-    ) -> Option<String> {
-        let target = target?;
-        let shape = crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)?;
-        let node = self.ctx.arena.get(expr_idx)?;
-        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return None;
-        }
-        let literal = self.ctx.arena.get_literal_expr(node)?;
-        let mut computed_key_kind = None;
-        let mut computed_value_types = Vec::new();
-
-        for child_idx in literal.elements.nodes.iter().copied() {
-            let child = self.ctx.arena.get(child_idx)?;
-            let prop = self.ctx.arena.get_property_assignment(child)?;
-            let name_node = self.ctx.arena.get(prop.name)?;
-            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                return None;
-            }
-            let computed = self.ctx.arena.get_computed_property(name_node)?;
-            let raw_key_type = self.get_type_of_node(computed.expression);
-            let key_type = self.widen_type_for_display(raw_key_type);
-            let key_kind = if key_type == TypeId::STRING {
-                "string"
-            } else if key_type == TypeId::NUMBER {
-                "number"
-            } else {
-                return None;
-            };
-            if computed_key_kind.is_some_and(|existing| existing != key_kind) {
-                return None;
-            }
-            computed_key_kind = Some(key_kind);
-
-            let value_type = self.get_type_of_node(prop.initializer);
-            if value_type == TypeId::ERROR {
-                return None;
-            }
-            computed_value_types.push(self.widen_type_for_display(value_type));
-        }
-
-        let key_kind = computed_key_kind?;
-        if computed_value_types.is_empty()
-            || !((key_kind == "string" && shape.string_index.is_some())
-                || (key_kind == "number" && shape.number_index.is_some()))
-        {
-            return None;
-        }
-
-        let value_type = if computed_value_types.len() == 1 {
-            computed_value_types[0]
-        } else {
-            self.ctx.types.factory().union(computed_value_types)
-        };
-        let value_display = self.format_type_for_assignability_message(value_type);
-        Some(format!("{{ [x: {key_kind}]: {value_display}; }}"))
-    }
-
-    pub(in crate::error_reporter) fn literal_assignment_source_display_for_target(
-        &mut self,
-        target: TypeId,
-        anchor_idx: NodeIndex,
-    ) -> Option<String> {
-        if self.in_arithmetic_compound_assignment_context(anchor_idx)
-            || !crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target)
-        {
-            return None;
-        }
-        let expr_idx = self
-            .assignment_source_expression(anchor_idx)
-            .or_else(|| self.direct_diagnostic_source_expression(anchor_idx))?;
-        let display = self.literal_expression_display(expr_idx)?;
-        literal_display_appropriate_for_undefined_null_target(self.ctx.types, target, &display)
-            .then_some(display)
     }
 }

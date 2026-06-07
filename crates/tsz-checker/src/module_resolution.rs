@@ -309,26 +309,34 @@ struct IndexedTarget<'a> {
 ///
 /// This replaces the previous implementation, which re-derived per-target
 /// metadata inside the inner loop of an O(n²) source × target scan.
+///
+/// This type is internal to `module_resolution`. The canonical public path is
+/// [`build_file_name_index`] + [`resolve_specifier_via_file_index`] for the
+/// checker, and [`build_module_resolution_maps`] for the driver dependency
+/// graph. New code must not expose `TargetIndex` through the public API.
 #[derive(Debug)]
-pub struct TargetIndex<'a> {
+struct TargetIndex<'a> {
     targets: Vec<IndexedTarget<'a>>,
 }
 
 impl<'a> TargetIndex<'a> {
     /// Number of usable (non-skipped) target entries in the index.
-    pub const fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.targets.len()
     }
 
     /// True when the index holds no targets.
-    pub const fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.targets.is_empty()
     }
 }
 
 /// Build a `TargetIndex` from a list of project file paths. The returned index
 /// borrows from `file_names` for zero-copy access to path components.
-pub fn build_target_index(file_names: &[String]) -> TargetIndex<'_> {
+///
+/// Internal helper called by [`build_module_resolution_maps`]. Not part of the
+/// public API — external callers should use [`build_file_name_index`] instead.
+fn build_target_index(file_names: &[String]) -> TargetIndex<'_> {
     let mut targets = Vec::with_capacity(file_names.len());
     for (idx, name) in file_names.iter().enumerate() {
         let abs_path = Path::new(name.as_str());
@@ -360,16 +368,13 @@ pub fn build_target_index(file_names: &[String]) -> TargetIndex<'_> {
 // Relative specifier derivation
 // ---------------------------------------------------------------------------
 
-/// Compute a canonical `./…`-style relative specifier from `from_dir` to
-/// `to_file`. Returns `None` if the two paths have no common ancestor (e.g.
-/// different drive roots on Windows).
+/// Compute the extension-stripped relative specifier from `from_dir` to `to_file`.
 ///
-/// The returned string:
-/// - always starts with `./` or `../`,
-/// - has its known TS/JS extension stripped, or for arbitrary-extension
-///   declaration files (`<base>.d.<ext>.ts`, `<ext>` outside TS/JS/JSON),
-///   the user-written `<base>.<ext>` form,
-/// - uses `/` separators.
+/// Thin wrapper around [`relative_file_specifier`] that returns only the stem
+/// (no-extension) form. Used by unit tests to verify stem derivation; production
+/// code calls [`relative_file_specifier`] directly so it can also use the
+/// `with_extension` and `user_alt` forms.
+#[cfg_attr(not(test), allow(dead_code))]
 fn relative_specifier_for_file(from_dir: &Path, to_file: &Path) -> Option<String> {
     relative_file_specifier(from_dir, to_file).map(|r| r.stem)
 }
@@ -478,62 +483,8 @@ fn directory_specifier(from_dir: &Path, to_dir: &Path) -> Option<DirectorySpecif
 }
 
 // ---------------------------------------------------------------------------
-// Resolve a single specifier against the index
+// TargetIndex helpers (internal to build_module_resolution_maps)
 // ---------------------------------------------------------------------------
-
-/// Resolve `specifier` as imported from `source_file` against the precomputed
-/// `TargetIndex`.
-///
-/// Used for single-specifier lookups against a `TargetIndex` (returned by
-/// `build_target_index`).  For the canonical checker resolution path use
-/// `resolve_specifier_via_file_index` together with the `FileNameIndex`
-/// returned by `build_file_name_index`; that path avoids the O(N²)
-/// cross-product materialization.
-pub fn resolve_from_source(
-    source_file: &str,
-    specifier: &CanonicalSpecifier,
-    index: &TargetIndex<'_>,
-) -> Option<usize> {
-    // Only project-local paths are resolvable here. Bare/absolute specifiers
-    // are classified but not matched against the in-memory target set.
-    if !matches!(
-        specifier.kind,
-        SpecifierKind::Relative | SpecifierKind::Parent
-    ) {
-        return None;
-    }
-
-    let src_dir = Path::new(source_file).parent()?;
-
-    // File matches win over directory-index matches, and within each bucket the
-    // highest `tsc` resolution priority (source before declaration) wins when
-    // several siblings share one extensionless stem. An exact extension-bearing
-    // or arbitrary-extension spelling is unambiguous (only the named file
-    // produces it), so it short-circuits immediately.
-    let mut best_file: Option<(usize, usize)> = None;
-    let mut best_dir: Option<(usize, usize)> = None;
-    for target in &index.targets {
-        if let Some(rel) = relative_file_specifier(src_dir, target.abs_path) {
-            if rel.with_extension.as_deref() == Some(specifier.text.as_str())
-                || rel.user_alt.as_deref() == Some(specifier.text.as_str())
-            {
-                return Some(target.tgt_idx);
-            }
-            if rel.stem == specifier.text {
-                keep_higher_priority(&mut best_file, target);
-                continue;
-            }
-        }
-        if let Some(idx_dir) = target.index_dir
-            && let Some(dir) = directory_specifier(src_dir, idx_dir)
-            && (dir.primary == specifier.text
-                || dir.alt.as_deref() == Some(specifier.text.as_str()))
-        {
-            keep_higher_priority(&mut best_dir, target);
-        }
-    }
-    best_file.or(best_dir).map(|(_, tgt_idx)| tgt_idx)
-}
 
 /// Update `best` to hold `target` when it has a strictly higher `tsc`
 /// resolution priority (lower [`resolution_priority`] value) than the current
@@ -843,13 +794,60 @@ pub fn module_specifier_error_candidates(specifier: &str) -> Vec<String> {
 // so the whole project pays the cost once.
 
 /// Project-wide reverse index from normalized file name to file index.
-pub type FileNameIndex = FxHashMap<String, usize>;
+///
+/// The index also owns a shared memo for `(source_file_name, specifier)`
+/// probes. It is rebuilt with the project filename topology, so memoized hits
+/// and misses have the same lifetime as the strings they were resolved against.
+#[derive(Default)]
+pub struct FileNameIndex {
+    entries: FxHashMap<String, usize>,
+    specifier_resolution_cache: dashmap::DashMap<(Option<usize>, String, String), Option<usize>>,
+}
+
+impl FileNameIndex {
+    pub fn reserve(&mut self, additional: usize) {
+        self.entries.reserve(additional);
+    }
+
+    pub fn insert(&mut self, key: String, value: usize) -> Option<usize> {
+        self.entries.insert(key, value)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&usize> {
+        self.entries.get(key)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    #[cfg(test)]
+    fn specifier_resolution_cache_len(&self) -> usize {
+        self.specifier_resolution_cache.len()
+    }
+}
+
+impl FromIterator<(String, usize)> for FileNameIndex {
+    fn from_iter<T: IntoIterator<Item = (String, usize)>>(iter: T) -> Self {
+        let mut idx = Self::default();
+        for (key, value) in iter {
+            idx.insert(key, value);
+        }
+        idx
+    }
+}
 
 /// Build a reverse index `normalized_file_name -> file_idx` from a slice of
 /// arenas. The keys use forward slashes only, matching the forms the
 /// specifier resolver produces.
 pub fn build_file_name_index(arenas: &[Arc<NodeArena>]) -> FileNameIndex {
-    let mut idx: FileNameIndex = FxHashMap::default();
+    let mut idx = FileNameIndex::default();
     idx.reserve(arenas.len());
     for (file_idx, arena) in arenas.iter().enumerate() {
         let Some(sf) = arena.source_files.first() else {
@@ -927,6 +925,41 @@ fn probe_arbitrary_ext_decl(
 /// index that matches, or `None` when no project file answers the
 /// specifier.
 pub fn resolve_specifier_via_file_index(
+    source_file_name: &str,
+    specifier: &str,
+    filename_idx: &FileNameIndex,
+) -> Option<usize> {
+    resolve_specifier_via_file_index_for_source(None, source_file_name, specifier, filename_idx)
+}
+
+/// Resolve a module specifier through [`FileNameIndex`] with a source-indexed
+/// cache key. Conformance and project batches can contain repeated file-name
+/// strings such as `test.ts`; the source index keeps those probes isolated so a
+/// cached file-index hit cannot bypass the caller's source-indexed legacy map
+/// fallback for a different arena with the same name.
+pub fn resolve_specifier_via_file_index_for_source(
+    source_file_idx: Option<usize>,
+    source_file_name: &str,
+    specifier: &str,
+    filename_idx: &FileNameIndex,
+) -> Option<usize> {
+    let cache_key = (
+        source_file_idx,
+        source_file_name.to_string(),
+        specifier.to_string(),
+    );
+    if let Some(cached) = filename_idx.specifier_resolution_cache.get(&cache_key) {
+        return *cached;
+    }
+    let resolved =
+        resolve_specifier_via_file_index_uncached(source_file_name, specifier, filename_idx);
+    filename_idx
+        .specifier_resolution_cache
+        .insert(cache_key, resolved);
+    resolved
+}
+
+fn resolve_specifier_via_file_index_uncached(
     source_file_name: &str,
     specifier: &str,
     filename_idx: &FileNameIndex,

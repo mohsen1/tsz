@@ -50,7 +50,7 @@ default_cargo_build_jobs() {
   cpu_jobs="$HOST_CPUS"
   mem_mb="$(host_memory_mb)"
   case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
-    unit|unit-archive|unit-shard)
+    unit|checker-integration|unit-archive|unit-shard)
       # Force `CARGO_BUILD_JOBS=1` on unit. Observed RSS-per-rustc on this
       # workspace's lib-test compiles (notably tsz-checker, tsz-emitter,
       # tsz-solver, tsz-core lib-test) now exceeds 16 GiB per process during
@@ -67,19 +67,18 @@ default_cargo_build_jobs() {
       #   * 12288 (2 jobs) intermediate — still SIGKILLs (this PR's first run).
       #   * 24576 (1 job) ← current. Safe on 32 GiB box; floor(32768/24576)=1.
       #
-      # The real fix for compile time is a bigger box (Cloud Build private
-      # pool e2-highcpu-32 in PR #7591). Once that lands and is promoted, this
-      # cap stops mattering — Cloud Build runs the same compile at -j32 on a
-      # box where memory isn't the constraint.
+      # Keep unit on Cloud Run by default. Heavy dist-style builds can use
+      # larger infra when needed, but unit needs to stay within the standard
+      # 32 GiB runner budget.
       mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     dist-binaries)
       # sccache is disabled for dist-binaries (TSZ_CI_DISABLE_SCCACHE=1 in
-      # GitHub CI) so every codegen unit compiles from scratch. The observed
-      # peak RSS per cargo job is slightly higher than the sccache-assisted
-      # path; budget 8192 MiB/job instead of the default 7168 to keep total
-      # cargo RSS below ~87% of RAM before OS overhead.
-      mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-8192}"
+      # GitHub CI) so every codegen unit compiles from scratch. Keep the
+      # default 7168 MiB/job budget so the 8 vCPU x 32 GiB Cloud Run runner can
+      # build at -j4; -j3 has repeatedly finished cargo just after the runner's
+      # external cancellation window and before artifact upload.
+      mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-7168}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"

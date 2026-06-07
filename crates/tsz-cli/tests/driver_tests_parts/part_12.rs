@@ -666,8 +666,13 @@ fn ts5011_emitted_when_out_dir_without_root_dir_and_inferred_subdir() {
     );
 }
 
+// tsc 6.0 emits TS5011 for *every* emit, not only declaration emit. A plain
+// JavaScript build with `outDir` set, no `rootDir`, and an inferred common
+// source subdirectory triggers the same migration warning, because the JS
+// output layout changes in TypeScript 7.0 the same way the declaration layout
+// does. Verified against the `tsc@6.0.x` oracle.
 #[test]
-fn ts5011_not_emitted_for_js_emit_only_out_dir_without_root_dir() {
+fn ts5011_emitted_for_js_emit_only_out_dir_without_root_dir() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -686,8 +691,53 @@ fn ts5011_not_emitted_for_js_emit_only_out_dir_without_root_dir() {
     let result = compile(&args, base).expect("compilation should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&5011),
-        "Should NOT emit TS5011 for outDir-only JS emit, got: {codes:?}"
+        codes.contains(&5011),
+        "Should emit TS5011 for outDir JS emit without rootDir, got: {codes:?}"
+    );
+    let ts5011 = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5011)
+        .expect("TS5011 diagnostic");
+    assert!(
+        ts5011.message_text.contains("./src"),
+        "TS5011 message should reference the inferred common source dir, got: {}",
+        ts5011.message_text
+    );
+    assert!(
+        ts5011
+            .message_text
+            .contains("Visit https://aka.ms/ts6 for migration information."),
+        "TS5011 message should carry the TS6 migration URL, got: {}",
+        ts5011.message_text
+    );
+}
+
+// tsc 6.0 also emits TS5011 for `outFile` bundle emit (no `outDir`/`rootDir`)
+// when the inferred common source directory is a subdirectory.
+#[test]
+fn ts5011_emitted_for_out_file_without_root_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outFile": "bundle.js",
+            "module": "amd"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&5011),
+        "Should emit TS5011 for outFile emit without rootDir, got: {codes:?}"
     );
 }
 
@@ -978,5 +1028,136 @@ fn invalid_config_es_module_interop_keeps_cli_file_emit_classic_unless_cli_enabl
     assert!(
         a_js.contains("__importDefault"),
         "explicit --esModuleInterop must still enable the interop helper, got:\n{a_js}"
+    );
+}
+
+/// The (code, message) pairs of any "Type 'X' is not assignable to type 'X'"
+/// self-assignment diagnostics (TS2322/TS2719) in a result, for the #12464
+/// regression guards below.
+fn self_assign_diagnostics(diagnostics: &[tsz_common::diagnostics::Diagnostic]) -> Vec<(u32, String)> {
+    diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2719)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+/// Issue #12464: a cross-file generic interface used as the call-signature
+/// parameter of a hybrid callable, assigned back through a homomorphic mapped
+/// type, must not produce a spurious "Type 'X' is not assignable to type 'X'".
+///
+/// This needs the full driver (real lib load + project-wide symbol resolution):
+/// the consuming file routes the imported generic interface through the lib
+/// resolution path during generic-reference prewarming, so it lands in
+/// `lib_type_resolution_cache`. Before the fix, `lib_heritage_cache_override`
+/// substituted that cached body for the *user* interface, yielding a divergent
+/// `TypeId` from the same alias resolved normally, and the two forms failed to
+/// relate. The check is name-agnostic — `tsz` (and `tsc`) accept this program.
+#[test]
+fn cross_file_generic_callable_param_through_mapped_type_no_false_self_assign() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("atom.ts"),
+        "export interface Atom<Value> {\n  read: (get: <V>(a: Atom<V>) => V) => Value\n}\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"import type { Atom } from "./atom";
+type AnyAtom = Atom<unknown>;
+type Hook = {
+  (atom: AnyAtom): void;
+  add(atom: AnyAtom, cb: () => void): () => void;
+};
+type Hooks = { readonly m?: Hook };
+declare const v: Hook;
+function init(hooks: Hooks): void {
+  type Mut = { -readonly [P in keyof Hooks]: Hooks[P] };
+  (hooks as Mut).m = v;
+}
+"#,
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "atom.ts", "main.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let self_assign = self_assign_diagnostics(&result.diagnostics);
+    assert!(
+        self_assign.is_empty(),
+        "cross-file generic callable param through mapped type must not report \
+         a self-assignment TS2322/TS2719, got: {self_assign:?}"
+    );
+}
+
+/// Same rule, every binder name changed (interface / alias / property), to keep
+/// the guard structural rather than tied to the jotai spellings.
+#[test]
+fn cross_file_generic_callable_param_through_mapped_type_renamed_no_false_self_assign() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("cell.ts"),
+        "export interface Cell<T> {\n  peek: (get: <U>(c: Cell<U>) => U) => T\n}\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"import type { Cell } from "./cell";
+type AnyCell = Cell<unknown>;
+type Listener = {
+  (cell: AnyCell): void;
+  attach(cell: AnyCell, cb: () => void): () => void;
+};
+type Listeners = { readonly slot?: Listener };
+declare const listener: Listener;
+function setup(ls: Listeners): void {
+  type Mutable = { -readonly [P in keyof Listeners]: Listeners[P] };
+  (ls as Mutable).slot = listener;
+}
+"#,
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "cell.ts", "main.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let self_assign = self_assign_diagnostics(&result.diagnostics);
+    assert!(
+        self_assign.is_empty(),
+        "renamed cross-file generic callable param must not report a \
+         self-assignment TS2322/TS2719, got: {self_assign:?}"
+    );
+}
+
+/// Negative guard: a genuine member mismatch through the same mapped-type path
+/// must still be reported as TS2322, so the fix does not silence real errors.
+#[test]
+fn cross_file_generic_callable_param_genuine_mismatch_still_reports_ts2322() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("atom.ts"),
+        "export interface Atom<Value> {\n  read: (get: <V>(a: Atom<V>) => V) => Value\n}\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"import type { Atom } from "./atom";
+type AnyAtom = Atom<unknown>;
+type Hook = { (atom: AnyAtom): void; a: number };
+type Hooks = { readonly m?: Hook };
+declare const wrong: { (atom: AnyAtom): void; a: string };
+function init(hooks: Hooks): void {
+  type Mut = { -readonly [P in keyof Hooks]: Hooks[P] };
+  (hooks as Mut).m = wrong;
+}
+"#,
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "atom.ts", "main.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "genuine member mismatch (a: string vs a: number) must still report \
+         TS2322; got: {codes:?}"
     );
 }

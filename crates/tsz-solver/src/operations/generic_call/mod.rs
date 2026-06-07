@@ -47,14 +47,34 @@ pub(crate) fn write_placeholder_name(buf: &mut String, id: u64) {
     write!(buf, "__infer_{id}").expect("write to String is infallible");
 }
 
-/// Write the higher-order source placeholder name `__infer_src_{id}` into `buf`.
+/// Write the higher-order source placeholder name into `buf`.
+///
+/// The name is `__infer_src_{id}#{origin}`. The `{id}` keeps the placeholder
+/// program-unique; the `#{origin}` suffix records the *original* type parameter
+/// name of the generic function argument so that, when a higher-order inference
+/// result is re-generalized (see
+/// [`super::CallEvaluator::hoist_source_placeholders_into_return_type`]), the
+/// re-generalized type parameters display with their source names — matching
+/// tsc's `<T>(a: T) => ...` output instead of the internal placeholder name.
+///
+/// `#` is not a valid identifier character, so it is an unambiguous delimiter:
+/// every `starts_with("__infer_src_")` check elsewhere keeps matching, and the
+/// origin can be recovered with [`decode_src_placeholder_origin`].
 ///
 /// `buf` is cleared first so callers can reuse a single allocation across
 /// type parameters.
-pub(crate) fn write_src_placeholder_name(buf: &mut String, id: u64) {
+pub(crate) fn write_src_placeholder_name(buf: &mut String, id: u64, origin: &str) {
     use std::fmt::Write;
     buf.clear();
-    write!(buf, "__infer_src_{id}").expect("write to String is infallible");
+    write!(buf, "__infer_src_{id}#{origin}").expect("write to String is infallible");
+}
+
+/// Recover the original source type-parameter name encoded by
+/// [`write_src_placeholder_name`], or `None` when `name` is not an origin-tagged
+/// source placeholder (e.g. legacy `__infer_src_ctx_*` names).
+pub(crate) fn decode_src_placeholder_origin(name: &str) -> Option<&str> {
+    let origin = name.strip_prefix("__infer_src_")?.split_once('#')?.1;
+    (!origin.is_empty()).then_some(origin)
 }
 
 /// Check if a type constraint is a primitive type (string, number, boolean, bigint, symbol)
@@ -545,6 +565,7 @@ mod normalization;
 mod readonly_direct_inference;
 pub mod request;
 mod resolve;
+mod rest_arity;
 pub mod result;
 mod return_context;
 mod return_context_feedback;

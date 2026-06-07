@@ -329,7 +329,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         lower_bounds: &[TypeId],
         inferred: TypeId,
     ) -> TypeId {
-        let mut concrete_bounds = lower_bounds
+        let pruned_bounds = self.prune_wrapped_return_type_param_candidates(lower_bounds);
+        if pruned_bounds.len() != lower_bounds.len()
+            && let Some(candidate) = self.single_bare_return_type_param_candidate(&pruned_bounds)
+        {
+            return candidate;
+        }
+        let effective_lower_bounds = if pruned_bounds.is_empty() {
+            lower_bounds
+        } else {
+            pruned_bounds.as_slice()
+        };
+
+        let mut concrete_bounds = effective_lower_bounds
             .iter()
             .copied()
             .filter(|ty| {
@@ -362,7 +374,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Conformance: `subtypeRelationForNever.ts`.
         let drop_never_promotion = concrete_bounds.len() == 1
             && concrete_bounds[0] == TypeId::NEVER
-            && lower_bounds
+            && effective_lower_bounds
                 .iter()
                 .any(|&b| matches!(b, TypeId::ANY | TypeId::UNKNOWN));
         if !drop_never_promotion
@@ -375,7 +387,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return concrete_bounds[0];
         }
 
-        if lower_bounds.len() <= 1 {
+        if effective_lower_bounds.len() <= 1 {
             return inferred;
         }
 
@@ -387,14 +399,74 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return inferred;
         }
 
-        let all_structural = lower_bounds
+        let all_structural = effective_lower_bounds
             .iter()
             .all(|ty| self.is_structural_return_inference_candidate(*ty));
         if all_structural {
-            return lower_bounds[0];
+            return effective_lower_bounds[0];
         }
 
         inferred
+    }
+
+    fn prune_wrapped_return_type_param_candidates(&self, lower_bounds: &[TypeId]) -> Vec<TypeId> {
+        let Some(duplicated_name) = self.duplicated_bare_return_type_param_name(lower_bounds)
+        else {
+            return lower_bounds.to_vec();
+        };
+
+        lower_bounds
+            .iter()
+            .copied()
+            .filter(|&bound| {
+                self.bare_return_type_param_name(bound) == Some(duplicated_name)
+                    || !self.is_structural_return_inference_candidate(bound)
+            })
+            .collect()
+    }
+
+    fn duplicated_bare_return_type_param_name(
+        &self,
+        lower_bounds: &[TypeId],
+    ) -> Option<tsz_common::Atom> {
+        let mut seen = FxHashSet::default();
+        let mut duplicated = None;
+        for &bound in lower_bounds {
+            let Some(name) = self.bare_return_type_param_name(bound) else {
+                continue;
+            };
+            if !seen.insert(name) {
+                if duplicated.is_some_and(|existing| existing != name) {
+                    return None;
+                }
+                duplicated = Some(name);
+            }
+        }
+        duplicated
+    }
+
+    fn bare_return_type_param_name(&self, ty: TypeId) -> Option<tsz_common::Atom> {
+        match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info.name),
+            _ => None,
+        }
+    }
+
+    fn single_bare_return_type_param_candidate(&self, lower_bounds: &[TypeId]) -> Option<TypeId> {
+        let mut first = None;
+        let mut first_name = None;
+        for &bound in lower_bounds {
+            let name = self.bare_return_type_param_name(bound)?;
+            if let Some(existing) = first_name {
+                if existing != name {
+                    return None;
+                }
+            } else {
+                first_name = Some(name);
+                first = Some(bound);
+            }
+        }
+        first
     }
 
     pub(super) fn constrain_return_context_structure(
@@ -1645,6 +1717,57 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
             return self.interner.function(erased);
         }
+
+        // Case 1b: naked source type params against a pure higher-order
+        // inference target. TypeScript 3.4 higher-order function type inference
+        // propagates the free type parameters of a generic function argument
+        // through the wrapper instead of collapsing them. When the contextual
+        // target is built entirely from outer inference placeholders (the
+        // `pipe`/`compose`/`makeGetter` family), instantiating the naked source
+        // param against that placeholder unifies the source type parameter with
+        // an outer placeholder that no concrete argument can pin, so it later
+        // resolves to `unknown` and the return-flow link is lost.
+        //
+        // Routing such arguments through the constraint walker's generic source
+        // branch (`return source_ty`) instead creates fresh `__infer_src_*`
+        // placeholders for the source type parameters. Those survive into the
+        // call result and are re-generalized by
+        // `hoist_source_placeholders_into_return_type`, reproducing tsc's
+        // `<T>(a: T) => { value: T[] }` shape. When an outer argument *does*
+        // pin the parameter, the source placeholder simply unifies with the
+        // concrete evidence and resolves normally, so this path stays correct
+        // for the determined case as well.
+        if source_type_params_are_naked
+            && target_params_need_hofi
+            && target_fn.type_params.is_empty()
+        {
+            // Every contextual placeholder of this argument (its parameters and
+            // its return) must be a bare outer inference placeholder for the
+            // pure higher-order shape to hold; `collect` into an `Option` so a
+            // single non-placeholder position short-circuits to `None`.
+            let placeholder_atoms: Option<Vec<_>> = target_param_types
+                .iter()
+                .chain(std::iter::once(&target_fn.return_type))
+                .map(|&pt| self.outer_inference_placeholder_atom(pt))
+                .collect();
+            // Fail closed: only re-generalize when the placeholders belong to the
+            // call currently being resolved (guards against nested/stale state).
+            // Shared placeholders are allowed here: in pure higher-order wrappers
+            // like `pipe`, the shared middle type is exactly how tsc carries a
+            // source placeholder from one generic function argument's return into
+            // the next generic function argument's parameter before the final
+            // result is re-generalized.
+            let safe_to_regeneralize = placeholder_atoms.as_ref().is_some_and(|atoms| {
+                !atoms.is_empty()
+                    && atoms
+                        .iter()
+                        .all(|atom| self.current_call_inference_placeholders.contains(atom))
+            });
+            if safe_to_regeneralize {
+                return source_ty;
+            }
+        }
+
         // Case 1: naked type params — fall through to instantiation
 
         let prev_contextual_type = self.contextual_type;
@@ -1726,6 +1849,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         result
+    }
+
+    /// Returns the placeholder name atom when `ty` is a bare inference
+    /// placeholder (`__infer_*`) introduced by an enclosing generic call.
+    /// Used to detect pure higher-order inference targets where a generic
+    /// function argument's free type parameters must be propagated rather than
+    /// instantiated against the placeholder.
+    fn outer_inference_placeholder_atom(&self, ty: TypeId) -> Option<tsz_common::Atom> {
+        match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info))
+                if self
+                    .interner
+                    .resolve_atom_ref(info.name)
+                    .starts_with("__infer_") =>
+            {
+                Some(info.name)
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn single_concrete_upper_bound(

@@ -11,7 +11,8 @@ mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
 pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
-    NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeReferenceValidationCaches,
+    NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeNodeSurfaceCaches,
+    TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
@@ -103,6 +104,13 @@ impl RelationOverflowFlags {
         self.depth_exceeded |= depth_exceeded;
         self.iteration_exceeded |= iteration_exceeded;
     }
+}
+
+/// Project-run cache for global JSDoc typedef lookup.
+pub struct JSDocGlobalTypedefLookupCache {
+    pub miss_cache: RefCell<FxHashSet<String>>,
+    pub in_progress: RefCell<FxHashSet<String>>,
+    pub typedef_presence_by_file: Arc<dashmap::DashMap<(u32, u32, String), bool>>,
 }
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
@@ -340,6 +348,27 @@ pub struct NameResolutionDiagnostics {
     pub reported_nodes: FxHashSet<NodeIndex>,
 }
 
+/// File-session memo tables shared by flow narrowing helpers.
+///
+/// Grouping these symbol-stable caches keeps the top-level `CheckerContext`
+/// field count bounded as flow memoization grows.
+#[derive(Debug, Default)]
+pub struct SymbolFlowMemoCaches {
+    pub last_assignment_pos: RefCell<FxHashMap<SymbolId, u32>>,
+    pub nested_closure_assignment: RefCell<FxHashMap<SymbolId, bool>>,
+    pub has_non_initializer_assignment: RefCell<FxHashMap<SymbolId, bool>>,
+    pub first_identifier_ref: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
+}
+
+impl SymbolFlowMemoCaches {
+    pub fn clear(&self) {
+        self.last_assignment_pos.borrow_mut().clear();
+        self.nested_closure_assignment.borrow_mut().clear();
+        self.has_non_initializer_assignment.borrow_mut().clear();
+        self.first_identifier_ref.borrow_mut().clear();
+    }
+}
+
 /// Shared state for type checking.
 pub struct CheckerContext<'a> {
     /// The `NodeArena` containing the AST.
@@ -444,6 +473,11 @@ pub struct CheckerContext<'a> {
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
     pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
+
+    /// Negative results and re-entrancy state for global JSDoc typedef lookup.
+    /// Misses are stable for the project run; the in-progress set prevents a
+    /// recursive typedef's cycle-break `None` from poisoning that miss cache.
+    pub jsdoc_global_typedef_lookup_cache: JSDocGlobalTypedefLookupCache,
 
     /// True once `nested_namespace_candidates_cache` has been populated for every
     /// nested namespace export name visible across all binders.
@@ -569,10 +603,9 @@ pub struct CheckerContext<'a> {
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
 
-    /// Cache for last assignment position per symbol, used by closure narrowing.
-    /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
-    /// Reused across `FlowAnalyzer` instances within a single file check.
-    pub symbol_last_assignment_pos: RefCell<FxHashMap<SymbolId, u32>>,
+    /// Symbol-stable flow memo tables reused across `FlowAnalyzer` instances
+    /// within a single file check.
+    pub symbol_flow_memo: SymbolFlowMemoCaches,
 
     /// Stable flow cache: maps `(SymbolId, DeclaredTypeId)` to the last `FlowNodeId`
     /// where flow analysis confirmed no narrowing (returned the declared type unchanged).

@@ -4,7 +4,7 @@
 //! the same alias, parallel object members, or shadowed inner type params).
 //!
 //! Tracks the `solver-29-20` "generic defaults bleed between independent
-//! branches" family (mohsen1/tsz#11608 and siblings #11589 / #11487).
+//! branches" family (tsz-org/tsz#11608 and siblings #11589 / #11487).
 //!
 //! Structural rule under test:
 //!

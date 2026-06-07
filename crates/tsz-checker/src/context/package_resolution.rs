@@ -1,7 +1,10 @@
 use std::path::{Component, Path, PathBuf};
 
+use tsz_common::module_resolution::types_versions;
+
 use crate::module_resolution::{
     module_specifier_candidates, probe_file_name_index, resolve_specifier_via_file_index,
+    resolve_specifier_via_file_index_for_source,
 };
 
 use super::CheckerContext;
@@ -55,9 +58,12 @@ impl<'a> CheckerContext<'a> {
                 .and_then(|a| a.source_files.first())
                 .map(|sf| sf.file_name.as_str())
             {
-                if let Some(result) =
-                    resolve_specifier_via_file_index(source_file_name, specifier, idx)
-                {
+                if let Some(result) = resolve_specifier_via_file_index_for_source(
+                    Some(source_file_idx),
+                    source_file_name,
+                    specifier,
+                    idx,
+                ) {
                     return Some(
                         self.types_versions_redirected_target_index(specifier, result)
                             .unwrap_or(result),
@@ -111,31 +117,24 @@ impl<'a> CheckerContext<'a> {
             Self::node_modules_package_root_for_name(target_file_name, &package_name)?;
         let package_json_text = std::fs::read_to_string(package_root.join("package.json")).ok()?;
         let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
-        let types_versions = package_json.get("typesVersions")?.as_object()?;
+        let types_versions = package_json.get("typesVersions")?;
         let public_subpath = package_subpath.as_deref().unwrap_or("index");
 
-        let mut candidates = Vec::new();
-        for mappings in types_versions
-            .values()
-            .filter_map(|value| value.as_object())
-        {
-            for (pattern, targets) in mappings {
-                let Some(wildcard) = Self::match_types_versions_pattern(pattern, public_subpath)
-                else {
-                    continue;
-                };
-                let Some(targets) = targets.as_array() else {
-                    continue;
-                };
-                for target in targets.iter().filter_map(|value| value.as_str()) {
-                    let target = target.replacen('*', &wildcard, 1);
-                    candidates.push((pattern.len(), target));
-                }
-            }
-        }
-        candidates.sort_by_key(|(pattern_len, _)| std::cmp::Reverse(*pattern_len));
-
-        for (_, target) in candidates {
+        // Mirror tsc's `getPackageJsonTypesVersionsPaths`: select the first
+        // version-range entry (declaration order) matching the active compiler
+        // version, then the exact / longest-prefix subpath candidates. The
+        // shared `tsz_common` implementation is the single source of truth so
+        // this redirect cannot drift from the CLI driver's resolver.
+        //
+        // The compiler-version override (if any) is honored by the driver's
+        // primary resolution that populates `resolved_module_paths`; this
+        // redirect is a fallback for index-resolved bare imports, so it uses
+        // the version this compiler targets.
+        for target in types_versions::resolve_candidate_targets(
+            types_versions,
+            public_subpath,
+            types_versions::DEFAULT_COMPILER_VERSION,
+        ) {
             if let Some(idx) = self.file_index_for_package_relative_path(&package_root, &target) {
                 return Some(idx);
             }
@@ -217,17 +216,6 @@ impl<'a> CheckerContext<'a> {
                     },
                 ))
             })
-    }
-
-    fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> {
-        if let Some((prefix, suffix)) = pattern.split_once('*') {
-            if subpath.starts_with(prefix) && subpath.ends_with(suffix) {
-                let end = subpath.len() - suffix.len();
-                return Some(subpath[prefix.len()..end].to_string());
-            }
-            return None;
-        }
-        (pattern == subpath).then(String::new)
     }
 
     fn normalize_package_relative_path(path: &str) -> String {

@@ -3,6 +3,9 @@ use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::{NodeIndex, NodeList, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+#[path = "private_fields/invalid_new.rs"]
+mod invalid_new;
+
 /// Result of extracting a private field access from a (possibly parenthesized) node.
 #[derive(Clone)]
 struct PrivateFieldAccess {
@@ -1086,6 +1089,24 @@ impl<'a> Printer<'a> {
         let supports_logical_assignment =
             (self.ctx.options.target as u8) >= (super::super::super::ScriptTarget::ES2021 as u8);
 
+        // Compound assignment (including `**=`) with a missing/recovered LHS:
+        // emit only the RHS. This must come before the exponentiation lowering so
+        // `{ block } **= value` does not route through `Math.pow(, value)`.
+        // Exception: when the RHS is an object literal `{...}`, keep the operator to
+        // prevent the emitted `{` from being parsed as a block statement at the
+        // statement level (e.g., `^= { return: 1 }` must keep `^=`).
+        // No flag state has been modified yet at this point, so no restore needed.
+        if self.is_compound_assignment(binary.operator_token)
+            && self.arena.is_missing_recovery_identifier(binary.left)
+            && self
+                .arena
+                .get(binary.right)
+                .is_none_or(|n| n.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        {
+            self.emit(binary.right);
+            return;
+        }
+
         if (is_exponentiation || is_exponentiation_assignment) && self.ctx.needs_es2016_lowering {
             self.emit_exponentiation_expression(binary);
             return;
@@ -1176,6 +1197,15 @@ impl<'a> Printer<'a> {
         }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+
+        if binary.operator_token == SyntaxKind::ColonToken as u16
+            && self.arena.is_missing_recovery_identifier(binary.left)
+        {
+            self.write(": ");
+            self.emit(binary.right);
+            self.ctx.flags.in_binary_operand = prev_in_binary;
+            return;
+        }
 
         // Check if there's a line break between left operand and operator,
         // and between operator and right operand. TypeScript preserves these
@@ -1899,99 +1929,5 @@ impl<'a> Printer<'a> {
         if self.new_expression_has_explicit_parens(node, call.expression) {
             self.write("()");
         }
-    }
-
-    fn emit_invalid_new_optional_chain(
-        &mut self,
-        callee: NodeIndex,
-        args: Option<&NodeList>,
-    ) -> bool {
-        let mut tail = Vec::new();
-        let Some((access_kind, base, name_or_argument)) =
-            self.collect_invalid_new_optional_access(callee, &mut tail)
-        else {
-            return false;
-        };
-
-        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
-        if needs_parens {
-            self.open_paren();
-            self.ctx.flags.optional_chain_needs_parens = false;
-        }
-        let temp = self.make_unique_name_hoisted();
-        self.open_paren();
-        self.write(&temp);
-        self.write(" = new ");
-        let prev_new = self.paren_in_new_callee;
-        self.paren_in_new_callee = true;
-        self.emit(base);
-        self.paren_in_new_callee = prev_new;
-        self.close_paren();
-        self.write(" === null || ");
-        self.write(&temp);
-        self.write(" === void 0 ? void 0 : ");
-        self.write(&temp);
-        self.emit_optional_access_segment(access_kind, name_or_argument);
-        self.emit_optional_chain_tail(&tail);
-        if let Some(args) = args {
-            self.open_paren();
-            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
-            self.emit_comma_separated(&valid_args);
-            self.close_paren();
-        }
-        if needs_parens {
-            self.close_paren();
-        }
-        true
-    }
-
-    fn collect_invalid_new_optional_access(
-        &self,
-        idx: NodeIndex,
-        tail: &mut Vec<OptionalChainSegment>,
-    ) -> Option<(u16, NodeIndex, NodeIndex)> {
-        let node = self.arena.get(idx)?;
-
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.arena.get_parenthesized(node)
-        {
-            return self.collect_invalid_new_optional_access(paren.expression, tail);
-        }
-
-        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && let Some(access) = self.arena.get_access_expr(node)
-        {
-            if access.question_dot_token {
-                return Some((node.kind, access.expression, access.name_or_argument));
-            }
-
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                tail.push(OptionalChainSegment::Property(access.name_or_argument));
-            } else {
-                tail.push(OptionalChainSegment::Element(access.name_or_argument));
-            }
-            return self.collect_invalid_new_optional_access(access.expression, tail);
-        }
-
-        None
-    }
-
-    fn emit_invalid_new_type_assertion_callee(&mut self, expression: NodeIndex) -> bool {
-        let Some(expr_node) = self.arena.get(expression) else {
-            return false;
-        };
-        if expr_node.kind != syntax_kind_ext::TYPE_ASSERTION {
-            return false;
-        }
-        let Some(assertion) = self.arena.get_type_assertion(expr_node) else {
-            return false;
-        };
-
-        self.write(" < ");
-        self.emit(assertion.type_node);
-        self.write(" > ");
-        self.emit(assertion.expression);
-        true
     }
 }

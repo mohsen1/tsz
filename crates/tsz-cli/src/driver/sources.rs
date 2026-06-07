@@ -255,7 +255,15 @@ pub(super) fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
 
 pub(super) struct SourceReadResult {
     pub(super) sources: Vec<SourceEntry>,
-    pub(super) dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    /// Per-file resolved dependencies in source-import (discovery) order.
+    ///
+    /// Order is load-bearing: cached project rebuilds replay this list to seed
+    /// BFS discovery, and discovery order determines the global `SymbolId`
+    /// assignment in `merge_user_files`. Storing an order-preserving `Vec`
+    /// (deduplicated on insert) rather than a hashed set keeps the replayed
+    /// discovery order identical to the original fresh build, so unchanged
+    /// project rows do not reconstruct different `SymbolId` values.
+    pub(super) dependencies: FxHashMap<PathBuf, Vec<PathBuf>>,
     pub(super) outfile_bundle_paths: FxHashSet<PathBuf>,
     pub(super) outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     pub(super) module_resolutions: FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
@@ -610,6 +618,18 @@ fn text_may_contain_reference_directives(text: &str) -> bool {
     text.contains("///") && text.contains("reference")
 }
 
+/// Append `dep` to a per-file dependency list, preserving insertion
+/// (source-import) order and skipping duplicates.
+///
+/// Dependency lists are short (a file's direct imports), so the linear
+/// membership scan is cheaper than the allocation/hashing a set would add, and
+/// it keeps the order deterministic for cached-rebuild replay.
+fn push_unique_dep(deps: &mut Vec<PathBuf>, dep: PathBuf) {
+    if !deps.contains(&dep) {
+        deps.push(dep);
+    }
+}
+
 pub(super) fn read_source_files(
     paths: &[PathBuf],
     base_dir: &Path,
@@ -618,7 +638,10 @@ pub(super) fn read_source_files(
     changed_paths: Option<&FxHashSet<PathBuf>>,
 ) -> Result<SourceReadResult> {
     let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
-    let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
+    // Per-file dependency lists are kept in source-import order (see the doc on
+    // `SourceReadResult::dependencies`); `push_unique_dep` preserves that order
+    // while deduplicating repeated imports of the same module within a file.
+    let mut dependencies: FxHashMap<PathBuf, Vec<PathBuf>> = FxHashMap::default();
     let mut outfile_bundle_paths: FxHashSet<PathBuf> = FxHashSet::default();
     let mut outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> =
         FxHashMap::default();
@@ -867,7 +890,7 @@ pub(super) fn read_source_files(
                                 },
                             );
                         }
-                        entry.insert(canonical.clone());
+                        push_unique_dep(entry, canonical.clone());
                         if import_kind != tsz::module_resolver::ImportKind::DynamicImport {
                             outfile_bundle_paths.insert(canonical.clone());
                             bundle_entry.insert(canonical.clone());
@@ -958,7 +981,7 @@ pub(super) fn read_source_files(
                     });
                     if let Some(resolved) = resolved {
                         let canonical = normalize(&resolved, options);
-                        entry.insert(canonical.clone());
+                        push_unique_dep(entry, canonical.clone());
                         outfile_bundle_paths.insert(canonical.clone());
                         bundle_entry.insert(canonical.clone());
                         if seen.insert(canonical.clone()) {
@@ -990,7 +1013,7 @@ pub(super) fn read_source_files(
                                 )
                             {
                                 let canonical = normalize(&alt, options);
-                                entry.insert(canonical.clone());
+                                push_unique_dep(entry, canonical.clone());
                                 outfile_bundle_paths.insert(canonical.clone());
                                 bundle_entry.insert(canonical.clone());
                                 if seen.insert(canonical.clone()) {
@@ -1031,7 +1054,7 @@ pub(super) fn read_source_files(
                     else {
                         continue;
                     };
-                    entry.insert(resolved_reference.clone());
+                    push_unique_dep(entry, resolved_reference.clone());
                     outfile_bundle_paths.insert(resolved_reference.clone());
                     bundle_entry.insert(resolved_reference.clone());
                     if seen.insert(resolved_reference.clone()) {
@@ -1221,6 +1244,89 @@ mod tests {
         assert!(
             foo_alpha_pos < bar_alpha_pos,
             "reference discovery order should load foo's alpha before bar's alpha; got {paths:?}"
+        );
+    }
+
+    /// Read `root` (plus its on-disk deps) from `dir` and return the recorded
+    /// dependency file names for `root.ts`, in stored order.
+    fn root_dep_file_names(dir: &Path, root: &Path) -> Vec<String> {
+        let result = read_source_files(
+            std::slice::from_ref(&root.to_path_buf()),
+            dir,
+            &ResolvedCompilerOptions::default(),
+            None,
+            None,
+        )
+        .expect("read source files");
+        let canonical_root = result
+            .sources
+            .iter()
+            .find(|source| source.path.ends_with("root.ts"))
+            .expect("root.ts loaded")
+            .path
+            .clone();
+        result
+            .dependencies
+            .get(&canonical_root)
+            .expect("root dependencies recorded")
+            .iter()
+            .map(|dep| dep.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn read_source_files_records_dependencies_in_source_import_order() {
+        // The per-file dependency list seeds BFS discovery on cached rebuilds,
+        // and discovery order fixes global `SymbolId` assignment. Storing deps
+        // in source-import order (rather than a hashed set) is what keeps a
+        // cached rebuild's `SymbolId`s identical to the original fresh build.
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("src/root.ts");
+        // Import order deliberately not alphabetical so a hashed set would be
+        // very likely to reorder these entries.
+        let dep_names = ["zeta", "alpha", "mid", "beta", "gamma"];
+        std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+        let imports: String = dep_names
+            .iter()
+            .map(|name| format!("import './{name}';\n"))
+            .collect();
+        std::fs::write(&root, imports).unwrap();
+        for name in dep_names {
+            let dep = dir.path().join(format!("src/{name}.ts"));
+            std::fs::write(&dep, "export {};\n").unwrap();
+        }
+
+        let expected: Vec<String> = dep_names.iter().map(|n| format!("{n}.ts")).collect();
+        assert_eq!(
+            root_dep_file_names(dir.path(), &root),
+            expected,
+            "dependencies must be recorded in source-import order"
+        );
+    }
+
+    #[test]
+    fn read_source_files_dedups_repeated_imports_preserving_first_order() {
+        // Importing the same module twice must not duplicate it in the dep list,
+        // and the first occurrence's position must be preserved.
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("src/root.ts");
+        std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+        std::fs::write(
+            &root,
+            "import { a } from './first';\nimport { b } from './second';\nimport { c } from './first';\na;b;c;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("src/first.ts"),
+            "export const a = 1; export const c = 2;\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("src/second.ts"), "export const b = 1;\n").unwrap();
+
+        assert_eq!(
+            root_dep_file_names(dir.path(), &root),
+            vec!["first.ts".to_string(), "second.ts".to_string()],
+            "repeated imports must be deduped while preserving first-seen order"
         );
     }
 

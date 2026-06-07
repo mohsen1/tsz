@@ -755,10 +755,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Wrapped with `stacker::maybe_grow()` so that deeply recursive structural
     /// comparisons (e.g. ts-toolbelt type-level tests) grow the stack dynamically
     /// instead of crashing even when the logical `RecursionGuard` has headroom.
+    ///
+    /// The shared cross-operation [`crate::recursion::with_solver_frame`] breaker
+    /// bounds the combined `evaluate -> subtype -> instantiate -> evaluate` cycle
+    /// that no per-instance guard can see (issue #7574). When that budget is
+    /// exhausted we bail with [`SubtypeResult::DepthExceeded`], which is treated
+    /// as `true` (tsc's `Ternary.Maybe` overflow behavior) and so cannot
+    /// introduce a spurious assignability error.
     pub(crate) fn check_subtype_inner(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
-        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
-            self.check_subtype_inner_impl(source, target)
-        })
+        crate::recursion::with_solver_frame(|| self.check_subtype_inner_impl(source, target))
+            .unwrap_or(SubtypeResult::DepthExceeded)
     }
 
     pub(crate) fn readonly_application_or_display_alias_inner(

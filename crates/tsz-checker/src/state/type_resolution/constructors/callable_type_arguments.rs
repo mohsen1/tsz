@@ -1,8 +1,10 @@
+use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeList;
 use tsz_solver::computation::TypeSubstitution;
-use tsz_solver::{CallableShape, TypeId};
+use tsz_solver::def::DefKind;
+use tsz_solver::{CallSignature, CallableShape, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Apply explicit type arguments to a callable type for function calls.
@@ -66,23 +68,17 @@ impl<'a> CheckerState<'a> {
             }
             query::SignatureTypeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
+                let call_signatures = shape.call_signatures.clone();
+                let construct_signatures = shape.construct_signatures.clone();
 
                 // Find signatures that can accept the supplied explicit type
                 // arguments. Exact arity for instantiation expressions is
                 // checked before this path; ordinary calls may supply a prefix
                 // when remaining type parameters have defaults or can infer.
-                let matching_calls: Vec<tsz_solver::CallSignature> = shape
-                    .call_signatures
-                    .iter()
-                    .filter(|&sig| sig.type_params.len() >= type_args.len())
-                    .cloned()
-                    .collect();
-                let matching_constructs: Vec<tsz_solver::CallSignature> = shape
-                    .construct_signatures
-                    .iter()
-                    .filter(|&sig| sig.type_params.len() >= type_args.len())
-                    .cloned()
-                    .collect();
+                let matching_calls =
+                    self.signatures_matching_explicit_type_args(&call_signatures, &type_args);
+                let matching_constructs =
+                    self.signatures_matching_explicit_type_args(&construct_signatures, &type_args);
 
                 if matching_calls.is_empty() && matching_constructs.is_empty() {
                     return callee_type;
@@ -227,6 +223,9 @@ impl<'a> CheckerState<'a> {
             if !sig.type_params.is_empty() {
                 continue;
             }
+            if self.substituted_return_can_stay_lazy_identity(sig.return_type) {
+                continue;
+            }
             // Only evaluate the return type. Params, `this`, and predicate
             // are intentionally left as substituted-but-not-evaluated:
             // contextual-typing and contravariant matching paths rely on
@@ -236,6 +235,36 @@ impl<'a> CheckerState<'a> {
             // resolution).
             sig.return_type = eval(sig.return_type);
         }
+    }
+
+    fn substituted_return_can_stay_lazy_identity(&self, return_type: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let mut saw_identity = false;
+        if let Some(members) = common_query::union_members(db, return_type) {
+            for member in members.iter() {
+                if matches!(*member, TypeId::NULL | TypeId::UNDEFINED) {
+                    continue;
+                }
+                if !self.type_is_lazy_class_or_interface_identity(*member) {
+                    return false;
+                }
+                saw_identity = true;
+            }
+            return saw_identity;
+        }
+        self.type_is_lazy_class_or_interface_identity(return_type)
+    }
+
+    fn type_is_lazy_class_or_interface_identity(&self, type_id: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let base = common_query::type_application(db, type_id)
+            .map_or(type_id, |application| application.base);
+        query::lazy_def_id(db, base).is_some_and(|def_id| {
+            matches!(
+                self.ctx.definition_store.get_kind(def_id),
+                Some(DefKind::Class | DefKind::Interface)
+            )
+        })
     }
 
     fn instantiate_instantiation_expression_signature(
@@ -274,5 +303,87 @@ impl<'a> CheckerState<'a> {
         } else {
             self.instantiate_signature(sig, &args)
         }
+    }
+
+    fn signatures_matching_explicit_type_args(
+        &mut self,
+        signatures: &[CallSignature],
+        type_args: &[TypeId],
+    ) -> Vec<CallSignature> {
+        let arity_matches: Vec<CallSignature> = signatures
+            .iter()
+            .filter(|sig| sig.type_params.len() >= type_args.len())
+            .cloned()
+            .collect();
+        let constraint_matches: Vec<CallSignature> = arity_matches
+            .iter()
+            .filter(|sig| {
+                !self.explicit_type_args_definitely_violate_signature_constraints(sig, type_args)
+            })
+            .cloned()
+            .collect();
+
+        if constraint_matches.is_empty() {
+            arity_matches
+        } else {
+            constraint_matches
+        }
+    }
+
+    fn explicit_type_args_definitely_violate_signature_constraints(
+        &mut self,
+        sig: &CallSignature,
+        type_args: &[TypeId],
+    ) -> bool {
+        for (param, &type_arg) in sig.type_params.iter().zip(type_args.iter()) {
+            let Some(constraint) = param.constraint else {
+                continue;
+            };
+            if matches!(type_arg, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                continue;
+            }
+
+            let substitution =
+                TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
+            let constraint = crate::query_boundaries::common::instantiate_type_preserving_meta(
+                self.ctx.types,
+                constraint,
+                &substitution,
+            );
+            let constraint = self.resolve_lazy_type(constraint);
+            if query::contains_type_parameters(self.ctx.types.as_type_database(), constraint) {
+                continue;
+            }
+            let constraint = self.evaluate_type_for_assignability(constraint);
+            let db = self.ctx.types.as_type_database();
+            if !common_query::is_literal_or_primitive_or_compound_of_those(db, constraint) {
+                continue;
+            }
+
+            if common_query::contains_type_parameters(db, type_arg)
+                || common_query::enum_def_id(db, type_arg).is_some()
+            {
+                continue;
+            }
+
+            if !common_query::is_literal_or_primitive_or_compound_of_those(db, type_arg) {
+                if query::lazy_def_id(db, type_arg).is_some_and(|def_id| {
+                    matches!(
+                        self.ctx.definition_store.get_kind(def_id),
+                        Some(DefKind::Class | DefKind::Interface)
+                    )
+                }) || common_query::is_object_like_type(db, type_arg)
+                {
+                    return true;
+                }
+                continue;
+            }
+
+            let outcome = self.type_arg_constraint_no_weak_relation_outcome(type_arg, constraint);
+            if !outcome.related && !outcome.depth_exceeded && !outcome.iteration_exceeded {
+                return true;
+            }
+        }
+        false
     }
 }

@@ -137,16 +137,16 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .ctx
         .binder
         .file_locals
-        .get("HTMLDivElement")
-        .expect("HTMLDivElement should resolve to a value-merged dom lib symbol");
+        .get("ValidityState")
+        .expect("ValidityState should resolve to a value-merged dom lib symbol");
     let value_merged_symbol = state
         .ctx
         .binder
         .get_symbol(value_merged_sym_id)
-        .expect("HTMLDivElement symbol should exist");
+        .expect("ValidityState symbol should exist");
     assert!(
         value_merged_symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::VALUE),
-        "HTMLDivElement should be both an interface and constructor value",
+        "ValidityState should be both an interface and constructor value",
     );
     let value_merged_arena = state
         .ctx
@@ -154,7 +154,7 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .symbol_arenas
         .get(&value_merged_sym_id)
         .map(std::convert::AsRef::as_ref)
-        .expect("HTMLDivElement should have a delegate arena");
+        .expect("ValidityState should have a delegate arena");
     assert!(
         state
             .direct_builtin_lib_interface_symbol_type(
@@ -173,7 +173,7 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
             Some(value_merged_arena),
             false,
         )
-        .expect("value-merged dom interfaces with only void-return methods should stay lazy");
+        .expect("value-merged dom interfaces without heritage should stay lazy");
     assert!(value_merged_params.is_empty());
     assert!(
         crate::query_boundaries::common::lazy_def_id(state.ctx.types, value_merged_ty).is_some(),
@@ -186,10 +186,64 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
             .contains_symbol_type(value_merged_sym_id),
         "admitted value-merged dom interfaces should populate lib delegation cache",
     );
+
+    let html_div_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("HTMLDivElement")
+        .expect("HTMLDivElement should resolve to a value-merged dom lib symbol");
+    let html_div_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&html_div_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("HTMLDivElement should have a delegate arena");
+    let (html_div_ty, html_div_params) = state
+        .direct_value_merged_builtin_lib_interface_symbol_type(
+            html_div_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(html_div_arena),
+            false,
+        )
+        .expect("value-merged DOM interfaces with only void-return own methods should stay lazy");
+    assert!(html_div_params.is_empty());
+    assert!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, html_div_ty).is_some(),
+        "HTMLDivElement should use a type-position Lazy ref",
+    );
+
+    let document_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("document")
+        .expect("document should resolve to a dom lib variable");
+    let document_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&document_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("document should have a delegate arena");
+    let (document_ty, document_params) = state
+        .direct_actual_lib_symbol_type(
+            document_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(document_arena),
+            false,
+        )
+        .expect("builtin DOM variables with simple type-reference annotations should stay lazy");
+    assert!(document_params.is_empty());
+    assert!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, document_ty).is_some(),
+        "document should use a type-position Lazy ref",
+    );
 }
 
 #[test]
-fn direct_actual_lib_symbol_type_keeps_dom_alias_bodies_on_fallback() {
+fn direct_actual_lib_symbol_type_lowers_builtin_dom_alias_bodies() {
     let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
@@ -237,16 +291,19 @@ fn direct_actual_lib_symbol_type_keeps_dom_alias_bodies_on_fallback() {
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref)
             .unwrap_or_else(|| panic!("{name} should have a delegate arena"));
+        let (ty, params) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(delegate_arena),
+                false,
+            )
+            .unwrap_or_else(|| panic!("{name} should lower through the direct builtin alias path"));
+        assert_ne!(ty, TypeId::UNKNOWN, "{name} must not lower to unknown");
+        assert_ne!(ty, TypeId::ERROR, "{name} must not lower to error");
         assert!(
-            state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    Some(delegate_arena),
-                    false,
-                )
-                .is_none(),
-            "{name} should stay on child-checker fallback until DOM alias direct answers preserve conformance fingerprints",
+            params.is_empty(),
+            "{name} should not synthesize type params"
         );
     }
 }
@@ -546,6 +603,57 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
             .is_none(),
         "value-merged DOM interfaces with non-void method returns should stay on the existing child/interface path",
     );
+    let query_selector = state
+        .resolve_simple_lib_interface_own_property("Document", "querySelector")
+        .expect("single-member DOM resolver should lower inherited method groups");
+    assert_ne!(query_selector, TypeId::ERROR);
+    assert_ne!(query_selector, TypeId::UNKNOWN);
+
+    let document_value_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("document")
+        .expect("document should resolve to a lib value symbol");
+    let document_value_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&document_value_sym_id)
+        .map(std::convert::AsRef::as_ref);
+    let (document_value, document_value_params) = state
+        .direct_actual_lib_symbol_type(
+            document_value_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            document_value_arena,
+            false,
+        )
+        .expect("document should lower to its annotated lazy lib interface");
+    assert!(
+        document_value_params.is_empty(),
+        "document should not expose type parameters",
+    );
+    let document_def = state
+        .resolve_actual_lib_name_to_def_id_for_lowering("Document")
+        .expect("Document should resolve to a lib definition");
+    assert_eq!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, document_value),
+        Some(document_def),
+        "document should preserve its Document annotation as a Lazy interface",
+    );
+    assert!(
+        state
+            .lazy_lib_member_receiver_def_id(document_value)
+            .is_some(),
+        "the returned lazy interface should remain eligible for lazy member lookup",
+    );
+    let (cached_document_value, cached_document_value_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(document_value_sym_id)
+        .expect("direct annotation path should populate the delegation cache");
+    assert_eq!(cached_document_value, document_value);
+    assert!(cached_document_value_params.is_empty());
 
     let error_sym_id = state
         .ctx
@@ -624,6 +732,78 @@ interface CombinedTarget extends AlphaBase, BetaBase {}
 }
 
 #[test]
+fn simple_lib_member_with_lib_interface_reference_annotation_stays_lazy() {
+    // A non-readonly member whose annotation is a bare reference to an eligible
+    // simple lib interface (`inner: Leaf`) must resolve to a `Lazy(DefId)` ref
+    // rather than the materialized `Leaf` shape, so chained access such as
+    // `wrapper.inner.value` keeps each link on the single-member fast path. A
+    // member referencing a generic lib interface (`boxed: Generic<string>`)
+    // lowers to an `Application`, is ineligible for the lazy receiver path, and
+    // must fall back to full materialization.
+    let lib_files = vec![Arc::new(LibFile::from_source(
+        "lib.lazy-ref-member.d.ts".to_string(),
+        r#"
+interface Leaf {
+  value: string;
+}
+
+interface Generic<T> {
+  item: T;
+}
+
+interface Wrapper {
+  inner: Leaf;
+  boxed: Generic<string>;
+}
+"#
+        .to_string(),
+    ))];
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let inner = state
+        .resolve_simple_lib_interface_own_property("Wrapper", "inner")
+        .expect("a non-readonly member typed as a simple lib interface should resolve lazily");
+    assert!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, inner).is_some(),
+        "the member should lower to a Lazy(DefId) reference, not a materialized object shape",
+    );
+    assert!(
+        state.lazy_lib_member_receiver_def_id(inner).is_some(),
+        "the lazily-resolved member should itself be eligible for further lazy member access",
+    );
+
+    assert!(
+        state
+            .resolve_simple_lib_interface_own_property("Wrapper", "boxed")
+            .is_none(),
+        "a member referencing a generic lib interface is ineligible and must fall back to full materialization",
+    );
+}
+
+#[test]
 fn value_merged_builtin_dom_interface_type_argument_keeps_inherited_members() {
     let lib_files = load_compiled_lib_files(&[
         "lib.es5.d.ts",
@@ -684,6 +864,103 @@ if (app) {
     assert!(
         diagnostics.is_empty(),
         "expected DOM querySelector type argument to keep inherited members, got: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn value_merged_builtin_dom_interface_keeps_inherited_members_in_project_mode() {
+    let lib_files = load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2016.array.include.d.ts",
+        "lib.es2016.d.ts",
+        "lib.es2017.arraybuffer.d.ts",
+        "lib.es2017.date.d.ts",
+        "lib.es2017.object.d.ts",
+        "lib.es2017.sharedmemory.d.ts",
+        "lib.es2017.string.d.ts",
+        "lib.es2017.typedarrays.d.ts",
+        "lib.es2017.d.ts",
+        "lib.es2018.asyncgenerator.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.es2018.promise.d.ts",
+        "lib.es2018.regexp.d.ts",
+        "lib.es2018.d.ts",
+        "lib.es2019.array.d.ts",
+        "lib.es2019.object.d.ts",
+        "lib.es2019.string.d.ts",
+        "lib.es2019.symbol.d.ts",
+        "lib.es2019.d.ts",
+        "lib.es2020.bigint.d.ts",
+        "lib.es2020.date.d.ts",
+        "lib.es2020.number.d.ts",
+        "lib.es2020.promise.d.ts",
+        "lib.es2020.sharedmemory.d.ts",
+        "lib.es2020.string.d.ts",
+        "lib.es2020.symbol.wellknown.d.ts",
+        "lib.es2020.d.ts",
+        "lib.dom.d.ts",
+        "lib.dom.iterable.d.ts",
+    ]);
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "main.ts",
+                r##"
+import { renderDashboard } from "./view";
+
+const app = document.querySelector<HTMLDivElement>("#app");
+
+if (app) {
+  app.innerHTML = renderDashboard();
+}
+"##,
+            ),
+            (
+                "view.ts",
+                r#"
+export function renderDashboard(): string {
+  return "<main></main>";
+}
+"#,
+            ),
+            (
+                "env.d.ts",
+                r#"
+export {};
+
+declare global {
+  interface ImportMetaEnv {
+    readonly MODE: string;
+  }
+}
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2020,
+            module: ModuleKind::ESNext,
+            module_explicitly_set: true,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected DOM querySelector type argument to keep inherited members in project mode, got: {diagnostics:?}",
     );
 }
 

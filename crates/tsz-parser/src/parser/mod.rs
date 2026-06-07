@@ -36,15 +36,20 @@ mod state_diagnostics;
 mod state_exports_recovery;
 mod state_expressions;
 mod state_expressions_arrow;
+mod state_expressions_binary;
+mod state_expressions_call_member;
 mod state_expressions_literals;
 mod state_expressions_literals_object;
 mod state_expressions_literals_regex;
 mod state_expressions_tail;
+mod state_expressions_unary;
 mod state_import_attributes;
 mod state_recovery_helpers;
 mod state_statements;
 mod state_statements_class;
 mod state_statements_class_declarations;
+mod state_statements_class_member_methods;
+mod state_statements_class_member_properties;
 mod state_statements_class_members;
 mod state_statements_class_recovery;
 mod state_statements_keywords;
@@ -66,6 +71,9 @@ pub(crate) mod test_fixture;
 // JSDoc-style types, tuples, etc.) can locate the related cases by file name
 // without grepping a single monolithic file. Each shard imports only the
 // `test_fixture` helpers it actually uses; tests share no per-shard helpers.
+#[cfg(test)]
+#[path = "../../tests/definite_assignment_assertion_tests.rs"]
+mod definite_assignment_assertion_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_async_arrow_context_tests.rs"]
 mod parser_async_arrow_context_tests;
@@ -171,6 +179,10 @@ mod base_tests;
 #[cfg(test)]
 #[path = "../../tests/trailing_comma_tests.rs"]
 mod trailing_comma_tests;
+
+#[cfg(test)]
+#[path = "../../tests/rest_param_trailing_comma_tests.rs"]
+mod rest_param_trailing_comma_tests;
 
 #[cfg(test)]
 #[path = "../../tests/spelling_integration_tests.rs"]

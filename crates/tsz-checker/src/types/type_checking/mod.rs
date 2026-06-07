@@ -23,6 +23,7 @@ mod duplicate_identifiers;
 mod duplicate_identifiers_ambient_default;
 mod duplicate_identifiers_constructor;
 mod duplicate_identifiers_export_surface;
+mod duplicate_identifiers_global_augmentation;
 mod duplicate_identifiers_helpers;
 mod duplicate_identifiers_remote_lib;
 mod duplicate_index_signatures;
@@ -34,6 +35,7 @@ mod type_alias_checking;
 mod type_alias_depth_helpers;
 mod type_alias_missing_name_coverage;
 mod type_alias_recursion_patterns;
+mod type_alias_variance;
 mod unused;
 
 /// Release the type-alias resolution scratch pool owned by this module tree.

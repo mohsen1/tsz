@@ -393,7 +393,8 @@ fn test_path_mapping_target_canonicalised_into_resolved_path() {
     // Rule covers `./X` (leading curdir), `./X/../Y` (embedded parent), and
     // non-wildcard `./X/../Y/Z` (no `*` in target). Each must produce a
     // resolved path with no surviving CurDir/ParentDir components.
-    let rows: &[(&str, &str, &str, &[&str], &str)] = &[
+    type PathMappingCanonicalizationRow<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str);
+    let rows: &[PathMappingCanonicalizationRow<'_>] = &[
         (
             "@app/*",
             "@app/",
@@ -497,6 +498,160 @@ fn test_path_mapping_same_file_via_two_paths_shares_resolved_path() {
         );
         assert_eq!(via_a.resolved_path, fx.join(row.file));
     }
+}
+
+// ── single best-pattern selection (issue #11577) ─────────────────────────────
+//
+// tsc selects exactly one `paths` pattern (`matchPatternOrExact` ->
+// `findBestPatternMatch`) and probes only that pattern's targets. A missing
+// target under the chosen pattern must NOT fall through to a less-specific
+// pattern (notably a catch-all `"*"`). The witness rows vary the binder names
+// so the rule stays structural rather than fixture-keyed.
+
+#[test]
+fn test_path_mapping_missing_specific_target_does_not_fall_through_to_catch_all() {
+    // The specific pattern matches but its on-disk target is missing. tsc
+    // commits to that pattern and reports the module unresolved; it does NOT
+    // resolve via the catch-all `"*"`. A specifier that only matches the
+    // catch-all still resolves through it.
+    let rows: &[(&str, &str, &[&str])] = &[
+        ("next/dist/*", "next/dist/", &["./src/*"]),
+        ("@scope/*", "@scope/", &["./packages/*"]),
+        ("lib/*", "lib/", &["./internal/*"]),
+    ];
+    for (pattern, prefix, targets) in rows {
+        let fx = TempFixture::new();
+        // The catch-all target exists; the specific target does not.
+        fx.write("external.d.ts", "declare const v: any; export default v;");
+        fx.write("index.ts", "");
+
+        let options = make_options(
+            fx.path(),
+            vec![
+                pm(pattern, prefix, targets),
+                pm("*", "", &["./external.d.ts"]),
+            ],
+        );
+        let mut resolver = ModuleResolver::new(&options);
+
+        // Matches the specific pattern, whose target is missing: must fail
+        // rather than fall through to the catch-all `external.d.ts`.
+        let specific_specifier = format!("{prefix}missing-entry");
+        let missed = resolver.resolve(&specific_specifier, &fx.join("index.ts"), Span::new(0, 1));
+        assert!(
+            missed.is_err(),
+            "{specific_specifier}: a missing target under {pattern} must not fall through to the \"*\" catch-all",
+        );
+
+        // A specifier that only the catch-all matches still resolves via it.
+        let catch_all = resolver
+            .resolve(
+                "totally-unrelated-pkg",
+                &fx.join("index.ts"),
+                Span::new(0, 1),
+            )
+            .expect("catch-all \"*\" must still resolve specifiers no other pattern matches");
+        assert_eq!(catch_all.resolved_path, fx.join("external.d.ts"));
+    }
+}
+
+#[test]
+fn test_path_mapping_exact_key_beats_equal_prefix_wildcard() {
+    // `matchPatternOrExact` returns an exact, wildcard-free key before
+    // consulting any wildcard. `"foo"` and `"foo*"` tie on prefix length for
+    // the specifier `"foo"`, but the literal key must win — even when the
+    // wildcard is listed first and the wildcard target also exists on disk.
+    let fx = TempFixture::new();
+    fx.write("exact.ts", "export const exact = 1;");
+    fx.write("wild.ts", "export const wild = 1;");
+    fx.write("index.ts", "");
+
+    let options = make_options(
+        fx.path(),
+        vec![
+            pm("alias*", "alias", &["./wild.ts"]),
+            pm("alias", "alias", &["./exact.ts"]),
+        ],
+    );
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("alias", &fx.join("index.ts"), Span::new(0, 1))
+        .expect("exact key \"alias\" must resolve");
+    assert_eq!(
+        resolved.resolved_path,
+        fx.join("exact.ts"),
+        "exact wildcard-free key must outrank an equal-prefix wildcard",
+    );
+}
+
+#[test]
+fn test_path_mapping_longest_prefix_wins_on_miss_without_fallthrough() {
+    // Three nested patterns match `next/dist/compiled/x`. The longest-prefix
+    // pattern (`next/dist/compiled/*`) is chosen; when its target is missing,
+    // resolution fails rather than retrying `next/dist/*` or `"*"`.
+    let fx = TempFixture::new();
+    // Targets for the two *less* specific patterns exist; only the chosen
+    // (most specific) pattern's target is missing.
+    fx.write("src/compiled/react.ts", "export const r = 1;");
+    fx.write("external.d.ts", "declare const v: any; export default v;");
+    fx.write("index.ts", "");
+
+    let options = make_options(
+        fx.path(),
+        vec![
+            pm(
+                "next/dist/compiled/*",
+                "next/dist/compiled/",
+                &["./missing/*"],
+            ),
+            pm("next/dist/*", "next/dist/", &["./src/*"]),
+            pm("*", "", &["./external.d.ts"]),
+        ],
+    );
+    let mut resolver = ModuleResolver::new(&options);
+    let missed = resolver.resolve(
+        "next/dist/compiled/react",
+        &fx.join("index.ts"),
+        Span::new(0, 1),
+    );
+    assert!(
+        missed.is_err(),
+        "longest-prefix pattern is chosen; its missing target must not fall through to next/dist/* \
+         (which has ./src/compiled/react.ts) or the \"*\" catch-all",
+    );
+}
+
+#[test]
+fn test_path_mapping_matched_pattern_miss_skips_base_url_fallback() {
+    // tsc reaches the bare `baseUrl` join only when NO `paths` pattern matched.
+    // When a pattern matched but its target is missing, baseUrl is skipped. The
+    // control row (a specifier matching no pattern) still resolves via baseUrl.
+    let fx = TempFixture::new();
+    // `baseUrl + "shared/widget"` exists on disk, so the only way these
+    // resolutions could succeed is the (incorrect) baseUrl fallback.
+    fx.write("shared/widget.ts", "export const w = 1;");
+    fx.write("loose/thing.ts", "export const t = 1;");
+    fx.write("index.ts", "");
+
+    let options = make_options(
+        fx.path(),
+        vec![pm("shared/*", "shared/", &["./nonexistent/*"])],
+    );
+    let mut resolver = ModuleResolver::new(&options);
+
+    // `shared/widget` matches `shared/*`; its target `./nonexistent/widget` is
+    // missing. baseUrl must be skipped, so resolution fails.
+    let matched_miss = resolver.resolve("shared/widget", &fx.join("index.ts"), Span::new(0, 1));
+    assert!(
+        matched_miss.is_err(),
+        "a matched-but-missing pattern must skip the baseUrl fallback (tsc commits to the pattern)",
+    );
+
+    // `loose/thing` matches no pattern, so baseUrl resolution still applies.
+    let unmatched = resolver
+        .resolve("loose/thing", &fx.join("index.ts"), Span::new(0, 1))
+        .expect("a specifier matching no pattern must still resolve via baseUrl");
+    assert_eq!(unmatched.resolved_path, fx.join("loose/thing.ts"));
 }
 
 #[test]

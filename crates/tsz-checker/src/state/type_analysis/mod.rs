@@ -35,8 +35,10 @@ mod cross_file_overlay_gate;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;
 mod cross_file_shared_cache;
+mod qualified_names;
 mod source_alias_attribution;
 mod symbol_type_helpers;
+mod syntactic_defaults;
 mod type_param_defaults;
 
 /// Reset every cross-file/cross-arena recursion-guard thread-local owned by

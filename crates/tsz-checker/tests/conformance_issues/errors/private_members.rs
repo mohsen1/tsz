@@ -923,6 +923,52 @@ export type TypeGeneric3<T extends keyof DataFetchFns, F extends keyof DataFetch
 }
 
 #[test]
+fn test_constraint_with_indexed_access_preserves_renamed_alias_display() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type ReturnType<T extends (...args: any) => any> =
+    T extends (...args: any) => infer R ? R : any;
+
+type Registry = {
+    Car: {
+        label: (id: string) => string;
+        speed: (id: string) => number;
+    };
+    Train: {
+        label: (id: string) => string;
+        capacity: (id: string) => number;
+    };
+};
+
+export type BadSelector<T extends keyof Registry, K extends keyof Registry[T]> =
+    ReturnType<Registry[K][K]>;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2536 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2536)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        ts2536
+            .iter()
+            .any(|message| message.contains("Type 'K' cannot be used to index type 'Registry'")),
+        "Expected TS2536 to preserve the renamed object alias display.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
+            .all(|message| { !message.contains("Type 'K' cannot be used to index type '{ Car:") }),
+        "TS2536 should not expand the renamed object alias display.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_strict_false_suppresses_file_level_strict_mode_bind_errors() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",

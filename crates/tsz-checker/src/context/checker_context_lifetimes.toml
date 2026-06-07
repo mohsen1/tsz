@@ -33,6 +33,7 @@ namespace_member_resolution_cache = { lifetime = "FileLocalReset", capability = 
 export_equals_named_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 nested_namespace_candidates_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 symbol_name_candidates_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsdoc_global_typedef_lookup_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local project-run lookup cache and re-entrancy state; reset with checker file/session state" }
 nested_namespace_candidates_cache_complete = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 lowering_entity_name_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 namespace_exports_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
@@ -61,7 +62,7 @@ narrowable_identifier_cache = { lifetime = "FileLocalReset", capability = "FlowS
 flow_switch_reference_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 flow_numeric_atom_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 flow_reference_match_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-symbol_last_assignment_pos = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_flow_memo = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "symbol-stable flow memo tables reused only within the active file session; reset at file-session boundary" }
 symbol_flow_confirmed = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 call_type_predicates = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 daa_error_nodes = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }

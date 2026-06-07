@@ -5,7 +5,7 @@ Thank you for your interest in contributing to tsz, a TypeScript compiler writte
 ## Quick Start
 
 ```bash
-git clone https://github.com/mohsen1/tsz.git
+git clone https://github.com/tsz-org/tsz.git
 cd tsz
 ./scripts/setup/setup.sh   # installs hooks, initializes TypeScript submodule
 ```
@@ -15,10 +15,11 @@ tests. Mark the PR ready for review when it should run the heavy suites:
 WASM, conformance, emit, fourslash, and snapshot gates.
 
 When a ready PR's exact head has passed the PR-head gates (`CI Summary`,
-`GitGuardian Security Checks`, and any review/body checks), the merge manager
-adds the `merge-queue` label. The queue owns the required `Queue Tested`
-status: it synthetic-tests the PR against latest `main`, posts `Queue Tested`,
-and merges one PR at a time.
+and any review/body checks), the merge manager
+queues it with GitHub's native merge queue
+(`gh pr merge <pr> --match-head-commit <sha>`). The native queue creates a
+`merge_group` run that keeps the required queue summary check on the synthetic
+merge before merging.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
 
@@ -67,8 +68,9 @@ python3 scripts/conformance/query-conformance.py --dashboard
 7. **Push updates to the draft PR** — let CI run build, lint, and unit tests; do not wait idle
 8. **Mark ready for review** — triggers conformance, emit, fourslash, WASM, and snapshot gates
 9. **Hand off to the merge queue** — after exact-head PR-head gates pass,
-   the manager adds `merge-queue`; do not treat missing `Queue Tested` as a
-   blocker before enqueue
+   the manager queues the PR with
+   `gh pr merge <pr> --match-head-commit <sha>`; native queue admission and
+   summary validation run through the `merge_group` CI event
 
 Include your stable `AgentName` in every PR body and substantive PR comment.
 Use the draft PR body for scope, invariants, findings, verification, and

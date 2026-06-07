@@ -2,8 +2,7 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const QUEUE_LABEL = "merge-queue";
-const REQUIRED_PR_CHECKS = ["CI Summary", "GitGuardian Security Checks"];
+const REQUIRED_PR_CHECKS = ["CI Summary"];
 const DEFAULT_DRAFT_STALE_HOURS = 24;
 const DEFAULT_UNSTACKED_DRAFT_BUDGET = 2;
 
@@ -34,8 +33,9 @@ function parseArgs(argv) {
 }
 
 function normalizePr(raw) {
-  const labels = Array.isArray(raw.labels)
-    ? raw.labels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean)
+  const rawLabels = Array.isArray(raw.labels?.nodes) ? raw.labels.nodes : raw.labels;
+  const labels = Array.isArray(rawLabels)
+    ? rawLabels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean)
     : [];
   const statusCheckRollup = Array.isArray(raw.statusCheckRollup)
     ? raw.statusCheckRollup.map(normalizeCheck).filter(Boolean)
@@ -50,6 +50,8 @@ function normalizePr(raw) {
     mergeStateStatus: String(raw.mergeStateStatus || "UNKNOWN"),
     mergeable: String(raw.mergeable || "UNKNOWN"),
     autoMergeArmed: Boolean(raw.autoMergeRequest),
+    inMergeQueue: Boolean(raw.isInMergeQueue),
+    mergeQueueEnabled: Boolean(raw.isMergeQueueEnabled),
     labels,
     statusCheckRollup,
     body: String(raw.body ?? ""),
@@ -71,31 +73,78 @@ function loadPulls(fixture) {
     return JSON.parse(fs.readFileSync(fixture, "utf8")).map(normalizePr);
   }
 
-  const result = spawnSync(
-    "gh",
-    [
-      "pr",
-      "list",
-      "--state",
-      "open",
-      "--limit",
-      "500",
-      "--json",
-      "number,title,isDraft,updatedAt,baseRefName,headRefName,labels,body,mergeStateStatus,mergeable,autoMergeRequest",
-    ],
-    { encoding: "utf8" },
-  );
-  if (result.status !== 0) {
-    fail(result.stderr.trim() || "gh pr list failed");
+  const query = `
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequests(first: 100, after: $after, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            number
+            title
+            isDraft
+            updatedAt
+            baseRefName
+            headRefName
+            labels(first: 50) { nodes { name } }
+            body
+            mergeStateStatus
+            mergeable
+            autoMergeRequest { enabledAt }
+            isInMergeQueue
+            isMergeQueueEnabled
+          }
+        }
+      }
+    }
+  `;
+  const repository = process.env.GITHUB_REPOSITORY || "tsz-org/tsz";
+  const [owner, name] = repository.split("/", 2);
+  if (!owner || !name) {
+    fail(`invalid GITHUB_REPOSITORY: ${repository}`);
   }
-  return JSON.parse(result.stdout).map(normalizePr);
+
+  const pulls = [];
+  let after = null;
+  for (;;) {
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `owner=${owner}`,
+      "-f",
+      `name=${name}`,
+      "-f",
+      `query=${query}`,
+    ];
+    if (after) {
+      args.push("-f", `after=${after}`);
+    }
+    const result = spawnSync("gh", args, { encoding: "utf8" });
+    if (result.status !== 0) {
+      fail(result.stderr.trim() || "gh api graphql failed");
+    }
+    const parsed = JSON.parse(result.stdout);
+    const connection = parsed.data?.repository?.pullRequests;
+    if (!connection) {
+      fail("gh api graphql response did not include pullRequests");
+    }
+    pulls.push(...connection.nodes);
+    if (!connection.pageInfo?.hasNextPage) {
+      break;
+    }
+    after = connection.pageInfo.endCursor;
+  }
+  return pulls.map(normalizePr);
 }
 
 function shouldHydrateRequiredChecks(pr) {
   return (
     !pr.isDraft &&
     pr.baseRefName === "main" &&
-    !pr.labels.includes(QUEUE_LABEL) &&
+    !pr.inMergeQueue &&
     !isWipPr({ labels: pr.labels, title: pr.title })
   );
 }
@@ -324,6 +373,152 @@ function requiredCheckSummary(pr) {
   };
 }
 
+function requiredCheckState(checks) {
+  if (checks.some((check) => check.bucket === "fail")) return "fail";
+  if (checks.some((check) => check.bucket === "pending")) return "pending";
+  if (checks.some((check) => check.bucket === "missing")) return "missing";
+  return "pass";
+}
+
+function makeManagerActions(report) {
+  const actions = [];
+  const conflictingMainNumbers = new Set(report.conflictingMainPrs.map((pr) => pr.number));
+  for (const pr of report.readyMainNotQueuedPrs) {
+    if (conflictingMainNumbers.has(pr.number)) {
+      continue;
+    }
+    if (pr.queueCandidate) {
+      actions.push({
+        priority: "P0",
+        kind: "queue",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "queue verified ready PR",
+        commentPolicy: "none; queue and verify merge result",
+        reason: "PR-head required checks passed and branch is mergeable",
+      });
+      continue;
+    }
+
+    const state = requiredCheckState(pr.checks);
+    if (state === "fail") {
+      actions.push({
+        priority: "P0",
+        kind: "fix-ci",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "route failed required check to owner",
+        commentPolicy: "comment only with root cause or handoff",
+        reason: pr.checkSummary,
+      });
+    } else if (state === "pending") {
+      actions.push({
+        priority: "P1",
+        kind: "wait-ci",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "wait for active PR-head checks",
+        commentPolicy: "none",
+        reason: pr.checkSummary,
+      });
+    } else if (state === "missing") {
+      actions.push({
+        priority: "P1",
+        kind: "refresh-ci",
+        number: pr.number,
+        owner: ownerOf(pr),
+        action: "refresh or request PR-head CI evidence",
+        commentPolicy: "none unless rerun/fix is blocked",
+        reason: pr.checkSummary,
+      });
+    }
+  }
+
+  for (const pr of report.conflictingReadyMainPrs) {
+    actions.push({
+      priority: "P0",
+      kind: "rebase-ready",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "rebase or hand off conflicting ready PR",
+      commentPolicy: "comment only if taking over or handing off",
+      reason: `${pr.mergeStateStatus}/${pr.mergeable}`,
+    });
+  }
+
+  for (const pr of report.conflictingMainPrs.filter((candidate) => candidate.draft)) {
+    actions.push({
+      priority: "P1",
+      kind: "rebase-draft",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "refresh, supersede, or close conflicting draft",
+      commentPolicy: "prefer PR body; comment for handoff/closure evidence",
+      reason: `${pr.mergeStateStatus}/${pr.mergeable}`,
+    });
+  }
+
+  for (const pr of report.staleDraftPrs) {
+    if (conflictingMainNumbers.has(pr.number)) {
+      continue;
+    }
+    actions.push({
+      priority: "P1",
+      kind: "stale-draft",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "refresh blocker, hand off, or close stale draft",
+      commentPolicy: "one signed blocker/handoff comment if state changes",
+      reason: `draft age ${pr.ageHours}h`,
+    });
+  }
+
+  for (const pr of report.staleWipPrs) {
+    actions.push({
+      priority: "P1",
+      kind: "stale-wip",
+      number: pr.number,
+      owner: ownerOf(pr),
+      action: "refresh WIP blocker or split durable follow-up issue",
+      commentPolicy: "one signed blocker/handoff comment if keeping WIP open",
+      reason: `WIP age ${pr.ageHours}h`,
+    });
+  }
+
+  for (const owner of report.draftParkingOwners.filter((entry) => entry.overBudget)) {
+    actions.push({
+      priority: "P2",
+      kind: "draft-budget",
+      number: null,
+      owner: owner.owner,
+      action: "reduce unstacked draft runway",
+      commentPolicy: "batch by owner; do not comment on every PR",
+      reason: `${owner.unstackedDraft} unstacked drafts`,
+    });
+  }
+
+  for (const duplicate of report.duplicateDraftCleanupTargets) {
+    actions.push({
+      priority: "P2",
+      kind: "duplicate-drafts",
+      number: null,
+      owner: "mixed",
+      action: "deduplicate draft PRs for one issue",
+      commentPolicy: "comment only on PRs closed or handed off",
+      reason: `issue #${duplicate.issue}: ${duplicate.prs.map((pr) => `#${pr}`).join(", ")}`,
+    });
+  }
+
+  return actions.sort((a, b) => {
+    const priority = a.priority.localeCompare(b.priority);
+    if (priority !== 0) return priority;
+    const left = a.number ?? Number.MAX_SAFE_INTEGER;
+    const right = b.number ?? Number.MAX_SAFE_INTEGER;
+    if (left !== right) return left - right;
+    return a.kind.localeCompare(b.kind);
+  });
+}
+
 function makeReport(pulls) {
   const now = reportNow();
   const staleDraftHours = Number.parseInt(
@@ -344,6 +539,8 @@ function makeReport(pulls) {
     mergeStateStatus: pr.mergeStateStatus,
     mergeable: pr.mergeable,
     autoMergeArmed: pr.autoMergeArmed,
+    inMergeQueue: pr.inMergeQueue,
+    mergeQueueEnabled: pr.mergeQueueEnabled,
     labels: pr.labels.sort(),
     statusCheckRollup: pr.statusCheckRollup,
     agentName: agentNameFrom(pr.body),
@@ -588,12 +785,27 @@ function makeReport(pulls) {
     .filter((pr) => pr.ageHours !== null && pr.ageHours >= staleDraftHours)
     .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
 
-  const readyMainMissingQueueLabelPrs = normalized
+  const staleWipPrs = normalized
+    .filter((pr) => pr.draft && isWipPr(pr))
+    .map((pr) => ({
+      number: pr.number,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      updatedAt: pr.updatedAt,
+      ageHours: ageHours(pr.updatedAt, now),
+      stackRole: pr.stackRole,
+      markers: wipMarkers(pr),
+      title: pr.title,
+    }))
+    .filter((pr) => pr.ageHours !== null && pr.ageHours >= staleDraftHours)
+    .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
+
+  const readyMainNotQueuedPrs = normalized
     .filter((pr) => (
       !pr.draft
       && pr.base === "main"
       && !isWipPr(pr)
-      && !pr.labels.includes(QUEUE_LABEL)
+      && !pr.inMergeQueue
     ))
     .map((pr) => {
       const checks = requiredCheckSummary(pr);
@@ -614,7 +826,7 @@ function makeReport(pulls) {
     })
     .sort((a, b) => Number(b.queueCandidate) - Number(a.queueCandidate) || a.number - b.number);
 
-  return {
+  const report = {
     generatedAt: new Date().toISOString(),
     counts: {
       open: normalized.length,
@@ -623,11 +835,12 @@ function makeReport(pulls) {
       stacked: stacks.reduce((sum, stack) => sum + stack.children.length, 0),
       missingAgentName: normalized.filter((pr) => pr.agentName === null).length,
       agentLabelMismatches: agentLabelMismatches.length,
-      mergeQueued: normalized.filter((pr) => pr.labels.includes(QUEUE_LABEL)).length,
-      readyMissingQueueLabel: readyMainMissingQueueLabelPrs.length,
-      queueCandidates: readyMainMissingQueueLabelPrs.filter((pr) => pr.queueCandidate).length,
+      nativeQueued: normalized.filter((pr) => pr.inMergeQueue).length,
+      readyNotQueued: readyMainNotQueuedPrs.length,
+      queueCandidates: readyMainNotQueuedPrs.filter((pr) => pr.queueCandidate).length,
       draftParkingOwners: draftParkingOwners.length,
       staleDraftPrs: staleDraftPrs.length,
+      staleWipPrs: staleWipPrs.length,
     },
     byBase: [...byBase.entries()]
       .map(([base, prs]) => ({ base, prs: prs.sort((a, b) => a - b) }))
@@ -636,7 +849,8 @@ function makeReport(pulls) {
     draftRunwayByOwner,
     draftParkingOwners,
     staleDraftPrs,
-    readyMainMissingQueueLabelPrs,
+    staleWipPrs,
+    readyMainNotQueuedPrs,
     stacks,
     duplicateTitleScopes,
     duplicateIssueRefs,
@@ -652,6 +866,8 @@ function makeReport(pulls) {
     agentLabelMismatches,
     prs: normalized.sort((a, b) => a.number - b.number),
   };
+  report.managerActions = makeManagerActions(report);
+  return report;
 }
 
 function printMarkdown(report) {
@@ -659,8 +875,20 @@ function printMarkdown(report) {
   console.log("# Open PR Ownership Report");
   console.log("");
   console.log(
-    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; merge-queued: ${report.counts.mergeQueued}; ready missing queue label: ${report.counts.readyMissingQueueLabel}; queue candidates: ${report.counts.queueCandidates}; draft parking owners: ${report.counts.draftParkingOwners}; stale drafts: ${report.counts.staleDraftPrs}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
+    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; native queued: ${report.counts.nativeQueued}; ready not queued: ${report.counts.readyNotQueued}; queue candidates: ${report.counts.queueCandidates}; draft parking owners: ${report.counts.draftParkingOwners}; stale drafts: ${report.counts.staleDraftPrs}; stale WIP: ${report.counts.staleWipPrs}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
   );
+  console.log("");
+  console.log("## Manager Next Actions");
+  if (report.managerActions.length === 0) {
+    console.log("- none; wait and refresh without commenting");
+  } else {
+    for (const action of report.managerActions) {
+      const target = action.number === null ? action.owner : `#${action.number}`;
+      console.log(
+        `- ${action.priority} ${action.kind} ${target}: ${action.action}; comment: ${action.commentPolicy}; reason: ${action.reason}`,
+      );
+    }
+  }
   console.log("");
   console.log("## Owner Summary");
   if (report.ownerSummaries.length === 0) {
@@ -681,13 +909,13 @@ function printMarkdown(report) {
   }
   console.log("");
   console.log("## Queue Admission");
-  if (report.readyMainMissingQueueLabelPrs.length === 0) {
+  if (report.readyMainNotQueuedPrs.length === 0) {
     console.log("- none");
   } else {
     console.log("");
     console.log("| PR | Owner | Queue candidate | Merge state | Checks | Title |");
     console.log("|----|-------|-----------------|-------------|--------|-------|");
-    for (const pr of report.readyMainMissingQueueLabelPrs) {
+    for (const pr of report.readyMainNotQueuedPrs) {
       const owner = ownerOf(pr);
       const candidate = pr.queueCandidate ? "yes" : "no";
       console.log(
@@ -697,7 +925,11 @@ function printMarkdown(report) {
   }
   console.log("");
   console.log("## Draft Parking Risks");
-  if (report.draftParkingOwners.length === 0 && report.staleDraftPrs.length === 0) {
+  if (
+    report.draftParkingOwners.length === 0
+    && report.staleDraftPrs.length === 0
+    && report.staleWipPrs.length === 0
+  ) {
     console.log("- none");
   } else {
     if (report.draftParkingOwners.length) {
@@ -718,6 +950,17 @@ function printMarkdown(report) {
         const stack = pr.stackRole ? `; ${pr.stackRole}` : "";
         console.log(
           `- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; age ${pr.ageHours}h${stack}; ${pr.title}`,
+        );
+      }
+    }
+    if (report.staleWipPrs.length) {
+      console.log("");
+      console.log("Stale WIP PRs:");
+      for (const pr of report.staleWipPrs) {
+        const owner = ownerOf(pr);
+        const stack = pr.stackRole ? `; ${pr.stackRole}` : "";
+        console.log(
+          `- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; age ${pr.ageHours}h; ${pr.markers.join("+")}${stack}; ${pr.title}`,
         );
       }
     }

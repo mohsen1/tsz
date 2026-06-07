@@ -581,6 +581,57 @@ right = left;
 }
 
 #[test]
+fn conditional_alias_object_literal_excess_property_shows_reduced_branch() {
+    let source = r#"
+type Choice<Input> = Input extends string ? { ok: true } : { fail: true };
+
+const wrong: Choice<number> = { ok: true };
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|(code, _)| *code == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 diagnostic, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'{ fail: true; }'"),
+        "Expected TS2353 target display to use the reduced false branch, got: {ts2353:?}"
+    );
+    assert!(
+        !ts2353[0].1.contains("Choice<number>"),
+        "Expected TS2353 target display not to keep the conditional alias application, got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn wrapped_conditional_alias_object_literal_excess_property_shows_reduced_branch() {
+    let source = r#"
+type Project<Key> = Key extends number ? { value: number } : { fail: true };
+type Wrapped<Key> = Project<Key>;
+
+const wrong: Wrapped<string> = { value: true };
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|(code, _)| *code == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 diagnostic, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'{ fail: true; }'"),
+        "Expected wrapped TS2353 target display to use the reduced false branch, got: {ts2353:?}"
+    );
+    assert!(
+        !ts2353[0].1.contains("Wrapped<string>"),
+        "Expected wrapped TS2353 target display not to keep the conditional alias application, got: {ts2353:?}"
+    );
+}
+
+#[test]
 fn mapped_array_as_clause_missing_named_property_beats_symbol_members() {
     let source = r#"
 declare const Symbol: {

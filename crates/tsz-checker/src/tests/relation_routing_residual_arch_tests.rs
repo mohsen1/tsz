@@ -61,6 +61,57 @@ fn inline_arch_test_relation_assertion(relative_path: &str, line: &str) -> bool 
             || line.contains(".assign_relation_outcome_with_env("))
 }
 
+fn function_body_between<'a>(source: &'a str, start_marker: &str, end_marker: &str) -> &'a str {
+    let start = source
+        .find(start_marker)
+        .expect("missing function start marker");
+    let rest = &source[start..];
+    let end = rest.find(end_marker).expect("missing function end marker");
+    &rest[..end]
+}
+
+#[test]
+fn assign_relation_outcome_fast_path_uses_named_diagnostic_guard() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read assignability relation source");
+    let body = function_body_between(
+        &source,
+        "pub(crate) fn assign_relation_outcome(",
+        "pub(crate) fn variance_accepted_relation_outcome(",
+    );
+    let compact: String = body.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    assert!(
+        compact.contains("self.diagnostic_relation_boolean_guard(source,target)"),
+        "assign_relation_outcome should name its boolean fast path as a diagnostic guard"
+    );
+    assert!(
+        !compact.contains("self.is_assignable_to(source,target)"),
+        "assign_relation_outcome should not embed a raw assignability fast path"
+    );
+}
+
+#[test]
+fn relation_outcome_with_env_fast_path_uses_named_diagnostic_guard() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read assignability relation source");
+    let body = function_body_between(
+        &source,
+        "fn relation_outcome_with_env(",
+        "pub(crate) fn assign_relation_outcome_with_env(",
+    );
+    let compact: String = body.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    assert!(
+        compact.contains("self.diagnostic_relation_boolean_guard_with_env(source,target)"),
+        "relation_outcome_with_env should name its env-aware boolean fast path as a diagnostic guard"
+    );
+    assert!(
+        !compact.contains("self.is_assignable_to_with_env(source,target)"),
+        "relation_outcome_with_env should not embed a raw env-aware assignability fast path"
+    );
+}
+
 #[test]
 fn production_checker_relation_truth_uses_outcome_boundaries() {
     let mut violations = Vec::new();

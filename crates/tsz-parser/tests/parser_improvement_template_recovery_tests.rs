@@ -3,6 +3,92 @@
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
 
+/// Collect the diagnostic codes for `source` in emission order.
+fn diagnostic_codes(source: &str) -> Vec<u32> {
+    let (parser, _root) = parse_source(source);
+    parser.get_diagnostics().iter().map(|d| d.code).collect()
+}
+
+/// Structural rule: inside a template-literal *type*, each `${...}` substitution
+/// is a full type expression terminated by `}`. tsc's `parseLiteralOfTemplateSpan`
+/// only re-scans the brace as a template middle/tail when the substitution
+/// actually closes with `}`. If a syntax error leaves the parser parked on some
+/// other token, tsc emits `'}' expected` (TS1005) and synthesizes a *missing*
+/// `TemplateTail` without consuming the token — so the rest of the source is
+/// recovered from its real position. tsz must not blindly re-scan a template
+/// token from a non-`}` position, which would reinterpret unrelated source as
+/// template text and lose token boundaries during recovery.
+///
+/// `type R = ` + "`${A B}`" closes the substitution after `A`; the stray `B`
+/// must trigger the `TS1005` / `TS1128` / `TS1160` recovery cascade exactly as
+/// tsc produces, rather than being silently absorbed as template text.
+#[test]
+fn template_type_substitution_unterminated_by_stray_token_recovers_like_tsc() {
+    assert_eq!(
+        diagnostic_codes("type R = `${A B}`;"),
+        vec![1005, 1128, 1160],
+        "stray token after a template-type substitution type must emit the \
+         '}}' expected / declaration-expected / unterminated-template cascade"
+    );
+}
+
+/// The same rule must hold regardless of the binder spelling and across a
+/// statement-terminator stray token, proving the recovery is structural and not
+/// keyed on a particular identifier or token.
+#[test]
+fn template_type_substitution_stray_token_recovery_is_structural() {
+    // A different binder name and a `;` (instead of an identifier) as the stray
+    // token: still `'}' expected` + declaration-expected + unterminated.
+    assert_eq!(
+        diagnostic_codes("type Mapped = `${Outer;}`;"),
+        vec![1005, 1128, 1160],
+    );
+}
+
+/// A failed type parse inside the substitution (no valid type at all) reports
+/// `Type expected` (TS1110) at the offending token; tsc's same-position
+/// deduplication then suppresses the redundant `'}' expected`, leaving the
+/// declaration-expected / unterminated cascade. The previous tsz behavior
+/// swallowed everything after the bogus substitution into a phantom tail and
+/// emitted only the single TS1110.
+#[test]
+fn template_type_substitution_empty_or_invalid_recovers_like_tsc() {
+    assert_eq!(diagnostic_codes("type X = `${,}`;"), vec![1110, 1128, 1160]);
+    // A bare, well-formed empty substitution `${}` reports only `Type expected`,
+    // since the `}` legitimately closes the (empty) substitution.
+    assert_eq!(diagnostic_codes("type Y = `${}`;"), vec![1110]);
+}
+
+/// Multi-span template types must recover at the first broken span and not
+/// cascade phantom tails through the remaining spans.
+#[test]
+fn template_type_multi_span_recovers_at_first_broken_span() {
+    assert_eq!(
+        diagnostic_codes("type Q = `pre${A}mid${,}post`;"),
+        vec![1110, 1128, 1160],
+    );
+}
+
+/// Regression guard: a *valid* constrained-`infer` template-literal type in a
+/// conditional `extends` branch — the exact surface family in the originating
+/// benchmark row — must still parse with zero diagnostics. The fix only changes
+/// the error-recovery branch, so the well-formed grammar stays untouched.
+#[test]
+fn template_type_constrained_infer_extends_branch_parses_clean() {
+    for source in [
+        "type Foo<T> = T extends `${infer A extends string}` ? A : never;",
+        "type Split<S> = S extends `${infer H extends string}${infer R}` ? H : never;",
+        "type Joined = `a${string}b${number}c`;",
+        "type Nested<T> = T extends `x${T extends string ? `${infer A}` : never}y` ? A : never;",
+    ] {
+        assert!(
+            diagnostic_codes(source).is_empty(),
+            "expected no parse errors for {source:?}, got {:?}",
+            diagnostic_codes(source),
+        );
+    }
+}
+
 /// Structural rule: when a template literal appears where an object-literal
 /// property name is expected, tsc closes the object literal at the template,
 /// recovers the template as a tagged-template tail on the object expression,
@@ -123,5 +209,105 @@ fn test_ts1125_untagged_template_emits_errors() {
         "Expected 3 TS1125 errors (for \\u{{hello}}, \\xtraordinary, \\uworld), got {}: {:?}",
         ts1125_diagnostics.len(),
         ts1125_diagnostics
+    );
+}
+
+/// Count the TS1125 (invalid escape) diagnostics for `source`, reusing the
+/// shared `diagnostic_codes` collector above.
+fn ts1125_count(source: &str) -> usize {
+    diagnostic_codes(source)
+        .into_iter()
+        .filter(|&code| code == 1125)
+        .count()
+}
+
+/// Structural rule: the invalid-escape suppression of a tagged template applies
+/// only to the literal head/middle/tail spans of *that* template, not to the
+/// `${...}` substitution expressions. A nested **untagged** template inside a
+/// tagged template's substitution is an ordinary untagged template and must
+/// still report TS1125 for its invalid escapes.
+///
+/// Witness for the `in_tagged_template` flag leaking into substitution
+/// expressions: before the fix the outer tag's flag stayed set while the
+/// substitution was parsed, so the inner untagged template's escape was wrongly
+/// suppressed (0 errors instead of 1).
+#[test]
+fn tagged_template_does_not_suppress_escapes_in_nested_untagged_substitution() {
+    // Outer is tagged: its head `\xZ1` and tail `\xZ3` are suppressed.
+    // The inner untagged template `\xZ2` in the substitution must report once.
+    assert_eq!(
+        ts1125_count(r#"const a = tag`\xZ1 ${ `\xZ2` } \xZ3`;"#),
+        1,
+        "an untagged template inside a tagged template's substitution must \
+         still report its invalid escape"
+    );
+}
+
+/// Structural rule: a tagged template nested inside another tagged template's
+/// substitution must restore — not clear — the enclosing template's tagged
+/// status when it finishes. Otherwise the outer template's middle/tail literals
+/// would spuriously report TS1125 after the nested tag.
+///
+/// Witness for the `in_tagged_template = false` reset clobbering the enclosing
+/// flag: before the fix the outer tag's tail `\xZ3` was wrongly reported (1
+/// error instead of 0).
+#[test]
+fn nested_tagged_template_does_not_clobber_enclosing_tagged_status() {
+    assert_eq!(
+        ts1125_count(r#"const b = tag`\xZ1 ${ inner`\xZ2` } \xZ3`;"#),
+        0,
+        "a tagged template nested in a tagged substitution must not make the \
+         enclosing template's tail report TS1125"
+    );
+}
+
+/// Control: with no tagging anywhere, every span reports. The outer untagged
+/// template head `\xZ1` and tail `\xZ3` plus the inner untagged template `\xZ2`
+/// each report — three errors total.
+#[test]
+fn untagged_template_with_nested_untagged_substitution_reports_all_escapes() {
+    assert_eq!(ts1125_count(r#"const c = `\xZ1 ${ `\xZ2` } \xZ3`;"#), 3,);
+}
+
+/// Control: an untagged outer template still reports its own head/tail escapes
+/// even when its substitution holds a *tagged* template (whose escapes are
+/// suppressed). Proves the fix suppresses only the immediately-tagged literal
+/// and does not over-suppress the surrounding untagged spans.
+#[test]
+fn untagged_template_reports_own_escapes_around_nested_tagged_substitution() {
+    assert_eq!(
+        ts1125_count(r#"const d = `\xZ1 ${ inner`\xZ2` } \xZ3`;"#),
+        2,
+    );
+}
+
+/// The rule is structural, not keyed on the `tag`/`inner` spellings or on the
+/// `\x` escape form: vary the tag binder names and use `\u` escapes, and the
+/// same head/tail-suppressed, nested-untagged-reported counts must hold.
+#[test]
+fn tagged_template_escape_suppression_is_structural() {
+    // Distinct tag names, `\u` escapes. Outer tagged: head/tail suppressed,
+    // nested untagged reports once.
+    assert_eq!(
+        ts1125_count(r#"const e = render`\uZ1 ${ `\uZ2` } \uZ3`;"#),
+        1,
+    );
+    // Distinct names again, nested tagged: zero.
+    assert_eq!(
+        ts1125_count(r#"const f = html`\uZ1 ${ styled`\uZ2` } \uZ3`;"#),
+        0,
+    );
+}
+
+/// Deep nesting: a tagged template whose substitution is an *untagged* template
+/// that itself contains a tagged template substitution. Only the untagged
+/// template's own head/tail escapes report; both tagged levels are suppressed.
+#[test]
+fn deeply_nested_template_tagging_tracks_each_level_independently() {
+    // outer tagged (suppressed) -> untagged span (head `\uZ2` + tail `\uZ4`
+    // report) -> tagged span (`\uZ3` suppressed). Outer tail `\uZ5` suppressed.
+    assert_eq!(
+        ts1125_count(r#"const g = outer`\uZ1 ${ `\uZ2 ${ mid`\uZ3` } \uZ4` } \uZ5`;"#),
+        2,
     );
 }

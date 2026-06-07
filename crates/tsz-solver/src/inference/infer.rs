@@ -10,7 +10,7 @@
 //! - Best common type calculation
 //! - Efficient unification with path compression
 
-use crate::construction::TypeDatabase;
+use crate::construction::{QueryDatabase, TypeDatabase};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
@@ -261,6 +261,8 @@ pub(crate) struct InferenceContext<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Type resolver for semantic lookups (e.g., base class queries)
     pub(crate) resolver: Option<&'a dyn crate::relations::subtype::TypeResolver>,
+    // Shared query database for cache-aware inference-time instantiation.
+    pub(crate) query_db: Option<&'a dyn QueryDatabase>,
     /// Memoized subtype checks used by BCT and bound validation.
     pub(crate) subtype_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
     /// Active subtype checks used for coinductive cycle breaking in the
@@ -337,6 +339,15 @@ pub(crate) struct InferenceContext<'a> {
     /// element literals of a readonly array/tuple, so `new Set([1, 2] as const)`
     /// infers `Set<1 | 2>` rather than `Set<number>`.
     pub(crate) in_readonly_source_context: bool,
+    /// Implied arity per inference variable, mirroring tsc's `InferenceInfo.impliedArity`.
+    ///
+    /// Set during call-argument inference when a signature's non-array rest type is
+    /// a bare type parameter (`function f<T>(...args: T)` or `...rest: T`). The
+    /// implied arity is the number of trailing arguments that fall into the rest
+    /// parameter, and it lets variadic tuple inference distribute the middle of a
+    /// `[...A, ...B]` target between two adjacent variadic elements. Keyed by the
+    /// root inference variable (see [`InferenceContext::set_implied_arity`]).
+    pub(crate) implied_arities: FxHashMap<InferenceVar, usize>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -355,6 +366,7 @@ impl<'a> InferenceContext<'a> {
         InferenceContext {
             interner,
             resolver: None,
+            query_db: None,
             subtype_cache: RefCell::new(FxHashMap::default()),
             active_subtype_checks: RefCell::new(FxHashSet::default()),
             table: InPlaceUnificationTable::new(),
@@ -371,6 +383,7 @@ impl<'a> InferenceContext<'a> {
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             in_readonly_source_context: false,
+            implied_arities: FxHashMap::default(),
         }
     }
 
@@ -381,6 +394,7 @@ impl<'a> InferenceContext<'a> {
         InferenceContext {
             interner,
             resolver: Some(resolver),
+            query_db: None,
             subtype_cache: RefCell::new(FxHashMap::default()),
             active_subtype_checks: RefCell::new(FxHashSet::default()),
             table: InPlaceUnificationTable::new(),
@@ -397,6 +411,32 @@ impl<'a> InferenceContext<'a> {
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             in_readonly_source_context: false,
+            implied_arities: FxHashMap::default(),
+        }
+    }
+
+    pub fn with_query_db(query_db: &'a dyn QueryDatabase) -> Self {
+        InferenceContext {
+            interner: query_db.as_type_database(),
+            resolver: Some(query_db),
+            query_db: Some(query_db),
+            subtype_cache: RefCell::new(FxHashMap::default()),
+            active_subtype_checks: RefCell::new(FxHashSet::default()),
+            table: InPlaceUnificationTable::new(),
+            type_params: Vec::new(),
+            declared_constraints: FxHashMap::default(),
+            literal_preserving_declared_constraints: FxHashSet::default(),
+            app_expansion_depth: 0,
+            in_contra_mode: false,
+            reverse_mapped_properties: FxHashMap::default(),
+            source_is_type_annotation: false,
+            infer_depth: 0,
+            infer_visited: FxHashSet::default(),
+            top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_with_substituted_candidates: FxHashSet::default(),
+            in_array_element_context: false,
+            in_readonly_source_context: false,
+            implied_arities: FxHashMap::default(),
         }
     }
 
@@ -447,6 +487,56 @@ impl<'a> InferenceContext<'a> {
             .iter()
             .find(|(n, _, _)| *n == name)
             .map(|(_, v, _)| *v)
+    }
+
+    /// Record the implied arity for an inference variable (tsc's
+    /// `InferenceInfo.impliedArity`). Keyed by the root variable so it survives
+    /// later unification.
+    pub(crate) fn set_implied_arity(&mut self, var: InferenceVar, arity: usize) {
+        let root = self.table.find(var);
+        self.implied_arities.insert(root, arity);
+    }
+
+    /// Resolve the root inference variable named by a `TypeParameter`/`Infer`
+    /// placeholder type, or `None` if the type does not name a tracked variable.
+    fn type_param_root_for_type(&mut self, ty: TypeId) -> Option<InferenceVar> {
+        let name = match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.name,
+            _ => return None,
+        };
+        let var = self.find_type_param(name)?;
+        Some(self.table.find(var))
+    }
+
+    /// Look up the implied arity for a target type that names an inference
+    /// variable (a `TypeParameter`/`Infer` placeholder). Returns `None` when the
+    /// type is not an inference variable or has no recorded implied arity.
+    pub(crate) fn implied_arity_for_type(&mut self, ty: TypeId) -> Option<usize> {
+        let root = self.type_param_root_for_type(ty)?;
+        self.implied_arities.get(&root).copied()
+    }
+
+    /// Fixed arity implied by the declared constraint of the type parameter named
+    /// by `ty`. Mirrors tsc's use of `getBaseConstraintOfType(param)` in the
+    /// `(variadic, rest)` / `(rest, variadic)` middle cases: when the constraint
+    /// is a non-variadic tuple, its length is the implied arity.
+    pub(crate) fn constraint_fixed_arity_for_type(&mut self, ty: TypeId) -> Option<usize> {
+        let declared = match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.constraint,
+            _ => return None,
+        };
+        let constraint = declared.or_else(|| {
+            let root = self.type_param_root_for_type(ty)?;
+            self.declared_constraints.get(&root).copied()
+        })?;
+        let TypeData::Tuple(list_id) = self.interner.lookup(constraint)? else {
+            return None;
+        };
+        let elements = self.interner.tuple_list(list_id);
+        if elements.iter().any(|element| element.rest) {
+            return None;
+        }
+        Some(elements.len())
     }
 
     pub(crate) fn fixed_tuple_candidate_len_for_type(&mut self, ty: TypeId) -> Option<usize> {

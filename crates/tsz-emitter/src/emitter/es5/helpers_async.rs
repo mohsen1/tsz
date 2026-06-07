@@ -5,14 +5,12 @@
 //! tagged template support, and spread call lowering.
 
 use super::super::*;
-use super::helpers::ArraySegment;
 use super::helpers_class_expression_static::Es5StaticClassExpressionElement;
-use crate::emitter::core::PropertyNameEmit;
-use crate::emitter::declarations::class::replace_identifier;
 use crate::transforms::emit_utils;
 use crate::transforms::ir::IRNode;
-use crate::transforms::ir_printer::IRPrinter;
-use std::sync::Arc;
+
+#[path = "helpers_async/spread.rs"]
+mod spread;
 
 impl<'a> Printer<'a> {
     fn next_arguments_capture_name(&mut self) -> String {
@@ -25,302 +23,17 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn es5_class_iife_expression_from_var(output: &str, class_name: &str) -> Option<String> {
-        let prefix = format!("var {class_name} = ");
-        let output = output.trim_end();
-        let output = output.strip_suffix(';').unwrap_or(output);
-        output.strip_prefix(&prefix).map(str::to_string)
-    }
-
-    fn write_multiline_fragment_preserving_indent(&mut self, text: &str) {
-        let mut lines = text.lines();
-        if let Some(first) = lines.next() {
-            self.write(first);
-        }
-        for line in lines {
-            self.write_line();
-            if !line.is_empty() {
-                self.write(line);
-            }
-        }
-    }
-
-    fn write_multiline_fragment_with_continuation_indent(
+    pub(in crate::emitter) fn write_line_with_absolute_indent(
         &mut self,
+        indent_level: u32,
         text: &str,
-        continuation_indent_level: u32,
     ) {
-        let indent_unit = self.writer.indent_unit_width() as usize;
-        let indent_unit = if indent_unit == 0 { 4 } else { indent_unit };
-
-        let mut lines = text.lines();
-        if let Some(first) = lines.next() {
-            self.write(first);
-        }
-        for line in lines {
-            self.write_line();
-            if !line.is_empty() {
-                let leading = line.len() - line.trim_start_matches(' ').len();
-                let original_level = (leading / indent_unit) as u32;
-                let trimmed = &line[leading..];
-                // Formula: output_level = (continuation - 1) + original_level
-                // Naturally handles the `}())` closing (original_level=0 → continuation-1)
-                // and all deeper lines by adding their nesting relative to the IIFE root.
-                let output_level = continuation_indent_level.saturating_sub(1) + original_level;
-                self.write_line_with_absolute_indent(output_level, trimmed);
-            }
-        }
-    }
-
-    fn write_line_with_absolute_indent(&mut self, indent_level: u32, text: &str) {
         let original_indent_level = self.writer.indent_level();
         let indent = " ".repeat((self.writer.indent_unit_width() * indent_level) as usize);
         self.writer.set_indent_level(0);
         self.writer.write_raw_text(&indent);
         self.write(text);
         self.writer.set_indent_level(original_indent_level);
-    }
-
-    fn class_expression_static_comma_needs_parens(&self, class_node: NodeIndex) -> bool {
-        let mut current = class_node;
-        loop {
-            let Some(ext) = self.arena.get_extended(current) else {
-                return true;
-            };
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                return true;
-            }
-            let Some(parent) = self.arena.get(parent_idx) else {
-                return true;
-            };
-
-            match parent.kind {
-                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    current = parent_idx;
-                }
-                syntax_kind_ext::RETURN_STATEMENT => return false,
-                _ => return true,
-            }
-        }
-    }
-
-    fn current_statement_continuation_indent_level(&self) -> u32 {
-        self.writer
-            .indent_level()
-            .max(self.writer.current_line_visual_indent_level())
-            + 2
-    }
-
-    fn emit_es5_static_class_expression_comma(
-        &mut self,
-        class_node: NodeIndex,
-        class_name: &str,
-        class_iife_expr: &str,
-        class_value_temp: Option<&str>,
-        computed_init_exprs: &[IRNode],
-        static_elements: &[Es5StaticClassExpressionElement],
-        set_function_name: Option<&str>,
-    ) {
-        let needs_parens = self.class_expression_static_comma_needs_parens(class_node);
-        let temp = class_value_temp.map_or_else(
-            || {
-                if self.class_expression_is_in_loop_body(class_node) {
-                    let temp = self.make_class_static_temp_name(class_node);
-                    self.block_scoped_private_temps.push(temp.clone());
-                    temp
-                } else {
-                    self.make_class_static_temp_name_hoisted(class_node)
-                }
-            },
-            str::to_string,
-        );
-        let continuation_indent_level = self.current_statement_continuation_indent_level();
-
-        if needs_parens {
-            self.write("(");
-        }
-        self.write(&temp);
-        self.write(" = ");
-        self.write_multiline_fragment_with_continuation_indent(
-            class_iife_expr,
-            continuation_indent_level,
-        );
-
-        for init_expr in computed_init_exprs {
-            self.write(",");
-            self.write_line();
-            self.increase_indent();
-            self.write(&self.render_es5_class_ir_comma_expression(init_expr));
-            self.decrease_indent();
-        }
-
-        if let Some(name) = set_function_name {
-            self.emit_class_expr_set_function_name_comma_item(&temp, name);
-        }
-
-        for element in static_elements {
-            match element {
-                Es5StaticClassExpressionElement::Field(field) => {
-                    self.write(",");
-                    self.write_line();
-                    self.increase_indent();
-                    if self.ctx.options.use_define_for_class_fields {
-                        self.write("Object.defineProperty(");
-                        self.write(&temp);
-                        self.write(", ");
-                        match &field.name_emit {
-                            PropertyNameEmit::Dot(name) => {
-                                self.write("\"");
-                                self.write(name);
-                                self.write("\"");
-                            }
-                            PropertyNameEmit::Bracket(name)
-                            | PropertyNameEmit::BracketNumeric(name) => {
-                                self.write(name);
-                            }
-                        }
-                        self.write(", {");
-                        self.write_line();
-                        self.increase_indent();
-                        self.write("enumerable: true,");
-                        self.write_line();
-                        self.write("configurable: true,");
-                        self.write_line();
-                        self.write("writable: true,");
-                        self.write_line();
-                        self.write("value: ");
-                    } else {
-                        self.write(&temp);
-                        match &field.name_emit {
-                            PropertyNameEmit::Dot(name) => {
-                                self.write(".");
-                                self.write(name);
-                            }
-                            PropertyNameEmit::Bracket(name)
-                            | PropertyNameEmit::BracketNumeric(name) => {
-                                self.write("[");
-                                self.write(name);
-                                self.write("]");
-                            }
-                        }
-                        self.write(" = ");
-                    }
-
-                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                    if !class_name.is_empty() && class_name != temp {
-                        self.scoped_class_expression_self_alias = Some((
-                            Arc::<str>::from(class_name),
-                            Arc::<str>::from(temp.as_str()),
-                        ));
-                    }
-                    let before = self.writer.len();
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(field.initializer);
-                    });
-                    let after = self.writer.len();
-                    self.scoped_class_expression_self_alias = prev_self_alias;
-
-                    if !class_name.is_empty() && class_name != temp {
-                        let full = self.writer.get_output().to_string();
-                        let segment = &full[before..after];
-                        let replaced = replace_identifier(segment, class_name, &temp);
-                        if replaced != segment {
-                            self.writer.truncate(before);
-                            self.write(&replaced);
-                        }
-                    }
-                    if self.ctx.options.use_define_for_class_fields {
-                        self.write_line();
-                        self.decrease_indent();
-                        self.write("})");
-                    }
-                    self.decrease_indent();
-                }
-                Es5StaticClassExpressionElement::StaticBlock {
-                    block,
-                    saved_comment_idx,
-                    ..
-                } => {
-                    self.write(",");
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_static_block_iife_expression(*block, *saved_comment_idx);
-                    self.decrease_indent();
-                }
-            }
-        }
-
-        self.write(",");
-        self.write_line();
-        self.increase_indent();
-        self.write(&temp);
-        if needs_parens {
-            self.write(")");
-        }
-        self.decrease_indent();
-    }
-
-    fn render_es5_class_ir_comma_expression(&self, node: &IRNode) -> String {
-        let expr = match node {
-            IRNode::ExpressionStatement(inner) => inner.as_ref(),
-            other => other,
-        };
-        let mut printer = IRPrinter::with_arena(self.arena);
-        printer.set_transforms(self.transforms.clone());
-        printer.set_target_es5(true);
-        printer.set_remove_comments(self.ctx.options.remove_comments);
-        printer.set_indent_level(self.writer.indent_level());
-        if let Some(text) = self.source_text {
-            printer.set_source_text(text);
-        }
-        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
-            printer.set_tslib_prefix(true);
-            printer.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
-        }
-        printer.emit(expr);
-        printer.take_output()
-    }
-
-    fn emit_es5_static_class_expression_statements(
-        &mut self,
-        class_name: &str,
-        static_elements: &[Es5StaticClassExpressionElement],
-    ) {
-        for element in static_elements {
-            match element {
-                Es5StaticClassExpressionElement::Field(field) => {
-                    self.write(class_name);
-                    match &field.name_emit {
-                        PropertyNameEmit::Dot(name) => {
-                            self.write(".");
-                            self.write(name);
-                        }
-                        PropertyNameEmit::Bracket(name)
-                        | PropertyNameEmit::BracketNumeric(name) => {
-                            self.write("[");
-                            self.write(name);
-                            self.write("]");
-                        }
-                    }
-                    self.write(" = ");
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(field.initializer);
-                    });
-                    self.write(";");
-                    self.write_line();
-                }
-                Es5StaticClassExpressionElement::StaticBlock {
-                    block,
-                    saved_comment_idx,
-                    ..
-                } => {
-                    self.emit_static_block_iife_expression(*block, *saved_comment_idx);
-                    self.write(";");
-                    self.write_line();
-                }
-            }
-        }
     }
 
     fn async_body_function_declarations(&self, body: NodeIndex) -> Vec<NodeIndex> {
@@ -1341,6 +1054,7 @@ impl<'a> Printer<'a> {
         }
 
         if self.es5_class_expression_has_computed_instance_fields(class_data) {
+            let in_loop = self.class_expression_is_in_loop_body(class_node);
             let class_emit_name = if class_data.name.is_some() {
                 let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
                 if candidate.is_empty() || !is_valid_identifier_name(&candidate) {
@@ -1357,7 +1071,11 @@ impl<'a> Printer<'a> {
             self.sync_es5_class_emitter_state(&mut es5_emitter);
             let _ = es5_emitter.take_mappings();
 
-            let in_loop = self.class_expression_is_in_loop_body(class_node);
+            let computed_decls = if computed_decls.is_empty() {
+                self.es5_computed_temp_decls_from_init_exprs(&computed_init_exprs)
+            } else {
+                computed_decls
+            };
             for decl in &computed_decls {
                 if in_loop {
                     self.block_scoped_private_temps.push(decl.clone());
@@ -1523,6 +1241,48 @@ impl<'a> Printer<'a> {
                     } => Some((*block, *saved_comment_idx)),
                     Es5StaticClassExpressionElement::Field(_) => None,
                 }));
+        }
+    }
+
+    fn es5_computed_temp_decls_from_init_exprs(&self, init_exprs: &[IRNode]) -> Vec<String> {
+        let mut decls = Vec::new();
+        for init_expr in init_exprs {
+            self.collect_es5_computed_temp_decls_from_init_expr(init_expr, &mut decls);
+        }
+        decls
+    }
+
+    fn collect_es5_computed_temp_decls_from_init_expr(
+        &self,
+        init_expr: &IRNode,
+        decls: &mut Vec<String>,
+    ) {
+        let expr = match init_expr {
+            IRNode::ExpressionStatement(inner) => inner.as_ref(),
+            other => other,
+        };
+        self.collect_es5_computed_temp_decls_from_expr(expr, decls);
+    }
+
+    fn collect_es5_computed_temp_decls_from_expr(&self, expr: &IRNode, decls: &mut Vec<String>) {
+        let IRNode::BinaryExpr {
+            left,
+            operator,
+            right,
+        } = expr
+        else {
+            return;
+        };
+        if operator.as_ref() == "," {
+            self.collect_es5_computed_temp_decls_from_expr(left, decls);
+            self.collect_es5_computed_temp_decls_from_expr(right, decls);
+            return;
+        }
+        if operator.as_ref() == "="
+            && let IRNode::Identifier(name) = left.as_ref()
+            && !decls.iter().any(|decl| decl == name.as_ref())
+        {
+            decls.push(name.to_string());
         }
     }
 
@@ -1909,132 +1669,6 @@ impl<'a> Printer<'a> {
         self.write(")");
     }
 
-    fn emit_spread_args_array(&mut self, args: &[NodeIndex]) {
-        // Build arguments array using __spreadArray for spread elements
-        if args.is_empty() {
-            self.write("[]");
-            return;
-        }
-
-        // Check if there are any spread elements
-        let has_spread = args
-            .iter()
-            .any(|&arg_idx| emit_utils::is_spread_element(self.arena, arg_idx));
-
-        if !has_spread {
-            // No spreads, just emit an array literal
-            self.write("[");
-            self.emit_comma_separated(args);
-            self.write("]");
-            return;
-        }
-
-        // Build segments by grouping consecutive non-spread and spread elements
-        let mut segments: Vec<ArraySegment> = Vec::new();
-        let mut current_start = 0;
-
-        for (i, &arg_idx) in args.iter().enumerate() {
-            if emit_utils::is_spread_element(self.arena, arg_idx) {
-                // Add non-spread segment before this spread
-                if current_start < i {
-                    segments.push(ArraySegment::Elements(&args[current_start..i]));
-                }
-                // Add the spread element
-                segments.push(ArraySegment::Spread(arg_idx));
-                current_start = i + 1;
-            }
-        }
-
-        // Add remaining elements after last spread
-        if current_start < args.len() {
-            segments.push(ArraySegment::Elements(&args[current_start..]));
-        }
-
-        // Emit using nested __spreadArray calls
-        self.emit_spread_segments(&segments);
-    }
-
-    fn emit_spread_segments(&mut self, segments: &[ArraySegment]) {
-        if segments.is_empty() {
-            self.write("[]");
-            return;
-        }
-
-        let wrap_spread_with_read = self.ctx.target_es5 && self.ctx.options.downlevel_iteration;
-
-        if segments.len() == 1 {
-            match &segments[0] {
-                ArraySegment::Spread(spread_idx) => {
-                    // Just a single spread with no other arguments:
-                    // TypeScript optimization - pass arrays directly unless
-                    // downlevelIteration requires __read for iterable inputs.
-                    if let Some(spread_node) = self.arena.get(*spread_idx) {
-                        if wrap_spread_with_read {
-                            self.write_helper("__spreadArray");
-                            self.write("([], ");
-                            self.emit_spread_expression_with_read(spread_node, true);
-                            self.write(", false)");
-                        } else {
-                            self.emit_spread_expression(spread_node);
-                        }
-                    }
-                }
-                ArraySegment::Elements(elems) => {
-                    // Just elements: [1, 2, 3]
-                    self.write("[");
-                    self.emit_comma_separated(elems);
-                    self.write("]");
-                }
-            }
-            return;
-        }
-
-        // Multiple segments: build nested __spreadArray calls
-        // Pattern: __spreadArray(__spreadArray(base, segment1, false), segment2, false)
-
-        // Open __spreadArray calls for all but the last segment
-        for _ in 0..segments.len() - 1 {
-            self.write_helper("__spreadArray");
-            self.write("(");
-        }
-
-        // Emit the first segment as a complete unit
-        match &segments[0] {
-            ArraySegment::Elements(elems) => {
-                self.write("[");
-                self.emit_comma_separated(elems);
-                self.write("]");
-            }
-            ArraySegment::Spread(spread_idx) => {
-                // First segment is spread: emit as __spreadArray([], spread, false)
-                self.write_helper("__spreadArray");
-                self.write("([], ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
-                }
-                self.write(", false)");
-            }
-        }
-
-        // Emit remaining segments - each closes one __spreadArray call
-        for segment in &segments[1..] {
-            match segment {
-                ArraySegment::Elements(elems) => {
-                    self.write(", [");
-                    self.emit_comma_separated(elems);
-                    self.write("], false)");
-                }
-                ArraySegment::Spread(spread_idx) => {
-                    self.write(", ");
-                    if let Some(spread_node) = self.arena.get(*spread_idx) {
-                        self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
-                    }
-                    self.write(", false)");
-                }
-            }
-        }
-    }
-
     /// Emit a new expression with spread arguments, lowered for ES5.
     pub(in crate::emitter) fn emit_new_expression_es5_spread(&mut self, node: &Node) {
         let Some(new_expr) = self.arena.get_call_expr(node) else {
@@ -2074,79 +1708,5 @@ impl<'a> Printer<'a> {
         self.write(", ");
         self.emit_new_spread_args_array(&args.nodes);
         self.write("))()");
-    }
-
-    fn emit_new_spread_args_array(&mut self, args: &[NodeIndex]) {
-        let mut segments: Vec<ArraySegment> = Vec::new();
-        let mut current_start = 0;
-
-        for (i, &arg_idx) in args.iter().enumerate() {
-            if emit_utils::is_spread_element(self.arena, arg_idx) {
-                if current_start < i {
-                    segments.push(ArraySegment::Elements(&args[current_start..i]));
-                }
-                segments.push(ArraySegment::Spread(arg_idx));
-                current_start = i + 1;
-            }
-        }
-
-        if current_start < args.len() {
-            segments.push(ArraySegment::Elements(&args[current_start..]));
-        }
-
-        if segments.is_empty() {
-            self.write("[void 0]");
-            return;
-        }
-
-        if segments.len() == 1
-            && let ArraySegment::Spread(spread_idx) = &segments[0]
-        {
-            self.write_helper("__spreadArray");
-            self.write("([void 0], ");
-            if let Some(spread_node) = self.arena.get(*spread_idx) {
-                self.emit_spread_expression(spread_node);
-            }
-            self.write(", false)");
-            return;
-        }
-
-        for _ in 0..segments.len() - 1 {
-            self.write_helper("__spreadArray");
-            self.write("(");
-        }
-
-        match &segments[0] {
-            ArraySegment::Elements(elems) => {
-                self.write("[void 0, ");
-                self.emit_comma_separated(elems);
-                self.write("]");
-            }
-            ArraySegment::Spread(spread_idx) => {
-                self.write_helper("__spreadArray");
-                self.write("([void 0], ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
-                }
-                self.write(", false)");
-            }
-        }
-
-        for segment in &segments[1..] {
-            match segment {
-                ArraySegment::Elements(elems) => {
-                    self.write(", [");
-                    self.emit_comma_separated(elems);
-                    self.write("], false)");
-                }
-                ArraySegment::Spread(spread_idx) => {
-                    self.write(", ");
-                    if let Some(spread_node) = self.arena.get(*spread_idx) {
-                        self.emit_spread_expression(spread_node);
-                    }
-                    self.write(", false)");
-                }
-            }
-        }
     }
 }

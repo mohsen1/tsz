@@ -11,7 +11,7 @@
 //! match. Constraints that genuinely lack a matching index signature still
 //! report TS7053.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/10674>
+//! Issue: <https://github.com/tsz-org/tsz/issues/10674>
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::test_utils::check_source;
 

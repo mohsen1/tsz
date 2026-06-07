@@ -45,12 +45,16 @@ impl<'a> Printer<'a> {
         if self.emit_recovered_reserved_function_declaration_name(node, func) {
             return;
         }
+        if self.emit_recovered_this_parameter_initializer_function_declaration(node, func) {
+            return;
+        }
 
         let emit_invalid_namespace_static =
             self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
         if emit_invalid_namespace_static {
             self.write("static ");
         }
+        self.emit_recovered_root_js_declaration_modifiers(&func.modifiers, true);
 
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if func.name.is_some() {

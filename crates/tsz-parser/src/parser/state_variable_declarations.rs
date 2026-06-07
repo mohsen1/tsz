@@ -112,6 +112,48 @@ impl ParserState {
         }
     }
 
+    /// Parse an optional definite assignment assertion `!` after a variable
+    /// declaration name.
+    ///
+    /// Mirrors tsc's `parseVariableDeclaration` (`src/compiler/parser.ts`):
+    ///
+    /// ```ignore
+    /// if (allowExclamation && name.kind === SyntaxKind.Identifier &&
+    ///     token() === SyntaxKind.ExclamationToken && !scanner.hasPrecedingLineBreak()) {
+    ///     exclamationToken = parseTokenNode<...>();
+    /// }
+    /// ```
+    ///
+    /// The `!` is only consumed when all three structural conditions hold:
+    /// - `allow_exclamation` is set. tsc clears it inside `for` initializers
+    ///   (`allowExclamation = !inForStatementInitializer`), so a `!` there is
+    ///   left for list-recovery rather than absorbed as a definite assignment.
+    /// - the binding `name` is a plain `Identifier`, never an object/array
+    ///   binding pattern or an error/missing node.
+    /// - there is no preceding line break, so ASI does not split the statement
+    ///   (`let x` / `!expr` on the next line is two statements, not one).
+    ///
+    /// Returns `true` when a `!` was consumed.
+    pub(crate) fn parse_definite_assignment_assertion(
+        &mut self,
+        name: NodeIndex,
+        allow_exclamation: bool,
+    ) -> bool {
+        if allow_exclamation
+            && self.is_token(SyntaxKind::ExclamationToken)
+            && !self.scanner.has_preceding_line_break()
+            && self
+                .arena
+                .get(name)
+                .is_some_and(crate::parser::node::Node::is_identifier)
+        {
+            self.next_token();
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn parse_variable_declaration_initializer(&mut self) -> NodeIndex {
         if self.pending_array_binding_tail_recovery {
             return NodeIndex::NONE;
@@ -180,8 +222,17 @@ impl ParserState {
             }
             return;
         }
+        // A binding pattern followed by a stray *same-line* `!` is a definite
+        // assignment assertion the parser refused to absorb (tsc only allows `!`
+        // after a plain identifier). tsc recovers that as a missing-comma cascade
+        // and does not also report TS1182, so suppress it. A `!` after a line
+        // break is a separate expression statement via ASI and must NOT suppress
+        // TS1182 — `const {x}\n!foo;` still reports the missing initializer.
+        let stray_same_line_definite_assignment =
+            self.is_token(SyntaxKind::ExclamationToken) && !self.scanner.has_preceding_line_break();
         if !is_catch_clause
             && initializer.is_none()
+            && !stray_same_line_definite_assignment
             && !self.in_ambient_context()
             && let Some(name_node) = self.arena.get(name)
             && name_node.is_binding_pattern()
@@ -409,11 +460,35 @@ impl ParserState {
             self.reserved_parameter_yielded_to_statement = false;
             self.recover_reserved_parameter_as_statement_tail_allowed =
                 previous_reserved_parameter_recovery;
-            if !reserved_parameter_yielded_to_statement {
+            if self.abort_function_signature_after_definite_assignment_tail_once
+                || !reserved_parameter_yielded_to_statement
+            {
                 self.parse_expected(SyntaxKind::CloseParenToken);
             }
             params
         };
+
+        if self.abort_function_signature_after_definite_assignment_tail_once {
+            self.abort_function_signature_after_definite_assignment_tail_once = false;
+            self.context_flags = saved_flags;
+            let end_pos = self.token_full_start();
+            return self.arena.add_function(
+                syntax_kind_ext::FUNCTION_DECLARATION,
+                start_pos,
+                end_pos,
+                FunctionData {
+                    modifiers,
+                    is_async,
+                    asterisk_token,
+                    name,
+                    type_parameters,
+                    parameters,
+                    type_annotation: NodeIndex::NONE,
+                    body: NodeIndex::NONE,
+                    equals_greater_than_token: false,
+                },
+            );
+        }
 
         if reserved_parameter_yielded_to_statement {
             self.context_flags = saved_flags;

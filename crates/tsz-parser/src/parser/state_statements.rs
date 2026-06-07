@@ -2,7 +2,10 @@
 use super::state::{CONTEXT_FLAG_IN_BLOCK, IncrementalParseResult, ParserState};
 use crate::parser::{
     NodeIndex, NodeList,
-    node::{BlockData, QualifiedNameData, SourceFileData, VariableData, VariableDeclarationData},
+    node::{
+        BlockData, QualifiedNameData, RecoveredTypeofMemberCallData, SourceFileData, VariableData,
+        VariableDeclarationData,
+    },
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::diagnostic_codes;
@@ -314,6 +317,22 @@ impl ParserState {
 
             // If we see a closing brace at the top level, report error 1128
             if self.is_token(SyntaxKind::CloseBraceToken) {
+                if self.recovered_definite_assignment_empty_statement_close_brace_pos
+                    == Some(self.token_pos())
+                {
+                    self.recovered_definite_assignment_empty_statement_close_brace_pos = None;
+                    let start_pos = self.token_pos();
+                    let end_pos = self.token_end();
+                    self.next_token();
+                    statements.push(self.arena.add_token(
+                        syntax_kind_ext::EMPTY_STATEMENT,
+                        start_pos,
+                        end_pos,
+                    ));
+                    previous_statement_was_block = false;
+                    prev_block_needs_post_equals_semi = false;
+                    continue;
+                }
                 // Only emit error if we haven't already emitted one at this position
                 if self.token_pos() != self.last_error_pos {
                     use tsz_common::diagnostics::diagnostic_codes;
@@ -562,6 +581,16 @@ impl ParserState {
                 continue;
             }
 
+            if previous_statement_was_block
+                && self.orphan_case_assignment_starts_recovered_class_member()
+            {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                break;
+            }
+
             if self.recover_orphan_case_assignment_before_if() {
                 previous_statement_was_block = false;
                 continue;
@@ -687,6 +716,28 @@ impl ParserState {
     }
 
     fn recover_orphan_case_assignment_before_if(&mut self) -> bool {
+        if !self.current_token_starts_case_assignment() {
+            return false;
+        }
+
+        self.parse_error_at_current_token(
+            "Declaration or statement expected.",
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        );
+        self.skip_orphan_case_assignment();
+        if self.is_token(SyntaxKind::IfKeyword) {
+            self.report_orphan_case_following_if_header_recovery();
+        }
+        true
+    }
+
+    fn orphan_case_assignment_starts_recovered_class_member(&mut self) -> bool {
+        self.in_block_context()
+            && self.in_class_body()
+            && self.current_token_starts_case_assignment()
+    }
+
+    fn current_token_starts_case_assignment(&mut self) -> bool {
         if !self.is_token(SyntaxKind::CaseKeyword) {
             return false;
         }
@@ -698,14 +749,10 @@ impl ParserState {
             !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::EqualsToken);
         self.scanner.restore_state(snapshot);
         self.current_token = current;
-        if !has_same_line_equals {
-            return false;
-        }
+        has_same_line_equals
+    }
 
-        self.parse_error_at_current_token(
-            "Declaration or statement expected.",
-            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-        );
+    fn skip_orphan_case_assignment(&mut self) {
         while !self.is_token(SyntaxKind::SemicolonToken)
             && !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
@@ -718,10 +765,6 @@ impl ParserState {
         if self.is_token(SyntaxKind::SemicolonToken) {
             self.next_token();
         }
-        if self.is_token(SyntaxKind::IfKeyword) {
-            self.report_orphan_case_following_if_header_recovery();
-        }
-        true
     }
 
     fn report_orphan_case_following_if_header_recovery(&mut self) {
@@ -1047,6 +1090,7 @@ impl ParserState {
             VariableData {
                 modifiers,
                 declarations: self.make_node_list(vec![declaration_list]),
+                recovered_typeof_member_calls: Vec::new(),
             },
         )
     }
@@ -1099,6 +1143,7 @@ impl ParserState {
 
         // Parse declarations with enhanced error recovery
         let mut declarations = Vec::new();
+        let mut recovered_typeof_member_calls = Vec::new();
         let mut had_decl_expected_error = false;
         loop {
             // Check if we can start a variable declaration
@@ -1618,8 +1663,6 @@ impl ParserState {
                                 "Variable declaration expected.",
                                 diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
                             );
-                            let snapshot = self.scanner.save_state();
-                            let saved_token = self.current_token;
                             self.next_token();
                             if !matches!(
                                 self.token(),
@@ -1632,8 +1675,6 @@ impl ParserState {
                                     diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
                                 );
                             }
-                            self.scanner.restore_state(snapshot);
-                            self.current_token = saved_token;
                             break;
                         }
                         // `const x: C[#bar] = 3;` is recovered as a malformed
@@ -1659,6 +1700,7 @@ impl ParserState {
                     }
                     if was_dot && token_is_keyword(self.token()) {
                         use tsz_common::diagnostics::diagnostic_messages;
+                        let recovered_keyword = self.token();
                         let word = self.current_keyword_text();
                         let msg =
                             diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
@@ -1678,6 +1720,7 @@ impl ParserState {
                             && !self.scanner.has_preceding_line_break()
                         {
                             self.next_token(); // consume `(`
+                            let argument_pos = self.token_full_start();
                             let mut paren_depth = 1u32;
                             while !matches!(
                                 self.token(),
@@ -1691,6 +1734,14 @@ impl ParserState {
                                     SyntaxKind::CloseParenToken => {
                                         paren_depth -= 1;
                                         if paren_depth == 0 {
+                                            if recovered_keyword == SyntaxKind::TypeOfKeyword {
+                                                recovered_typeof_member_calls.push(
+                                                    RecoveredTypeofMemberCallData {
+                                                        argument_pos,
+                                                        argument_end: self.token_pos(),
+                                                    },
+                                                );
+                                            }
                                             self.next_token();
                                             break;
                                         }
@@ -1800,6 +1851,7 @@ impl ParserState {
             VariableData {
                 modifiers: None,
                 declarations: self.make_node_list(declarations),
+                recovered_typeof_member_calls,
             },
             flags,
         )
@@ -1818,7 +1870,10 @@ impl ParserState {
         self.recovered_template_literal_property_in_object = false;
 
         let name = self.parse_variable_declaration_name();
-        let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
+        // tsc only treats a postfix `!` as a definite assignment assertion when
+        // the binding name is a plain identifier and no line break precedes it.
+        // Outside `for` initializers `allowExclamation` is true.
+        let exclamation_token = self.parse_definite_assignment_assertion(name, true);
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else {

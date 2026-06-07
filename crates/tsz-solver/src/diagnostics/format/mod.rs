@@ -1,6 +1,7 @@
 //! Type formatting for the solver.
 //! Centralizes logic for converting `TypeIds` and `TypeDatas` to human-readable strings.
 
+mod alias_underlying;
 mod array;
 mod compound;
 mod display_simplification;
@@ -22,6 +23,7 @@ pub mod test_tracing;
 mod tests;
 pub mod tracing_helpers;
 
+pub use alias_underlying::type_alias_displayed_as_underlying;
 pub use property_names::format_excess_property_name;
 pub(crate) use property_names::needs_property_name_quotes;
 
@@ -293,6 +295,71 @@ impl<'a> TypeFormatter<'a> {
             || matches!(self.interner.lookup(evaluated), Some(TypeData::Literal(_)))
             || evaluated == TypeId::NEVER)
             .then_some(evaluated)
+    }
+
+    /// A non-distributive application of a generic alias whose *declared body is
+    /// a conditional type* loses its alias symbol when the conditional resolves:
+    /// the operator resolves into its branch and never stamps the enclosing
+    /// alias onto anonymous object/mapped results, so tsc renders those results
+    /// structurally (`DeepReadonly<{ b: number }>` →
+    /// `{ readonly b: number; }`, issue #10914), not as `Name<Args>`.
+    ///
+    /// Returns the evaluated type to format in place of the application form.
+    /// Returns `None` for a mapped/object-bodied application (`Partial<T>` keeps
+    /// its alias symbol), for a result that stays generic, and for a result that
+    /// fails to reduce (a still-deferred conditional), so those keep their
+    /// existing display. The distributive form is handled earlier by
+    /// [`Self::distributed_conditional_application_display`].
+    fn reducing_conditional_application_display(&self, type_id: TypeId) -> Option<TypeId> {
+        let def_store = self.def_store?;
+        // Cheap structural gate (shared with the checker boundary): the base
+        // must resolve to a generic alias whose declared body is a conditional.
+        // Mapped/object-bodied applications (`Partial<T>`) fail this and keep
+        // their alias symbol.
+        if !crate::type_queries::application_base_has_conditional_alias_body(
+            self.interner,
+            def_store,
+            type_id,
+        ) {
+            return None;
+        }
+        // Instantiate the conditional body with the concrete arguments and
+        // evaluate. `instantiate_generic` substitutes the def body directly,
+        // which reduces a nested helper application (`DeepReadonly<{ b }>`)
+        // that a bare `evaluate_type` of the wrapper would leave deferred.
+        let TypeData::Application(app_id) = self.interner.lookup(type_id)? else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let def_id = crate::type_queries::get_lazy_def_id(self.interner, app.base)
+            .or_else(|| def_store.find_def_for_type(app.base))?;
+        let def = def_store.get(def_id)?;
+        let instantiated = crate::computation::instantiate_generic(
+            self.interner,
+            def.body?,
+            &def.type_params,
+            &app.args,
+        );
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
+        if evaluated == TypeId::ERROR
+            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
+        {
+            return None;
+        }
+        // A conditional still deferred after evaluation never reduced (an
+        // unresolved operand); the raw node is no more informative than the
+        // application form, so keep the application form. Non-object results
+        // also keep the application surface; expanding tuple/scalar helper
+        // applications produces conformance fingerprint drift in assignment
+        // diagnostics where tsc preserves the helper spelling.
+        if matches!(
+            self.interner.lookup(evaluated),
+            Some(TypeData::Conditional(_))
+        ) || !crate::type_queries::is_object_or_mapped_type(self.interner, evaluated)
+        {
+            return None;
+        }
+        Some(evaluated)
     }
 
     /// For Application-arg display: when the arg is an `IndexAccess(obj, idx)`
@@ -598,6 +665,62 @@ impl<'a> TypeFormatter<'a> {
         let union = self.interner.union(distributed.clone());
         self.interner.store_union_origin(union, distributed);
         Some(union)
+    }
+
+    /// Expand a raw `Application` of a *variadic* (spread) tuple type alias to
+    /// its flattened tuple form for display.
+    ///
+    /// tsc instantiates spread tuple aliases (`Prepend<T, A> = [T, ...A]`,
+    /// `Concat<A, B> = [...A, ...B]`, `IdTuple<T> = [...T]`) through tuple
+    /// spreading, which yields a fresh tuple carrying no `aliasSymbol`; the
+    /// printer then renders the structural tuple (`[1, 2, 3]`) rather than the
+    /// named application (`Prepend<1, [2, 3]>`).
+    ///
+    /// Only handles fully concrete arguments and bails unless the spread
+    /// flattens to a tuple with no surviving rest element, so partially generic
+    /// or unresolved-recursive applications keep their named form (the formatter
+    /// has no resolver to expand nested alias references such as `Zip<...>`).
+    fn variadic_tuple_alias_application_display(
+        &self,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        let def_store = self.def_store?;
+        let def_id = match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => def_store.find_def_for_type(base)?,
+        };
+        let def = def_store.get(def_id)?;
+        if def.kind != crate::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return None;
+        }
+        let body = def.body?;
+        // The declared body must be a tuple with at least one rest/spread
+        // element — the structural marker for a variadic tuple alias.
+        if !crate::type_queries::data::is_variadic_tuple(self.interner, body) {
+            return None;
+        }
+        // Local flattening has no resolver, so only attempt it for concrete
+        // arguments; generic args would leave unresolved spreads behind.
+        if args.iter().any(|&arg| {
+            crate::visitors::visitor_predicates::contains_type_parameters(self.interner, arg)
+        }) {
+            return None;
+        }
+        let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
+        for (param, &arg) in def.type_params.iter().zip(args.iter()) {
+            subst.insert(param.name, arg);
+        }
+        let substituted =
+            crate::instantiation::instantiate::instantiate_type(self.interner, body, &subst);
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+        // Require a fully flattened tuple (no leftover rest element): an
+        // unresolved nested spread (e.g. `[..., ...Zip<...>]`) must keep the
+        // named application form rather than render a half-expanded tuple.
+        (evaluated != base
+            && matches!(self.interner.lookup(evaluated), Some(TypeData::Tuple(_)))
+            && !crate::type_queries::data::is_variadic_tuple(self.interner, evaluated))
+        .then_some(evaluated)
     }
 
     /// Returns `true` when the application points to a distributive conditional

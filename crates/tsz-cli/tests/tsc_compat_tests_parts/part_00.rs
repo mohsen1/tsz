@@ -945,6 +945,99 @@ export const x = foo();
 }
 
 #[test]
+fn declaration_emit_default_object_assign_reports_namespace_alias_for_default_only() {
+    let temp = TempDir::new("default_object_assign_namespace_alias").expect("temp dir");
+
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist",
+            "rootDir": "r",
+            "target": "es2017",
+            "module": "commonjs",
+            "moduleResolution": "node",
+            "ignoreDeprecations": "6.0",
+            "skipLibCheck": true,
+            "strict": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["r/entry.ts"]
+        }"#,
+    );
+    std::fs::create_dir_all(temp.path.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &temp
+            .path
+            .join("r/node_modules/styled-components/node_modules/hoist-non-react-statics/index.d.ts"),
+        r#"interface Statics {
+    "$$whatever": string;
+}
+declare namespace hoistNonReactStatics {
+    type NonReactStatics<T> = {[X in Exclude<keyof T, keyof Statics>]: T[X]}
+}
+export = hoistNonReactStatics;
+"#,
+    );
+    write_file(
+        &temp.path.join("r/node_modules/styled-components/index.d.ts"),
+        r#"import * as hoistNonReactStatics from "hoist-non-react-statics";
+export interface DefaultTheme {}
+export type StyledComponent<TTag extends string, TTheme = DefaultTheme, TStyle = {}, TWhatever = never> =
+    string
+    & StyledComponentBase<TTag, TTheme, TStyle, TWhatever>
+    & hoistNonReactStatics.NonReactStatics<TTag>;
+export interface StyledComponentBase<TTag extends string, TTheme = DefaultTheme, TStyle = {}, TWhatever = never> {
+    tag: TTag;
+    theme: TTheme;
+    style: TStyle;
+    whatever: TWhatever;
+}
+export interface StyledInterface {
+    div: (a: TemplateStringsArray) => StyledComponent<"div">;
+}
+declare const styled: StyledInterface;
+export default styled;
+"#,
+    );
+    write_file(
+        &temp.path.join("r/entry.ts"),
+        r#"import styled from "styled-components";
+
+const A = styled.div``;
+const B = styled.div``;
+export const C = styled.div``;
+
+export default Object.assign(A, {
+    B,
+    C
+});
+"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json"]).expect("tsz should run");
+    assert_ne!(code, 0, "tsz should report TS2883");
+    assert_eq!(
+        output.matches("TS2883").count(),
+        1,
+        "expected exactly one TS2883 diagnostic, got:\n{output}"
+    );
+    assert!(
+        output.contains("inferred type of 'default'")
+            && output.contains("NonReactStatics")
+            && output.contains("styled-components/node_modules/hoist-non-react-statics"),
+        "expected default TS2883 to name NonReactStatics, got:\n{output}"
+    );
+    assert!(
+        !output.contains("inferred type of 'C'") && !output.contains("reference to 'Statics'"),
+        "named tagged-template export should not report helper Statics, got:\n{output}"
+    );
+}
+
+#[test]
 fn declaration_emit_preserves_template_literal_type_text_from_dependency() {
     let temp = TempDir::new("template_literal_type_text_from_dependency").expect("temp dir");
 
@@ -1084,6 +1177,57 @@ fn run_tsc_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
         combined.push_str(&stdout);
     }
     Some((code, normalize_output(&combined)))
+}
+
+#[test]
+fn create_type_options_required_constraint_cli_no_ts2344() {
+    let temp = TempDir::new("create_type_options_required_constraint").expect("temp dir");
+    write_file(
+        &temp.path.join("repro.ts"),
+        r#"type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type;
+
+type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+
+type Ok = Paths<{ value: string }>;
+"#,
+    );
+    let args = ["--noEmit", "--pretty", "false", "--strict", "repro.ts"];
+    let Some((tsc_code, tsc_output)) = run_tsc_with_exit_code(&temp.path, &args) else {
+        println!("skipping: tsc not found");
+        return;
+    };
+    let Some((tsz_code, tsz_output)) = run_tsz_with_exit_code(&temp.path, &args) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(tsc_code, 0, "tsc should accept repro:\n{tsc_output}");
+    assert_eq!(tsz_code, 0, "tsz should accept repro:\n{tsz_output}");
+    assert!(
+        !tsz_output.contains("TS2344"),
+        "dependent Required<T> constraints must not emit TS2344:\n{tsz_output}"
+    );
 }
 
 /// Run both tsc and tsz and assert their outputs match exactly.
@@ -1793,4 +1937,3 @@ fn tsc_command() -> Option<Command> {
 // ===========================================================================
 // Integration tests: exact match (where checker positions agree)
 // ===========================================================================
-

@@ -6,6 +6,63 @@ use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
+    pub(crate) fn parse_recovered_leading_colon_expression_statement(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let missing_left = self.create_missing_expression();
+        let operator_token = SyntaxKind::ColonToken as u16;
+        self.parse_expected(SyntaxKind::ColonToken);
+
+        let right = if self.is_expression_start() {
+            self.parse_assignment_expression()
+        } else {
+            self.error_expression_expected();
+            self.create_missing_expression()
+        };
+
+        let mut expression = self.arena.add_binary_expr(
+            syntax_kind_ext::BINARY_EXPRESSION,
+            start_pos,
+            self.token_end(),
+            BinaryExprData {
+                left: missing_left,
+                operator_token,
+                right,
+            },
+        );
+
+        if self.parse_optional(SyntaxKind::CommaToken) {
+            if self.is_token(SyntaxKind::DotDotDotToken) {
+                self.error_expression_expected();
+                self.next_token();
+            }
+
+            let missing_right = self.create_missing_expression();
+            expression = self.arena.add_binary_expr(
+                syntax_kind_ext::BINARY_EXPRESSION,
+                start_pos,
+                self.token_end(),
+                BinaryExprData {
+                    left: expression,
+                    operator_token: SyntaxKind::CommaToken as u16,
+                    right: missing_right,
+                },
+            );
+        }
+
+        if !self.can_parse_semicolon() {
+            self.parse_error_for_missing_semicolon_after(expression);
+        } else if self.is_token(SyntaxKind::SemicolonToken) {
+            self.next_token();
+        }
+
+        self.arena.add_expr_statement(
+            syntax_kind_ext::EXPRESSION_STATEMENT,
+            start_pos,
+            self.token_end(),
+            ExprStatementData { expression },
+        )
+    }
+
     pub(crate) fn parse_switch_case_clauses(&mut self) -> Vec<NodeIndex> {
         let mut clauses = Vec::new();
         let mut seen_default = false;
@@ -164,6 +221,10 @@ impl ParserState {
             };
 
             let catch_block = self.parse_block();
+            if self.catch_missing_block_has_dangling_question_recovery(catch_block) {
+                self.error_expression_expected();
+                self.next_token();
+            }
             let catch_end = self.token_end();
 
             self.arena.add_catch_clause(
@@ -216,6 +277,32 @@ impl ParserState {
                 finally_block,
             },
         )
+    }
+
+    fn catch_missing_block_has_dangling_question_recovery(
+        &mut self,
+        catch_block: NodeIndex,
+    ) -> bool {
+        if !self.is_token(SyntaxKind::QuestionToken) {
+            return false;
+        }
+        let Some(block_node) = self.arena.get(catch_block) else {
+            return false;
+        };
+        if block_node.pos != self.token_pos() {
+            return false;
+        }
+
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let is_recovery_boundary = matches!(
+            self.token(),
+            SyntaxKind::CloseBraceToken | SyntaxKind::FinallyKeyword | SyntaxKind::EndOfFileToken
+        );
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        is_recovery_boundary
     }
 
     // Parse with statement
@@ -284,6 +371,8 @@ impl ParserState {
         self.jsx_missing_brace_semicolon_window_start = Some(start_pos);
 
         let started_with_binary_operator = !self.is_expression_start() && self.is_binary_operator();
+        let started_with_assignment_operator =
+            !self.is_expression_start() && self.is_assignment_operator(self.token());
         // A statement that begins with a purely-binary operator (e.g. `|| a`,
         // `!= b`, `&& c`; not `+`/`-`/`*`/`/`, which are unary/JSX/regex at
         // statement start and stay on their existing paths) is recovered by tsc
@@ -303,41 +392,67 @@ impl ParserState {
                 self.token(),
                 SyntaxKind::CommaToken | SyntaxKind::QuestionToken
             );
-        let mut expression =
-            if started_with_binary_operator && !started_with_binary_operator_skip_path {
+        let mut expression = if started_with_assignment_operator {
+            self.parse_error_at_current_token(
+                diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+            let operator_token = self.token() as u16;
+            self.next_token();
+            let mut right = self.parse_assignment_expression();
+            if right.is_none() {
                 self.error_expression_expected();
-                let start_pos = self.token_pos();
-                let missing_left = self.create_missing_expression();
-                self.parse_binary_expression_chain_seeded(2, start_pos, Some(missing_left))
-            } else if started_with_binary_operator {
-                self.error_expression_expected();
-                self.next_token();
-                let right = if self.is_expression_start() {
-                    self.parse_binary_expression(2)
-                } else {
-                    NodeIndex::NONE
-                };
-                if right.is_none() {
-                    self.create_missing_expression()
-                } else {
-                    right
-                }
+                right = self.create_missing_expression();
+            }
+            if operator_token == SyntaxKind::EqualsToken as u16 {
+                right
             } else {
-                // Early rejection: If the current token cannot start an expression, fail immediately
-                // This prevents TS1109 from being emitted for tokens that are obviously not expressions
-                // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
-                // parse_statement()'s wildcard match.
-                let recoverable_bare_hash_expression = self.is_token(SyntaxKind::HashToken)
-                    && self.bare_hash_is_followed_by_statement_boundary();
-                if !self.is_expression_start() && !recoverable_bare_hash_expression {
-                    // Don't emit error here - let the statement-level error handling deal with it
-                    // Just return NONE to indicate failure
-                    self.jsx_missing_brace_semicolon_window_start = None;
-                    return NodeIndex::NONE;
-                }
-
-                self.parse_expression()
+                let missing_left = self.create_missing_expression();
+                self.arena.add_binary_expr(
+                    syntax_kind_ext::BINARY_EXPRESSION,
+                    start_pos,
+                    self.token_end(),
+                    BinaryExprData {
+                        left: missing_left,
+                        operator_token,
+                        right,
+                    },
+                )
+            }
+        } else if started_with_binary_operator && !started_with_binary_operator_skip_path {
+            self.error_expression_expected();
+            let start_pos = self.token_pos();
+            let missing_left = self.create_missing_expression();
+            self.parse_binary_expression_chain_seeded(2, start_pos, Some(missing_left))
+        } else if started_with_binary_operator {
+            self.error_expression_expected();
+            self.next_token();
+            let right = if self.is_expression_start() {
+                self.parse_binary_expression(2)
+            } else {
+                NodeIndex::NONE
             };
+            if right.is_none() {
+                self.create_missing_expression()
+            } else {
+                right
+            }
+        } else {
+            // Early rejection: If the current token cannot start an expression, fail immediately
+            // This prevents TS1109 from being emitted for tokens that are obviously not expressions
+            // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
+            // parse_statement()'s wildcard match.
+            let recoverable_bare_hash_expression = self.is_token(SyntaxKind::HashToken)
+                && self.bare_hash_is_followed_by_statement_boundary();
+            if !self.is_expression_start() && !recoverable_bare_hash_expression {
+                // Don't emit error here - let the statement-level error handling deal with it
+                // Just return NONE to indicate failure
+                self.jsx_missing_brace_semicolon_window_start = None;
+                return NodeIndex::NONE;
+            }
+
+            self.parse_expression()
+        };
 
         // If expression parsing failed completely, resync to recover
         if expression.is_none() {
@@ -508,6 +623,15 @@ impl ParserState {
                 );
                 self.next_token();
             }
+        } else if started_with_binary_operator
+            && self.is_token(SyntaxKind::CloseParenToken)
+            && self.speculate(|parser| {
+                parser.next_token();
+                parser.is_token(SyntaxKind::ColonToken)
+            })
+        {
+            self.next_token();
+            self.next_token();
         } else if !self.can_parse_semicolon() {
             let jsx_head_needs_semicolon = self.arena.get(expression).is_some_and(|node| {
                 matches!(

@@ -1384,8 +1384,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // A homomorphic mapped target `{ [K in keyof T]: ... }` over a bare,
+        // unresolved type parameter `T` has an *unbounded* required key-set: a
+        // concrete instantiation of `T` may carry members its constraint does not
+        // advertise (`T extends object` admits `{ a: 1 }`; `T extends { a: number }`
+        // admits `{ a: number, b: string }`; …). Expanding such a target through
+        // `T`'s constraint keys is therefore only a *lower bound* on the demanded
+        // members — a concrete source that merely matches the constraint shape is
+        // NOT assignable, and tsc rejects it (TS2322 in value positions, TS2416 /
+        // TS2430 in override checks). Only a source genuinely correlated with `T`
+        // (one that mentions `T`, e.g. a `T[K]`-derived value) can satisfy the
+        // unbounded portion. The constraint-derived expansions below still run so
+        // their *failures* keep producing precise per-property diagnostics, but a
+        // spurious *accept* from them is vetoed when the source is concrete w.r.t.
+        // `T`.
+        let constraint_expansion_can_overaccept = self
+            .generic_homomorphic_key_param(mapped_id)
+            .is_some_and(|tp_id| !self.source_correlated_with_type_param(source, tp_id));
+
         match self.try_expand_mapped(mapped_id) {
-            Some(expanded) => self.check_subtype(source, expanded),
+            Some(expanded) => {
+                let result = self.check_subtype(source, expanded);
+                if result.is_true() && constraint_expansion_can_overaccept {
+                    return SubtypeResult::False;
+                }
+                result
+            }
             None => {
                 // tsc: an empty object {} is assignable to any mapped type that adds
                 // the optional modifier (+?), like Partial<T>. All properties are optional,
@@ -1399,7 +1423,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
 
-                if let Some(expanded) = self.try_expand_mapped_with_constraint(mapped_id) {
+                if !constraint_expansion_can_overaccept
+                    && let Some(expanded) = self.try_expand_mapped_with_constraint(mapped_id)
+                {
                     let result = self.check_subtype(source, expanded);
                     if result.is_true() {
                         return result;
@@ -1430,6 +1456,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::False
             }
         }
+    }
+
+    /// When `mapped_id` is a homomorphic mapped type `{ [K in keyof T]: ... }`
+    /// whose key source `T` is still a bare, unresolved type parameter (or an
+    /// `infer` position) and which does not ADD optionality or rename keys,
+    /// returns the `TypeId` of `T`; otherwise `None`.
+    ///
+    /// These are exactly the targets whose required key-set is unbounded, so
+    /// relating a concrete source to them cannot be decided by expanding the
+    /// target through `T`'s constraint keys (see
+    /// [`Self::check_source_to_mapped_expansion`]). `+?` (Partial) and
+    /// name-remapped (`as`) targets keep their existing handling.
+    fn generic_homomorphic_key_param(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
+        let mapped = self.interner.get_mapped(mapped_id);
+        if mapped.optional_modifier == Some(MappedModifier::Add) || mapped.name_type.is_some() {
+            return None;
+        }
+        let constraint_source = keyof_inner_type(self.interner, mapped.constraint)?;
+        matches!(
+            self.interner.lookup(constraint_source),
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        )
+        .then_some(constraint_source)
+    }
+
+    /// Whether `source` is correlated with the type parameter `tp_id` — i.e. it
+    /// structurally mentions `tp_id` (so it can be a `T`/`T[K]`-derived value that
+    /// tracks `T`'s concrete shape). A source that does not mention `tp_id` is
+    /// concrete with respect to it and cannot satisfy an unbounded homomorphic
+    /// mapped target over `tp_id`.
+    fn source_correlated_with_type_param(&self, source: TypeId, tp_id: TypeId) -> bool {
+        // Short-circuiting containment walk (no full type-set allocation).
+        crate::visitor::contains_type_by_id(self.interner, source, tp_id)
     }
 
     /// Check if any source type is assignable to a homomorphic mapped type.

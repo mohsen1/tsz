@@ -16,7 +16,7 @@
 
 solver_max_loc      3474
 solver_oversized    20
-solver_file_generic_call_resolve 3380
+solver_file_generic_call_resolve 3413
 solver_file_eval_conditional 3257
 solver_file_evaluate 3474
 solver_file_instantiate 2872
@@ -27,12 +27,12 @@ solver_file_narrowing_core 2718
 solver_file_relations_compat 2950
 solver_file_constraints_walker 2348
 solver_file_diag_format_mod 2318
-solver_file_eval_mapped 1963
+solver_file_eval_mapped 1982
 solver_file_subtype_generics 2217
-solver_file_call_args 2084
+solver_file_call_args 2097
 solver_file_eval_index_access 2226
 solver_file_def_core 2244
-solver_file_visitor_predicates 2162
+solver_file_visitor_predicates 742
 solver_file_types 2018
 
 binder_max_loc        2890

@@ -1,7 +1,7 @@
 use crate::context::CheckerOptions;
 use crate::test_utils::{
     check_computed_type_argument_resolution_counts, check_multi_file_with_global_index,
-    check_source_diagnostics,
+    check_source_diagnostics, diagnostic_count,
 };
 
 /// When multiple type references in the same alias body refer to the same
@@ -17,6 +17,42 @@ fn alias_body_explicit_type_refs_use_validator_only_path() {
         checker_source.contains("check_explicit_type_reference_for_alias_body_validation"),
         "alias body validation should validate explicit type reference arguments \
          without forcing full type-reference lowering"
+    );
+}
+
+#[test]
+fn composed_generic_alias_body_can_defer_semantic_construction() {
+    let checker_source =
+        std::fs::read_to_string("src/types/type_checking/type_alias_missing_name_coverage.rs")
+            .expect("read type alias missing-name coverage");
+    assert!(
+        checker_source.contains("type_ref.type_arguments.as_ref().is_none_or")
+            && checker_source.contains("syntax_kind_ext::TEMPLATE_LITERAL_TYPE")
+            && checker_source.contains("syntax_kind_ext::TYPE_OPERATOR"),
+        "generic alias bodies composed from type references, template literals, \
+         and type operators should be eligible for lazy semantic construction"
+    );
+
+    let diags = check_source_diagnostics(
+        r#"
+type ObjectOf<List> = { [Key in keyof List]: List[Key] };
+type PickObject<Obj, Key extends keyof Obj> = { [P in Key]: Obj[P] };
+type ListOf<Obj> = Obj[keyof Obj][];
+
+type PickList<List, Key extends string | number | symbol> =
+    ListOf<PickObject<ObjectOf<List>, `${Key & number}` | Key>>;
+"#,
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2304 | 2314 | 2315 | 2344 | 2558))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "composed generic alias bodies must still validate names and explicit \
+         type arguments without eager semantic construction; got: {relevant:#?}"
     );
 }
 
@@ -40,7 +76,7 @@ fn property_only_type_literal_alias_body_missing_names_covered_by_validation() {
     assert!(
         checker_source.contains("syntax_kind_ext::TYPE_LITERAL")
             && checker_source.contains("get_property_decl")
-            && checker_source.contains("prop.type_annotation.is_none()"),
+            && checker_source.contains("prop.type_annotation.is_some()"),
         "property-only type literal alias bodies should be covered by the \
          validation walk without broadening to signatures or unannotated members"
     );
@@ -58,6 +94,182 @@ fn tuple_alias_body_missing_names_covered_by_validation() {
             && checker_source.contains("get_named_tuple_member"),
         "tuple and named-tuple alias bodies should be covered by the validation \
          walk without falling back to a second missing-name traversal"
+    );
+}
+
+#[test]
+fn reference_composite_alias_body_keeps_missing_name_diagnostics() {
+    let diags = check_source_diagnostics(
+        r#"
+type Known<Value> = { value: Value };
+type Combined<Item> = Known<Item> | Missing<Item>;
+"#,
+    );
+
+    let missing_names: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        missing_names.len(),
+        1,
+        "Reference/composite-only alias bodies should still report unresolved \
+         type names through check_type_node; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn mapped_alias_body_keeps_conservative_missing_name_path() {
+    let checker_source =
+        std::fs::read_to_string("src/types/type_checking/type_alias_missing_name_coverage.rs")
+            .expect("read type alias missing-name coverage");
+    assert!(
+        checker_source.contains("type_alias_body_missing_names_covered_inner")
+            && checker_source.contains("syntax_kind_ext::MAPPED_TYPE")
+            && checker_source.contains("_ => false"),
+        "Mapped alias bodies must keep the resolving coverage path because \
+         mapped parameters and template diagnostics need scoped handling"
+    );
+}
+
+#[test]
+fn type_node_validation_cache_is_context_keyed() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    assert!(
+        checker_source.contains("active_resolving_alias_set_key")
+            && checker_source.contains("type_reference_arg_validation_scope_key")
+            && checker_source.contains("type_node_validation"),
+        "type-node validation success caching must be keyed by lexical scope \
+         and active alias-resolution context"
+    );
+}
+
+#[test]
+fn type_node_validation_cache_only_records_clean_walks() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    assert!(
+        checker_source.contains("let diagnostics_before = self.ctx.diagnostics.len();")
+            && checker_source.contains("if self.ctx.diagnostics.len() == diagnostics_before")
+            && checker_source.contains(".type_node_validation")
+            && checker_source.contains(".insert(validation_cache_key)"),
+        "type-node validation success caching must not record diagnostic-bearing walks"
+    );
+}
+
+#[test]
+fn direct_conditional_true_branch_validation_skips_check_type_resolution() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    let direct_branch = checker_source
+        .find("if true_needs_direct_type_ref_validation")
+        .expect("direct true-branch validation path");
+    let mapped_branch = checker_source[direct_branch..]
+        .find("} else if true_is_mapped")
+        .map(|offset| direct_branch + offset)
+        .expect("mapped true-branch validation path");
+    let direct_branch_source = &checker_source[direct_branch..mapped_branch];
+    assert!(
+        direct_branch_source.contains("push_infer_bindings_from_extends")
+            && direct_branch_source.contains("check_child_type_node_in_current_scope")
+            && !direct_branch_source.contains("get_type_from_type_node(cond.check_type)"),
+        "Direct conditional true-branch type-reference validation should only push \
+         infer bindings and validate the branch; resolving the check type eagerly \
+         evaluates recursive aliases such as ts-toolbelt Drop/Flatten."
+    );
+}
+
+#[test]
+fn recursive_alias_type_args_are_not_validated_before_cycle_guard() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    let type_reference_branch = checker_source
+        .find("k if k == syntax_kind_ext::TYPE_REFERENCE =>")
+        .expect("type-reference validation branch");
+    let branch_source = &checker_source[type_reference_branch..];
+    let recursive_guard = branch_source
+        .find("type_alias_reaches_resolving_alias")
+        .expect("recursive alias guard");
+    let argument_walk = branch_source
+        .find("for &arg_idx in &type_arguments.nodes")
+        .expect("type argument validation walk");
+    assert!(
+        recursive_guard < argument_walk,
+        "Recursive alias references should short-circuit before declaration-time \
+         type-argument validation; ts-toolbelt dispatch aliases recursively refer \
+         to themselves with expensive intermediate arguments."
+    );
+}
+
+#[test]
+fn recursive_alias_type_arg_skip_preserves_missing_name_diagnostics() {
+    let diags = check_source_diagnostics(
+        r#"
+type A<T extends string> = {0: A<number>}[0];
+type C<T> = {0: C<Missing>}[0];
+"#,
+    );
+
+    assert_eq!(
+        diagnostic_count(&diags, 2304),
+        1,
+        "Recursive alias type arguments should still report unresolved names; got: {diags:#?}"
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2344),
+        0,
+        "Recursive alias type arguments should not be constraint-validated during \
+         cycle detection; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn boolean_dispatch_index_alias_uses_declared_key_subset() {
+    let diags = check_source_diagnostics(
+        r#"
+type Boolean = 0 | 1;
+type Or<B1 extends Boolean, B2 extends Boolean> = {
+    0: {
+        0: 0;
+        1: 1;
+    };
+    1: {
+        0: 1;
+        1: 1;
+    };
+}[B1][B2];
+type Dispatch<A extends Boolean, B extends Boolean> = {
+    0: string;
+    1: number;
+}[Or<A, B>];
+
+type Good = Dispatch<0, 1>;
+type BadBoolean = 0 | 2;
+type Bad = {
+    0: string;
+    1: number;
+}[BadBoolean];
+"#,
+    );
+
+    let indexed_access_errors: Vec<_> = diags.iter().filter(|d| d.code == 2536).collect();
+    assert_eq!(
+        indexed_access_errors.len(),
+        1,
+        "Boolean dispatch aliases should validate when their declared result \
+         is covered by the dispatch table, while uncovered literal aliases \
+         still report TS2536; got: {diags:#?}"
+    );
+
+    let checker_source = std::fs::read_to_string("src/types/type_checking/indexed_access.rs")
+        .expect("read indexed access checker");
+    let fast_path = checker_source
+        .find("type_literal_dispatch_index_is_declared_key_subset")
+        .expect("dispatch index fast path");
+    let index_resolution = checker_source
+        .find("let index_type = self.get_type_from_type_node(data.index_type);")
+        .expect("indexed access index resolution");
+    assert!(
+        fast_path < index_resolution,
+        "Dispatch-table index validation must run before resolving the index type"
     );
 }
 

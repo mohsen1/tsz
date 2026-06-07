@@ -34,13 +34,20 @@ gh pr list --state open --limit 100 --json number,title,isDraft,labels,updatedAt
 - PR families: ready-but-unqueued PRs, blocked ready PRs, conflicting main PRs,
   stale drafts, duplicate invariants, missing `AgentName`, missing or
   noncanonical labels, and PRs needing high-level review.
+- Comment noise budget: use PR bodies, check state, and
+  `Manager Next Actions` from `node scripts/ci/pr-ownership-report.mjs` for
+  routine status. Do not leave heartbeat comments. Comment only for state
+  transitions, blocker/root-cause evidence, handoff/takeover, closure, queue
+  failure, readiness risk, or submitted review findings.
 - Architecture cleanup metric: label audit findings, ownership report
   mismatches, duplicate active invariants, stale WIP markers, and unreviewed
   high-risk PRs should trend down.
 - First live command: run the label audit and PR ownership report, then triage
-  queue candidates and PRs needing review.
-- Next concrete step: submit a review, add/remove the right label, enqueue a
-  verified ready PR, or leave a signed blocker/handoff comment.
+  the report's `Manager Next Actions`.
+- Next concrete step: enqueue a verified ready PR, inspect failed/missing CI,
+  submit an actionable review, add/remove the right label, update a PR body, or
+  leave one signed blocker/handoff comment when the report calls for a state
+  transition.
 
 ## Existing Work To Inspect First
 
@@ -55,7 +62,7 @@ gh pr list --state open --limit 100 --json number,title,isDraft,labels,updatedAt
 Priority order:
 
 1. Ready PRs with red, missing, stale, or blocked required checks.
-2. Ready PRs that can be safely moved to `merge-queue`.
+2. Ready PRs that can be safely queued with GitHub's native merge queue.
 3. PRs touching checker/solver relation, inference, evaluation, narrowing,
    identity, or cache semantics.
 4. PRs touching emit/DTS output boundaries, output surgery, source-text
@@ -86,6 +93,11 @@ Prefer submitted PR reviews for file-specific findings and PR conversation
 comments for high-level scope, duplication, metric truth, queueing, or
 readiness concerns.
 
+Quiet PR-management rule: if no state changed, do not comment. Refresh the
+ownership report, wait for pending checks, or update the PR body when durable
+coordination text is stale. Batch owner-level draft parking or stale-WIP
+follow-up instead of posting one comment per PR.
+
 ## Non-Overlap Rules
 
 - Do not take implementation ownership unless explicitly asked or a stale PR
@@ -102,5 +114,6 @@ readiness concerns.
 - Use `node scripts/ci/pr-ownership-report.mjs` for PR topology.
 - Use `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json` for label hygiene.
 - Use `scripts/ci/check-wip-state-comments.mjs` when changing WIP state.
-- Use GitHub PR-head check status before adding `merge-queue`.
+- Use GitHub PR-head check status before queueing with
+  `gh pr merge <pr> --match-head-commit <sha>`.
 - No compiler suite is needed for metadata-only cleanup.

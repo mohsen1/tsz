@@ -31,19 +31,24 @@
 
 mod check;
 mod handlers_code_fixes;
+mod handlers_code_fixes_combined;
 mod handlers_code_fixes_enum_member;
 mod handlers_code_fixes_fallbacks;
 mod handlers_code_fixes_implement_interface;
 mod handlers_code_fixes_imports;
+mod handlers_code_fixes_isolated_decl;
 mod handlers_code_fixes_jsdoc;
 mod handlers_code_fixes_synthetic;
 mod handlers_code_fixes_utils;
 mod handlers_completions;
+mod handlers_completions_auto_imports;
 mod handlers_completions_display;
 mod handlers_completions_parameters;
+mod handlers_completions_project;
 mod handlers_completions_snippets;
 mod handlers_diagnostics;
 mod handlers_editing;
+mod handlers_editing_comments;
 mod handlers_files;
 mod handlers_info;
 mod handlers_info_alias;

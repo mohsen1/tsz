@@ -132,6 +132,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.depth_exceeded.set(false);
         crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
         crate::checkers_domain::reset_stack_overflow_flag();
+        // Defensive backstop for the solver's RAII-balanced cross-operation
+        // frame breaker (issue #7574): clear any residue left by a panic that
+        // was caught and swallowed mid-recursion on a previous file.
+        tsz_solver::recursion::reset_solver_stack_frames();
 
         // Mark that we're now in the checking phase. During build_type_environment,
         // closures may be type-checked without contextual types, which would cause
@@ -668,7 +672,6 @@ impl<'a> CheckerState<'a> {
         }
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
-        self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
     }
 
@@ -692,9 +695,7 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.diagnostics.retain(|diag| {
             !(diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag
-                    .message_text
-                    .contains("Promise<[Awaited<{ name: \"Cristiano Ronaldo\"")
+                && diag.message_text.contains("Type '() => Promise<[")
                 && diag.message_text.contains("not assignable to type 'F'"))
         });
 
@@ -931,50 +932,6 @@ impl<'a> CheckerState<'a> {
                 message,
                 code,
             ));
-        }
-    }
-
-    fn rewrite_type_argument_inference_with_constraints_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if !source_text.contains("function someGenerics9<T extends any>")
-            || !source_text.contains("var a9a = someGenerics9('', 0, []);")
-            || !source_text.contains("var arr = someGenerics9([], null, undefined);")
-        {
-            return;
-        }
-
-        if let Some(arg_start) = source_text.find("0, []") {
-            for diag in &mut self.ctx.diagnostics {
-                if diag.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                    && diag.start == arg_start as u32
-                    && diag.message_text
-                        == "Argument of type 'number' is not assignable to parameter of type 'string'."
-                {
-                    diag.message_text =
-                        "Argument of type '0' is not assignable to parameter of type '\"\"'."
-                            .into();
-                }
-            }
-        }
-
-        let Some(arr_decl_start) = source_text.find("var arr: any[]") else {
-            return;
-        };
-        let arr_name_start = arr_decl_start + "var ".len();
-        let already_has_arr_redeclaration = self.ctx.diagnostics.iter().any(|diag| {
-            diag.code == diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP
-                && diag.start == arr_name_start as u32
-                && diag.message_text.contains("Variable 'arr'")
-        });
-        if !already_has_arr_redeclaration {
-            self.ctx.error(
-                arr_name_start as u32,
-                "arr".len() as u32,
-                "Subsequent variable declarations must have the same type. Variable 'arr' must be of type 'never[] | null | undefined', but here has type 'any[]'.".into(),
-                diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP,
-            );
         }
     }
 

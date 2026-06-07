@@ -178,7 +178,7 @@ impl<'a> Printer<'a> {
                     self.next_disposable_env_id,
                     blocked_disposable_names,
                 );
-                self.configure_es5_class_external_hoists(&mut es5_emitter, idx, &class_name, class);
+                self.configure_es5_class_external_hoists(&mut es5_emitter, idx, &class_name);
                 es5_emitter.set_indent_level(self.writer.indent_level());
                 es5_emitter.set_transforms(self.transforms.clone());
                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
@@ -389,7 +389,7 @@ impl<'a> Printer<'a> {
             es5_emitter
                 .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
             if let Some(class_name) = self.get_identifier_text_opt(class.name) {
-                self.configure_es5_class_external_hoists(&mut es5_emitter, idx, &class_name, class);
+                self.configure_es5_class_external_hoists(&mut es5_emitter, idx, &class_name);
             }
             es5_emitter.set_indent_level(self.writer.indent_level());
             // Pass transform directives to the ClassES5Emitter
@@ -1021,180 +1021,18 @@ impl<'a> Printer<'a> {
         es5_emitter: &mut ClassES5Emitter<'a>,
         class_idx: NodeIndex,
         class_name: &str,
-        class_data: &ClassData,
     ) {
         let externally_hoisted_decls =
             self.es5_class_externally_hoisted_decls(class_idx, class_name);
-        if !externally_hoisted_decls.is_empty() {
-            for decl in &externally_hoisted_decls {
-                if !self.hoisted_assignment_temps.contains(decl) {
-                    self.hoisted_assignment_temps.push(decl.clone());
-                }
-            }
-            es5_emitter.set_externally_hoisted_decls(externally_hoisted_decls);
-            return;
-        }
-
-        if self
-            .arena
-            .get(class_idx)
-            .is_none_or(|node| node.kind != syntax_kind_ext::CLASS_DECLARATION)
-        {
-            return;
-        }
-
-        let externally_hoisted_decls =
-            self.es5_class_current_counter_computed_temp_decls(class_name, class_data);
         if externally_hoisted_decls.is_empty() {
             return;
         }
-
         for decl in &externally_hoisted_decls {
             if !self.hoisted_assignment_temps.contains(decl) {
                 self.hoisted_assignment_temps.push(decl.clone());
             }
         }
         es5_emitter.set_externally_hoisted_decls(externally_hoisted_decls);
-    }
-
-    fn es5_class_current_counter_computed_temp_decls(
-        &mut self,
-        class_name: &str,
-        class_data: &ClassData,
-    ) -> Vec<String> {
-        let first_computed_instance_auto_accessor =
-            self.first_es5_computed_instance_auto_accessor(class_data);
-        let mut temp_name_index = self.ctx.destructuring_state.temp_var_counter;
-        let mut decls = Vec::new();
-
-        for &member_idx in &class_data.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                continue;
-            }
-            let Some(prop) = self.arena.get_property_decl(member_node) else {
-                continue;
-            };
-            if !self.es5_class_property_has_runtime_effect(member_node, prop) {
-                continue;
-            }
-            let Some(name_node) = self.arena.get(prop.name) else {
-                continue;
-            };
-            if !self.es5_computed_name_needs_temp(name_node) {
-                continue;
-            }
-            let computed_temp = next_es5_temp_name(&mut temp_name_index);
-
-            if first_computed_instance_auto_accessor == Some(member_idx)
-                && let Some(storage_name) =
-                    self.es5_auto_accessor_storage_name(class_data, class_name, member_idx)
-            {
-                decls.push(storage_name);
-            }
-            decls.push(computed_temp);
-        }
-
-        decls
-    }
-
-    fn first_es5_computed_instance_auto_accessor(
-        &self,
-        class_data: &ClassData,
-    ) -> Option<NodeIndex> {
-        class_data.members.nodes.iter().find_map(|&member_idx| {
-            let member_node = self.arena.get(member_idx)?;
-            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                return None;
-            }
-            let prop = self.arena.get_property_decl(member_node)?;
-            if self.es5_auto_accessor_participates_in_storage_naming(prop)
-                && !self.arena.is_static(&prop.modifiers)
-                && self
-                    .arena
-                    .get(prop.name)
-                    .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-            {
-                Some(member_idx)
-            } else {
-                None
-            }
-        })
-    }
-
-    fn es5_auto_accessor_storage_name(
-        &self,
-        class_data: &ClassData,
-        class_name: &str,
-        target_member_idx: NodeIndex,
-    ) -> Option<String> {
-        let has_static_auto_accessor = class_data.members.nodes.iter().any(|&member_idx| {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                return false;
-            };
-            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                return false;
-            }
-            let Some(prop) = self.arena.get_property_decl(member_node) else {
-                return false;
-            };
-            self.es5_auto_accessor_participates_in_storage_naming(prop)
-                && self.arena.is_static(&prop.modifiers)
-        });
-        let mut generated_name_index = if has_static_auto_accessor { 1 } else { 0 };
-
-        for &member_idx in &class_data.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                continue;
-            }
-            let Some(prop) = self.arena.get_property_decl(member_node) else {
-                continue;
-            };
-            if !self.es5_auto_accessor_participates_in_storage_naming(prop) {
-                continue;
-            }
-            let Some(name_node) = self.arena.get(prop.name) else {
-                continue;
-            };
-            let storage_part = if name_node.kind == SyntaxKind::Identifier as u16 {
-                self.arena
-                    .get_identifier(name_node)
-                    .map(|id| id.escaped_text.clone())?
-            } else {
-                let name = es5_generated_auto_accessor_name(generated_name_index);
-                generated_name_index += 1;
-                name
-            };
-
-            if member_idx == target_member_idx {
-                return Some(format!("_{class_name}_{storage_part}_accessor_storage"));
-            }
-        }
-
-        None
-    }
-
-    fn es5_auto_accessor_participates_in_storage_naming(
-        &self,
-        prop: &tsz_parser::parser::node::PropertyDeclData,
-    ) -> bool {
-        self.arena
-            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-            && !self
-                .arena
-                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-            && !self
-                .arena
-                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-            && self
-                .arena
-                .get(prop.name)
-                .is_none_or(|n| n.kind != SyntaxKind::PrivateIdentifier as u16)
     }
 
     pub(in crate::emitter) fn es5_class_externally_hoisted_decls(
@@ -1218,13 +1056,6 @@ impl<'a> Printer<'a> {
                 .pending_commonjs_class_export_name
                 .as_ref()
                 .is_some_and(|(_, local_name, _)| local_name == class_name);
-        if !self.ctx.outer_module_kind().is_commonjs()
-            || !is_commonjs_exported_class
-            || self.ctx.module_state.has_export_assignment
-        {
-            return Vec::new();
-        }
-
         let has_static_runtime_computed_key = class_data.members.nodes.iter().any(|&member_idx| {
             let Some(member_node) = self.arena.get(member_idx) else {
                 return false;
@@ -1247,7 +1078,14 @@ impl<'a> Printer<'a> {
             return Vec::new();
         }
 
-        let mut decls = self.es5_class_private_storage_decls(class_idx, class_name, class_data);
+        let can_externalize_private_storage = self.ctx.outer_module_kind().is_commonjs()
+            && is_commonjs_exported_class
+            && !self.ctx.module_state.has_export_assignment;
+        let mut decls = if can_externalize_private_storage {
+            self.es5_class_private_storage_decls(class_idx, class_name, class_data)
+        } else {
+            Vec::new()
+        };
 
         let mut temp_name_index = self.ctx.destructuring_state.temp_var_counter;
         let mut auto_accessor_storage_reserved = false;

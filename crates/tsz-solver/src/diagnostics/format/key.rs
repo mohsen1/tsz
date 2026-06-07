@@ -161,7 +161,10 @@ impl<'a> TypeFormatter<'a> {
                 // `type A = B; type B = string`. Mirror that policy here so
                 // nested elaboration positions (which keep the property type as
                 // `Lazy(def)`) do not leak the alias spelling.
-                if let Some(body) = self.type_alias_body_displayed_as_underlying(*def_id) {
+                if let Some(def_store) = self.def_store
+                    && let Some(body) =
+                        super::type_alias_displayed_as_underlying(self.interner, def_store, *def_id)
+                {
                     return self.format(body);
                 }
                 self.format_def_id_with_type_params(*def_id, "Lazy").into()
@@ -208,6 +211,22 @@ impl<'a> TypeFormatter<'a> {
                     self.distributed_conditional_application_display(app.base, &app.args)
                 {
                     return self.format(distributed);
+                }
+
+                // A non-distributive conditional-bodied alias application that
+                // resolves renders its resolved type structurally, not
+                // `Name<Args>` (issue #10914).
+                if let Some(evaluated) = self.reducing_conditional_application_display(type_id) {
+                    return self.format(evaluated);
+                }
+
+                // A variadic (spread) tuple alias instantiated with concrete
+                // arguments loses its alias symbol in tsc (spreading produces a
+                // fresh tuple), so render the flattened tuple form.
+                if let Some(flattened) =
+                    self.variadic_tuple_alias_application_display(app.base, &app.args)
+                {
+                    return self.format(flattened);
                 }
 
                 // Special handling for Application(Lazy(def_id), args)
@@ -798,142 +817,6 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::Error => Cow::Borrowed("error"),
         }
-    }
-
-    /// Mirror tsc's `aliasSymbol` policy for diagnostic display: a non-generic
-    /// type alias whose body resolves to a primitive `Intrinsic` or a `Literal`
-    /// is rendered as the underlying type, not by the alias name.
-    ///
-    /// Returns the resolved primitive/literal `TypeId` to format in place of the
-    /// alias name, or `None` when the alias should keep its name (generic alias,
-    /// or a body that is a union/intersection/object/array/tuple/function/…).
-    /// Alias chains are followed (`type A = B; type B = string` → `string`); a
-    /// bounded visited set guards against cyclic alias definitions.
-    fn type_alias_body_displayed_as_underlying(&self, def_id: crate::def::DefId) -> Option<TypeId> {
-        use crate::def::DefKind;
-
-        let def_store = self.def_store?;
-        let mut current_def = def_id;
-        let mut seen = 0usize;
-        loop {
-            // Bound iteration to avoid spinning on a cyclic alias chain.
-            seen += 1;
-            if seen > 64 {
-                return None;
-            }
-
-            let def = def_store.get(current_def)?;
-            if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
-                return None;
-            }
-            let body = def.body?;
-            if crate::visitor::is_intrinsic_or_literal_type(self.interner, body) {
-                return Some(body);
-            }
-            // The checker stores the *evaluated* body for a non-generic alias and
-            // flags it as "computed" when the declared body was a reducing
-            // operator (a conditional or indexed access that resolved away, an
-            // intersection that collapsed to a primitive union). tsc attaches no
-            // `aliasSymbol` to those shared results, so render the underlying
-            // structural type — `[string, number]`, `number[]`, `() => void`, … —
-            // rather than the alias name, matching the checker-side display.
-            //
-            // Object-mentioning bodies (a bare object, or a union/intersection
-            // containing one) are excluded: re-formatting such a shared shape
-            // re-enters the reverse `find_def_for_type` lookup, which can repaint
-            // it with an unrelated alias name. Those keep the existing display
-            // path. This mirrors the checker's `computed body` marking gate.
-            if def_store.is_computed_body(body)
-                && !crate::type_queries::union_or_intersection_mentions_object(self.interner, body)
-            {
-                return Some(body);
-            }
-            match self.interner.lookup(body) {
-                Some(TypeData::Lazy(next_def)) => current_def = next_def,
-                // Operators that never carry tsc's `aliasSymbol` onto their
-                // result. A conditional or indexed access *resolves away* into
-                // its branch/element, and `keyof`, template-literal, and the
-                // `Uppercase`/`Lowercase`/… string-mapping intrinsics build
-                // their result without ever stamping the enclosing alias onto
-                // it. tsc therefore renders the *evaluated* underlying type for
-                // any resolved shape — scalar, literal, `never`, union, object,
-                // tuple, or even another computed type (e.g. a still-generic
-                // template literal) — never the alias name. The syntactic
-                // checks above never see this because the body is e.g.
-                // `true extends true ? { a: 1 } : never` or `keyof { a: 1 }`.
-                Some(
-                    TypeData::Conditional(_)
-                    | TypeData::IndexAccess(_, _)
-                    | TypeData::KeyOf(_)
-                    | TypeData::TemplateLiteral(_)
-                    | TypeData::StringIntrinsic { .. },
-                ) => return self.alias_resolved_body_underlying(body),
-                // A utility/generic application *does* propagate the alias
-                // symbol onto a freshly-constructed structural result
-                // (`Pick<…>` → object, `Array<number>`, `Extract<…>` → union
-                // all keep their alias name), but a result that bottoms out at
-                // a shared scalar/literal/`never` singleton drops it
-                // (`ReturnType<() => string>` → `string`). Only collapse an
-                // application when it reduces to such a singleton.
-                Some(TypeData::Application(_)) => {
-                    return self.alias_application_scalar_underlying(body);
-                }
-                _ => return None,
-            }
-        }
-    }
-
-    /// Evaluate a computed alias body whose top-level operator never carries
-    /// tsc's `aliasSymbol` onto its result — a conditional, an indexed access,
-    /// a `keyof`, a template literal, or a string-mapping intrinsic — and return
-    /// the resolved underlying type to display in place of the alias name.
-    ///
-    /// tsc renders the evaluated result for **any** resolved shape (scalar,
-    /// literal, `never`, union, object, tuple, function, or a still-generic
-    /// template literal), so this deliberately does not gate on the result being
-    /// a scalar. Returns `None` only when the body stays generic, errors, or a
-    /// conditional/indexed access fails to reduce — leaving a deferred node that
-    /// is no more informative than the alias name itself.
-    fn alias_resolved_body_underlying(&self, body: TypeId) -> Option<TypeId> {
-        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, body);
-        if evaluated == TypeId::ERROR
-            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
-        {
-            return None;
-        }
-        // A conditional or indexed access that is still deferred after
-        // evaluation never reduced (e.g. an unresolved operand): rendering the
-        // raw node would not improve on the alias name, so keep the name.
-        if matches!(
-            self.interner.lookup(evaluated),
-            Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
-        ) {
-            return None;
-        }
-        Some(evaluated)
-    }
-
-    /// Evaluate a utility/generic *application* alias body and return the
-    /// underlying type **only** when it collapses to a shared scalar/literal/
-    /// `never` singleton — the one case where tsc drops the application's alias
-    /// name (`ReturnType<() => string>` → `string`). Structural results
-    /// (object/array/tuple/union/…) keep the alias name because tsc stamps the
-    /// alias symbol onto the freshly-constructed application result.
-    ///
-    /// Returns `None` when the body stays generic, structural, errors, or does
-    /// not change under evaluation, so those aliases keep their declared name.
-    fn alias_application_scalar_underlying(&self, body: TypeId) -> Option<TypeId> {
-        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, body);
-        if evaluated == body
-            || evaluated == TypeId::ERROR
-            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
-        {
-            return None;
-        }
-        (crate::visitor::is_primitive_type(self.interner, evaluated)
-            || matches!(self.interner.lookup(evaluated), Some(TypeData::Literal(_)))
-            || evaluated == TypeId::NEVER)
-            .then_some(evaluated)
     }
 
     fn format_in_operator_record(&mut self, shape: &ObjectShape) -> Option<String> {

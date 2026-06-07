@@ -237,6 +237,20 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// base instead: re-entering Case 2's fallback for the same `(alias_base, source)`
     /// indicates a coinductive fixed point, and we converge to the source.
     pub(crate) reverse_alias_expansion_visited: RefCell<FxHashSet<(TypeId, TypeId)>>,
+    /// Inference-placeholder name atoms (`__infer_*`) allocated for the type
+    /// parameters of the generic call currently being resolved. Used to gate
+    /// higher-order (TypeScript 3.4) re-generalization: a re-generalization is
+    /// only safe when the argument's contextual placeholders belong to *this*
+    /// call, so the gate fails closed (falls back to instantiation) for nested
+    /// or stale state.
+    pub(crate) current_call_inference_placeholders: FxHashSet<tsz_common::Atom>,
+    /// Subset of [`Self::current_call_inference_placeholders`] that appears in
+    /// more than one parameter of the callee signature. Shared placeholders are
+    /// tracked as call-shape metadata for inference ordering decisions; pure
+    /// higher-order generic arguments may still re-generalize through them so
+    /// wrappers such as `pipe(f: (a: A) => B, g: (b: B) => C)` preserve the
+    /// middle return-to-parameter flow.
+    pub(crate) shared_inference_placeholders: FxHashSet<tsz_common::Atom>,
 }
 
 /// Operation-local cache statistics for [`CallEvaluator`].
@@ -311,6 +325,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             reverse_mapped_depth: Cell::new(0),
             reverse_mapped_visited: RefCell::new(FxHashSet::default()),
             reverse_alias_expansion_visited: RefCell::new(FxHashSet::default()),
+            current_call_inference_placeholders: FxHashSet::default(),
+            shared_inference_placeholders: FxHashSet::default(),
         }
     }
 

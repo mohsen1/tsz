@@ -17,7 +17,6 @@ use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHasher};
 use smallvec::SmallVec;
-use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc, OnceLock, RwLock,
@@ -25,144 +24,7 @@ use std::sync::{
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
-// ---------------------------------------------------------------------------
-// Thread-local direct-mapped lookup cache
-// ---------------------------------------------------------------------------
-// On single-threaded workloads (all benchmarks, CLI), every `lookup()` call
-// goes through `RwLock::read()` which costs ~15-25 ns per call (atomic CAS on
-// the reader count, memory fence, deref, fence, atomic decrement). A 1024-entry
-// direct-mapped cache turns >90% of lookups into a single array index + compare
-// (~1-2 ns). The cache is keyed by `TypeId.0` with the tag stored alongside
-// the data, so collisions just evict (no correctness issue).
-
-const LOOKUP_CACHE_BITS: u32 = 10;
-const LOOKUP_CACHE_SIZE: usize = 1 << LOOKUP_CACHE_BITS; // 1024
-#[allow(dead_code)]
-const LOOKUP_CACHE_MASK: u32 = (LOOKUP_CACHE_SIZE as u32) - 1;
-
-/// A single cache entry: (tag = TypeId raw value, cached TypeData, owning
-/// interner `instance_id`).
-///
-/// `tag == 0` means empty (`TypeId::NONE` is never looked up for user types).
-/// `instance_id` scopes the cache entry to the interner that inserted it, so
-/// a stale entry from a previous `TypeInterner` on the same thread is
-/// detected and treated as a miss — even though the raw `tag` may collide
-/// with a different type in the new interner. Without this, the thread-local
-/// cache was disabled entirely, forcing every `lookup()` through a
-/// `RwLock::read()` (~15-25 ns per call).
-#[derive(Clone, Copy)]
-struct LookupCacheEntry {
-    tag: u32,
-    instance_id: u32,
-    data: TypeData,
-}
-
-// LookupCacheEntry is used by TypeInternerCache below.
-
-// ---------------------------------------------------------------------------
-// Thread-local combined cache for both lookup and intern
-// ---------------------------------------------------------------------------
-// Combines both caches into a single struct to reduce thread_local! accesses.
-// On macOS, each thread_local! access goes through __tls_get_addr (~10-15ns).
-// By combining into one TLS access, we halve the overhead.
-
-const INTERN_CACHE_BITS: u32 = 9;
-const INTERN_CACHE_SIZE: usize = 1 << INTERN_CACHE_BITS; // 512
-#[allow(dead_code)]
-const INTERN_CACHE_MASK: u64 = (INTERN_CACHE_SIZE as u64) - 1;
-
-#[derive(Clone, Copy)]
-struct InternCacheEntry {
-    /// `FxHash` of the TypeData, used as tag
-    hash: u64,
-    /// Owning interner `instance_id` for cross-interner safety.
-    instance_id: u32,
-    /// The TypeData that was interned
-    key: TypeData,
-    /// The resulting TypeId
-    result: TypeId,
-}
-
-/// Combined thread-local cache for both `lookup()` and `intern()` directions.
-///
-/// Uses per-slot `Cell<T>` values for interior mutability. Both cache entry
-/// types are `Copy`, so each probe/insert remains one direct slot `get`/`set`
-/// with no `unsafe` and no manual `Send`/`Sync` impls. The cache is reached
-/// only through `thread_local!`, which requires neither bound.
-struct TypeInternerCache {
-    lookup: [Cell<LookupCacheEntry>; LOOKUP_CACHE_SIZE],
-    intern: [Cell<InternCacheEntry>; INTERN_CACHE_SIZE],
-}
-
-const EMPTY_LOOKUP_ENTRY: LookupCacheEntry = LookupCacheEntry {
-    tag: 0,
-    instance_id: 0,
-    data: TypeData::Error,
-};
-
-const EMPTY_INTERN_ENTRY: InternCacheEntry = InternCacheEntry {
-    hash: 0,
-    instance_id: 0,
-    key: TypeData::Error,
-    result: TypeId::NONE,
-};
-
-#[allow(dead_code)]
-impl TypeInternerCache {
-    const fn new() -> Self {
-        Self {
-            lookup: [const { Cell::new(EMPTY_LOOKUP_ENTRY) }; LOOKUP_CACHE_SIZE],
-            intern: [const { Cell::new(EMPTY_INTERN_ENTRY) }; INTERN_CACHE_SIZE],
-        }
-    }
-
-    #[inline(always)]
-    const fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
-        let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        let entry = self.lookup[idx].get();
-        if entry.tag == id.0 && entry.instance_id == instance_id {
-            Some(entry.data)
-        } else {
-            None
-        }
-    }
-
-    #[inline(always)]
-    fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) {
-        let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        self.lookup[idx].set(LookupCacheEntry {
-            tag: id.0,
-            instance_id,
-            data,
-        });
-    }
-
-    #[inline(always)]
-    fn intern_probe(&self, hash: u64, instance_id: u32, key: &TypeData) -> Option<TypeId> {
-        let idx = (hash & INTERN_CACHE_MASK) as usize;
-        let entry = self.intern[idx].get();
-        if entry.hash == hash && entry.instance_id == instance_id && &entry.key == key {
-            Some(entry.result)
-        } else {
-            None
-        }
-    }
-
-    #[inline(always)]
-    fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
-        let idx = (hash & INTERN_CACHE_MASK) as usize;
-        self.intern[idx].set(InternCacheEntry {
-            hash,
-            instance_id,
-            key,
-            result,
-        });
-    }
-}
-
-thread_local! {
-    static TL_CACHE: TypeInternerCache = const { TypeInternerCache::new() };
-}
+mod cache;
 
 /// Global counter for assigning unique `instance_id`s to `TypeInterner`
 /// instances. `0` is reserved as "empty/no-interner" so it will never match
@@ -177,14 +39,7 @@ static NEXT_INTERNER_INSTANCE_ID: AtomicU32 = AtomicU32::new(1);
 /// Without this, the lookup cache may return `TypeData` from a dropped interner,
 /// causing incorrect type resolution and panics.
 pub fn clear_thread_local_cache() {
-    TL_CACHE.with(|cache| {
-        for cell in &cache.lookup {
-            cell.set(EMPTY_LOOKUP_ENTRY);
-        }
-        for cell in &cache.intern {
-            cell.set(EMPTY_INTERN_ENTRY);
-        }
-    });
+    cache::clear_thread_local_cache();
 }
 
 pub(super) const SHARD_BITS: u32 = 6;
@@ -556,6 +411,10 @@ pub struct TypeInterner {
     pub(crate) contains_lazy_or_recursive_cache: DashMap<TypeId, bool, FxBuildHasher>,
     pub(crate) contains_unresolved_application_cache: DashMap<TypeId, bool, FxBuildHasher>,
     pub(crate) contains_resolver_dependent_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Alias-opaque `contains Conditional` cache for the closed-eval gate.
+    /// The answer is immutable per `TypeId` and avoids repeated subtree walks
+    /// on dense recursive mapped/conditional/index-access expansions.
+    pub(crate) contains_conditional_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -662,6 +521,33 @@ pub struct TypeInterner {
     pub(super) instance_id: u32,
 }
 
+/// Entry-count snapshot for retained `TypeInterner` predicate caches.
+///
+/// These caches memoize immutable per-`TypeId` content predicates. The snapshot
+/// is observability-only: it does not change cache keys, invalidation, fuel, or
+/// predicate answers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TypePredicateCacheStatistics {
+    /// Number of memoized identity-comparability predicate results.
+    pub identity_comparable_cache_entries: usize,
+    /// Number of memoized `ThisType` containment predicate results.
+    pub contains_this_cache_entries: usize,
+    /// Number of memoized `infer` containment predicate results.
+    pub contains_infer_cache_entries: usize,
+    /// Number of memoized `typeof` query containment predicate results.
+    pub contains_type_query_cache_entries: usize,
+    /// Number of memoized type-parameter containment predicate results.
+    pub contains_type_params_cache_entries: usize,
+    /// Number of memoized lazy-or-recursive containment predicate results.
+    pub contains_lazy_or_recursive_cache_entries: usize,
+    /// Number of memoized unresolved-application containment predicate results.
+    pub contains_unresolved_application_cache_entries: usize,
+    /// Number of memoized resolver-dependent containment predicate results.
+    pub contains_resolver_dependent_cache_entries: usize,
+    /// Number of memoized conditional-type containment predicate results.
+    pub contains_conditional_cache_entries: usize,
+}
+
 impl std::fmt::Debug for TypeInterner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TypeInterner")
@@ -671,6 +557,24 @@ impl std::fmt::Debug for TypeInterner {
 }
 
 impl TypeInterner {
+    /// Capture retained predicate-cache entry counts for perf attribution.
+    #[must_use]
+    pub fn type_predicate_cache_statistics(&self) -> TypePredicateCacheStatistics {
+        TypePredicateCacheStatistics {
+            identity_comparable_cache_entries: self.identity_comparable_cache.len(),
+            contains_this_cache_entries: self.contains_this_cache.len(),
+            contains_infer_cache_entries: self.contains_infer_cache.len(),
+            contains_type_query_cache_entries: self.contains_type_query_cache.len(),
+            contains_type_params_cache_entries: self.contains_type_params_cache.len(),
+            contains_lazy_or_recursive_cache_entries: self.contains_lazy_or_recursive_cache.len(),
+            contains_unresolved_application_cache_entries: self
+                .contains_unresolved_application_cache
+                .len(),
+            contains_resolver_dependent_cache_entries: self.contains_resolver_dependent_cache.len(),
+            contains_conditional_cache_entries: self.contains_conditional_cache.len(),
+        }
+    }
+
     /// Create a new type interner with pre-registered intrinsics.
     ///
     /// Uses lazy initialization for all `DashMap` structures to minimize
@@ -700,6 +604,7 @@ impl TypeInterner {
             contains_lazy_or_recursive_cache: DashMap::with_hasher(FxBuildHasher),
             contains_unresolved_application_cache: DashMap::with_hasher(FxBuildHasher),
             contains_resolver_dependent_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_conditional_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
@@ -867,7 +772,10 @@ impl TypeInterner {
 
     /// Register a DefId as belonging to a boxed type.
     pub fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
-        self.boxed_def_ids.entry(kind).or_default().push(def_id);
+        let mut def_ids = self.boxed_def_ids.entry(kind).or_default();
+        if !def_ids.contains(&def_id) {
+            def_ids.push(def_id);
+        }
     }
 
     /// Check if a DefId corresponds to a boxed type of the given kind.
@@ -1177,7 +1085,7 @@ impl TypeInterner {
 
         // Fast path: thread-local cache hit scoped by this interner's
         // instance_id.
-        if let Some(id) = TL_CACHE.with(|c| c.intern_probe(hash, self.instance_id, &key)) {
+        if let Some(id) = cache::intern_probe(hash, self.instance_id, &key) {
             if let Some(c) = pc {
                 c.interner_intern_hits
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1187,7 +1095,7 @@ impl TypeInterner {
 
         let result = self.intern_slow(key, hash, pc);
         if result != TypeId::ERROR {
-            TL_CACHE.with(|c| c.intern_insert(hash, self.instance_id, key, result));
+            cache::intern_insert(hash, self.instance_id, key, result);
         }
         result
     }
@@ -1360,12 +1268,12 @@ impl TypeInterner {
 
         // Fast path: thread-local cache hit scoped by this interner's
         // instance_id.
-        if let Some(data) = TL_CACHE.with(|c| c.lookup_probe(id, self.instance_id)) {
+        if let Some(data) = cache::lookup_probe(id, self.instance_id) {
             return Some(data);
         }
 
         let data = self.lookup_slow(id)?;
-        TL_CACHE.with(|c| c.lookup_insert(id, self.instance_id, data));
+        cache::lookup_insert(id, self.instance_id, data);
         Some(data)
     }
 

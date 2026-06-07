@@ -1043,6 +1043,17 @@ impl<'a> CheckerState<'a> {
                 return (TypeId::ERROR, Vec::new());
             }
 
+            // Type-only inline default exports have no `value_declaration`; resolve
+            // their inline interface/type alias declaration to the local type symbol
+            // so default imports see that type instead of generic alias `any`.
+            if import_module.is_none()
+                && value_decl.is_none()
+                && let Some(target_type) =
+                    self.inline_default_export_type_only_target_type(sym_id, declarations)
+            {
+                return (target_type, Vec::new());
+            }
+
             // Synthetic `export default ...` aliases point directly at the exported
             // declaration node (often an anonymous class/function). They are real
             // value symbols, not unresolved imports, so compute the declaration type
@@ -1223,14 +1234,8 @@ impl<'a> CheckerState<'a> {
                                 ) {
                                     continue;
                                 }
-                                // Skip type-only exports (`export type { A }`), exports
-                                // reached through `export type *` wildcards, exports
-                                // that are intrinsically type-only (type aliases, interfaces
-                                // without merged values), and transitively type-only
-                                // exports (re-exported from a `export type` chain).
                                 if self.is_type_only_export_symbol(export_sym_id)
                                     || self.is_export_from_type_only_wildcard(module_name, name)
-                                    || self.export_symbol_has_no_value(export_sym_id)
                                     || self.is_export_type_only_from_file(
                                         module_name,
                                         name,
@@ -1239,18 +1244,24 @@ impl<'a> CheckerState<'a> {
                                 {
                                     continue;
                                 }
-                                let mut prop_type = self
+                                let validated_prop_type = self
                                     .namespace_default_reexport_property_type(
                                         module_name,
                                         declaring_file_idx,
                                         name,
                                     )
+                                    .or_else(|| {
+                                        self.get_validated_member_type(export_sym_id, name)
+                                    });
+                                if validated_prop_type.is_none()
+                                    && self.export_symbol_has_no_value(export_sym_id)
+                                {
+                                    continue;
+                                }
+                                let mut prop_type = validated_prop_type
                                     .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id));
-
-                                // Rule #44: Apply module augmentations to each exported type
                                 prop_type =
                                     self.apply_module_augmentations(module_name, name, prop_type);
-
                                 let declaration_order = if name == "default" {
                                     1
                                 } else {

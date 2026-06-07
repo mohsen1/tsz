@@ -37,7 +37,7 @@ function artifact(rows, sourceCommit = "abc123") {
   return {
     generated_at: "2026-05-19T01:02:03.000Z",
     source_commit: sourceCommit,
-    workflow_run_url: `https://github.com/mohsen1/tsz/actions/runs/${sourceCommit}`,
+    workflow_run_url: `https://github.com/tsz-org/tsz/actions/runs/${sourceCommit}`,
     results: rows,
   };
 }
@@ -188,6 +188,16 @@ assert.match(
   benchWorkflow,
   /bench-results-project-winner-regressions\.md/,
   "merged benchmark artifact should include the project winner regression markdown report",
+);
+assert.match(
+  benchWorkflow,
+  /check-artifact-readiness\.mjs\s+\\\s*\n\s+--json\s+\\\s*\n\s+--require-project-timing-pairs=1\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"/,
+  "bench publish should reject artifacts with no successful project timing pairs before publishing latest.json",
+);
+assert.match(
+  benchWorkflow,
+  /bench-results-readiness\.json/,
+  "merged benchmark artifact should include the public publish readiness JSON report",
 );
 
 console.log("project winner regression report tests passed");

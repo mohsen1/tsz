@@ -8,7 +8,9 @@ use crate::query_boundaries::assignability::{
     is_assignable_with_overrides, is_relation_cacheable, object_shape_for_type,
 };
 use crate::query_boundaries::common::{
-    intersection_members, object_shape_id, object_with_index_shape_id, union_members,
+    has_call_signatures, has_construct_signatures, intersection_members, is_empty_object_type,
+    is_type_parameter_like, object_shape_id, object_with_index_shape_id, type_param_info,
+    union_members,
 };
 use crate::query_boundaries::state::type_resolution::{get_application_info, get_lazy_def_id};
 use crate::state::{CheckerOverrideProvider, CheckerState};
@@ -113,7 +115,12 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .find(|source_prop| source_prop.name == target_prop.name)
                 .is_some_and(|source_prop| {
-                    !self.is_assignable_to(source_prop.type_id, target_prop.type_id)
+                    !self
+                        .namespace_property_mismatch_relation_outcome(
+                            source_prop.type_id,
+                            target_prop.type_id,
+                        )
+                        .related
                 })
         })
     }
@@ -133,14 +140,8 @@ impl<'a> CheckerState<'a> {
         (source, target)
     }
 
-    /// Execute a `RelationRequest` through the canonical boundary, returning
-    /// a structured `RelationOutcome`.
-    ///
-    /// This is the single authoritative checker-level entry point for relation
-    /// queries that need both the assignability result AND structured failure
-    /// information. It replaces the pattern of calling `is_assignable_to` +
-    /// `analyze_assignability_failure` + `is_weak_union_violation` separately.
-    ///
+    /// Execute a `RelationRequest` through the canonical boundary, returning a
+    /// structured `RelationOutcome` for diagnostic-bearing relation queries.
     /// The request must contain **prepared** (evaluated) source/target types.
     pub(crate) fn execute_relation_request(
         &mut self,
@@ -220,7 +221,7 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
-        let related = self.is_assignable_to(source, target);
+        let related = self.diagnostic_relation_boolean_guard(source, target);
         if related {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
@@ -306,12 +307,16 @@ impl<'a> CheckerState<'a> {
             property_classification: None,
         };
 
-        if source == target || self.is_assignable_to_with_env(source, target) {
+        if source == target || self.diagnostic_relation_boolean_guard_with_env(source, target) {
             return outcome(true);
         }
 
         self.ensure_relation_inputs_ready(&[source, target]);
         let target = self.substitute_this_type_if_needed(target);
+
+        if self.empty_object_deferred_keyof_index_access_accepts(source, target) {
+            return outcome(true);
+        }
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
@@ -504,7 +509,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         crate::query_boundaries::assignability::RelationOutcome {
-            related: self.is_assignable_to_no_erase_generics(source, target),
+            related: self.diagnostic_relation_boolean_guard_no_erase_generics(source, target),
             depth_exceeded: false,
             iteration_exceeded: false,
             failure: None,
@@ -521,7 +526,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         crate::query_boundaries::assignability::RelationOutcome {
-            related: self.is_assignable_to_strict(source, target),
+            related: self.diagnostic_relation_boolean_guard_strict(source, target),
             depth_exceeded: false,
             iteration_exceeded: false,
             failure: None,
@@ -584,6 +589,22 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to_bivariant(source, target)
     }
 
+    pub(crate) fn diagnostic_relation_boolean_guard_strict(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_strict(source, target)
+    }
+
+    pub(crate) fn diagnostic_relation_boolean_guard_no_erase_generics(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_no_erase_generics(source, target)
+    }
+
     /// No-weak-checks boolean relation guard for diagnostic code paths.
     ///
     /// Use this only when the caller intentionally mirrors `tsc`'s
@@ -604,7 +625,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         crate::query_boundaries::assignability::RelationOutcome {
-            related: self.is_assignable_to_no_weak_checks(source, target),
+            related: self.diagnostic_relation_boolean_guard_no_weak_checks(source, target),
             depth_exceeded: false,
             iteration_exceeded: false,
             failure: None,
@@ -629,6 +650,10 @@ impl<'a> CheckerState<'a> {
         let raw_target = target;
         source = self.normalize_awaited_application_args_for_variance(source);
         target = self.normalize_awaited_application_args_for_variance(target);
+
+        if self.empty_object_deferred_keyof_index_access_accepts(source, target) {
+            return true;
+        }
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
@@ -1160,6 +1185,10 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
+        if self.empty_object_deferred_keyof_index_access_accepts(source, target) {
+            return false;
+        }
+
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
         {
@@ -1282,11 +1311,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if !self.is_deferred_generic_index_for_object(index_type, object_type) {
+        if !self.is_deferred_generic_index_for_object(index_type, object_type, false) {
             return false;
         }
 
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
+        if is_type_parameter_like(self.ctx.types, object_type) {
             return source != TypeId::ANY;
         }
 
@@ -1294,17 +1323,10 @@ impl<'a> CheckerState<'a> {
         self.collect_deferred_index_access_candidate_types(object_type, &mut candidate_types);
 
         if candidate_types.is_empty() {
-            return crate::query_boundaries::common::is_type_parameter_like(
-                self.ctx.types,
-                object_type,
-            );
+            return is_type_parameter_like(self.ctx.types, object_type);
         }
 
-        // Structural fast path for `{}` source: avoids re-evaluating every
-        // candidate's generic application through the full relation, which
-        // can degrade to a false negative when evaluation fuel is exhausted
-        // on one candidate of a 100+-key intrinsic map.
-        if crate::query_boundaries::common::is_empty_object_type(self.ctx.types, source) {
+        if is_empty_object_type(self.ctx.types, source) {
             let mut visited = FxHashSet::default();
             return candidate_types
                 .iter()
@@ -1324,9 +1346,134 @@ impl<'a> CheckerState<'a> {
             .any(|candidate| !self.is_assignable_to(source, candidate))
     }
 
-    /// `true` iff `{}` would be rejected against `candidate`. Falls back to
-    /// `false` when the shape cannot be inspected, so an inconclusive probe
-    /// here cannot manufacture a false positive against the caller.
+    pub(crate) fn empty_object_deferred_keyof_index_access_accepts(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let mut source_is_empty = is_empty_object_type(self.ctx.types, source);
+        if !source_is_empty {
+            let source = self.substitute_this_type_if_needed(source);
+            source_is_empty = is_empty_object_type(self.ctx.types, source);
+            if !source_is_empty {
+                let source = self.evaluate_type_for_assignability(source);
+                source_is_empty = is_empty_object_type(self.ctx.types, source);
+            }
+        }
+        if !source_is_empty {
+            return false;
+        }
+
+        let Some((object_type, index_type)) = self.deferred_keyof_index_access_components(target)
+        else {
+            return false;
+        };
+
+        if !self.is_deferred_generic_index_for_object(index_type, object_type, true) {
+            return false;
+        }
+
+        let mut candidate_types = Vec::new();
+        self.collect_deferred_index_access_candidate_types(object_type, &mut candidate_types);
+        if candidate_types.is_empty() {
+            return false;
+        }
+
+        // Broad key maps can pull in deeply-expanded lib helper types while
+        // probing `O[k]` candidates. For `{}` sources, `tsc` does not
+        // manufacture an extra source-to-`O[K]` diagnostic in that shape, but
+        // required properties and callable targets still reject `{}`.
+        const LARGE_DEFERRED_INDEX_EMPTY_OBJECT_CANDIDATES: usize = 8;
+        let mut visited = FxHashSet::default();
+        let rejects_empty = if candidate_types.len() >= LARGE_DEFERRED_INDEX_EMPTY_OBJECT_CANDIDATES
+        {
+            candidate_types.iter().any(|&candidate| {
+                self.candidate_rejects_empty_object_shallow(candidate, &mut visited)
+            })
+        } else {
+            candidate_types
+                .iter()
+                .any(|&candidate| self.candidate_rejects_empty_object(candidate, &mut visited))
+        };
+        if rejects_empty {
+            return false;
+        }
+
+        if candidate_types.len() >= LARGE_DEFERRED_INDEX_EMPTY_OBJECT_CANDIDATES {
+            return true;
+        }
+
+        true
+    }
+
+    fn deferred_keyof_index_access_components(
+        &mut self,
+        target: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        let raw_target = self.substitute_this_type_if_needed(target);
+        let evaluated_target = self.evaluate_type_for_assignability(raw_target);
+        let resolved_target = self.resolve_type_for_property_access(target);
+
+        for candidate in [target, raw_target, evaluated_target, resolved_target] {
+            if let Some(components) =
+                crate::query_boundaries::checkers::generic::index_access_components(
+                    self.ctx.types,
+                    candidate,
+                )
+            {
+                return Some(components);
+            }
+            if let Some(alias) = self.ctx.types.get_display_alias(candidate)
+                && let Some(components) =
+                    crate::query_boundaries::checkers::generic::index_access_components(
+                        self.ctx.types,
+                        alias,
+                    )
+            {
+                return Some(components);
+            }
+        }
+
+        None
+    }
+
+    fn candidate_rejects_empty_object_shallow(
+        &self,
+        candidate: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if candidate == TypeId::ANY
+            || candidate == TypeId::UNKNOWN
+            || candidate == TypeId::NEVER
+            || candidate == TypeId::ERROR
+            || candidate == TypeId::NULL
+            || candidate == TypeId::UNDEFINED
+            || candidate == TypeId::VOID
+        {
+            return false;
+        }
+        if !visited.insert(candidate) {
+            return false;
+        }
+
+        if let Some(members) = get_union_members(self.ctx.types, candidate) {
+            return members
+                .iter()
+                .all(|&member| self.candidate_rejects_empty_object_shallow(member, visited));
+        }
+
+        if let Some(members) = intersection_members(self.ctx.types, candidate) {
+            return members
+                .iter()
+                .any(|&member| self.candidate_rejects_empty_object_shallow(member, visited));
+        }
+
+        object_shape_for_type(self.ctx.types, candidate)
+            .is_some_and(|shape| shape.properties.iter().any(|prop| !prop.optional))
+            || has_call_signatures(self.ctx.types, candidate)
+            || has_construct_signatures(self.ctx.types, candidate)
+    }
+
     fn candidate_rejects_empty_object(
         &mut self,
         candidate: TypeId,
@@ -1360,13 +1507,13 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = union_members(self.ctx.types, probe) {
             return members
                 .iter()
-                .all(|&m| self.candidate_rejects_empty_object(m, visited));
+                .all(|&member| self.candidate_rejects_empty_object(member, visited));
         }
 
         if let Some(members) = intersection_members(self.ctx.types, probe) {
             return members
                 .iter()
-                .any(|&m| self.candidate_rejects_empty_object(m, visited));
+                .any(|&member| self.candidate_rejects_empty_object(member, visited));
         }
 
         let shape_id = object_shape_id(self.ctx.types, probe)
@@ -1384,42 +1531,68 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if crate::query_boundaries::common::has_call_signatures(self.ctx.types, probe)
-            || crate::query_boundaries::common::has_construct_signatures(self.ctx.types, probe)
+        has_call_signatures(self.ctx.types, probe)
+            || has_construct_signatures(self.ctx.types, probe)
+    }
+
+    fn is_deferred_generic_index_for_object(
+        &mut self,
+        index_type: TypeId,
+        object_type: TypeId,
+        allow_equivalent_operands: bool,
+    ) -> bool {
+        if let Some(members) = intersection_members(self.ctx.types, index_type) {
+            return members.iter().copied().any(|member| {
+                self.is_deferred_generic_index_for_object(
+                    member,
+                    object_type,
+                    allow_equivalent_operands,
+                )
+            });
+        }
+
+        if let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) {
+            return keyof_operand == object_type
+                || (allow_equivalent_operands
+                    && self.same_index_access_object_operand(keyof_operand, object_type));
+        }
+
+        if let Some(param_info) = type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+            && let Some(keyof_operand) = get_keyof_type(self.ctx.types, constraint)
         {
-            return true;
+            return keyof_operand == object_type
+                || (allow_equivalent_operands
+                    && self.same_index_access_object_operand(keyof_operand, object_type));
         }
 
         false
     }
 
-    fn is_deferred_generic_index_for_object(
-        &self,
-        index_type: TypeId,
-        object_type: TypeId,
-    ) -> bool {
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+    fn same_index_access_object_operand(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        if self
+            .ctx
+            .definition_store
+            .find_def_for_type(left)
+            .zip(self.ctx.definition_store.find_def_for_type(right))
+            .is_some_and(|(left_def, right_def)| left_def == right_def)
         {
-            return members
-                .iter()
-                .copied()
-                .any(|member| self.is_deferred_generic_index_for_object(member, object_type));
+            return true;
         }
 
-        if let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) {
-            return keyof_operand == object_type;
-        }
-
-        if let Some(param_info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
-            && let Some(constraint) = param_info.constraint
-            && let Some(keyof_operand) = get_keyof_type(self.ctx.types, constraint)
-        {
-            return keyof_operand == object_type;
-        }
-
-        false
+        let left_eval = self.evaluate_type_for_assignability(left);
+        let right_eval = self.evaluate_type_for_assignability(right);
+        left_eval == right_eval
+            || self
+                .ctx
+                .definition_store
+                .find_def_for_type(left_eval)
+                .zip(self.ctx.definition_store.find_def_for_type(right_eval))
+                .is_some_and(|(left_def, right_def)| left_def == right_def)
     }
 
     fn is_generic_index_key_assignable(&mut self, source_key: TypeId, target_key: TypeId) -> bool {
@@ -1427,9 +1600,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if crate::query_boundaries::common::type_param_info(self.ctx.types, source_key).is_some()
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, target_key)
-                .is_some()
+        if type_param_info(self.ctx.types, source_key).is_some()
+            && type_param_info(self.ctx.types, target_key).is_some()
         {
             return self.type_param_constraint_chain_reaches(source_key, target_key);
         }
@@ -1456,9 +1628,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            let Some(current_param) =
-                crate::query_boundaries::common::type_param_info(self.ctx.types, current)
-            else {
+            let Some(current_param) = type_param_info(self.ctx.types, current) else {
                 return false;
             };
             let Some(constraint) = current_param.constraint else {
@@ -1476,8 +1646,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         candidate_types: &mut Vec<TypeId>,
     ) {
-        if let Some(param_info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, object_type)
+        if let Some(param_info) = type_param_info(self.ctx.types, object_type)
             && let Some(constraint) = param_info.constraint
         {
             self.collect_deferred_index_access_candidate_types(constraint, candidate_types);
@@ -1493,26 +1662,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(members) = crate::query_boundaries::common::union_members(
-            self.ctx.types,
-            object_type,
-        )
-        .or_else(|| {
-            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
-        }) {
+        if let Some(members) = union_members(self.ctx.types, object_type)
+            .or_else(|| intersection_members(self.ctx.types, object_type))
+        {
             for member in members.iter().copied() {
                 self.collect_deferred_index_access_candidate_types(member, candidate_types);
             }
             return;
         }
 
-        let shape_id = crate::query_boundaries::common::object_shape_id(
-            self.ctx.types,
-            object_type,
-        )
-        .or_else(|| {
-            crate::query_boundaries::common::object_with_index_shape_id(self.ctx.types, object_type)
-        });
+        let shape_id = object_shape_id(self.ctx.types, object_type)
+            .or_else(|| object_with_index_shape_id(self.ctx.types, object_type));
 
         if let Some(shape_id) = shape_id {
             let shape = self.ctx.types.object_shape(shape_id);
@@ -1628,6 +1788,10 @@ impl<'a> CheckerState<'a> {
         }
         self.ensure_relation_inputs_ready(&[source, target]);
         let target = self.substitute_this_type_if_needed(target);
+
+        if self.empty_object_deferred_keyof_index_access_accepts(source, target) {
+            return true;
+        }
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)

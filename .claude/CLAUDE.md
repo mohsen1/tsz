@@ -97,10 +97,11 @@ Hard rules:
   blocker/current work, next owner/action, and verification already run.
 - Close PRs/issues only when merged, user-requested, exact duplicate, or fully
   superseded with evidence and preserved findings.
-- Ready PRs land through repo-local merge queue. Add `merge-queue` only if you
-  own the PR, it is not WIP/draft/blocked, exact-head PR-head checks pass, and
-  you reviewed the latest head. Do not use auto-merge as a watcher.
-- `Queue Tested` is produced by the queue after enqueue.
+- Ready PRs land through GitHub's native merge queue. After exact-head
+  PR-head checks pass and you reviewed the latest head, queue with
+  `gh pr merge <pr> --match-head-commit <sha>` only if you own the PR and it
+  is not WIP/draft/blocked. Do not use auto-merge as a watcher.
+- Native `merge_group` CI owns queued-merge summary validation after enqueue.
 
 ## Repo Skills
 Use repo-local skills under `.agents/skills/` when the task matches:

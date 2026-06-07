@@ -6,6 +6,7 @@ use super::duplicate_private_names::{
 use super::emit_es6_after_body::ClassEs6AfterBody;
 use super::emit_es6_field_inits::ClassFieldInitCollection;
 use super::emit_es6_members::ClassEs6MemberEmit;
+use super::emit_es6_options::ClassEs6EmitOptions;
 use super::emit_es6_private_accessors::{
     PrivateAutoAccessorInfo, collect_private_auto_accessors_with_reserved,
 };
@@ -38,6 +39,55 @@ impl<'a> Printer<'a> {
         static_initializer_self_alias: Option<&str>,
         emit_assignment_static_elements_as_statements: bool,
     ) {
+        self.emit_class_es6_with_emit_options(
+            node,
+            _idx,
+            ClassEs6EmitOptions {
+                suppress_modifiers,
+                assignment_prefix,
+                assignment_alias,
+                static_initializer_self_alias,
+                emit_assignment_static_elements_as_statements,
+                assignment_suffix: None,
+            },
+        );
+    }
+
+    pub(in crate::emitter) fn emit_class_es6_assignment_with_suffix(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+        assignment_target: String,
+        assignment_suffix: &str,
+    ) {
+        self.emit_class_es6_with_emit_options(
+            node,
+            _idx,
+            ClassEs6EmitOptions {
+                suppress_modifiers: false,
+                assignment_prefix: Some(("", assignment_target)),
+                assignment_alias: None,
+                static_initializer_self_alias: None,
+                emit_assignment_static_elements_as_statements: false,
+                assignment_suffix: Some(assignment_suffix),
+            },
+        );
+    }
+
+    fn emit_class_es6_with_emit_options(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+        options: ClassEs6EmitOptions<'_>,
+    ) {
+        let ClassEs6EmitOptions {
+            suppress_modifiers,
+            assignment_prefix,
+            assignment_alias,
+            static_initializer_self_alias,
+            emit_assignment_static_elements_as_statements,
+            assignment_suffix,
+        } = options;
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
@@ -107,12 +157,22 @@ impl<'a> Printer<'a> {
                     // Skip TypeScript-only modifiers (abstract, declare, etc.)
                     // Also skip `async` — it's an error on class declarations but
                     // TSC still emits the class without the modifier.
+                    // `accessor` on class declarations is handled by
+                    // `emit_recovered_top_level_accessor_class_modifier` above,
+                    // so skip it here to avoid duplication (ESNext) or a stray
+                    // space (non-ESNext).
                     if mod_node.kind == SyntaxKind::AbstractKeyword as u16
                         || mod_node.kind == SyntaxKind::DeclareKeyword as u16
                         || mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                        || mod_node.kind == SyntaxKind::AccessorKeyword as u16
                         || (self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
+                        if mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                            && self.should_emit_recovered_root_js_declaration_modifiers()
+                        {
+                            self.write("async ");
+                        }
                         if self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR
                         {
@@ -124,10 +184,6 @@ impl<'a> Printer<'a> {
                         self.write("export");
                     } else if mod_node.kind == SyntaxKind::DefaultKeyword as u16 {
                         self.write("default");
-                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
-                        && self.ctx.options.target == ScriptTarget::ESNext
-                    {
-                        self.write("accessor");
                     } else {
                         self.emit(mod_idx);
                     }
@@ -1078,8 +1134,7 @@ impl<'a> Printer<'a> {
         let emits_as_class_expression = is_class_expression || assignment_prefix.is_some();
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
-        // For class expressions with static field initializers, we need to wrap
-        // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
+        // Class-expression tails that run after the class body use a comma wrapper.
         let has_static_field_comma_expr = self.class_has_static_field_comma_expr(
             class,
             target_needs_field_lowering,
@@ -1088,13 +1143,8 @@ impl<'a> Printer<'a> {
         );
         let has_static_block_comma_expr =
             self.class_has_static_block_comma_expr(class, target_needs_static_block_lowering);
-        // A computed-named *static method or accessor* is emitted inline in the
-        // class body, so it only requires the `(_tmp = class {...}, ..., _tmp)`
-        // comma wrapping when the binding *also* loses JS named evaluation --
-        // i.e. a `using`/`await using` declaration lowered to
-        // `__addDisposableResource`, which moves the class out of
-        // direct-assignment position. A plain `var X = class {...}` keeps named
-        // evaluation and needs no wrapping for inline computed method names.
+        // Inline computed static methods/accessors need comma wrapping only when
+        // the binding also loses JS named evaluation (for example lowered `using`).
         let has_static_computed_method_or_accessor = self
             .class_has_static_computed_method_or_accessor_comma_expr(
                 class,
@@ -1106,9 +1156,12 @@ impl<'a> Printer<'a> {
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
                 || has_static_computed_method_or_accessor);
+        let computed_name_needs_class_expr_temp_first =
+            self.class_computed_property_names_contain_static_context_reference(class);
         let preplanned_class_expr_temp = if needs_static_comma_expr
             && private_class_alias.is_none()
-            && self.file_level_class_temp_reservations.contains_key(&_idx)
+            && (self.file_level_class_temp_reservations.contains_key(&_idx)
+                || computed_name_needs_class_expr_temp_first)
         {
             Some(self.make_class_static_temp_name_hoisted(_idx))
         } else {
@@ -1464,15 +1517,8 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        // tsc emits `__setFunctionName(temp, "C")` for an anonymous class
-        // expression only when the comma wrapper carries *static* state
-        // (a static field initializer, a static block, or a static
-        // private field that lowers into the same comma). Instance-only
-        // private comma forms — e.g.
-        // `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep the
-        // engine's automatic assignment-based naming and tsc does not
-        // emit the helper. Mirror this so the helper inclusion decision
-        // in lowering and the comma-item emission in the printer agree.
+        // tsc emits setFunctionName only when the comma wrapper carries
+        // real static state; recovery-only and instance-private tails do not.
         let has_static_private_member = needs_private_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 self.arena.get(member_idx).is_some_and(|m| {
@@ -1483,8 +1529,11 @@ impl<'a> Printer<'a> {
                         })
                 })
             });
-        let needs_set_function_name_comma_item =
-            needs_static_comma_expr || has_static_private_member;
+        let needs_set_function_name_comma_item = has_static_private_member
+            || (needs_static_comma_expr
+                && (has_static_field_comma_expr
+                    || has_static_block_comma_expr
+                    || has_static_computed_method_or_accessor));
         let class_expr_set_function_name = class_expr_temp.as_ref().and_then(|_| {
             if class.name.is_none() && needs_set_function_name_comma_item {
                 self.resolve_class_expr_binding_name(_idx)
@@ -1849,7 +1898,7 @@ impl<'a> Printer<'a> {
             self.write("}");
         }
         if assignment_prefix.is_some() && class_expr_temp.is_none() {
-            self.write(";");
+            self.write(assignment_suffix.unwrap_or(";"));
         }
 
         if class_expr_temp.is_none() {

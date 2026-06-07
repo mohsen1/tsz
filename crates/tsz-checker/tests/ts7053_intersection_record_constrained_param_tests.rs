@@ -9,7 +9,7 @@
 //! opaque, the classifier returns `Other` for that member, and the
 //! intersection is reported as unindexable even though tsc accepts the access.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/10726>
+//! Issue: <https://github.com/tsz-org/tsz/issues/10726>
 //!
 //! The fix threads a `TypeResolver` through the shared
 //! `classify_element_indexable` query so the evaluator can expand applications

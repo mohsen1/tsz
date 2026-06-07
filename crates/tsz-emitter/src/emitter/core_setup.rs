@@ -412,6 +412,7 @@ impl<'a> Printer<'a> {
             scoped_static_super_index_alias: None,
             scoped_static_super_index_value_access: false,
             scoped_static_super_assignment_target: false,
+            scoped_static_super_value_write_as_comma: false,
             scoped_class_expression_self_alias: None,
             scoped_class_expression_self_alias_ancestors: Vec::new(),
             pending_tc39_class_expression_name: None,
@@ -724,6 +725,10 @@ impl<'a> Printer<'a> {
         {
             let start = std::cmp::min(n1.end as usize, text.len());
             let end = std::cmp::min(n2.pos as usize, text.len());
+            if end <= start {
+                let overlap_start = std::cmp::min(n2.pos as usize, text.len());
+                return !text[overlap_start..start].contains('\n');
+            }
             if start < end {
                 // Check if there's a newline between the two nodes
                 return !text[start..end].contains('\n');
@@ -905,12 +910,15 @@ impl<'a> Printer<'a> {
             self.comment_emit_idx = first_inner;
         }
 
+        let prev_value_write_as_comma = self.scoped_static_super_value_write_as_comma;
+        self.scoped_static_super_value_write_as_comma = true;
         self.emit_expression_with_scoped_static_initializer_mode(
             init_idx,
             this_alias,
             super_base_alias,
             super_direct_access,
         );
+        self.scoped_static_super_value_write_as_comma = prev_value_write_as_comma;
 
         // Never move the cursor backwards relative to where emission left it,
         // and never expose comments the surrounding code already consumed.

@@ -2,7 +2,7 @@
 //! of `mapped.rs` to keep each source shard under the file-size limit. These
 //! are additional inherent methods on [`TypeEvaluator`]; behavior is unchanged.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{MappedModifier, MappedType, TupleElement, TupleListId, TypeData, TypeId};
 use rustc_hash::FxHashMap;
@@ -25,8 +25,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
 
         // Substitute into the template to get the mapped element type
-        let mut mapped_element =
-            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let mut mapped_element = self.evaluate(instantiate_type_cached(
+            self.interner(),
+            self.query_db(),
+            mapped.template,
+            &subst,
+        ));
 
         // CRITICAL: Handle optional modifier (Partial<T[]> case)
         // TypeScript adds undefined to the element type when ? modifier is present
@@ -49,31 +53,119 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate a homomorphic mapped type over an Array type with explicit readonly flag.
     ///
-    /// Used for `ReadonlyArray`<T> to preserve readonly semantics.
+    /// Used for `ReadonlyArray`<T> to preserve readonly semantics. The mapped
+    /// type's `readonly` modifier is resolved homomorphically against the
+    /// source's readonly-ness (`+readonly` => readonly, `-readonly` => mutable,
+    /// none => copy `source_readonly`).
     pub(crate) fn evaluate_mapped_array_with_readonly(
         &mut self,
         mapped: &MappedType,
+        element_type: TypeId,
+        source_readonly: bool,
+    ) -> TypeId {
+        let final_readonly = mapped.resolve_readonly(source_readonly);
+        self.evaluate_mapped_array_with_explicit_readonly(mapped, element_type, final_readonly)
+    }
+
+    /// Evaluate a homomorphic mapped type over an Array type, wrapping the result
+    /// as readonly exactly when `final_readonly` is set.
+    ///
+    /// Unlike [`Self::evaluate_mapped_array_with_readonly`], the caller decides
+    /// the final readonly-ness rather than having the mapped modifier resolved
+    /// here. This is required for `as`-clause maps: tsc only applies the
+    /// `+readonly`/`-readonly` modifier to an array's surface for a no-`as`
+    /// homomorphic map (`instantiateMappedArrayType` under
+    /// `if (!type.declaration.nameType)`); with an `as` clause the array's
+    /// readonly-ness mirrors the source instead, so a readonly array stays
+    /// readonly even under `-readonly`.
+    pub(crate) fn evaluate_mapped_array_with_explicit_readonly(
+        &mut self,
+        mapped: &MappedType,
         _element_type: TypeId,
-        is_readonly: bool,
+        final_readonly: bool,
     ) -> TypeId {
         let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
 
         // Substitute into the template to get the mapped element type
-        let mut mapped_element =
-            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let mut mapped_element = self.evaluate(instantiate_type_cached(
+            self.interner(),
+            self.query_db(),
+            mapped.template,
+            &subst,
+        ));
 
         // CRITICAL: Handle optional modifier (Partial<T[]> case)
         if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
             mapped_element = self.interner().union2(mapped_element, TypeId::UNDEFINED);
         }
 
-        // Apply readonly modifier (homomorphic: copy source readonly when absent)
-        if mapped.resolve_readonly(is_readonly) {
+        if final_readonly {
             // Wrap the array type in ReadonlyType to get readonly semantics
             let array_type = self.interner().array(mapped_element);
             self.interner().readonly_type(array_type)
         } else {
             self.interner().array(mapped_element)
+        }
+    }
+
+    /// Map a homomorphic identity mapped type over a syntax-level `readonly`
+    /// source — `readonly [..]` (a `ReadonlyType(Tuple)`) or `readonly T[]`
+    /// (a `ReadonlyType(Array(..))`, which `ReadonlyArray<T>` also interns to).
+    /// The lib-interface `ReadonlyArray<T>` form that resolves to an
+    /// `ObjectWithIndex` is detected separately by the caller's match block,
+    /// which needs structural array-marker checks this helper does not perform.
+    ///
+    /// Returns `None` (so the caller falls through to the generic object path)
+    /// when `inner` is neither tuple- nor array-shaped, and for the one array
+    /// shape we cannot model: `-readonly` under an `as` clause.
+    ///
+    /// Without the array arm here a homomorphic mapped type — `{ [K in keyof T]:
+    /// T[K] }`, an identity `as K`, or a key-filtering `as` clause — fell through
+    /// to the generic property-building path, reshaping the readonly array into a
+    /// plain object and dropping its `readonly` modifier.
+    ///
+    /// The mapped `readonly` modifier only rewrites the array surface for a
+    /// no-`as` homomorphic map (tsc's `instantiateMappedArrayType`, gated by
+    /// `if (!type.declaration.nameType)`). With an `as` clause tsc routes through
+    /// the object path, where the modifier never adds or removes a readonly
+    /// array's methods (`push`/`pop`/...): the surface mirrors the source. We
+    /// reproduce that by keeping the array readonly when an `as` clause is present
+    /// and only resolving `+readonly`/`-readonly` for the no-`as` case.
+    ///
+    /// `-readonly` under an `as` clause is the shape we cannot represent as an
+    /// array: tsc yields a hybrid object with a *writable* index but still no
+    /// mutable-array methods (a readonly array minus its readonly index). A
+    /// mutable array would invent `push`; a readonly array would reject valid
+    /// element writes. That case returns `None` and keeps its pre-existing
+    /// object-path approximation rather than emitting a false positive.
+    pub(crate) fn evaluate_mapped_over_readonly_source(
+        &mut self,
+        mapped: &MappedType,
+        source: TypeId,
+        inner: TypeId,
+    ) -> Option<TypeId> {
+        match self.interner().lookup(inner) {
+            Some(TypeData::Tuple(tuple_id)) => {
+                Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, true))
+            }
+            Some(TypeData::Array(element_type)) => {
+                if mapped.name_type.is_some()
+                    && matches!(mapped.readonly_modifier, Some(MappedModifier::Remove))
+                {
+                    return None;
+                }
+                let final_readonly = if mapped.name_type.is_none() {
+                    mapped.resolve_readonly(true)
+                } else {
+                    true
+                };
+                Some(self.evaluate_mapped_array_with_explicit_readonly(
+                    mapped,
+                    element_type,
+                    final_readonly,
+                ))
+            }
+            _ => None,
         }
     }
 
@@ -289,7 +381,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.substitute_exact_type(template, old_source, new_source, &mut memo)
         };
         let subst = TypeSubstitution::single(iter_var, key);
-        let instantiated = instantiate_type(self.interner(), rewritten, &subst);
+        let instantiated =
+            instantiate_type_cached(self.interner(), self.query_db(), rewritten, &subst);
         self.evaluate(instantiated)
     }
 

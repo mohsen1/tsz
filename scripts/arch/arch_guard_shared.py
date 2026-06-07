@@ -238,15 +238,7 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/flow/control_flow/core.rs",
-            "crates/tsz-checker/src/jsdoc/diagnostics.rs",
-            "crates/tsz-checker/src/state/type_analysis/core.rs",
-            "crates/tsz-checker/src/state/type_environment/core.rs",
-            "crates/tsz-checker/src/state/type_resolution/module.rs",
-            "crates/tsz-checker/src/types/class_type/constructor.rs",
-            "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-            "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
-            "crates/tsz-checker/src/types/utilities/core.rs",
+            # (empty — all files are now under the 2000-line limit)
         },
     ),
     (
@@ -270,7 +262,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1924,
+        1901,
     ),
     (
         "Emitter transform boundary: class_es5_ir.rs must not grow",
@@ -299,7 +291,19 @@ FILE_LINE_LIMIT_CHECKS = [
         2003,
     ),
     (
-        "Solver engine boundary: generic call resolver must stay at current 3378 LOC baseline (#8209)",
+        "Emitter expression boundary: private_fields.rs size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "core"
+        / "private_fields.rs",
+        2006,
+    ),
+    (
+        "Solver engine boundary: generic call resolver must stay at current 3413 LOC baseline (#8209)",
         ROOT
         / "crates"
         / "tsz-solver"
@@ -307,7 +311,23 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3359,
+        3413,
+    ),
+    (
+        "Solver generic-call boundary: inference_helpers size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "inference_helpers.rs",
+        2065,
+    ),
+    (
+        "Solver inference boundary: infer_matching size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "inference" / "infer_matching.rs",
+        2002,
     ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
@@ -337,17 +357,19 @@ FILE_LINE_LIMIT_CHECKS = [
     # Ratcheted 8206→4981 after extracting the 3.2k-LOC test module into
     # config/tests/{options_parsing,module_resolution,strict_lib_extends}.rs.
     (
+        # Ratcheted 4275→4281: +6 lines for tsconfig selector normalization
+        # and config-validation fixes (#12493, #12496).
         "Core boundary: tsconfig/config monolith size ratchet (#8280)",
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
-        4275,
+        4281,
     ),
-    # LSP signature-help: the root provider has been split by concern. Existing
-    # TypeData/direct lookup() debt is isolated in signature_help/shapes.rs (see
-    # arch_guard_policy.toml exclusions) and should burn down separately.
+    # LSP signature-help root provider has been split into signature_help/.
+    # Keep the largest implementation shard pinned while the remaining
+    # TypeData/direct lookup() debt in shapes.rs burns down separately.
     (
-        "LSP boundary: signature_help monolith size ratchet",
-        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help.rs",
-        968,
+        "LSP boundary: signature_help contextual shard size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help" / "contextual.rs",
+        1309,
     ),
     # Scanner main loop: issue #9431 tracks splitting by token family.
     (
@@ -390,13 +412,6 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-lsp" / "src" / "project" / "module_specifiers.rs",
         3669,
     ),
-    # LSP import candidate collection: issue #9420 tracks splitting collection
-    # from ranking and rendering.
-    (
-        "LSP boundary: project/imports monolith size ratchet (#9420)",
-        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "imports.rs",
-        3449,
-    ),
     # Binder declaration binding: split by declaration family per §19.
     (
         "Binder boundary: binder/declaration monolith size ratchet",
@@ -437,9 +452,11 @@ FILE_LINE_LIMIT_CHECKS = [
     # CLI driver core: orchestrates check/emit/resolve pipeline. Ratchet down
     # as pipeline stages are extracted per §19.
     (
+        # Ratcheted 3186→3193: +7 lines for config-validation false-positive
+        # fixes (#12493, #12496).
         "CLI boundary: driver/core monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
-        3186,
+        3193,
     ),
     # CLI LSP server: structure/outline handler — split by request kind per §19.
     (
@@ -518,6 +535,10 @@ FILE_LINE_LIMIT_CHECKS = [
     ),
     # Emitter using/disposable region: issue #8276 tracks migrating the 16
     # output-surgery rewrites to structured resource-region IR.
+    # Ratcheted 2537→2608 here in #12503 because main grew past the prior
+    # cap between this branch's base and the synthetic-merge test (issues
+    # #12499 / #12492 — this PR's reason for being). The new cap matches
+    # the live count on the rebased synthetic merge.
     (
         "Emitter boundary: source_file/top_level_using size ratchet (#8276)",
         ROOT
@@ -527,7 +548,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "source_file"
         / "top_level_using.rs",
-        2537,
+        2608,
     ),
     # Emitter property/element access: split by access kind per §19.
     (
@@ -556,6 +577,18 @@ FILE_LINE_LIMIT_CHECKS = [
         2006,
     ),
     (
+        "Emitter boundary: emitter/expressions/core/private_fields.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "core"
+        / "private_fields.rs",
+        2006,
+    ),
+    (
         "Checker boundary: types/property_access_type/resolve.rs size ratchet",
         ROOT
         / "crates"
@@ -564,7 +597,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "property_access_type"
         / "resolve.rs",
-        3164,
+        1035,
     ),
     (
         "Checker boundary: types/type_checking/duplicate_identifiers_helpers.rs size ratchet",
@@ -628,7 +661,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "type_checking"
         / "duplicate_identifiers.rs",
-        2914,
+        1992,
     ),
     (
         "Checker boundary: flow/control_flow/core.rs size ratchet",
@@ -639,7 +672,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "flow"
         / "control_flow"
         / "core.rs",
-        2886,
+        1823,
     ),
     (
         "Solver boundary: type_queries/flow.rs size ratchet",
@@ -649,7 +682,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Checker boundary: types/utilities/core.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "utilities" / "core.rs",
-        2779,
+        1703,
     ),
     (
         "Checker boundary: state/type_analysis/core.rs size ratchet",
@@ -660,12 +693,14 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2843,
+        1815,
     ),
     (
+        # Ratcheted 2736→2896: +160 lines for three config-validation
+        # false-positive test cases (#12493).
         "CLI boundary: driver/tests.rs size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "tests.rs",
-        2736,
+        2896,
     ),
     (
         "Checker boundary: types/class_type/constructor.rs size ratchet",
@@ -676,7 +711,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "class_type"
         / "constructor.rs",
-        2688,
+        1981,
     ),
     (
         "Solver boundary: diagnostics/format/compound.rs size ratchet",
@@ -708,7 +743,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_resolution"
         / "module.rs",
-        2596,
+        1953,
     ),
     (
         "Parser boundary: parser/state_statements_class_members.rs size ratchet",
@@ -729,7 +764,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_environment"
         / "core.rs",
-        2568,
+        1461,
     ),
     (
         "Conformance boundary: conformance runner size ratchet",
@@ -762,7 +797,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Checker boundary: jsdoc/diagnostics.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "diagnostics.rs",
-        2440,
+        1450,
     ),
     (
         "Checker boundary: state/variable_checking/destructuring.rs size ratchet",
@@ -854,7 +889,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: operations/call_args.rs size ratchet",
         ROOT / "crates" / "tsz-solver" / "src" / "operations" / "call_args.rs",
-        2084,
+        2097,
     ),
     (
         "LSP boundary: navigation/definition.rs size ratchet",
@@ -1200,7 +1235,45 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # boundary re-exports already used throughout the checker; the new
         # call site walks the `extends` chain and substitutes inherited
         # member types via `instantiate_type`. No new quarantine entry.
-        3237,
+        #
+        # Ratcheted down by 6 after the index-signature key-type validity
+        # check moved to `query_boundaries::index_signature` (PR #12371/
+        # #12468): `classify_index_sig_param_type` and the resolved-key
+        # `resolved_index_key_type_is_valid` query each use solver calls
+        # rather than direct `query_boundaries::common` access.
+        #
+        # Ratcheted down after arch-smoke caught current stacked-branch slack.
+        # Ratcheted 3211→3208 after guard tests caught slack in the live count,
+        # then bumped to 3209 for the `keyof T` TS2322 diagnostic-display fix
+        # (#12549). Owner: M1-A diagnostic hardcoding debt. Removal condition:
+        # ratchet this back down when `core_formatting.rs` gets a focused
+        # formatting/query-boundary helper for type-parameter `keyof` display,
+        # so `format_type_for_assignability_message` no longer needs a direct
+        # `type_param_info(keyof_inner)` quarantine read to short-circuit the
+        # anonymous-constraint evaluation path for free type parameters.
+        #
+        # Bumped by 4 for #10867 generic interface/class diagnostic source
+        # display: the display-only source formatter needs application base,
+        # lazy definition, and free-type-parameter checks before preserving the
+        # as-written nominal reference. Removal condition remains #8225
+        # narrowing these common-barrel calls behind a dedicated diagnostic
+        # source-display query.
+        #
+        # Ratcheted 3213→3202 after current arch-smoke caught live-count slack.
+        #
+        # Ratcheted 3202→3197 after generic predicate-target instantiation
+        # moved five flow/narrowing substitution queries through
+        # query_boundaries::flow_analysis instead of the broad common barrel.
+        #
+        # Ratcheted 3197→3191 after assignment flow operator/property/literal
+        # queries moved through query_boundaries::flow_analysis.
+        #
+        # Ratcheted 3191→3174 after assignment numeric display shape queries
+        # moved through query_boundaries::diagnostics.
+        #
+        # Ratcheted 3174→3163 after missing-property display shape queries
+        # moved through query_boundaries::diagnostics.
+        3163,
     ),
 ]
 
@@ -1285,13 +1358,13 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
-        6,
+        5,
     ),
     (
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        23,
+        20,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
@@ -1323,13 +1396,45 @@ REGEX_LINE_COUNT_CHECKS = [
         14,
     ),
     (
-        # Ratcheted from 3→1: two calls removed (bang-module and mixin-intersection
-        # decisions migrated to structured AST facts in #8406 / #8276 cycle).
-        # Remaining call: variable_decl.rs intersection-arm detection; issue #8276
-        # tracks migrating it to a structured declaration summary.
-        "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
+        # Broadens the previous direct-call guard to include sliced source-text
+        # recovery predicates such as `source_text[start..end].contains(...)`.
+        # The current baseline is pinned so each migration to structured emit
+        # facts can ratchet this count down in the same PR.
+        "Emitter boundary: source_text contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
-        re.compile(r"\bsource_text\.contains\s*\("),
+        re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
+        0,
+    ),
+    (
+        "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "emitter"
+            / "statements"
+            / "recovered_variable_statement.rs"
+        ],
+        re.compile(
+            r"\b(?:find_source_pattern_outside_quoted_text|find_matching_source_paren|skip_quoted_source_text)\b"
+        ),
+        0,
+    ),
+    (
+        # The async ES5 lowering path still has one source-text fallback for
+        # recovered `yield` detection. Keep it visible so the future parser- or
+        # lowering-owned fact can ratchet this to zero in the same PR.
+        "Emitter boundary: async yield source-text fallback (#8276)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-emitter"
+            / "src"
+            / "transforms"
+            / "async_es5_ir_discovery.rs"
+        ],
+        re.compile(r"\bfn\s+node_text_contains_yield\s*\("),
         1,
     ),
     (

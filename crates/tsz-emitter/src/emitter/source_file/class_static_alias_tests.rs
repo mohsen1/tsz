@@ -35,11 +35,11 @@ fn es2015_nested_class_computed_names_use_enclosing_static_this_alias() {
     let output = emit(source, ScriptTarget::ES2015);
 
     assert!(
-        output.contains("class Inner {\n        constructor() {\n            this[_c] = 456;"),
+        output.contains("class Inner {\n        constructor() {\n            this[_d] = 456;"),
         "Instance computed field should use the captured computed-name temp in the constructor.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("_b = _a.c,\n    _c = _a.c,\n") && output.contains("_d[_b] = 123,"),
+        output.contains("_c = _a.c,\n    _d = _a.c,\n") && output.contains("_b[_c] = 123,"),
         "Computed names should evaluate against the enclosing static alias before static assignment.\nOutput:\n{output}"
     );
 }
@@ -50,7 +50,13 @@ fn es5_nested_class_computed_names_use_enclosing_static_this_alias() {
     let output = emit(source, ScriptTarget::ES5);
 
     assert!(
-        output.contains("_b = _a.c, _c = _a.c,\n        _d[_b] = 123,"),
+        output.contains("var _a, _b, _c, _d;"),
+        "ES5 static-initializer class-expression temps should share the IIFE hoist group in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "C.bar = (_b = /** @class */ (function () {\n            function Inner() {\n                this[_d] = 456;\n            }\n            return Inner;\n        }()),\n        _c = _a.c,\n        _d = _a.c,\n        _b[_c] = 123,\n        _b);"
+        ),
         "ES5 computed names should evaluate against the enclosing static alias before static assignment.\nOutput:\n{output}"
     );
     assert!(
@@ -67,7 +73,13 @@ fn es5_define_nested_class_computed_names_use_enclosing_static_this_alias() {
     let output = emit_with_define(source, ScriptTarget::ES5, true);
 
     assert!(
-        output.contains("_b = _a.c, _c = _a.c,\n            Object.defineProperty(_d, _b, {"),
+        output.contains("var _a, _b, _c, _d;"),
+        "ES5 define-mode static-initializer class-expression temps should share the IIFE hoist group in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "value: (_b = /** @class */ (function () {\n                function Inner() {\n                    Object.defineProperty(this, _d, {\n                        enumerable: true,\n                        configurable: true,\n                        writable: true,\n                        value: 456\n                    });\n                }\n                return Inner;\n            }()),\n            _c = _a.c,\n            _d = _a.c,\n            Object.defineProperty(_b, _c, {"
+        ),
         "ES5 define-mode static computed field should use the enclosing static alias for key evaluation.\nOutput:\n{output}"
     );
     assert!(
@@ -75,6 +87,24 @@ fn es5_define_nested_class_computed_names_use_enclosing_static_this_alias() {
             && !output.contains("_b = this.c")
             && !output.contains("_c = this.c"),
         "ES5 define-mode computed names must not use unbound `this`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_static_initializer_class_expr_result_temp_precedes_computed_key_temps() {
+    let source = "class C {\n    static c = \"foo\";\n    static bar = class Inner {\n        static [this.c] = 123;\n        [this.c] = 456;\n    };\n}\n";
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("var _a, _b, _c, _d;"),
+        "Static-initializer class-expression temps should share the hoist group in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "C.bar = (_b = class Inner {\n        constructor() {\n            this[_d] = 456;\n        }\n    },\n    _c = _a.c,\n    _d = _a.c,\n    _b[_c] = 123,\n    _b);"
+        ),
+        "Class-expression result temp should be reserved before computed key temps while \
+         preserving enclosing static `this` alias evaluation.\nOutput:\n{output}"
     );
 }
 
@@ -228,5 +258,82 @@ fn es2015_mixin_arrow_typed_param_and_return_keeps_single_line_block() {
     assert!(
         output.contains("_a.message = \"hello\","),
         "Annotated mixin static field should be a comma item.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_define_static_super_writes_use_hoisted_comma_temps() {
+    let source = "\
+declare class Base { static a: any; }
+class C extends Base {
+    static assign = super.a = 0;
+    static add = super.a += 1;
+    static rest = { ...super.a } = { x: 0 };
+    static pre = ++super.a;
+    static elem = ++super[(\"a\")];
+    static post = super.a++;
+
+    // keep instance comment
+    x = 1;
+}
+";
+    let output = emit_with_define(source, ScriptTarget::ES2015, true);
+
+    assert!(
+        output.contains("var _a;\nvar _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;"),
+        "Object-rest assignment temp should be declared before class/static-super temps in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class C extends (_c = Base)") && output.contains("_b = C;"),
+        "Static field initializers should use separate class and base aliases.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value: (Reflect.set(_c, \"a\", _d = 0, _b), _d)")
+            && output.contains("value: (Reflect.set(_c, \"a\", _e = Reflect.get(_c, \"a\", _b) + 1, _b), _e)")
+            && output.contains("value: (Reflect.set(_c, \"a\", (_g = Reflect.get(_c, \"a\", _b), _f = ++_g), _b), _f)")
+            && output.contains("value: (Reflect.set(_c, _h = (\"a\"), (_k = Reflect.get(_c, _h, _b), _j = ++_k), _b), _j)")
+            && output.contains("value: (Reflect.set(_c, \"a\", (_m = Reflect.get(_c, \"a\", _b), _l = _m++, _m), _b), _l)"),
+        "Value-producing static `super` writes should use hoisted comma expressions, not IIFEs.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Object.defineProperty(C, \"rest\", Object.assign({ enumerable: true, configurable: true, writable: true, value: (_a = { x: 0 },"),
+        "Define-mode object-rest static initializer should use tsc's compact `Object.assign` descriptor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "        // keep instance comment\n        Object.defineProperty(this, \"x\""
+        ),
+        "Leading comments before lowered instance fields should remain in the synthesized constructor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_assign_static_super_writes_use_hoisted_comma_temps() {
+    let source = "\
+declare class Base { static a: any; }
+class C extends Base {
+    static assign = super.a = 0;
+    static add = super.a += 1;
+    static pre = ++super.a;
+
+    // keep instance comment
+    x = 1;
+}
+";
+    let output = emit_with_define(source, ScriptTarget::ES2015, false);
+
+    assert!(
+        output.contains("class C extends (_b = Base)") && output.contains("_a = C;"),
+        "Assignment-mode static field initializers should keep class/base aliases stable.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("C.assign = (Reflect.set(_b, \"a\", _c = 0, _a), _c);")
+            && output.contains("C.add = (Reflect.set(_b, \"a\", _d = Reflect.get(_b, \"a\", _a) + 1, _a), _d);")
+            && output.contains("C.pre = (Reflect.set(_b, \"a\", (_f = Reflect.get(_b, \"a\", _a), _e = ++_f), _a), _e);"),
+        "Assignment-mode static `super` writes should also use hoisted comma expressions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("        // keep instance comment\n        this.x = 1;"),
+        "Leading comments before lowered assignment-mode instance fields should be preserved.\nOutput:\n{output}"
     );
 }

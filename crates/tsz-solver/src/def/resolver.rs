@@ -631,8 +631,11 @@ impl TypeEnvironment {
 
     /// Register a `DefId` as belonging to a boxed type.
     pub fn register_boxed_def_id(&mut self, kind: IntrinsicKind, def_id: DefId) {
-        self.boxed_def_ids.entry(kind).or_default().push(def_id);
-        self.bump_generation();
+        let def_ids = self.boxed_def_ids.entry(kind).or_default();
+        if !def_ids.contains(&def_id) {
+            def_ids.push(def_id);
+            self.bump_generation();
+        }
     }
 
     /// Check if a `DefId` corresponds to a boxed type of the given kind.
@@ -1382,6 +1385,28 @@ mod tests {
         assert!(
             env.resolver_generation() > gen_before_mutation,
             "store mutation must still be visible after idempotent reinstall"
+        );
+    }
+
+    #[test]
+    fn boxed_def_id_registration_is_idempotent() {
+        let mut env = TypeEnvironment::new();
+        let def_id = DefId(7);
+
+        env.register_boxed_def_id(IntrinsicKind::Function, def_id);
+        let gen_after_first = env.resolver_generation();
+        env.register_boxed_def_id(IntrinsicKind::Function, def_id);
+
+        assert_eq!(
+            env.resolver_generation(),
+            gen_after_first,
+            "re-registering the same boxed DefId must not invalidate env caches"
+        );
+        assert_eq!(
+            env.snapshot_boxed_def_ids()
+                .get(&IntrinsicKind::Function)
+                .map(Vec::as_slice),
+            Some(&[def_id][..])
         );
     }
 

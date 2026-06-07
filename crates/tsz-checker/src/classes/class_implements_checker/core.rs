@@ -429,53 +429,131 @@ impl<'a> CheckerState<'a> {
         target_type: &str,
         code: u32,
     ) {
-        let Some((pos, end)) = self.get_node_span(node_idx) else {
+        let detail = format!("Type '{source_type}' is not assignable to type '{target_type}'.");
+        if self.attach_elaboration_frames_to_lead(
+            node_idx,
+            code,
+            std::iter::once((detail.clone(), 0u8)),
+        ) {
             return;
+        }
+        // Fallback: emit as a standalone diagnostic when no matching lead is
+        // present (e.g., the lead error was suppressed).
+        if let Some((pos, end)) = self.get_node_span(node_idx) {
+            self.error(pos, end.saturating_sub(pos), detail, code);
+        }
+    }
+
+    /// Attach the full structural elaboration under a property-override
+    /// incompatibility lead (TS2416 / TS2417), routed through the shared
+    /// `relation -> reason -> diagnostic` assignability gateway.
+    ///
+    /// The single-frame [`Self::report_type_not_assignable_detail`] only ever
+    /// renders the top `Type 'S' is not assignable to type 'T'.` line, which
+    /// truncates `tsc`'s multi-line override elaboration (parameter
+    /// incompatibility, missing/optional property, nested property path,
+    /// type-argument variance, return-type mismatch, ...). Routing override and
+    /// `implements` mismatches through the same reason machinery the
+    /// TS2322/TS2345 assignment paths use restores parity: the rendered reason's
+    /// own lead becomes the first elaboration frame and its nested frames are
+    /// re-parented one level deeper under the override lead.
+    pub(crate) fn report_type_override_incompatibility_detail(
+        &mut self,
+        node_idx: NodeIndex,
+        source_type: TypeId,
+        target_type: TypeId,
+        code: u32,
+    ) {
+        if source_type != target_type
+            && let Some(reason) = self
+                .analyze_assignability_failure(source_type, target_type)
+                .failure_reason
+        {
+            // `render_failure_reason` is consumed for its returned elaboration
+            // only. Its top-level (`depth == 0`) display branch is written for
+            // assignment *expression* anchors and can incidentally resolve a
+            // non-expression anchor (here the overridden member's name node) as
+            // a value identifier, emitting spurious name-resolution diagnostics.
+            // Snapshot the diagnostic buffer and restore it so only the
+            // re-parented elaboration frames survive.
+            let diagnostics_before = self.ctx.diagnostics.len();
+            let inner = self.render_failure_reason(&reason, source_type, target_type, node_idx, 0);
+            self.ctx.diagnostics.truncate(diagnostics_before);
+            // The rendered reason's own lead becomes the first elaboration frame
+            // (depth 0); its nested frames sit one level deeper (depth + 1).
+            let frames = std::iter::once((inner.message_text, 0u8)).chain(
+                inner
+                    .related_information
+                    .into_iter()
+                    .map(|child| (child.message_text, child.depth.saturating_add(1))),
+            );
+            if self.attach_elaboration_frames_to_lead(node_idx, code, frames) {
+                return;
+            }
+        }
+
+        // Fallback: no structured reason available (e.g. suppressed/opaque
+        // types). Preserve the single-frame elaboration so the lead still
+        // carries the canonical `Type 'S' is not assignable to type 'T'.` line.
+        let source_str = self.format_type(source_type);
+        let target_str = self.format_type(target_type);
+        self.report_type_not_assignable_detail(node_idx, &source_str, &target_str, code);
+    }
+
+    /// Attach `frames` (each an elaboration `(message, depth)`) as related
+    /// information to the most recent diagnostic with `code` whose start matches
+    /// the raw span of `node_idx`, de-duplicating by `(message, depth)`. Returns
+    /// `false` when no matching lead diagnostic is present so callers can fall
+    /// back to a standalone diagnostic.
+    ///
+    /// Matching by `(code, start)` rather than `(code, start, length)` is
+    /// deliberate: `error_at_node` normalizes the lead's span (e.g. trimming to
+    /// the leading identifier of a declaration) while `get_node_span` returns
+    /// the raw node span, so the lengths can legitimately differ. Producing the
+    /// elaboration as indented related-information (instead of separate
+    /// top-level diagnostics) is what the conformance fingerprinter expects.
+    fn attach_elaboration_frames_to_lead(
+        &mut self,
+        node_idx: NodeIndex,
+        code: u32,
+        frames: impl IntoIterator<Item = (String, u8)>,
+    ) -> bool {
+        let Some((pos, end)) = self.get_node_span(node_idx) else {
+            return false;
         };
         let length = end.saturating_sub(pos);
-        let detail = format!("Type '{source_type}' is not assignable to type '{target_type}'.");
-
-        // Attach to the most recent diagnostic at this position with this code
-        // (the lead "Property X is not assignable" message we just emitted).
-        // This produces tsc-style multi-line diagnostics where the elaboration is
-        // indented under the lead, instead of two top-level diagnostics that the
-        // conformance fingerprinter treats as distinct entries.
-        //
-        // Match by `(code, start)` rather than `(code, start, length)` because
-        // `error_at_node` normalizes the anchor span (e.g., trimming to the
-        // leading identifier of a declaration), while `get_node_span` here returns
-        // the raw node span.
-        if let Some(parent) = self
+        let Some(parent) = self
             .ctx
             .diagnostics
             .iter_mut()
             .rev()
             .find(|diag| diag.code == code && diag.start == pos)
-        {
-            // Avoid duplicate related-info text.
-            if !parent
+        else {
+            return false;
+        };
+
+        let file = parent.file.clone();
+        for (message_text, depth) in frames {
+            if parent
                 .related_information
                 .iter()
-                .any(|info| info.message_text == detail)
+                .any(|info| info.message_text == message_text && info.depth == depth)
             {
-                parent
-                    .related_information
-                    .push(crate::diagnostics::DiagnosticRelatedInformation {
-                        file: parent.file.clone(),
-                        start: pos,
-                        length,
-                        message_text: detail,
-                        category: crate::diagnostics::DiagnosticCategory::Message,
-                        code,
-                        depth: 0,
-                    });
+                continue;
             }
-            return;
+            parent
+                .related_information
+                .push(crate::diagnostics::DiagnosticRelatedInformation {
+                    file: file.clone(),
+                    start: pos,
+                    length,
+                    message_text,
+                    category: crate::diagnostics::DiagnosticCategory::Message,
+                    code,
+                    depth,
+                });
         }
-
-        // Fallback: emit as a standalone diagnostic when no matching parent is
-        // present (e.g., the lead error was suppressed).
-        self.error(pos, length, detail, code);
+        true
     }
 
     /// Check that non-abstract class implements all abstract members from base class (error 2654).
@@ -1067,7 +1145,7 @@ impl<'a> CheckerState<'a> {
 
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
-                    let mut incompatible_members: Vec<(NodeIndex, String, String, String)> =
+                    let mut incompatible_members: Vec<(NodeIndex, String, TypeId, TypeId)> =
                         Vec::new(); // (node_idx, name, expected_type, actual_type)
                     // Build type arguments vector from implements clause (e.g., A<boolean> -> [boolean])
                     let mut type_args = Vec::new();
@@ -1319,13 +1397,11 @@ impl<'a> CheckerState<'a> {
                                             class_member_idx,
                                         );
                                     if types_incompatible {
-                                        let expected_str = self.format_type(interface_member_type);
-                                        let actual_str = self.format_type(class_member_type);
                                         incompatible_members.push((
                                             class_member_idx,
                                             member_name.clone(),
-                                            expected_str,
-                                            actual_str,
+                                            interface_member_type,
+                                            class_member_type,
                                         ));
                                     } else {
                                         self.error_at_node(
@@ -1416,14 +1492,24 @@ impl<'a> CheckerState<'a> {
                                     interface_member_type,
                                     class_member_idx,
                                 )
+                                // A non-generic class member validly implements a
+                                // generic interface method by dropping the method-local
+                                // type parameter(s) to their constraint(s) when those
+                                // appear only in input positions. The strict own-member
+                                // relation rejects that sound specialization (false
+                                // TS2416); the same suppression already governs the
+                                // interface-/class-`extends` paths, so all three heritage
+                                // forms make identical variance decisions.
+                                && !self.nongeneric_input_only_generic_override_is_valid(
+                                    class_member_type,
+                                    interface_member_type,
+                                )
                             {
-                                let expected_str = self.format_type(interface_member_type);
-                                let actual_str = self.format_type(class_member_type);
                                 incompatible_members.push((
                                     class_member_idx,
                                     member_name.clone(),
-                                    expected_str,
-                                    actual_str,
+                                    interface_member_type,
+                                    class_member_type,
                                 ));
                             }
                         } else if let Some(&inherited_type) =
@@ -1441,14 +1527,19 @@ impl<'a> CheckerState<'a> {
                                     interface_member_type,
                                     class_idx,
                                 )
+                                // Same input-only generic-drop specialization rule as
+                                // the own-member branch above, for a member the class
+                                // inherits from its base class to satisfy the interface.
+                                && !self.nongeneric_input_only_generic_override_is_valid(
+                                    inherited_type,
+                                    interface_member_type,
+                                )
                             {
-                                let expected_str = self.format_type(interface_member_type);
-                                let actual_str = self.format_type(inherited_type);
                                 incompatible_members.push((
                                     class_error_idx,
                                     member_name.clone(),
-                                    expected_str,
-                                    actual_str,
+                                    interface_member_type,
+                                    inherited_type,
                                 ));
                             }
                         } else if let Some(&visibility) =
@@ -1609,13 +1700,11 @@ impl<'a> CheckerState<'a> {
                                     .get(&member_name)
                                     .copied()
                                     .unwrap_or(class_error_idx);
-                                let expected_str = self.format_type(target_property_type);
-                                let actual_str = self.format_type(source_property_type);
                                 incompatible_members.push((
                                     class_member_idx,
                                     member_name,
-                                    expected_str,
-                                    actual_str,
+                                    target_property_type,
+                                    source_property_type,
                                 ));
                             } else if suppress_index_member_duplicate {
                                 // Class member compatibility with its own declared index
@@ -1715,7 +1804,7 @@ impl<'a> CheckerState<'a> {
                     // clause.  Emit per-property errors for both interfaces and
                     // classes.
                     {
-                        for (class_member_idx, member_name, expected, actual) in
+                        for (class_member_idx, member_name, expected_type, actual_type) in
                             incompatible_members
                         {
                             let error_node_idx =
@@ -1733,10 +1822,10 @@ impl<'a> CheckerState<'a> {
                                 ),
                                 diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                             );
-                            self.report_type_not_assignable_detail(
+                            self.report_type_override_incompatibility_detail(
                                 error_node_idx,
-                                &actual,
-                                &expected,
+                                actual_type,
+                                expected_type,
                                 diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                             );
                         }

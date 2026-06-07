@@ -324,6 +324,21 @@ impl<'a> CheckerContext<'a> {
             if kind != tsz_solver::def::DefKind::Interface {
                 return None;
             }
+            // The heritage cache is keyed purely by interface name, so it must
+            // only ever upgrade *lib* interfaces (whose heritage-merged bodies it
+            // stores). A user interface that merely shares a name with a lib
+            // interface — or that happens to collide with a stale/partial cache
+            // entry of its own name — must keep its own declared body. Without
+            // this guard, a cross-file user `interface Atom<T> { value: T }`
+            // resolved through a homomorphic mapped re-instantiation gets
+            // overridden by an unrelated/empty cache entry, collapsing to `{}`
+            // and producing spurious `TS2322`/`TS2719` ("X is not assignable to
+            // X"). See the user-interface-name-collision regression tests.
+            // `sym_id` is already in hand, so check it directly rather than
+            // round-tripping the `def_id` back to a symbol.
+            if !self.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                return None;
+            }
             let name_atom = self.definition_store.get_name(def_id)?;
             let name = self.types.resolve_atom(name_atom);
             if name == "Atomics" {
@@ -339,6 +354,11 @@ impl<'a> CheckerContext<'a> {
         // Fallback: no DefId yet — use the primary binder (O(1), no lib scan).
         let symbol = self.binder.symbols.get(sym_id)?;
         if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+        // Same lib-only restriction as the DefId path above: never override a
+        // user interface's body with a name-keyed lib heritage entry.
+        if !self.symbol_is_from_actual_or_cloned_lib(sym_id) {
             return None;
         }
         if symbol.escaped_name == "Atomics" {

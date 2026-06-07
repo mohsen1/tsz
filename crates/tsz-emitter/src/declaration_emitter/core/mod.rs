@@ -63,8 +63,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) type_interner: Option<&'a TypeInterner>,
     /// Binder state for symbol resolution (used by `UsageAnalyzer`)
     pub(super) binder: Option<&'a BinderState>,
-    /// Precomputed export surface summary (replaces ad-hoc re-extraction).
-    pub(super) export_surface: Option<tsz_binder::ExportSurface>,
+    /// Precomputed declaration facts (replaces ad-hoc re-extraction).
+    pub(super) declaration_summary: Option<tsz_binder::DeclarationSummary>,
     /// Map of symbols to their usage kind (Type, Value, or Both) for import elision
     pub(super) used_symbols:
         Option<FxHashMap<SymbolId, crate::declaration_emitter::usage_analyzer::UsageKind>>,

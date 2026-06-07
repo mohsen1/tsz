@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-REPO="${REPO:-mohsen1/tsz}"
+REPO="${REPO:-tsz-org/tsz}"
 WORKFLOW_FILE="${WORKFLOW_FILE:-npm-publish.yml}"
 REGISTRY="${REGISTRY:-https://registry.npmjs.org}"
 

@@ -173,7 +173,7 @@ impl<'a> CheckerState<'a> {
         // Skip the check under `noLib`: with no library files, the user owns
         // the global type surface, and tsc does not complain about missing
         // `Promise` simply because an async function is declared. See
-        // https://github.com/mohsen1/tsz/issues/3787.
+        // https://github.com/tsz-org/tsz/issues/3787.
         if func.is_async && !func.asterisk_token && !self.ctx.compiler_options.no_lib {
             self.check_global_promise_available();
         }
@@ -1210,11 +1210,14 @@ impl<'a> CheckerState<'a> {
             || check_no_implicit_returns
             || needs_unknown_empty_body_scan
             || needs_ts2355_undefined_union_scan;
+        let terminal_return_flow = self.top_level_terminal_return_flow(func.body);
         let (has_return, falls_through) = if need_return_flow_scan {
-            (
-                self.body_has_return_with_value(func.body),
-                self.function_body_falls_through(func.body),
-            )
+            terminal_return_flow.unwrap_or_else(|| {
+                (
+                    self.body_has_return_with_value(func.body),
+                    self.function_body_falls_through(func.body),
+                )
+            })
         } else {
             (false, false)
         };
@@ -1225,7 +1228,13 @@ impl<'a> CheckerState<'a> {
         // but it does require the function to never complete normally).
         if has_declared_return
             && check_return_type == TypeId::NEVER
-            && self.function_body_falls_through(func.body)
+            && if need_return_flow_scan {
+                falls_through
+            } else {
+                terminal_return_flow
+                    .map(|(_, falls_through)| falls_through)
+                    .unwrap_or_else(|| self.function_body_falls_through(func.body))
+            }
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let error_node = if has_type_annotation {
@@ -1249,8 +1258,20 @@ impl<'a> CheckerState<'a> {
         if has_type_annotation
             && can_check_generator_completion
             && check_return_type == TypeId::UNKNOWN
-            && self.function_body_falls_through(func.body)
-            && !self.body_has_return_with_value(func.body)
+            && if need_return_flow_scan {
+                falls_through
+            } else {
+                terminal_return_flow
+                    .map(|(_, falls_through)| falls_through)
+                    .unwrap_or_else(|| self.function_body_falls_through(func.body))
+            }
+            && if need_return_flow_scan {
+                !has_return
+            } else {
+                terminal_return_flow
+                    .map(|(has_return, _)| !has_return)
+                    .unwrap_or_else(|| !self.body_has_return_with_value(func.body))
+            }
         {
             let error_node = func.type_annotation;
             use crate::diagnostics::diagnostic_codes;
@@ -1395,6 +1416,29 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                 diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
             );
+        }
+    }
+
+    fn top_level_terminal_return_flow(&self, body: NodeIndex) -> Option<(bool, bool)> {
+        let body_node = self.ctx.arena.get(body)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return None;
+        }
+
+        let block = self.ctx.arena.get_block(body_node)?;
+        let last_stmt = block.statements.nodes.last().copied()?;
+        let last_node = self.ctx.arena.get(last_stmt)?;
+        match last_node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                let has_return_value = self
+                    .ctx
+                    .arena
+                    .get_return_statement(last_node)
+                    .is_some_and(|return_data| return_data.expression.is_some());
+                Some((has_return_value, false))
+            }
+            syntax_kind_ext::THROW_STATEMENT => Some((false, false)),
+            _ => None,
         }
     }
 }

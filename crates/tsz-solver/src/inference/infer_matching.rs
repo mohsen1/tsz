@@ -9,7 +9,9 @@
 //! lower/upper bound candidates for each inference variable.
 
 use crate::def::DefId;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_generic, instantiate_type};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_generic_cached, instantiate_type,
+};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
     CallSignature, CallableShapeId, FunctionShape, FunctionShapeId, InferencePriority,
@@ -928,7 +930,8 @@ impl<'a> InferenceContext<'a> {
         let body = resolver.resolve_lazy(def_id, self.interner)?;
 
         // Instantiate the body with the application's type arguments
-        let instantiated = instantiate_generic(self.interner, body, &type_params, &app.args);
+        let instantiated =
+            instantiate_generic_cached(self.interner, self.query_db, body, &type_params, &app.args);
 
         // Restore depth after expansion
         self.app_expansion_depth = depth;
@@ -1039,6 +1042,23 @@ impl<'a> InferenceContext<'a> {
                 let target_param = target_params
                     .next()
                     .expect("target_rest flag guarantees next element");
+
+                // A tuple-typed rest parameter (`...args: [...T, ...U]`,
+                // `[A, ...B]`, …) carries its own variadic structure; route the
+                // remaining source params through variadic tuple inference so
+                // adjacent-variadic arity is preserved (e.g. `bind`).
+                if matches!(
+                    self.interner.lookup(target_param.type_id),
+                    Some(TypeData::Tuple(_))
+                ) {
+                    let rest: Vec<ParamInfo> = source_params.by_ref().copied().collect();
+                    self.infer_source_params_against_rest_tuple(
+                        &rest,
+                        target_param.type_id,
+                        priority,
+                    )?;
+                    break;
+                }
 
                 // CRITICAL: Check if target rest param is a type parameter (like A extends any[])
                 // If so, we need to infer it as a TUPLE of all remaining source params,

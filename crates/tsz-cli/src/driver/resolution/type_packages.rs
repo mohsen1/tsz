@@ -67,7 +67,12 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
         .and_then(|(package_name, subpath)| subpath.map(|subpath| (package_name, subpath)));
     let conditions = export_conditions(options);
 
-    let mut current = from_file.parent().unwrap_or(base_dir);
+    // Anchor the walk-up at the containing file's real path so triple-slash
+    // references from inside a symlinked package (pnpm's `.pnpm` sandbox) can
+    // reach the package's private/transitive `@types/*` siblings. See
+    // `node_modules_walkup_dir`.
+    let start_dir = node_modules_walkup_dir(from_file, base_dir, options);
+    let mut current = start_dir.as_path();
 
     loop {
         let node_modules = current.join("node_modules");
@@ -155,28 +160,10 @@ pub(crate) fn implied_resolution_mode_for_file_with_cache(
         _ => {}
     }
 
-    // Walk up from the file to find the nearest package.json with "type" field
-    let mut current = file.parent().unwrap_or(base_dir);
-    loop {
-        let pkg_json_path = current.join("package.json");
-        if let Some(pj) = resolution_cache.read_package_json(&pkg_json_path) {
-            if pj.package_type.as_deref() == Some("module") {
-                return "import".to_string();
-            }
-            // Found a package.json without "type": "module" → CJS
-            return "require".to_string();
-        }
-        if current == base_dir {
-            break;
-        }
-        let Some(parent) = current.parent() else {
-            break;
-        };
-        current = parent;
+    match resolution_cache.package_type_for_dir(file.parent().unwrap_or(base_dir), base_dir) {
+        Some(PackageType::Module) => "import".to_string(),
+        Some(PackageType::CommonJs) | None => "require".to_string(),
     }
-
-    // Default to require (CJS) when no package.json is found
-    "require".to_string()
 }
 
 /// Public wrapper for `type_package_candidates`.

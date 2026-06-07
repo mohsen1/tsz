@@ -1,7 +1,8 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::{
-    empty_object_type, is_union_type, is_unit_type, is_unknown_narrowing_literal,
+    self as flow_query, empty_object_type, is_union_type, is_unit_type,
+    is_unknown_narrowing_literal,
 };
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
@@ -9,9 +10,40 @@ use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
+use tsz_solver::narrowing::{NarrowingContext, TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
+    fn narrow_to_falsy_via_flow_boundary(&self, type_id: TypeId) -> TypeId {
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_to_falsy(self.interner, env_borrow.as_deref(), type_id)
+    }
+
+    fn narrow_by_typeof_result_via_flow_boundary(
+        &self,
+        type_id: TypeId,
+        typeof_result: &str,
+        is_true_branch: bool,
+    ) -> TypeId {
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_by_typeof_result(
+            self.interner,
+            env_borrow.as_deref(),
+            type_id,
+            typeof_result,
+            is_true_branch,
+        )
+    }
+
+    fn narrow_with_guard_via_flow_boundary(
+        &self,
+        narrowing: &NarrowingContext<'_>,
+        type_id: TypeId,
+        guard: &TypeGuard,
+        is_true_branch: bool,
+    ) -> TypeId {
+        flow_query::narrow_with_guard_in_context(narrowing, type_id, guard, is_true_branch)
+    }
+
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
         let mut members = Vec::with_capacity(types.len());
         let mut saw_reachable = false;
@@ -207,7 +239,11 @@ impl<'a> FlowAnalyzer<'a> {
                     let Some(typeof_result) = self.literal_string_from_node(case_expr) else {
                         break;
                     };
-                    return narrowing.narrow_by_typeof(narrowed, typeof_result);
+                    return self.narrow_by_typeof_result_via_flow_boundary(
+                        narrowed,
+                        typeof_result,
+                        true,
+                    );
                 }
 
                 if clause.expression.is_none() {
@@ -218,7 +254,8 @@ impl<'a> FlowAnalyzer<'a> {
                     break;
                 };
 
-                narrowed = narrowing.narrow_by_typeof_negation(narrowed, typeof_result);
+                narrowed =
+                    self.narrow_by_typeof_result_via_flow_boundary(narrowed, typeof_result, false);
                 if narrowed == TypeId::NEVER {
                     return TypeId::NEVER;
                 }
@@ -309,9 +346,14 @@ impl<'a> FlowAnalyzer<'a> {
                 let narrowed = if excluded_types.is_empty() {
                     type_id
                 } else if target_is_switch_expr {
-                    narrowing.narrow_excluding_types(type_id, &excluded_types)
+                    flow_query::narrow_excluding_types_in_context(
+                        narrowing,
+                        type_id,
+                        &excluded_types,
+                    )
                 } else if let Some((ref path, _, _)) = discriminant_info {
-                    narrowing.narrow_by_excluding_discriminant_values(
+                    flow_query::narrow_by_excluding_discriminant_values_in_context(
+                        narrowing,
                         type_id,
                         path,
                         &excluded_types,
@@ -454,7 +496,8 @@ impl<'a> FlowAnalyzer<'a> {
                 };
 
                 applied = true;
-                narrowed = narrowing.narrow_by_typeof_negation(narrowed, typeof_result);
+                narrowed =
+                    self.narrow_by_typeof_result_via_flow_boundary(narrowed, typeof_result, false);
                 if narrowed == TypeId::NEVER {
                     return TypeId::NEVER;
                 }
@@ -523,13 +566,18 @@ impl<'a> FlowAnalyzer<'a> {
             if !excluded_types.is_empty() {
                 if target_is_switch_expr {
                     // Use batched narrowing for O(N) instead of O(N²)
-                    return narrowing.narrow_excluding_types(type_id, &excluded_types);
+                    return flow_query::narrow_excluding_types_in_context(
+                        narrowing,
+                        type_id,
+                        &excluded_types,
+                    );
                 } else if let Some((path, is_optional, _)) = discriminant_info {
                     if is_optional && excluded_types.contains(&TypeId::UNDEFINED) {
                         return type_id;
                     }
                     // Use batched discriminant narrowing
-                    return narrowing.narrow_by_excluding_discriminant_values(
+                    return flow_query::narrow_by_excluding_discriminant_values_in_context(
+                        narrowing,
                         type_id,
                         &path,
                         &excluded_types,
@@ -766,10 +814,11 @@ impl<'a> FlowAnalyzer<'a> {
                             // This applies to ALL guards, not just typeof
                             // For `x !== "string"` or `x.kind !== "circle"`, the true branch should EXCLUDE
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)
-                            let result = narrowing.narrow_type(
+                            let result = self.narrow_with_guard_via_flow_boundary(
+                                &narrowing,
                                 type_id,
                                 &guard,
-                                GuardSense::from(effective_sense),
+                                effective_sense,
                             );
                             if effective_sense
                                 && matches!(guard, TypeGuard::Typeof(TypeofKind::Object))
@@ -778,7 +827,11 @@ impl<'a> FlowAnalyzer<'a> {
                                     target,
                                 )
                             {
-                                return narrowing.narrow_excluding_type(result, TypeId::NULL);
+                                return flow_query::narrow_excluding_type_in_context(
+                                    &narrowing,
+                                    result,
+                                    TypeId::NULL,
+                                );
                             }
                             return result;
                         }
@@ -892,7 +945,8 @@ impl<'a> FlowAnalyzer<'a> {
                 // `{flag: "hello"; data: string} | {flag: ""; data: number}`,
                 // narrow x based on whether `flag` is truthy or falsy.
                 if let Some(property_path) = self.discriminant_property(condition_idx, target) {
-                    let narrowed = narrowing.narrow_by_property_truthiness(
+                    let narrowed = flow_query::narrow_by_property_truthiness_in_context(
+                        &narrowing,
                         type_id,
                         &property_path,
                         is_true_branch,
@@ -917,22 +971,21 @@ impl<'a> FlowAnalyzer<'a> {
                         return flow_boundary::narrow_non_nullish(self.interner, type_id);
                     }
                     // False branch - keep only falsy types (use Solver for NaN handling)
-                    return narrowing.narrow_to_falsy(type_id);
+                    return self.narrow_to_falsy_via_flow_boundary(type_id);
                 }
             }
 
             // Truthiness check: if (x)
-            // Use Solver-First architecture: delegate to TypeGuard::Truthy
+            // Use Solver-First architecture: delegate truthiness to the flow boundary.
             _ => {
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
                 let matches = self.is_matching_reference(condition_ref, target);
                 if matches {
-                    let narrowed = narrowing.narrow_type(
+                    return flow_query::narrow_to_truthy_in_context(
+                        &narrowing,
                         type_id,
-                        &TypeGuard::Truthy,
-                        GuardSense::from(is_true_branch),
+                        is_true_branch,
                     );
-                    return narrowed;
                 }
 
                 if let Some((base, prop_names)) = self.binding_element_property_alias(condition_ref)
@@ -941,7 +994,8 @@ impl<'a> FlowAnalyzer<'a> {
                         self.binder.resolve_identifier(self.arena, condition_ref)
                     && !self.is_alias_reference_mutated(alias_sym_id, target, antecedent_id)
                 {
-                    let narrowed = narrowing.narrow_by_property_truthiness(
+                    let narrowed = flow_query::narrow_by_property_truthiness_in_context(
+                        &narrowing,
                         type_id,
                         &prop_names,
                         is_true_branch,
@@ -1268,16 +1322,21 @@ impl<'a> FlowAnalyzer<'a> {
                     .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
                 let typeof_base_type =
                     flow_boundary::catch_variable_typeof_base_from_flow(type_id, is_catch_var);
-                let narrowed = narrowing.narrow_type(
+                let narrowed = self.narrow_with_guard_via_flow_boundary(
+                    narrowing,
                     typeof_base_type,
                     &TypeGuard::Typeof(typeof_kind),
-                    GuardSense::from(effective_truth),
+                    effective_truth,
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
                     && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
                 {
-                    return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
+                    return flow_query::narrow_excluding_type_in_context(
+                        narrowing,
+                        narrowed,
+                        TypeId::NULL,
+                    );
                 }
                 return narrowed;
             }
@@ -1289,15 +1348,16 @@ impl<'a> FlowAnalyzer<'a> {
             //     return standard strings at runtime, so the condition is always
             //     false; the complement narrows to primitives)
             if effective_truth {
-                return narrowing.narrow_excluding_types(
+                return flow_query::narrow_excluding_types_in_context(
+                    narrowing,
                     type_id,
                     &[TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN],
                 );
             } else {
                 // Collect the primitive members from the source type
-                let s = narrowing.narrow_by_typeof(type_id, "string");
-                let n = narrowing.narrow_by_typeof(type_id, "number");
-                let b = narrowing.narrow_by_typeof(type_id, "boolean");
+                let s = self.narrow_by_typeof_result_via_flow_boundary(type_id, "string", true);
+                let n = self.narrow_by_typeof_result_via_flow_boundary(type_id, "number", true);
+                let b = self.narrow_by_typeof_result_via_flow_boundary(type_id, "boolean", true);
                 let mut parts = Vec::new();
                 if s != TypeId::NEVER {
                     parts.push(s);
@@ -1341,7 +1401,8 @@ impl<'a> FlowAnalyzer<'a> {
                 if is_optional && discriminant_type == TypeId::UNDEFINED && effective_truth {
                     return type_id;
                 }
-                return narrowing.narrow_by_discriminant_for_type(
+                return flow_query::narrow_by_discriminant_for_type_in_context(
+                    narrowing,
                     type_id,
                     &property_path,
                     discriminant_type,
@@ -1355,7 +1416,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if effective_truth {
                     return nullish;
                 }
-                return narrowing.narrow_excluding_type(type_id, nullish);
+                return flow_query::narrow_excluding_type_in_context(narrowing, type_id, nullish);
             }
 
             let nullish_union = self.interner.union2(TypeId::NULL, TypeId::UNDEFINED);
@@ -1408,7 +1469,8 @@ impl<'a> FlowAnalyzer<'a> {
                             base_type,
                         );
                     }
-                    let narrowed = narrowing.narrow_by_discriminant_for_type(
+                    let narrowed = flow_query::narrow_by_discriminant_for_type_in_context(
+                        narrowing,
                         base_type,
                         &property_path,
                         literal_type,
@@ -1429,11 +1491,16 @@ impl<'a> FlowAnalyzer<'a> {
                 && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
             {
                 if effective_truth {
-                    let narrowed = narrowing.narrow_to_type(type_id, literal_type);
+                    let narrowed =
+                        flow_query::narrow_to_type_in_context(narrowing, type_id, literal_type);
                     if narrowed != TypeId::NEVER {
                         return narrowed;
                     }
-                    if narrowing.literal_assignable_to(literal_type, type_id) {
+                    if flow_query::literal_assignable_to_in_context(
+                        narrowing,
+                        literal_type,
+                        type_id,
+                    ) {
                         return literal_type;
                     }
                     return TypeId::NEVER;
@@ -1441,7 +1508,11 @@ impl<'a> FlowAnalyzer<'a> {
                 if !is_unit_type(self.interner, literal_type) {
                     return type_id;
                 }
-                return narrowing.narrow_excluding_type(type_id, literal_type);
+                return flow_query::narrow_excluding_type_in_context(
+                    narrowing,
+                    type_id,
+                    literal_type,
+                );
             }
 
             // Equality narrowing of `unknown` / `any` against a primitive-
@@ -1461,7 +1532,7 @@ impl<'a> FlowAnalyzer<'a> {
                     self.literal_comparison_for_unknown_target(bin.left, bin.right, target)
             {
                 if effective_truth {
-                    return narrowing.narrow_to_type(type_id, literal_type);
+                    return flow_query::narrow_to_type_in_context(narrowing, type_id, literal_type);
                 }
                 return type_id;
             }
@@ -1485,16 +1556,18 @@ impl<'a> FlowAnalyzer<'a> {
                         {
                             return right_type;
                         }
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
-                            GuardSense::Positive,
+                            true,
                         );
                     } else if is_unit_type(self.interner, right_type) {
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
-                            GuardSense::Negative,
+                            false,
                         );
                     }
                 }
@@ -1514,16 +1587,18 @@ impl<'a> FlowAnalyzer<'a> {
                         {
                             return left_type;
                         }
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),
-                            GuardSense::Positive,
+                            true,
                         );
                     } else if is_unit_type(self.interner, left_type) {
-                        return narrowing.narrow_type(
+                        return self.narrow_with_guard_via_flow_boundary(
+                            narrowing,
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),
-                            GuardSense::Negative,
+                            false,
                         );
                     }
                 }
@@ -1712,19 +1787,12 @@ impl<'a> FlowAnalyzer<'a> {
             || operator == SyntaxKind::QuestionQuestionEqualsToken as u16)
             && self.is_matching_reference(bin.left, target)
         {
-            let env_borrow;
-            let narrowing = if let Some(env) = &self.type_environment {
-                env_borrow = env.borrow();
-                self.make_narrowing_context().with_resolver(&*env_borrow)
-            } else {
-                self.make_narrowing_context()
-            };
             if is_true_branch {
                 // x holds the truthy result → remove null/undefined
                 return Some(flow_boundary::narrow_non_nullish(self.interner, type_id));
             }
             // x holds the falsy result → keep only falsy types
-            return Some(narrowing.narrow_to_falsy(type_id));
+            return Some(self.narrow_to_falsy_via_flow_boundary(type_id));
         }
         // For non-matching references, fall through to || handling below
 
@@ -1860,10 +1928,10 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     self.make_narrowing_context()
                 };
-                return Some(narrowing.narrow_type(
+                return Some(flow_query::narrow_to_truthy_in_context(
+                    &narrowing,
                     type_id,
-                    &TypeGuard::Truthy,
-                    GuardSense::from(is_true_branch),
+                    is_true_branch,
                 ));
             }
         }

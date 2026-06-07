@@ -3,128 +3,32 @@
 mod assignment_formatting;
 mod assignment_source_preservation;
 mod compound_assignment_context;
+mod computed_index_source_display;
 mod contextual_index_display;
 mod generic_source_display;
+mod keyof_source_display;
 mod literal_surface;
 mod literal_widening_helpers;
 mod literal_widening_policy;
+mod object_literal_anchors;
 mod object_literal_targets;
 mod recursive_alias_display;
+mod span_diagnostic_queries;
 mod static_schema;
 mod tuple_source_display;
 mod type_query_alias;
 mod wrapper_provenance;
 
-use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
+use span_diagnostic_queries::strip_module_specifier_extension;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn object_literal_initializer_anchor_for_type(
-        &mut self,
-        object_idx: NodeIndex,
-        source_type: TypeId,
-    ) -> Option<(u32, u32)> {
-        let mut current = self.ctx.arena.skip_parenthesized_and_assertions(object_idx);
-        let mut guard = 0;
-
-        loop {
-            guard += 1;
-            if guard > 32 {
-                return None;
-            }
-
-            let node = self.ctx.arena.get(current)?;
-
-            let direct_initializer =
-                if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
-                    Some(prop.initializer)
-                } else {
-                    self.ctx
-                        .arena
-                        .get_shorthand_property(node)
-                        .map(|prop| prop.name)
-                };
-
-            if let Some(initializer_idx) = direct_initializer {
-                if let Some(anchor) = self.resolve_diagnostic_anchor(
-                    initializer_idx,
-                    crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind::Exact,
-                ) {
-                    return Some((anchor.start, anchor.length));
-                }
-
-                let (pos, end) = self.get_node_span(initializer_idx)?;
-                return Some(self.normalized_anchor_span(
-                    initializer_idx,
-                    pos,
-                    end.saturating_sub(pos),
-                ));
-            }
-
-            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                let literal = self.ctx.arena.get_literal_expr(node)?;
-                let source_display = self.format_type_for_assignability_message(
-                    self.widen_type_for_display(source_type),
-                );
-
-                for child_idx in literal.elements.nodes.iter().copied() {
-                    let Some(child) = self.ctx.arena.get(child_idx) else {
-                        continue;
-                    };
-
-                    let candidate_idx =
-                        if let Some(prop) = self.ctx.arena.get_property_assignment(child) {
-                            prop.initializer
-                        } else if let Some(prop) = self.ctx.arena.get_shorthand_property(child) {
-                            prop.name
-                        } else {
-                            continue;
-                        };
-
-                    let candidate_type = self.get_type_of_node(candidate_idx);
-                    if matches!(candidate_type, TypeId::ERROR | TypeId::UNKNOWN) {
-                        continue;
-                    }
-
-                    let candidate_display = self.format_type_for_assignability_message(
-                        self.widen_type_for_display(candidate_type),
-                    );
-                    if candidate_type != source_type && candidate_display != source_display {
-                        continue;
-                    }
-
-                    if let Some(anchor) = self.resolve_diagnostic_anchor(
-                        candidate_idx,
-                        crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind::Exact,
-                    ) {
-                        return Some((anchor.start, anchor.length));
-                    }
-
-                    let (pos, end) = self.get_node_span(candidate_idx)?;
-                    return Some(self.normalized_anchor_span(
-                        candidate_idx,
-                        pos,
-                        end.saturating_sub(pos),
-                    ));
-                }
-
-                return None;
-            }
-
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = self.ctx.arena.skip_parenthesized_and_assertions(ext.parent);
-        }
-    }
-
     pub(in crate::error_reporter) fn direct_diagnostic_source_expression(
         &self,
         anchor_idx: NodeIndex,
@@ -219,6 +123,21 @@ impl<'a> CheckerState<'a> {
         if parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
             && let Some(prop) = self.ctx.arena.get_shorthand_property(parent_node)
             && prop.name == expr_idx
+        {
+            return None;
+        }
+
+        // Shorthand method and accessor member names (`{ m(x) {} }`,
+        // `{ get x() {} }`, `{ set x(v) {} }`) are declaration names, not source
+        // expressions. The member's value is the declaration itself; resolving
+        // the name as a value reference would emit a false TS2304 "Cannot find name".
+        // This mirrors the property-assignment guard above.
+        if matches!(
+            parent_node.kind,
+            syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+        ) && self.get_declaration_name_node(parent_idx) == Some(expr_idx)
         {
             return None;
         }
@@ -544,6 +463,14 @@ impl<'a> CheckerState<'a> {
         if self.declared_source_annotation_names_type_query_alias(expr_idx) {
             return false;
         }
+        // A computed-body alias carries no `aliasSymbol` in tsc, so its source is
+        // rendered structurally, never by name. Scalar bodies already expand (the
+        // index-signature gate below returns `false`), but tuple/array bodies slip
+        // past that gate via their numeric index signature; route them through the
+        // shared display policy so every reducible body drops the alias annotation.
+        if self.source_declared_type_is_displayed_as_underlying(expr_type) {
+            return false;
+        }
         if annotation.contains("`${") {
             return true;
         }
@@ -606,6 +533,20 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// True when `ty` resolves to a non-generic type alias that tsc renders by
+    /// its underlying (computed) type rather than its declared name — see
+    /// [`crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying`],
+    /// which owns the `Lazy(DefId)` / resolved-shape resolution behind the query
+    /// boundary.
+    fn source_declared_type_is_displayed_as_underlying(&self, ty: TypeId) -> bool {
+        crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            ty,
+        )
+        .is_some()
     }
 
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
@@ -1174,12 +1115,14 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            // tsc preserves literal types in fresh object literal error messages
-            // when the target property type accepts literals (e.g., discriminated
-            // unions: `tag: "A" | "B" | "C"`). Otherwise it widens (e.g., `string`).
-            // Check the target property type to decide.
-            // When the target is a union (e.g., discriminated union ADT), check
-            // each union member's properties for literal acceptance.
+            // tsc preserves a fresh literal property only when the contextual
+            // (target) property type carries a literal of the *same* primitive
+            // base (mirroring `getWidenedLiteralLikeTypeForContextualType`); the
+            // base must match so a numeric source against a string-literal target
+            // still widens. The former check recognized string literals only, so
+            // numeric/boolean/bigint properties were wrongly widened.
+            let source_literal_base =
+                diagnostic_query::widen_literal_to_primitive(self.ctx.types, value_type);
             let target_accepts_literal = property_name
                 .and_then(|name| {
                     // First try the direct object shape
@@ -1188,12 +1131,19 @@ impl<'a> CheckerState<'a> {
                             .properties
                             .iter()
                             .find(|p| p.name == name)
+                            .filter(|p| {
+                                self.type_contains_literal_of_primitive_base(
+                                    p.type_id,
+                                    source_literal_base,
+                                )
+                            })
                             .map(|p| p.type_id);
                     }
-                    // For union targets, check each member's properties
+                    // For union targets, check each member's properties. The
+                    // per-member gate already enforces the base match, so the
+                    // returned type needs no re-check below.
                     let target = target?;
-                    let members =
-                        crate::query_boundaries::common::union_members(self.ctx.types, target)?;
+                    let members = diagnostic_query::union_members(self.ctx.types, target)?;
                     for member in &members {
                         if let Some(member_shape) =
                             crate::query_boundaries::common::object_shape_for_type(
@@ -1202,16 +1152,17 @@ impl<'a> CheckerState<'a> {
                             )
                             && let Some(prop) =
                                 member_shape.properties.iter().find(|p| p.name == name)
-                            && self.type_contains_string_literal(prop.type_id)
+                            && self.type_contains_literal_of_primitive_base(
+                                prop.type_id,
+                                source_literal_base,
+                            )
                         {
                             return Some(prop.type_id);
                         }
                     }
                     None
                 })
-                .is_some_and(|target_prop_type| {
-                    self.type_contains_string_literal(target_prop_type)
-                });
+                .is_some();
             if let Some(literal_display) = self.literal_expression_display(value_idx) {
                 let preserve_normalized_union_boolean = preserve_literal_source_for_normalized_union
                     && matches!(literal_display.as_str(), "true" | "false");
@@ -1668,6 +1619,22 @@ impl<'a> CheckerState<'a> {
                     self.format_assignability_type_for_message(declared_type, target);
                 let widened_display = self.format_assignability_type_for_message(widened, target);
                 if literal_display != widened_display {
+                    // tsc widens a declared *unit-literal* source (`0n`, `"x"`,
+                    // `42`, `true`) to its base when the target cannot hold a
+                    // literal (`boolean`, `bigint`, …), and keeps the literal only
+                    // against a literal-sensitive target (`0`, `"x"`). The
+                    // call-argument source path already mirrors this; do the same
+                    // for return/assignment identifier sources so the three
+                    // positions agree with tsc. Compound literal surfaces
+                    // (tuples, objects, `as const`) have no scalar `literal_value`
+                    // and keep their existing preserve-the-literal behaviour.
+                    if crate::query_boundaries::assignability_alias_display::is_unit_literal_type(
+                        self.ctx.types.as_type_database(),
+                        declared_type,
+                    ) && !self.is_literal_sensitive_assignment_target(target)
+                    {
+                        return Some(widened_display);
+                    }
                     return Some(literal_display);
                 }
             }
@@ -1897,8 +1864,12 @@ impl<'a> CheckerState<'a> {
         if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        let widened_element =
-            self.normalize_assignability_display_type(self.widen_type_for_display(element_type));
+        let widened_element = self.normalize_assignability_display_type(
+            crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                self.ctx.types,
+                element_type,
+            ),
+        );
         let rebuilt = self.ctx.types.array(widened_element);
         // Preserve the readonly modifier: tsc displays `readonly number[]` not `number[]`
         // when the source type was a readonly array (ReadonlyType(Array(...))).
@@ -1953,32 +1924,4 @@ impl<'a> CheckerState<'a> {
 
         replaced_object_member.then(|| displays.join(" & "))
     }
-
-    pub(in crate::error_reporter) fn has_more_specific_diagnostic_at_span(
-        &self,
-        start: u32,
-        length: u32,
-    ) -> bool {
-        self.ctx.diagnostics.iter().any(|diag| {
-            diag.start == start
-                && diag.length == length
-                && diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag.code
-                    != diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV
-        })
-    }
-
-    pub(crate) fn has_diagnostic_code_within_span(&self, start: u32, end: u32, code: u32) -> bool {
-        self.ctx
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == code && diag.start >= start && diag.start < end)
-    }
-}
-
-/// Strip TS-family file extensions from module specifiers for display while
-/// preserving JS-family extensions in `typeof import("mod")` output.
-/// Element-access diagnostics can opt into raw namespace display earlier.
-pub(crate) fn strip_module_specifier_extension(module_name: &str) -> &str {
-    tsz_common::file_extensions::strip_ts_extension(module_name)
 }

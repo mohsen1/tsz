@@ -160,6 +160,89 @@ impl<'a> CheckerState<'a> {
             .related
     }
 
+    /// True when a *non-generic* derived method validly overrides a *generic*
+    /// base method by dropping the base's method-local type parameter(s) to
+    /// their constraints.
+    ///
+    /// tsc's `compareSignaturesRelated` accepts dropping a method-local generic
+    /// that appears only in **input** (contravariant) positions — the override's
+    /// wider concrete parameter accepts every instantiation of the parameter —
+    /// and rejects one used in a **covariant** (return/output) position, where a
+    /// caller relies on getting a specific instantiation back. For example,
+    /// `with(k: string): Sub` is a valid override of
+    /// `with<K extends string>(k: K): Base` (input-only `K`), while
+    /// `m(): string` is **not** a valid override of `m<T>(): T` (covariant `T`).
+    ///
+    /// The strict no-erase relation used by `should_report_member_type_mismatch`
+    /// rejects *both*, producing a false `TS2430` on the sound input-only case.
+    /// The decision is keyed on the structural shape of the signatures (whether
+    /// the base carries method-local type parameters the override does not), not
+    /// on any identifier, so renaming the method or its type parameter does not
+    /// change the outcome.
+    ///
+    /// Restricted to the regime the strict relation over-reports — the base
+    /// method is generic and the override is not — via
+    /// `generic_erasure_fallback_is_safe` so ordinary non-generic and
+    /// matching-generic overrides keep the strict relation's decision. In that
+    /// regime, dropping the base's method-local generic(s) to their
+    /// constraint(s) is sound iff BOTH hold:
+    /// 1. The override is assignable to the base after erasing those generics to
+    ///    their constraints (method parameters bivariant). This accepts an
+    ///    input-only parameter — the override's wider concrete parameter admits
+    ///    every instantiation — while still rejecting a genuine parameter or
+    ///    callback-position mismatch (`each(f: () => string)` is not assignable
+    ///    to the erased `each(f: () => unknown)`).
+    /// 2. The override's return type is assignable to the base's return type with
+    ///    the generics kept OPAQUE (no-erase). A method-local generic used
+    ///    covariantly in the return (`m(): string` vs `m<T>(): T`) fails this —
+    ///    a concrete type is not assignable to the opaque `T` — while a generic
+    ///    used only in inputs leaves a concrete (or `this`-family) return that
+    ///    relates normally.
+    ///
+    /// Together these reproduce tsc's `compareSignaturesRelated` decision for the
+    /// non-generic-override-of-generic-base shape without re-deriving variance.
+    pub(super) fn nongeneric_input_only_generic_override_is_valid(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+    ) -> bool {
+        if crate::query_boundaries::class::generic_erasure_fallback_is_safe(self, derived, base) {
+            return false;
+        }
+        if !self
+            .bivariant_callbacks_relation_outcome(derived, base)
+            .related
+        {
+            return false;
+        }
+        let (Some(derived_return), Some(base_return)) = (
+            self.single_call_signature_return_type(derived),
+            self.single_call_signature_return_type(base),
+        ) else {
+            return false;
+        };
+        self.no_erase_generics_relation_outcome(derived_return, base_return)
+            .related
+    }
+
+    /// Return type of a callable member that has exactly one call signature and
+    /// no construct signatures — the single-method-override shape. Returns `None`
+    /// for overloaded members, constructors, or non-callable types, so the
+    /// caller defers to the strict relation in those shapes.
+    fn single_call_signature_return_type(&self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        {
+            return Some(shape.return_type);
+        }
+        let shape =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)?;
+        if shape.call_signatures.len() == 1 && shape.construct_signatures.is_empty() {
+            return Some(shape.call_signatures[0].return_type);
+        }
+        None
+    }
+
     /// True when a derived interface member that mentions the polymorphic `this`
     /// type is a valid override of the base member under tsc's `this`-type
     /// relation.
@@ -198,7 +281,8 @@ impl<'a> CheckerState<'a> {
         )
         .map(|p| p.type_id)
         .unwrap_or(raw_derived_member);
-        self.is_assignable_to_no_erase_generics(derived, base_member)
+        self.no_erase_generics_relation_outcome(derived, base_member)
+            .related
     }
 
     pub(super) fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {

@@ -69,9 +69,10 @@ pub(crate) fn namespace_exports_cache_estimated_size_bytes(cache: &NamespaceExpo
     size
 }
 
-/// Per-checker positive cache for named exports reached through `export=`.
-/// Keyed by `(current_file_idx, module_specifier, export_name)`.
-pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), Option<SymbolId>>;
+/// Per-checker cache for named exports reached through `export=`.
+/// Keyed by `(current_file_idx, module_specifier, export_name, visited_aliases)`.
+pub type ExportEqualsNamedCache =
+    FxHashMap<(usize, String, String, Vec<SymbolId>), Option<SymbolId>>;
 
 #[must_use]
 pub(crate) fn export_equals_named_cache_entries(cache: &ExportEqualsNamedCache) -> usize {
@@ -83,11 +84,12 @@ pub(crate) fn export_equals_named_cache_estimated_size_bytes(
     cache: &ExportEqualsNamedCache,
 ) -> usize {
     let mut size = cache.capacity()
-        * (std::mem::size_of::<(usize, String, String)>()
+        * (std::mem::size_of::<(usize, String, String, Vec<SymbolId>)>()
             + std::mem::size_of::<Option<SymbolId>>()
             + 8);
-    for (_, specifier, export_name) in cache.keys() {
+    for (_, specifier, export_name, visited_aliases) in cache.keys() {
         size += specifier.capacity() + export_name.capacity();
+        size += visited_aliases.capacity() * std::mem::size_of::<SymbolId>();
     }
     size
 }
@@ -219,13 +221,19 @@ mod tests {
         assert_eq!(export_equals_named_cache_entries(&cache), 0);
         assert_eq!(export_equals_named_cache_estimated_size_bytes(&cache), 0);
 
-        cache.insert((1, "pkg".to_string(), "foo".to_string()), Some(SymbolId(3)));
-        cache.insert((1, "pkg".to_string(), "bar".to_string()), None);
+        cache.insert(
+            (1, "pkg".to_string(), "foo".to_string(), vec![]),
+            Some(SymbolId(3)),
+        );
+        cache.insert(
+            (1, "pkg".to_string(), "bar".to_string(), vec![SymbolId(7)]),
+            None,
+        );
 
         assert_eq!(export_equals_named_cache_entries(&cache), 2);
         assert!(
             export_equals_named_cache_estimated_size_bytes(&cache)
-                >= 2 * (std::mem::size_of::<(usize, String, String)>()
+                >= 2 * (std::mem::size_of::<(usize, String, String, Vec<SymbolId>)>()
                     + std::mem::size_of::<Option<SymbolId>>())
         );
     }

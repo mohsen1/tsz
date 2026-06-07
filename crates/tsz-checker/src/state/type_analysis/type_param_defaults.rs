@@ -22,6 +22,24 @@ impl<'a> CheckerState<'a> {
             let Some(constraint_type) = param.constraint else {
                 continue;
             };
+            let validation_cache_key = (param_idx.0, default_type, constraint_type);
+            if self
+                .ctx
+                .type_reference_validation_caches
+                .type_param_default_constraint
+                .contains(&validation_cache_key)
+            {
+                continue;
+            }
+            let diagnostics_before = self.ctx.diagnostics.len();
+            macro_rules! cache_default_constraint_success {
+                () => {{
+                    self.ctx
+                        .type_reference_validation_caches
+                        .type_param_default_constraint
+                        .insert(validation_cache_key);
+                }};
+            }
             let constraint_has_type_params =
                 generic_query::contains_type_parameters(self.ctx.types, constraint_type);
             let default_has_type_params =
@@ -35,12 +53,14 @@ impl<'a> CheckerState<'a> {
                 if !is_other_bare_type_parameter(default_type)
                     && !is_other_bare_type_parameter(constraint_type)
                 {
+                    cache_default_constraint_success!();
                     continue;
                 }
             }
             if self
                 .empty_type_literal_satisfies_optional_mapped_constraint(param_idx, constraint_type)
             {
+                cache_default_constraint_success!();
                 continue;
             }
             // A default that is syntactically one branch of its constraint union
@@ -48,6 +68,7 @@ impl<'a> CheckerState<'a> {
             // validation from depending on an early semantic copy of the same
             // branch that may not have all lazy aliases stabilized yet.
             if self.type_parameter_default_syntactically_satisfies_constraint(param_idx) {
+                cache_default_constraint_success!();
                 continue;
             }
             let mut default_satisfies = self
@@ -123,6 +144,7 @@ impl<'a> CheckerState<'a> {
                         );
                 }
                 if default_satisfies {
+                    cache_default_constraint_success!();
                     continue;
                 }
                 let type_str = self.format_type(default_type);
@@ -132,6 +154,9 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                     &[&type_str, &constraint_str],
                 );
+            }
+            if self.ctx.diagnostics.len() == diagnostics_before {
+                cache_default_constraint_success!();
             }
         }
     }

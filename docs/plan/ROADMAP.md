@@ -45,8 +45,9 @@ as campaigns instead of isolated conformance picks.
 ## Current Public Metrics
 
 Sources: checked-in conformance artifacts, `scripts/conformance/query-conformance.py
---dashboard`, `scripts/emit/query-emit.py --families`, live GitHub orientation on
-2026-06-04, `scripts/bench/project-row-summary.mjs`, public README metrics, and
+--dashboard` (accepted-regression count refreshed on 2026-06-06),
+`scripts/emit/query-emit.py --families`, live GitHub orientation on 2026-06-04,
+`scripts/bench/project-row-summary.mjs`, public README metrics, and
 `scripts/emit/audit-output-surgery.py`.
 Release planning uses exact artifact numerators and denominators; stale detail
 artifacts are triage inputs only, not current public truth.
@@ -54,12 +55,12 @@ artifacts are triage inputs only, not current public truth.
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | checked detail is `100.0%` exact (`12,585 / 12,585`) |
-| Accepted-regression strictness | `13` listed tests in `conformance-accepted-regressions.txt`; the dashboard remains exact, but strictness debt must be justified or paid down before treating the runway as retired |
-| JavaScript emit | `99.5%` (`13,468 / 13,530`) in README/public aggregate and checked detail |
-| Declaration emit | `99.5%` (`1,661 / 1,669`) in README/public aggregate and checked detail |
+| Accepted-regression strictness | `15` listed tests in `conformance-accepted-regressions.txt`; the dashboard remains exact, but strictness debt must be justified or paid down before treating the runway as retired |
+| JavaScript emit | `100.0%` exact (`13,530 / 13,530`) in README/public aggregate and checked detail |
+| Declaration emit | `100.0%` exact (`1,669 / 1,669`) in README/public aggregate and checked detail |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
 | Open bug issues | `68` open `bug` issues in live GitHub orientation (point-in-time count; drifts daily) |
-| Output-surgery audit | passing: `0` unallowlisted calls, `0` stale allowlist entries; resource-region output surgery is capped at `4 / 4` with `0` remaining budget slots |
+| Output-surgery audit | passing: `0` unallowlisted calls, `0` stale allowlist entries, `0` allowlisted calls |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -71,7 +72,7 @@ The exact conformance snapshot does not by itself mean the conformance runway
 is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
 remains a separate gate-strictness artifact and must be kept empty or
 explicitly justified by current CI evidence before agents treat conformance
-cleanup as complete. It currently lists `13` accepted-regression entries even
+cleanup as complete. It currently lists `15` accepted-regression entries even
 though the dashboard is exact, so the strictness gate is non-empty and each
 entry should be paid down or re-justified in follow-up PRs. A checked-in detail
 snapshot that no longer lists these tests as failures is not enough to retire
@@ -121,16 +122,15 @@ changes the picture.
    parity, bug closure, green project rows, and `2x` timing wins over `tsgo`.
    Architecture cleanup is part of that goal only when it ratchets a measured
    boundary counter down or unblocks one of those gates.
-7. Emit remains the largest numeric parity gap and a real architecture risk:
-   the README/public aggregate and checked detail agree at JavaScript emit
-   `13,468 / 13,530` and declaration emit `1,661 / 1,669`. DTS still needs to
-   move away from late semantic discovery during printing toward a precomputed
-   declaration/public-API summary.
-8. Output-surgery audit is passing with exhausted pressure: the current audit
-   reports `0` unallowlisted calls and `0` stale allowlist entries. Resource-region
-   output-surgery is now `4 / 4`; Studio emit work should keep ratcheting it
-   down, and any cap increase must name an owner, removal condition, and
-   counter update.
+7. Emit remains a release-gate tail and a real architecture risk: the
+   README/public aggregate and checked detail agree at exact JavaScript emit
+   `13,530 / 13,530`, and declaration emit is exact at `1,669 / 1,669`.
+   DTS still needs to move away from late semantic discovery
+   during printing toward a precomputed declaration/public-API summary.
+8. Output-surgery audit is passing with no allowlist pressure: the current audit
+   reports `0` unallowlisted calls, `0` stale allowlist entries, and `0`
+   allowlisted calls. Studio emit work should keep it there; any cap increase
+   must name an owner, removal condition, and counter update.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows
@@ -163,7 +163,8 @@ GitHub is the coordination surface.
    Address other agents by `AgentName` when coordination matters.
 8. Use only canonical ownership labels from `docs/plan/agents/README.md`.
    Replace generated runner labels or `agnet:*` typos with the correct lane
-   before marking a PR ready or adding `merge-queue`.
+   before marking a PR ready or queueing it with
+   `gh pr merge <pr> --match-head-commit <sha>`.
 9. Never merge work that is still draft, labeled `WIP`, titled with `[WIP]`, or
    described as not ready.
 10. Treat `ready` plus a `WIP` label as WIP. Remove the label before merge.

@@ -6,6 +6,7 @@ use tsz_solver::TypeId;
 
 mod indexed_access_helpers;
 mod mapped_key_check;
+mod object_format;
 
 use indexed_access_helpers::{
     generic_constrained_index, indexed_access_object_alias_application_exceeds_depth,
@@ -498,6 +499,11 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        if self
+            .type_literal_dispatch_index_is_declared_key_subset(data.object_type, data.index_type)
+        {
+            return;
+        }
 
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -517,6 +523,15 @@ impl<'a> CheckerState<'a> {
 
         if index_type != TypeId::ERROR
             && self.type_literal_ast_key_space_accepts_index(data.object_type, index_type)
+        {
+            return;
+        }
+        if index_type != TypeId::ERROR
+            && self.nested_type_literal_index_access_allows_index(
+                data.object_type,
+                data.index_type,
+                index_type,
+            )
         {
             return;
         }
@@ -564,10 +579,13 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
-            // Clean up object type text: strip enclosing parens and any trailing
-            // index access syntax that may leak from the object_type node span.
+            // Clean up object type text: normalize stray whitespace (so the
+            // display matches tsc's printer), strip enclosing parens, and drop
+            // any trailing index access syntax that may leak from the node span.
+            let normalized_object_text =
+                object_format::normalize_indexed_access_object_text(&raw_object_text);
             let object_type_str = {
-                let trimmed = raw_object_text.trim();
+                let trimmed = normalized_object_text.trim();
                 let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
                 let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
                 if let Some(pos) = trimmed.find(")[") {
@@ -924,6 +942,7 @@ impl<'a> CheckerState<'a> {
         if foreign_keyof_indexed_constraint {
             let obj_type_str = self
                 .node_text(data.object_type)
+                .map(|text| object_format::normalize_indexed_access_object_text(&text))
                 .unwrap_or_else(|| self.format_type(object_type));
             let index_type_str = self.format_type(index_type);
             let message_2536 = format_message(
@@ -1418,6 +1437,8 @@ impl<'a> CheckerState<'a> {
                         let object_type_str = self
                             .node_text(data.object_type)
                             .map(|text| {
+                                let text =
+                                    object_format::normalize_indexed_access_object_text(&text);
                                 let trimmed = text.trim();
                                 let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
                                 let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
@@ -1554,7 +1575,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let obj_type_str = self.format_type(object_type);
+            let obj_type_str = self.format_ts2536_object_type(data.object_type, object_type);
             let evaluated_index_type = self.evaluate_type_for_assignability(index_type);
             let prefer_evaluated_index = (evaluated_index_type != TypeId::ERROR
                 && !crate::query_boundaries::common::contains_type_parameters(

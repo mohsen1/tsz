@@ -801,12 +801,18 @@ pub(crate) fn should_report_member_type_mismatch_bivariant(
 fn is_incomplete_class_type(checker: &mut CheckerState<'_>, type_id: TypeId) -> bool {
     match checker.ctx.types.lookup(type_id) {
         Some(tsz_solver::TypeData::Object(shape_id))
-        | Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => checker
-            .ctx
-            .types
-            .object_shape(shape_id)
-            .properties
-            .is_empty(),
+        | Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
+            // Only a *class* instance type that came back empty during circular
+            // resolution counts as incomplete. A class instance carries its class
+            // symbol even when its property set is transiently empty; a symbol-less
+            // empty object is a genuine, fully-resolved `{}` type (e.g. an explicit
+            // `(): {}` annotation), not a resolution artifact. Treating the latter
+            // as "incomplete" would wrongly suppress a real member-type mismatch
+            // (TS2416) — e.g. an override returning `{}` against a base member with
+            // required members.
+            let shape = checker.ctx.types.object_shape(shape_id);
+            shape.properties.is_empty() && shape.symbol.is_some()
+        }
         Some(tsz_solver::TypeData::Application(app_id)) => {
             // For Application types like B<T>, evaluate the application to check
             // if the resulting object has 0 properties.

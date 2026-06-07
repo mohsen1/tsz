@@ -10,7 +10,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
+    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleListId, TypeId,
+    Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -21,6 +22,33 @@ use crate::visitor::{
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Array element type, transparently peeling a single `readonly` array
+    /// wrapper (`readonly T[]` / `ReadonlyArray<T>`).
+    ///
+    /// tsc walks a readonly array element exactly like a mutable one when
+    /// elaborating an assignment failure, so the explanation must reach the
+    /// element regardless of the `readonly` modifier. Without this peel,
+    /// `readonly number[]` vs `readonly string[]` loses its nested
+    /// `Type 'number' is not assignable to type 'string'.` line (the modifier
+    /// itself is not the failure — the element relation is).
+    fn array_element_peeling_readonly(&self, ty: TypeId) -> Option<TypeId> {
+        array_element_type(self.interner, ty).or_else(|| {
+            readonly_inner_type(self.interner, ty)
+                .and_then(|inner| array_element_type(self.interner, inner))
+        })
+    }
+
+    /// Tuple element list, transparently peeling a single `readonly` tuple
+    /// wrapper (`readonly [..]`). Mirrors [`Self::array_element_peeling_readonly`]
+    /// so readonly tuple mismatches still elaborate the offending position
+    /// (`Type at position N in source is not compatible ...`).
+    fn tuple_list_peeling_readonly(&self, ty: TypeId) -> Option<TupleListId> {
+        tuple_list_id(self.interner, ty).or_else(|| {
+            readonly_inner_type(self.interner, ty)
+                .and_then(|inner| tuple_list_id(self.interner, inner))
+        })
+    }
+
     fn shape_or_type_requires_declared_index_signature(
         &self,
         shape: &ObjectShape,
@@ -345,6 +373,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Application expansion may produce a Mapped type (e.g., Required<Foo> →
         // { [K in keyof Foo]-?: Foo[K] }) which needs further evaluation to a concrete
         // object type so property enumeration can generate TS2739/TS2741 diagnostics.
+        //
+        // Preserve the pre-evaluation source union for member elaboration. tsc
+        // applies `UnionReduction.Literal` to written/annotation unions: it absorbs
+        // literals into their primitive but never drops a member merely because it
+        // is a structural subtype of a sibling. `evaluate_type` re-normalizes via
+        // the default (subtype-reducing) union path, so a written union like
+        // `string[] | [string, string]` collapses to `string[]` here even though
+        // tsc keeps both members. Capture the member-preserving union so the
+        // union-source elaboration below can still drill into the failing member.
+        let pre_eval_source = resolved_source;
         let eval_source = self.evaluate_type(resolved_source);
         if eval_source != resolved_source {
             resolved_source = eval_source;
@@ -352,6 +390,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let eval_target = self.evaluate_type(resolved_target);
         if eval_target != resolved_target {
             resolved_target = eval_target;
+        }
+
+        // A type-parameter source matches none of the structural arms below —
+        // it has no object/tuple/union/primitive shape of its own — and tsc
+        // always elaborates `T <: X` through `T`'s base constraint regardless
+        // of the target shape (primitive, object, union, evaluated conditional,
+        // ...). Surface that constraint relation before the shape-specific arms
+        // so the chain reaches the real root instead of collapsing to a bare
+        // `TypeMismatch`/`NoUnionMemberMatches` line.
+        if let Some(reason) =
+            self.explain_type_parameter_constraint_failure(source, resolved_source, resolved_target)
+        {
+            return Some(reason);
         }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
@@ -703,8 +754,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_elem), Some(t_elem)) = (
-            array_element_type(self.interner, source),
-            array_element_type(self.interner, target),
+            self.array_element_peeling_readonly(source),
+            self.array_element_peeling_readonly(target),
         ) {
             if !self.check_subtype(s_elem, t_elem).is_true() {
                 // Recurse into the element failure so the rendered chain carries
@@ -760,8 +811,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_elems), Some(t_elems)) = (
-            tuple_list_id(self.interner, source),
-            tuple_list_id(self.interner, target),
+            self.tuple_list_peeling_readonly(source),
+            self.tuple_list_peeling_readonly(target),
         ) {
             let s_elems = self.interner.tuple_list(s_elems);
             let t_elems = self.interner.tuple_list(t_elems);
@@ -942,10 +993,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // assignable to type 'T'.`). Without this, the chain stops at the bare
         // union line and hides why the assignment fails (e.g. the `undefined`
         // member contributed by an optional property).
-        if let Some(member_list) = union_list_id(self.interner, resolved_source) {
+        //
+        // Prefer the evaluated `resolved_source` when it is still a union (e.g. a
+        // conditional/mapped type that evaluates *into* a union). Otherwise fall
+        // back to `pre_eval_source`: when subtype reduction during `evaluate_type`
+        // collapsed a written union of structurally-related members (e.g.
+        // `string[] | [string, string]` -> `string[]`), the member elaboration
+        // must still walk the members tsc preserves under `UnionReduction.Literal`.
+        let (union_member_source, union_member_list) =
+            match union_list_id(self.interner, resolved_source) {
+                Some(list) => (resolved_source, Some(list)),
+                None => (
+                    pre_eval_source,
+                    union_list_id(self.interner, pre_eval_source),
+                ),
+            };
+        if let Some(member_list) = union_member_list {
             let members = self.interner.type_list(member_list);
             for &member in members.iter() {
-                if member == source || member == resolved_source {
+                if member == source || member == union_member_source {
                     // Defensive: avoid self-recursion on a degenerate union.
                     continue;
                 }
@@ -978,12 +1044,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // line and hides which member fails.
                 //
                 // The set is intentionally limited to member-failure shapes whose
-                // render composes exactly with `tsc` here. Notably excluded:
-                //   * `TupleElementMismatch` (fixed-arity count mismatch) — its
-                //     nested `TS2618`/`TS2619` (`Source has N element(s) but
-                //     target requires/allows only M`) leaf render is owned
-                //     separately; surfacing it before that lands emits a non-tsc
-                //     line.
+                // render composes exactly with `tsc` here.
+                //
+                // Tuple fixed-arity (`TupleElementMismatch`) and variadic-arity
+                // (`TupleArityMismatch`) count mismatches are header-led leaves:
+                // their `TS2618`/`TS2619` (`Source has N element(s) but target
+                // requires/allows only M`) text carries no member name, so the
+                // union renderer supplies the `Type 'M' is not assignable to type
+                // 'T'.` member header (via `union_member_nested_needs_header`)
+                // before drilling the arity leaf — matching tsc:
+                //   Type '[2, 3] | [4]' is not assignable to type '[number]'.
+                //     Type '[2, 3]' is not assignable to type '[number]'.
+                //       Source has 2 element(s) but target allows only 1.
+                //
+                // Notably excluded:
                 //   * `OptionalPropertyRequired`/`ReadonlyPropertyMismatch` — `tsc`
                 //     leads these with the member header (and they only arise in
                 //     narrow `exactOptionalPropertyTypes` / readonly-index shapes),
@@ -998,6 +1072,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             | SubtypeFailureReason::MissingProperty { .. }
                             | SubtypeFailureReason::MissingProperties { .. }
                             | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                            | SubtypeFailureReason::TupleElementMismatch { .. }
+                            | SubtypeFailureReason::TupleArityMismatch(_)
+                            | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
                             | SubtypeFailureReason::PropertyTypeMismatch { .. }
                             | SubtypeFailureReason::ArrayElementMismatch { .. }
                             | SubtypeFailureReason::IndexSignatureMismatch { .. }
@@ -1040,6 +1117,68 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         Some(SubtypeFailureReason::TypeMismatch {
             source_type: source,
             target_type: target,
+        })
+    }
+
+    /// Elaborate a failed `T <: X` relation (where `T` is a type parameter)
+    /// through `T`'s declared base constraint, mirroring tsc's
+    /// `getBaseConstraintOfType` elaboration.
+    ///
+    /// The structural rule: a type parameter is assignable to a target only
+    /// through its constraint, so when the relation fails the constraint must
+    /// also fail against the (evaluated) target. Surface that constraint-level
+    /// relation as the nested reason so the diagnostic chain reaches the real
+    /// root (`Type '<constraint>' is not assignable to type 'X'.` and deeper)
+    /// instead of stopping at `Type 'T' is not assignable to type 'X'.`.
+    ///
+    /// Independent of the target shape (primitive, object, union, evaluated
+    /// conditional, ...) and of any identifier spelling — it operates purely
+    /// over the constraint TypeId. Unconstrained type parameters carry an
+    /// implicit `unknown` constraint for which tsc adds no elaboration line, so
+    /// they fall through to the bare `TypeMismatch` fallback.
+    fn explain_type_parameter_constraint_failure(
+        &mut self,
+        source: TypeId,
+        resolved_source: TypeId,
+        resolved_target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let info = crate::visitor::type_param_info(self.interner, resolved_source)?;
+        let constraint = info.constraint?;
+
+        // When the *target* is itself a (bare) type parameter, tsc does not
+        // elaborate through the source constraint — it reports the
+        // `'U' could be instantiated with an arbitrary type ...` caveat instead,
+        // which a separate path owns. Adding a constraint chain on top of that
+        // caveat would diverge from tsc, so leave those failures alone.
+        if is_type_parameter(self.interner, resolved_target) {
+            return None;
+        }
+
+        let resolved_constraint = self.resolve_lazy_type(constraint);
+
+        // A constraint that reinterns to the parameter itself carries no extra
+        // information; avoid emitting a degenerate self-referential chain.
+        if resolved_constraint == resolved_source || resolved_constraint == source {
+            return None;
+        }
+
+        // The relation has already failed. If the constraint nonetheless
+        // relates to the target, the parameter failed for a reason other than
+        // its constraint (e.g. variance or positional identity); there is no
+        // constraint-level root to surface, so defer to the bare fallback.
+        if self
+            .check_subtype(resolved_constraint, resolved_target)
+            .is_true()
+        {
+            return None;
+        }
+
+        let nested = self.explain_failure_guarded(resolved_constraint, resolved_target)?;
+        Some(SubtypeFailureReason::TypeParameterConstraintMismatch {
+            source_type: source,
+            target_type: resolved_target,
+            constraint_type: resolved_constraint,
+            nested_reason: Box::new(nested),
         })
     }
 
