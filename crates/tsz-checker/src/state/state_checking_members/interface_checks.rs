@@ -842,6 +842,11 @@ impl<'a> CheckerState<'a> {
         // (both first and subsequent), not just the second+.
         for (name, entries) in &seen_properties {
             if entries.len() > 1 {
+                // TS2687: duplicate property declarations must agree on
+                // `readonly` / optional modifiers. Independent of TS2300/TS2717.
+                let member_nodes: Vec<NodeIndex> = entries.iter().map(|entry| entry.0).collect();
+                self.report_property_modifier_disagreements(name, &member_nodes);
+
                 // Check if all entries have syntactic names (for TS2300 decisions).
                 // When computed properties resolve to the same name (e.g., `[c0]` and `[c1]`
                 // where c0="1" and c1=1), tsc emits only TS2717, not TS2300.
