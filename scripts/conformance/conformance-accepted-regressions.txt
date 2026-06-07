@@ -18,7 +18,6 @@
 #   seven additional current-head rows after the stale type-query-flow module
 #   deletion made the checker buildable again.
 # - PR #12649 run 27008940643 at f2db335b3d found five rows returned and five
-#   previous accepted rows resolved after exact-head shard rerun.
 # - PR #12649 run 27013631682 at synthetic merge 9a9f5fb46f found four rows
 #   returned and twelve previous accepted rows resolved after merging main.
 # - PR #12649 run 27015324920 attempt 2 at synthetic merge 2f1ff2f987 found
@@ -50,7 +49,6 @@ TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
-TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
@@ -93,3 +91,14 @@ TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 # only exposed by it. Tracked in #12876 (solver recursive/distributive array
 # inference, same family as #10872/#11585). Remove this entry when #12876 lands.
 TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/recursiveTypeReferences1.ts
+
+# excessPropertyCheckIntersectionWithRecursiveType.ts: RESOLVED. A nested TS2353
+# was dropped for a fresh literal checked against a recursive homomorphic mapped
+# target `{ [K in keyof T]: F<T[K]> }` whose property value stays a *raw* mapped
+# type (the Schema2 shape, where `& Example<T>` lives inside the conditional
+# branches). `report_concrete_mapped_target_excess_property` checked excess only
+# at the mapped level and then returned `true` (fully handled), skipping the
+# descent into each present property's nested literal where the real excess key
+# lives. It now returns `false` when there is no excess at the mapped level,
+# deferring to the recursion-capable simple-object/intersection branches. Covered
+# by recursive_mapped_intersection_nested_excess_property_tests.

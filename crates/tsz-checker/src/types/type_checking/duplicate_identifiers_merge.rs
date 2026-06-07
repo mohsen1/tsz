@@ -52,23 +52,27 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let member_nodes: Vec<NodeIndex> = match node.kind {
+            // Borrow the member list rather than clone: the loop only reads from
+            // `&self` (member-name and visibility queries), so the arena borrow
+            // persists across iterations instead of allocating a fresh `Vec` per
+            // merged class / interface declaration.
+            let member_nodes: &[NodeIndex] = match node.kind {
                 syntax_kind_ext::CLASS_DECLARATION => self
                     .ctx
                     .arena
                     .get_class(node)
-                    .map(|class_data| class_data.members.nodes.clone())
+                    .map(|class_data| class_data.members.nodes.as_slice())
                     .unwrap_or_default(),
                 syntax_kind_ext::INTERFACE_DECLARATION => self
                     .ctx
                     .arena
                     .get_interface(node)
-                    .map(|interface_data| interface_data.members.nodes.clone())
+                    .map(|interface_data| interface_data.members.nodes.as_slice())
                     .unwrap_or_default(),
-                _ => Vec::new(),
+                _ => &[],
             };
 
-            for &member_idx in &member_nodes {
+            for &member_idx in member_nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
                 };
