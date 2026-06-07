@@ -36,7 +36,15 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
-type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
+// The trailing two `bool`s are `no_unchecked_indexed_access` and
+// `exact_optional_property_types`. Evaluating a generic application can expand a
+// homomorphic mapped type whose optional-modifier stripping depends on
+// `exactOptionalPropertyTypes`, so both options are part of the cache identity
+// (issue #10970).
+type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool, bool);
+// Element access (indexed access) of an optional property includes `undefined`
+// under both `exactOptionalPropertyTypes` settings (matching tsc), so the result
+// does not depend on that option and it is intentionally not part of this key.
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 
@@ -974,6 +982,7 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
             def_id,
             smallvec::SmallVec::from_slice(args),
             no_unchecked_indexed_access,
+            self.exact_optional_property_types(),
         ))
     }
 
@@ -990,6 +999,7 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
                 def_id,
                 smallvec::SmallVec::from_slice(args),
                 no_unchecked_indexed_access,
+                self.exact_optional_property_types(),
             ),
             result,
         );
@@ -1005,6 +1015,7 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
             .get(&EvaluationCacheKey::new(
                 type_id,
                 no_unchecked_indexed_access,
+                self.exact_optional_property_types(),
             ))
             .copied()
     }
@@ -1016,7 +1027,11 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
         result: TypeId,
     ) {
         self.closed_eval_cache.borrow_mut().insert(
-            EvaluationCacheKey::new(type_id, no_unchecked_indexed_access),
+            EvaluationCacheKey::new(
+                type_id,
+                no_unchecked_indexed_access,
+                self.exact_optional_property_types(),
+            ),
             result,
         );
     }
@@ -1412,7 +1427,8 @@ impl QueryDatabase for QueryCache<'_> {
         }
 
         let request = EvaluationRequest::new(type_id)
-            .with_no_unchecked_indexed_access(no_unchecked_indexed_access);
+            .with_no_unchecked_indexed_access(no_unchecked_indexed_access)
+            .with_exact_optional_property_types(self.exact_optional_property_types());
         let key = request.cache_key();
         let cached = self.eval_cache.borrow().get(&key).copied();
 
