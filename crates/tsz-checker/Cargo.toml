@@ -401,6 +401,9 @@ path = "tests/type_alias_namespace_merge_tests.rs"
 name = "type_alias_typeof_circular_tests"
 path = "tests/type_alias_typeof_circular_tests.rs"
 [[test]]
+name = "typeof_self_referential_alias_termination_tests"
+path = "tests/typeof_self_referential_alias_termination_tests.rs"
+[[test]]
 name = "destructuring_default_target_narrow_tests"
 path = "tests/destructuring_default_target_narrow_tests.rs"
 [[test]]

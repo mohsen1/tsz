@@ -499,7 +499,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// A run in any of these states must not persist results to caches whose
     /// key does not capture the ambient stack depth (`closed_eval_cache`,
-    /// `application_eval_cache`); see the respective limit gates.
+    /// `application_eval_cache`); see the respective limit gates. `pub(crate)`
+    /// so the per-query cross-evaluator memo can tell a stable result (safe to
+    /// memoize) from a stack-context artifact that must be recomputed (#11586).
     #[inline]
     pub(crate) const fn recursion_limit_hit(&self) -> bool {
         self.guard.is_exceeded() || self.silent_depth_bailed || self.deep_recursion_seen
