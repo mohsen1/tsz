@@ -469,3 +469,72 @@ fn evaluate_application_divergent_alias_does_not_poison_cache() {
         );
     }
 }
+
+/// Phase 5 — an earlier, unrelated recursion bail must not disable caching for a
+/// fully-converging alias evaluated afterwards on the same evaluator.
+///
+/// `deep_recursion_seen` / `silent_depth_bailed` are sticky for the evaluator's
+/// lifetime, so the previous behavior — gating cache writes on
+/// `!recursion_limit_hit()` — turned every later `application_eval_cache` write
+/// off the moment the first unrelated alias bailed (a cycle / silent-depth
+/// bail that leaves the evaluator usable, unlike the divergent
+/// `guard.mark_exceeded` path covered by
+/// `evaluate_application_divergent_alias_does_not_poison_cache`). A
+/// schema-library shape such as TypeBox/zod `Static<TObject<…>>` re-instantiates
+/// the *same* finite inner application across each intersection branch and
+/// nesting level; with caching globally disabled after one unrelated bail it is
+/// recomputed combinatorially, turning a terminating type into an effective hang
+/// (#10834). Cacheability is now keyed on the per-application epoch: a converging
+/// alias whose own body subtree fires no new limit event is still persisted.
+///
+/// Structural axis (CLAUDE.md §25/§26): keyed on recursion state, not a
+/// spelling, so the def id and the type-parameter / field names both vary.
+#[test]
+fn evaluate_application_clean_alias_caches_after_unrelated_recursion_bail() {
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+
+    for (good_raw, good_param, good_field, good_arg) in [
+        (832u32, "U", "value", TypeId::NUMBER),
+        (954u32, "Elem", "payload", TypeId::STRING),
+    ] {
+        let interner = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+
+        // Converging alias `Good<U> = { <field>: U }` — its body fires no limit
+        // event, so its result is a complete function of `(DefId, args)`.
+        let good_def = DefId(good_raw);
+        let good_param = unconstrained_param(&interner, good_param);
+        let good_param_ty = interner.intern(TypeData::TypeParameter(good_param));
+        let good_field_atom = interner.intern_string(good_field);
+        let good_body = interner.object(vec![PropertyInfo::new(good_field_atom, good_param_ty)]);
+        let good_app = alias_application(
+            &interner,
+            &mut env,
+            good_def,
+            DefKind::TypeAlias,
+            good_body,
+            vec![good_param],
+            vec![good_arg],
+        );
+        let expected = interner.object(vec![PropertyInfo::new(good_field_atom, good_arg)]);
+
+        let qc = QueryCache::new(&interner);
+        let mut evaluator = TypeEvaluator::with_resolver(&interner, &env).with_query_db(&qc);
+
+        // An earlier, unrelated alias bailed (a cycle / silent-depth bail),
+        // latching the sticky recursion-limit state without poisoning the guard.
+        evaluator.simulate_unrelated_recursion_bail_for_test();
+
+        // The unrelated converging alias must still expand correctly AND be
+        // persisted — the sticky bail flag must not disable its write.
+        let result = evaluator.evaluate(good_app);
+        assert_eq!(result, expected, "Good<arg> must expand structurally");
+        assert_eq!(
+            qc.lookup_application_eval_cache(good_def, &[good_arg], false),
+            Some(expected),
+            "a fully-converging alias must still populate the cache even after an \
+             unrelated alias bailed earlier on the same evaluator (#10834)"
+        );
+    }
+}

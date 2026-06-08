@@ -944,7 +944,10 @@ impl<'a> CheckerState<'a> {
             // referential typeof (e.g. `(t: typeof C.g) => void` where `C.g`
             // IS that function) produces an extra outer wrapper. tsc keeps
             // the typeof reference intact in the rendered message.
-            if crate::query_boundaries::common::function_signature_has_typeof(self.ctx.types, ty) {
+            if crate::query_boundaries::diagnostics::function_signature_has_typeof(
+                self.ctx.types,
+                ty,
+            ) {
                 visiting.remove(&ty);
                 return ty;
             }
@@ -1423,7 +1426,7 @@ impl<'a> CheckerState<'a> {
         // (return-side) or extra wrapping like `(t: (t: typeof g) => void)
         // => void` (param-side, for recursive `typeof X` referring to the
         // enclosing function).
-        if crate::query_boundaries::common::function_signature_has_typeof(self.ctx.types, ty) {
+        if crate::query_boundaries::diagnostics::function_signature_has_typeof(self.ctx.types, ty) {
             return false;
         }
 

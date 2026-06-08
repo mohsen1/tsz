@@ -786,12 +786,49 @@ impl<'a> CheckerState<'a> {
                 interface,
                 seen_type_names,
             ) && interface.members.nodes.iter().copied().all(|member_idx| {
-                let Some(member_node) = arena.get(member_idx) else {
-                    return false;
-                };
-                if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
-                    return false;
-                }
+                Self::source_file_interface_member_is_direct_lowerable(
+                    arena,
+                    delegate_binder,
+                    member_idx,
+                    seen_type_names,
+                )
+            });
+            seen_type_names.pop();
+            result
+        })
+    }
+
+    /// Decide whether a single source-file interface member can be lowered on
+    /// the direct cross-file path (no child checker).
+    ///
+    /// The direct path reuses the same `TypeLowering` member collection as the
+    /// mature path, so it produces an identical member type *as long as every
+    /// type referenced by the member resolves through the option-bag guard*
+    /// (primitives, `Array`/`ReadonlyArray`, and direct-lowerable sibling
+    /// interfaces/aliases). Anything the guard cannot prove resolvable falls
+    /// back to the child-checker path, which preserves correctness.
+    ///
+    /// Two member shapes qualify:
+    /// - Plain property signatures whose annotation is option-bag lowerable.
+    /// - Non-generic method signatures whose every parameter annotation and
+    ///   return annotation are option-bag lowerable. Optional and rest
+    ///   parameters are fine (the shared collector models them identically on
+    ///   both paths); `this` parameters and own method type parameters need the
+    ///   mature generic/self path and are rejected.
+    ///
+    /// Call/construct/index signatures, accessors, computed names, and members
+    /// with unannotated parameters or return types stay on the child path.
+    fn source_file_interface_member_is_direct_lowerable<'b>(
+        arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        member_idx: NodeIndex,
+        seen_type_names: &mut Vec<&'b str>,
+    ) -> bool {
+        let Some(member_node) = arena.get(member_idx) else {
+            return false;
+        };
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
                 let Some(signature) = arena.get_signature(member_node) else {
                     return false;
                 };
@@ -809,10 +846,55 @@ impl<'a> CheckerState<'a> {
                         signature.type_annotation,
                         seen_type_names,
                     )
-            });
-            seen_type_names.pop();
-            result
-        })
+            }
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                let Some(signature) = arena.get_signature(member_node) else {
+                    return false;
+                };
+                // Own method type parameters (`foo<T>(...)`) need the mature
+                // generic instantiation path.
+                if signature
+                    .type_parameters
+                    .as_ref()
+                    .is_some_and(|params| !params.nodes.is_empty())
+                {
+                    return false;
+                }
+                signature.parameters.as_ref().is_none_or(|params| {
+                    params.nodes.iter().copied().all(|param_idx| {
+                        let Some(param_node) = arena.get(param_idx) else {
+                            return false;
+                        };
+                        let Some(parameter) = arena.get_parameter(param_node) else {
+                            return false;
+                        };
+                        !Self::source_file_parameter_is_this(arena, parameter)
+                            && Self::source_file_type_node_is_option_bag_lowerable(
+                                arena,
+                                delegate_binder,
+                                parameter.type_annotation,
+                                seen_type_names,
+                            )
+                    })
+                }) && Self::source_file_type_node_is_option_bag_lowerable(
+                    arena,
+                    delegate_binder,
+                    signature.type_annotation,
+                    seen_type_names,
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn source_file_parameter_is_this(
+        arena: &NodeArena,
+        parameter: &tsz_parser::parser::node::ParameterData,
+    ) -> bool {
+        arena
+            .get(parameter.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .is_some_and(|ident| ident.escaped_text == "this")
     }
 
     fn source_file_interface_heritage_is_direct_lowerable<'b>(

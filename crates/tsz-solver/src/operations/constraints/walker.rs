@@ -591,46 +591,126 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     computed
                 };
 
-                // Collect source members that matched fixed targets, so we can
-                // build a reduced target for the remaining (placeholder) members.
-                // This matches tsc's inferFromMatchingTypes: after pairing off
-                // identical members (e.g., `null` ↔ `null`), the remaining source
-                // placeholders are inferred against the remaining target members.
-                // Without this reduction, `T | null` against `HTMLElement | null`
-                // would infer T = HTMLElement | null (wrong) instead of T = HTMLElement.
-                let matched_fixed: FxHashSet<TypeId> = s_members
+                // Partition the parameterized target members into bare inference
+                // variables ("naked") and the rest. The single naked-variable case
+                // follows tsc's `inferToMultipleTypes`; otherwise we fall back to
+                // the historical per-member decomposition.
+                let naked_target_vars: Vec<TypeId> = t_members_list
                     .iter()
                     .copied()
-                    .filter(|member| fixed_targets.contains(member))
+                    .filter(|member| var_map.contains_key(member))
                     .collect();
-                let has_unmatched_source = s_members
-                    .iter()
-                    .any(|member| !fixed_targets.contains(member));
 
-                // Build a reduced target union: remove matched fixed members.
-                // Only do this when there are unmatched source members (placeholders)
-                // that need inference from the remaining target members.
-                let reduced_target = if !matched_fixed.is_empty() && has_unmatched_source {
-                    let remaining_targets: Vec<TypeId> = t_members_list
-                        .iter()
-                        .copied()
-                        .filter(|member| !matched_fixed.contains(member))
-                        .collect();
-                    if remaining_targets.is_empty()
-                        || remaining_targets.len() == t_members_list.len()
-                    {
-                        target // No reduction possible or nothing removed
-                    } else {
-                        crate::utils::union_or_single(self.interner, remaining_targets)
+                if naked_target_vars.len() == 1 {
+                    // tsc's `inferToMultipleTypes` for a union target with exactly one
+                    // naked inference variable: route each source constituent to a
+                    // structured arm whose outer structure it shares, and *union* all
+                    // remaining (unmatched) constituents into a single candidate for
+                    // the naked variable (`inferFromTypes(getUnionType(unmatched),
+                    // nakedTypeVariable)`).
+                    //
+                    // Inferring the unmatched members individually would let
+                    // common-supertype resolution (which governs the `NakedTypeVariable`
+                    // priority these candidates carry) keep only the leftmost branch and
+                    // silently drop the rest — e.g. collapsing the element inference for
+                    // `flat([1, 'a', [2]])` from `string | number` down to `string` and
+                    // reporting a spurious `TS2322`.
+                    let naked_var = naked_target_vars[0];
+                    // Structured members merely *contain* inference variables
+                    // (e.g. `RecArray<T>`), as opposed to the bare naked variable.
+                    let structured_targets: Vec<TypeId> = {
+                        let mut member_visited = FxHashSet::default();
+                        t_members_list
+                            .iter()
+                            .copied()
+                            .filter(|member| {
+                                if var_map.contains_key(member) {
+                                    return false;
+                                }
+                                member_visited.clear();
+                                self.type_contains_placeholder(
+                                    *member,
+                                    var_map,
+                                    &mut member_visited,
+                                )
+                            })
+                            .collect()
+                    };
+                    let mut unmatched: Vec<TypeId> = Vec::new();
+                    for &member in s_members.iter() {
+                        if fixed_targets.contains(&member) {
+                            continue;
+                        }
+                        let structural_matches: Vec<TypeId> = structured_targets
+                            .iter()
+                            .copied()
+                            .filter(|&structured| {
+                                self.types_share_outer_structure_for_constraint(member, structured)
+                            })
+                            .collect();
+                        if structural_matches.is_empty() {
+                            unmatched.push(member);
+                            continue;
+                        }
+                        let infer_targets = if structural_matches.len() > 1 {
+                            self.filter_by_discriminant(member, &structural_matches)
+                        } else {
+                            structural_matches.clone()
+                        };
+                        self.add_never_candidates_for_excluded_union_placeholders(
+                            ctx,
+                            var_map,
+                            &structural_matches,
+                            &infer_targets,
+                            priority,
+                        );
+                        for structured in infer_targets {
+                            self.constrain_types(ctx, var_map, member, structured, priority);
+                        }
+                    }
+                    if !unmatched.is_empty() {
+                        let unioned = crate::operations::widening::union_unmatched_naked_candidate(
+                            self.interner,
+                            unmatched,
+                            ctx.in_readonly_source_context,
+                        );
+                        self.constrain_types(ctx, var_map, unioned, naked_var, priority);
                     }
                 } else {
-                    target
-                };
-
-                for &member in s_members.iter() {
-                    // Skip source members that directly match a fixed target member
-                    if !fixed_targets.contains(&member) {
-                        self.constrain_types(ctx, var_map, member, reduced_target, priority);
+                    // Fallback: pair off source members that match a fixed target,
+                    // then infer the remaining source members against a reduced
+                    // target union. This matches tsc's `inferFromMatchingTypes`:
+                    // without it, `T | null` against `HTMLElement | null` would
+                    // infer `T = HTMLElement | null` instead of `T = HTMLElement`.
+                    let matched_fixed: FxHashSet<TypeId> = s_members
+                        .iter()
+                        .copied()
+                        .filter(|member| fixed_targets.contains(member))
+                        .collect();
+                    let has_unmatched_source = s_members
+                        .iter()
+                        .any(|member| !fixed_targets.contains(member));
+                    let reduced_target = if !matched_fixed.is_empty() && has_unmatched_source {
+                        let remaining_targets: Vec<TypeId> = t_members_list
+                            .iter()
+                            .copied()
+                            .filter(|member| !matched_fixed.contains(member))
+                            .collect();
+                        if remaining_targets.is_empty()
+                            || remaining_targets.len() == t_members_list.len()
+                        {
+                            target // No reduction possible or nothing removed
+                        } else {
+                            crate::utils::union_or_single(self.interner, remaining_targets)
+                        }
+                    } else {
+                        target
+                    };
+                    for &member in s_members.iter() {
+                        // Skip source members that directly match a fixed target member
+                        if !fixed_targets.contains(&member) {
+                            self.constrain_types(ctx, var_map, member, reduced_target, priority);
+                        }
                     }
                 }
             }

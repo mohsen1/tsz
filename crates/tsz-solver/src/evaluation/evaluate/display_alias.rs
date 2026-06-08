@@ -1,4 +1,8 @@
+use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefKind};
+use crate::diagnostics::display_provenance::{
+    self, AliasApplicationPriority, AliasApplicationProvenance,
+};
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
@@ -128,5 +132,102 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> bool {
         matches!(self.interner.lookup(evaluated), Some(TypeData::Tuple(_)))
             && self.application_alias_body_is_fixed_tuple(application) == Some(false)
+    }
+
+    /// Record a back-reference from an evaluated structural form to its
+    /// originating parametric Application — the interface/class counterpart
+    /// to `store_intermediate_application_display_alias` (which only stores
+    /// for type-alias bodies that are themselves Applications).
+    ///
+    /// Read by `reduce_alias_body_to_application_form` to recover the
+    /// Application form when the source has been eagerly evaluated to its
+    /// structural shape (e.g. `Promise<{id}>` substituted into a structural
+    /// Object). The downstream `store_display_alias_preferring_application`
+    /// applies its own safety gates (alloc-order, intrinsic-skip, generic-
+    /// args) that prevent overriding aliases for pre-existing types.
+    pub(in crate::evaluation) fn store_parametric_structural_back_reference(
+        &mut self,
+        evaluated: TypeId,
+        original_type_id: TypeId,
+    ) {
+        if evaluated == original_type_id || evaluated == TypeId::ERROR {
+            return;
+        }
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(original_type_id) else {
+            return;
+        };
+        let app = self.interner.type_application(app_id);
+        if app.args.is_empty() {
+            return;
+        }
+        let app_def = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver
+                .get_def_kind(def_id)
+                .map(|kind| (def_id, kind)),
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                self.resolver.symbol_to_def_id(sym_ref).and_then(|def_id| {
+                    self.resolver
+                        .get_def_kind(def_id)
+                        .map(|kind| (def_id, kind))
+                })
+            }
+            _ => None,
+        };
+        let Some((_, app_kind)) = app_def else {
+            return;
+        };
+        // This back-reference is for nominal parametric shapes. Type-alias
+        // applications still need their evaluated structural form for displays
+        // such as TS2339 on conditional helper aliases. If the resolver cannot
+        // prove a nominal interface/class origin, do not repaint a structural
+        // result as an arbitrary application.
+        if !matches!(
+            app_kind,
+            crate::def::DefKind::Interface | crate::def::DefKind::Class
+        ) {
+            return;
+        }
+        if app.args.contains(&evaluated) {
+            return;
+        }
+        // Args that carry free type parameters (e.g. `OwnerList<T>` inside a
+        // generic function) must still record provenance: `tsc` displays the
+        // nominal reference `OwnerList<T>`, not a structurally-recovered form.
+        // The downstream `store_display_alias_preferring_application` already
+        // applies precise gates (alloc-order, self-reference, bare type
+        // parameter, intrinsic) that reject the genuinely unsafe cases, so a
+        // blunt skip here would only drop legitimate generic-instance aliases
+        // and force the fragile property-based recovery in the checker.
+        if !Self::is_structural_display_alias_result(self.interner, evaluated) {
+            return;
+        }
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
+    }
+
+    pub(in crate::evaluation) fn is_structural_display_alias_result(
+        interner: &dyn TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        matches!(
+            interner.lookup(type_id),
+            Some(
+                TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Mapped(_)
+            )
+        )
     }
 }
