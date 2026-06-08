@@ -50,7 +50,6 @@ TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
-TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
@@ -100,3 +99,17 @@ TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 # lives. It now returns `false` when there is no excess at the mapped level,
 # deferring to the recursion-capable simple-object/intersection branches. Covered
 # by recursive_mapped_intersection_nested_excess_property_tests.
+
+
+# jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts: RESOLVED. A JSDoc
+# `import("pkg").T` type (in `@typedef`/`@type`/`@param`/`@returns`) was never
+# collected as a module reference: only AST `import(...)` type nodes and JSDoc
+# `@import ... from` tags were gathered, so a JSDoc import-type to a bare/package
+# specifier never populated `resolved_module_paths`. The checker's JSDoc resolver
+# then failed to find the export, silently degrading `@param` to `any` and
+# emitting a false TS2552/TS2304 in `@type` position ("Cannot find name 'T'").
+# `collect_module_specifiers_impl` now also scans JSDoc comment text for
+# `import("...")` type specifiers (and `@import` tags), and the source-discovery
+# fast path defers to the full parse when a comment-only `import(` is present, so
+# both relative and package JSDoc import-types resolve like tsc. Covered by
+# jsdoc_import_type_specifier_collection_tests.
