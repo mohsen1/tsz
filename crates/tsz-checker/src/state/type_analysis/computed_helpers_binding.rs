@@ -1593,6 +1593,24 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(tq_idx.0, narrowed);
                 any_changed = true;
             }
+            // Re-lowering a `typeof X` nested inside a generic type-argument or
+            // indexed access resolves it through `get_type_from_type_query`, which
+            // reads the flow-resolved type from the *expression-name* node rather
+            // than the `TYPE_QUERY` node. Cache it under that key too so the value
+            // type is observed on both lowering paths.
+            if narrowed != TypeId::ERROR
+                && let Some(tq_node) = self.ctx.arena.get(*tq_idx)
+                && let Some(type_query) = self.ctx.arena.get_type_query(tq_node)
+                && self
+                    .ctx
+                    .arena
+                    .get(type_query.expr_name)
+                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+                && self.ctx.node_types.get(&type_query.expr_name.0).copied() != Some(narrowed)
+            {
+                self.ctx.node_types.insert(type_query.expr_name.0, narrowed);
+                any_changed = true;
+            }
         }
 
         if !any_changed {
@@ -1693,7 +1711,76 @@ impl<'a> CheckerState<'a> {
             && let Some(data) = self.ctx.arena.get_array_type(node)
         {
             self.collect_type_query_nodes(data.element_type, out);
+            return;
         }
+
+        // A `typeof X` can also be nested inside a generic type-argument
+        // (`F<typeof X>`), an indexed access (`(typeof X)["k"]`), a parenthesized
+        // type, a tuple, or a conditional/mapped/operator body. These positions
+        // must be descended into as well so a `typeof` of a value that *shares its
+        // name with the alias being resolved* (the common `const X = ...; type X =
+        // Infer<typeof X>` shape from schema libraries) is pre-resolved to the
+        // value type instead of deferring to a `TypeQuery` that re-enters the
+        // in-progress alias and never terminates.
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(data) = self.ctx.arena.get_type_ref(node)
+            && let Some(type_arguments) = &data.type_arguments
+        {
+            for &arg_idx in &type_arguments.nodes {
+                self.collect_type_query_nodes(arg_idx, out);
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            && let Some(data) = self.ctx.arena.get_indexed_access_type(node)
+        {
+            self.collect_type_query_nodes(data.object_type, out);
+            self.collect_type_query_nodes(data.index_type, out);
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(data) = self.ctx.arena.get_parenthesized(node)
+        {
+            self.collect_type_query_nodes(data.expression, out);
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::TUPLE_TYPE
+            && let Some(data) = self.ctx.arena.get_tuple_type(node)
+        {
+            for &element_idx in &data.elements.nodes {
+                self.collect_type_query_nodes(element_idx, out);
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+            && let Some(data) = self.ctx.arena.get_named_tuple_member(node)
+        {
+            self.collect_type_query_nodes(data.type_node, out);
+            return;
+        }
+
+        if (node.kind == syntax_kind_ext::OPTIONAL_TYPE || node.kind == syntax_kind_ext::REST_TYPE)
+            && let Some(data) = self.ctx.arena.get_wrapped_type(node)
+        {
+            self.collect_type_query_nodes(data.type_node, out);
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR
+            && let Some(data) = self.ctx.arena.get_type_operator(node)
+        {
+            self.collect_type_query_nodes(data.type_node, out);
+        }
+
+        // Conditional- and mapped-type bodies are intentionally NOT descended
+        // into: their check/extends positions and `[K in ...]` scopes drive a
+        // specialized (deferred, distributive) evaluation whose result changes
+        // if a nested `typeof` is eagerly pre-resolved here, so they are left to
+        // the normal lowering path.
     }
 
     /// Check if a symbol is a type-only export (excludable from namespace value type).
