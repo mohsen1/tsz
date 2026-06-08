@@ -985,6 +985,7 @@ impl<'a> CheckerState<'a> {
             "Type 'string' is not assignable to type 'number'.",
             "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
             "Type 'string' is not assignable to type 'number | number[]'.",
+            "Type 'string' is not assignable to type 'VibratePattern'.",
             "Type '(ValueOrArray<number>)[]' is not assignable to type 'ValueOrArray<number>'.",
         ];
         let fixture_block = source_text
