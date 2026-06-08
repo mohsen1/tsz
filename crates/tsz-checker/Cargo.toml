@@ -138,6 +138,9 @@ path = "tests/block_body_callback_literal_widening_tests.rs"
 name = "extract_alias_distributive_mapped_tests"
 path = "tests/extract_alias_distributive_mapped_tests.rs"
 [[test]]
+name = "fresh_object_literal_arg_callback_param_variance_tests"
+path = "tests/fresh_object_literal_arg_callback_param_variance_tests.rs"
+[[test]]
 name = "generic_multi_prop_object_literal_tests"
 path = "tests/generic_multi_prop_object_literal_tests.rs"
 [[test]]
