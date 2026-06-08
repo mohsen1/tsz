@@ -181,23 +181,54 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Constraint must be keyof(S) for some S
-        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
-            return false;
-        };
-
-        // Fast path: Template is exactly S[K] where K is the iteration parameter
-        let is_identity_template = if let Some((template_obj, template_idx)) =
-            index_access_parts(self.interner, mapped.template)
-        {
-            if let Some(idx_param) = type_param_info(self.interner, template_idx) {
-                idx_param.name == mapped.type_param.name && template_obj == constraint_source
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        // Determine the "picked-from" object `S` and ensure the mapped type's key
+        // set is within `keyof S`. Two shapes are accepted:
+        //   * the constraint is exactly `keyof S` (the classic homomorphic case), or
+        //   * the constraint is a *subset* of `keyof S` and the template is the
+        //     identity `S[P]` — the `Pick<S, K>` shape `{ [P in K]: S[P] }`, where
+        //     every demanded key `P ∈ K` is a key of `S`, so a `T` carrying `S`'s
+        //     shape supplies each demanded property with a matching type. tsc
+        //     accepts `T <: Pick<T, SomeKeys<T>>` for exactly this reason.
+        // `is_identity_template` is set true when the constraint-source is derived
+        // from an identity `S[P]` template, so the general `S[K] <: Template` check
+        // below can be skipped.
+        let (constraint_source, is_identity_template) =
+            match keyof_inner_type(self.interner, mapped.constraint) {
+                Some(source) => {
+                    // Classic case: detect an identity `S[P]` template so the
+                    // general check can be skipped.
+                    let identity = index_access_parts(self.interner, mapped.template)
+                        .and_then(|(template_obj, template_idx)| {
+                            let idx_param = type_param_info(self.interner, template_idx)?;
+                            Some(idx_param.name == mapped.type_param.name && template_obj == source)
+                        })
+                        .unwrap_or(false);
+                    (source, identity)
+                }
+                None => {
+                    // Subset (`Pick`) shape: the template must be the identity
+                    // indexed access `S[P]` with `P` the iteration parameter, and
+                    // the picked key set must be a subset of `keyof S` (`keyof S`
+                    // covers the constraint). Matching this shape proves the
+                    // template is identity, so `is_identity_template` is true.
+                    let Some((template_obj, template_idx)) =
+                        index_access_parts(self.interner, mapped.template)
+                    else {
+                        return false;
+                    };
+                    let Some(idx_param) = type_param_info(self.interner, template_idx) else {
+                        return false;
+                    };
+                    if idx_param.name != mapped.type_param.name {
+                        return false;
+                    }
+                    let full_key_set = self.interner.keyof(template_obj);
+                    if !self.mapped_key_constraint_covers(full_key_set, mapped.constraint) {
+                        return false;
+                    }
+                    (template_obj, true)
+                }
+            };
 
         if !is_identity_template {
             // General case: construct S[K] (source value type at key K) and check

@@ -150,6 +150,65 @@ fn lib_awaited_promise_literal_terminates() {
     );
 }
 
+/// Convergence (#11586): a recursive unwrapper applied to a *literal* argument
+/// must not merely terminate — it must resolve to the unwrapped literal, exactly
+/// like `tsc`. Before the per-query cross-evaluator memo this either hung or
+/// bailed to an opaque/deferred form, so assigning the unwrapped literal back
+/// spuriously failed. We assert the *functional* outcome by source line rather
+/// than the rendered type name (which the structural-depth bail may still leave
+/// unexpanded): the inner-literal assignment must type-check and the unrelated
+/// one must error. `assert_terminates` also enforces termination within the
+/// deadline.
+fn assert_convergence(name: &str, source: &str, ok_line: u32, bad_line: u32) {
+    let out = assert_terminates(name, source);
+    if out.is_empty() {
+        return; // binary not found; assert_terminates already logged the skip.
+    }
+    assert!(
+        out.contains(&format!("repro.ts({bad_line},")),
+        "expected a diagnostic on the unrelated assignment (line {bad_line}) for `{name}`,\n\
+         showing the recursive type resolved to its unwrapped literal.\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains(&format!("repro.ts({ok_line},")),
+        "the inner-literal assignment (line {ok_line}) must type-check for `{name}` — the \
+         recursive type converged to the wrong value.\noutput:\n{out}"
+    );
+}
+
+/// Self-referential unwrapper over an interface resolves a literal argument to
+/// the unwrapped literal. Renamed binders (`Wrapper`/`Peel`/`Held`) keep the
+/// check name-agnostic.
+#[test]
+fn recursive_unwrapper_literal_resolves_to_inner_literal() {
+    assert_convergence(
+        "peel_resolves",
+        "interface Wrapper<Inner> { contents: Inner; }\n\
+         type Peel<Wrapped> = Wrapped extends Wrapper<infer Held> ? Peel<Held> : Wrapped;\n\
+         declare const a: Peel<Wrapper<Wrapper<7>>>;\n\
+         const ok: 7 = a;\n\
+         const bad: 8 = a;\n",
+        4,
+        5,
+    );
+}
+
+/// A string-literal argument converges the same way (the bug reproduced for any
+/// fresh literal/object identity, not just numbers).
+#[test]
+fn recursive_unwrapper_string_literal_resolves() {
+    assert_convergence(
+        "peel_string_resolves",
+        "interface Cell<Held> { item: Held; }\n\
+         type Open<W> = W extends Cell<infer H> ? Open<H> : W;\n\
+         declare const a: Open<Cell<Cell<Cell<\"deep\">>>>;\n\
+         const ok: \"deep\" = a;\n\
+         const bad: \"other\" = a;\n",
+        4,
+        5,
+    );
+}
+
 /// Convergence (#11586): a *nested concrete* `Awaited<Promise<Promise<…>>>` must
 /// resolve to the inner literal — exactly like `tsc` — not just terminate. The
 /// lazy conditional/`infer` evaluation of the standard-library `Awaited<T>` alias

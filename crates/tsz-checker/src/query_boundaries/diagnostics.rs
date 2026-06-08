@@ -15,9 +15,9 @@ pub(crate) use super::common::{
     is_template_literal_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
     mapped_type_info, no_infer_inner_type, object_shape_for_type, readonly_inner_type,
     return_type_for_type, string_literal_value, tuple_elements, type_has_displayable_name,
-    type_is_conditional_type_result_with_unresolved_inference, type_may_display_iterator_protocol,
-    type_param_info, type_parameter_constraint, union_list_id, union_members,
-    widen_literal_to_primitive, widen_type_deep,
+    type_is_conditional_type_result_with_unresolved_inference, type_param_info,
+    type_parameter_constraint, union_list_id, union_members, widen_literal_to_primitive,
+    widen_type_deep,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
@@ -26,6 +26,54 @@ pub(crate) fn assignment_numeric_display_children(
     type_id: TypeId,
 ) -> AssignmentNumericDisplayChildren {
     tsz_solver::type_queries::assignment_numeric_display_children(db, type_id)
+}
+
+/// Return the body of a non-generic alias shaped as `Foo[keyof Foo]`.
+pub(crate) fn indexed_access_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    ty: TypeId,
+) -> Option<TypeId> {
+    let def_id = tsz_solver::type_queries::get_lazy_def_id(db, ty)?;
+    let def = def_store.get(def_id)?;
+    if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
+        return None;
+    }
+    let body = def.body?;
+    tsz_solver::type_queries::indexed_access_self_keyof(db, body)?;
+    Some(body)
+}
+
+/// Returns true if `ty` is still a deferred form after display reduction.
+pub(crate) fn is_unresolved_for_display(db: &dyn TypeDatabase, ty: TypeId) -> bool {
+    tsz_solver::type_queries::is_deferred_lazy_or_indexed_access(db, ty)
+}
+
+pub(crate) fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::type_may_display_iterator_protocol(db, type_id)
+}
+
+/// Return `true` if a function/callable signature contains a `typeof` query.
+pub(crate) fn function_signature_has_typeof(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id)
+        && (tsz_solver::is_type_query_type(db, shape.return_type)
+            || shape
+                .params
+                .iter()
+                .any(|p| tsz_solver::is_type_query_type(db, p.type_id)))
+    {
+        return true;
+    }
+    if let Some(shape) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
+        return shape.call_signatures.iter().any(|sig| {
+            tsz_solver::is_type_query_type(db, sig.return_type)
+                || sig
+                    .params
+                    .iter()
+                    .any(|p| tsz_solver::is_type_query_type(db, p.type_id))
+        });
+    }
+    false
 }
 
 /// `true` when `type_id` is an anonymous object type, or a union / intersection

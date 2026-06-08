@@ -18,7 +18,6 @@
 #   seven additional current-head rows after the stale type-query-flow module
 #   deletion made the checker buildable again.
 # - PR #12649 run 27008940643 at f2db335b3d found five rows returned and five
-#   previous accepted rows resolved after exact-head shard rerun.
 # - PR #12649 run 27013631682 at synthetic merge 9a9f5fb46f found four rows
 #   returned and twelve previous accepted rows resolved after merging main.
 # - PR #12649 run 27015324920 attempt 2 at synthetic merge 2f1ff2f987 found
@@ -51,12 +50,20 @@ TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules
 TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
-TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
-TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
+# objectLiteralMemberWithoutBlock1.ts: RESOLVED. `var v = { foo(); }` parsed the
+# body-less object method but suppressed the missing-body `'{' expected` whenever
+# the next token was `;`, so the outer object-literal member loop emitted a
+# spurious `',' expected` instead. tsc reports `'{' expected` at the `;` for a
+# body-less method that is the final member (the `;` is followed by `}`/EOF); when
+# a further member follows, the `;` recovers as a delimiter and the missing comma
+# is reported at that member. The parser now mirrors that, so the single
+# `'{' expected` matches tsc. Covered by
+# parser_improvement_object_array_literal_recovery_tests::
+# object_method_missing_body_as_last_member_reports_open_brace (and siblings).
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
@@ -79,6 +86,8 @@ TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 # eliminated at least one impossible arm. Covered by
 # intersection_type_param_tests::
 # test_type_param_union_undefined_intersect_empty_or_null_assignable_to_type_param.
+
+
 # excessPropertyCheckIntersectionWithRecursiveType.ts: RESOLVED. A nested TS2353
 # was dropped for a fresh literal checked against a recursive homomorphic mapped
 # target `{ [K in keyof T]: F<T[K]> }` whose property value stays a *raw* mapped
@@ -89,3 +98,17 @@ TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 # lives. It now returns `false` when there is no excess at the mapped level,
 # deferring to the recursion-capable simple-object/intersection branches. Covered
 # by recursive_mapped_intersection_nested_excess_property_tests.
+
+
+# jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts: RESOLVED. A JSDoc
+# `import("pkg").T` type (in `@typedef`/`@type`/`@param`/`@returns`) was never
+# collected as a module reference: only AST `import(...)` type nodes and JSDoc
+# `@import ... from` tags were gathered, so a JSDoc import-type to a bare/package
+# specifier never populated `resolved_module_paths`. The checker's JSDoc resolver
+# then failed to find the export, silently degrading `@param` to `any` and
+# emitting a false TS2552/TS2304 in `@type` position ("Cannot find name 'T'").
+# `collect_module_specifiers_impl` now also scans JSDoc comment text for
+# `import("...")` type specifiers (and `@import` tags), and the source-discovery
+# fast path defers to the full parse when a comment-only `import(` is present, so
+# both relative and package JSDoc import-types resolve like tsc. Covered by
+# jsdoc_import_type_specifier_collection_tests.

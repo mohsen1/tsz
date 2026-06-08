@@ -1224,8 +1224,11 @@ impl<'a> CheckerState<'a> {
         let result = match kind {
             AugmentationTargetKind::Object(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
-                let merged_properties =
-                    self.merge_properties(&augmentation_members, &base_shape.properties);
+                let merged_properties = self.merge_properties(
+                    &augmentation_members,
+                    &base_shape.properties,
+                    crate::interface_type::InterfaceMergeMode::Declaration,
+                );
                 // Preserve the base interface's nominal identity (symbol) and
                 // object-level flags so the augmented type keeps its canonical
                 // declaration name (e.g. `Tool` rather than an expanded
@@ -1238,8 +1241,11 @@ impl<'a> CheckerState<'a> {
             }
             AugmentationTargetKind::ObjectWithIndex(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
-                let merged_properties =
-                    self.merge_properties(&augmentation_members, &base_shape.properties);
+                let merged_properties = self.merge_properties(
+                    &augmentation_members,
+                    &base_shape.properties,
+                    crate::interface_type::InterfaceMergeMode::Declaration,
+                );
                 factory.object_with_index(ObjectShape {
                     flags: base_shape.flags,
                     properties: merged_properties,
@@ -1253,7 +1259,11 @@ impl<'a> CheckerState<'a> {
                 let properties = if base_shape.construct_signatures.is_empty() {
                     // Non-constructor callable (namespace, function): merge
                     // augmentation members as direct properties.
-                    self.merge_properties(&augmentation_members, &base_shape.properties)
+                    self.merge_properties(
+                        &augmentation_members,
+                        &base_shape.properties,
+                        crate::interface_type::InterfaceMergeMode::Declaration,
+                    )
                 } else {
                     // Class constructor: augmentation members belong on the
                     // prototype (instance type), not as static properties of

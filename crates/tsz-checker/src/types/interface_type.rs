@@ -60,6 +60,30 @@ fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
     });
 }
 
+/// How `merge_interface_types` combines a named member that exists on both
+/// the "derived" and "base" side of a structural merge.
+///
+/// TypeScript distinguishes two structural-merge situations that share the
+/// same code path here:
+///
+/// - **Heritage** (`interface Derived extends Base`): a derived member with the
+///   same name as a base member *overrides* (entirely replaces) it. The base
+///   signature does not survive into an overload set. This is true even when
+///   the derived member is itself an overload set — only the derived
+///   signatures remain (`d.m(...)` resolves against the derived member alone).
+///   Anonymous call/construct signatures still accumulate because they have no
+///   name to override by.
+/// - **Declaration** (two `interface Foo {}` declarations merged into one
+///   symbol, module augmentation, lib declaration merging): same-named method
+///   signatures *accumulate* into a single overload set.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum InterfaceMergeMode {
+    /// `extends` heritage — derived members override base members by name.
+    Heritage,
+    /// Declaration/augmentation merge — same-named methods accumulate overloads.
+    Declaration,
+}
+
 /// Merges an additional string-keyed index signature into an existing one by
 /// unioning their key patterns, enabling excess-property checking to accept any
 /// key that matches ANY of the declared template-literal patterns.
@@ -915,11 +939,11 @@ impl<'a> CheckerState<'a> {
                             &type_args,
                             current_sym,
                         );
-                        derived_type = self.merge_interface_types(derived_type, base_type);
+                        derived_type = self.merge_interface_types_heritage(derived_type, base_type);
                         continue;
                     }
 
-                    derived_type = self.merge_interface_types(derived_type, base_type);
+                    derived_type = self.merge_interface_types_heritage(derived_type, base_type);
                 }
             }
         }
@@ -945,6 +969,28 @@ impl<'a> CheckerState<'a> {
     /// # Returns
     /// The merged `TypeId`
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        self.merge_interface_types_with_mode(derived, base, InterfaceMergeMode::Declaration)
+    }
+
+    /// Heritage (`extends`) variant of [`Self::merge_interface_types`]: a
+    /// derived member that shares a name with a base member overrides
+    /// (replaces) it rather than accumulating an overload set. See
+    /// [`InterfaceMergeMode`] for the structural rule and why anonymous call
+    /// signatures still accumulate.
+    pub(crate) fn merge_interface_types_heritage(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+    ) -> TypeId {
+        self.merge_interface_types_with_mode(derived, base, InterfaceMergeMode::Heritage)
+    }
+
+    fn merge_interface_types_with_mode(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+        mode: InterfaceMergeMode,
+    ) -> TypeId {
         if derived == base {
             return derived;
         }
@@ -953,12 +999,17 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.enter_recursion() {
             return derived;
         }
-        let result = self.merge_interface_types_impl(derived, base);
+        let result = self.merge_interface_types_impl(derived, base, mode);
         self.ctx.leave_recursion();
         result
     }
 
-    fn merge_interface_types_impl(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+    fn merge_interface_types_impl(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+        mode: InterfaceMergeMode,
+    ) -> TypeId {
         use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
         use tracing::trace;
         use tsz_solver::{CallableShape, ObjectShape};
@@ -1013,7 +1064,7 @@ impl<'a> CheckerState<'a> {
                 construct_signatures.extend(base_shape.construct_signatures.iter().cloned());
                 dedup_call_signatures_keep_last(&mut construct_signatures);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.callable(CallableShape {
                     call_signatures,
                     construct_signatures,
@@ -1035,7 +1086,7 @@ impl<'a> CheckerState<'a> {
                 let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.callable(CallableShape {
                     call_signatures: derived_shape.call_signatures.clone(),
                     construct_signatures: derived_shape.construct_signatures.clone(),
@@ -1053,7 +1104,7 @@ impl<'a> CheckerState<'a> {
                 let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.callable(CallableShape {
                     call_signatures: derived_shape.call_signatures.clone(),
                     construct_signatures: derived_shape.construct_signatures.clone(),
@@ -1075,7 +1126,7 @@ impl<'a> CheckerState<'a> {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),
@@ -1093,7 +1144,7 @@ impl<'a> CheckerState<'a> {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),
@@ -1115,7 +1166,7 @@ impl<'a> CheckerState<'a> {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.object_with_symbol(properties, derived_shape.symbol)
             }
             (
@@ -1132,7 +1183,7 @@ impl<'a> CheckerState<'a> {
                     "merge_interface_types: Object + ObjectWithIndex"
                 );
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 let result = factory.object_with_index(ObjectShape {
                     properties,
                     string_index: base_shape.string_index,
@@ -1150,7 +1201,7 @@ impl<'a> CheckerState<'a> {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.object_with_index(ObjectShape {
                     properties,
                     string_index: derived_shape.string_index,
@@ -1166,7 +1217,7 @@ impl<'a> CheckerState<'a> {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
-                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.object_with_index(ObjectShape {
                     properties,
                     string_index: derived_shape
@@ -1185,7 +1236,13 @@ impl<'a> CheckerState<'a> {
             // Use resolved types so that Lazy wrappers (e.g., type aliases) are
             // expanded to their structural intersection form before decomposition.
             (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => self
-                .merge_with_intersection(derived_resolved, derived_kind, base_resolved, base_kind),
+                .merge_with_intersection(
+                    derived_resolved,
+                    derived_kind,
+                    base_resolved,
+                    base_kind,
+                    mode,
+                ),
             // When the derived interface has no own members (TypeId::ANY), just use the base.
             (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
             // When the base is an Array or Tuple type (e.g., `interface MyTuple extends [] { ... }`),
@@ -1264,6 +1321,7 @@ impl<'a> CheckerState<'a> {
         _derived_kind: crate::query_boundaries::common::InterfaceMergeKind,
         base: TypeId,
         base_kind: crate::query_boundaries::common::InterfaceMergeKind,
+        mode: InterfaceMergeMode,
     ) -> TypeId {
         use crate::query_boundaries::common::intersection_members;
         use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
@@ -1332,7 +1390,7 @@ impl<'a> CheckerState<'a> {
 
             // Recursively merge the parts (hits Callable+Callable, Object+Object,
             // Callable+Object, etc. paths instead of the Intersection path)
-            let merged = self.merge_interface_types(merge_derived, merge_base);
+            let merged = self.merge_interface_types_with_mode(merge_derived, merge_base, mode);
 
             // Re-wrap with the remaining intersection members (e.g., string[])
             if other_members.is_empty() {
@@ -1346,6 +1404,48 @@ impl<'a> CheckerState<'a> {
             // No mergeable member found - fall back to plain intersection
             factory.intersection2(derived, base)
         }
+    }
+
+    /// Merge a derived property that shares a name with a `base` property.
+    ///
+    /// In `Heritage` mode the derived member overrides the base member outright
+    /// (no overload accumulation). Only `Declaration`/augmentation merges
+    /// concatenate same-named callable signatures into a shared overload set.
+    fn merge_overriding_property(
+        &mut self,
+        derived_prop: &tsz_solver::PropertyInfo,
+        base_prop: &tsz_solver::PropertyInfo,
+        mode: InterfaceMergeMode,
+    ) -> tsz_solver::PropertyInfo {
+        let merged_type = if mode == InterfaceMergeMode::Declaration
+            && crate::query_boundaries::common::callable_shape_for_type(
+                self.ctx.types,
+                base_prop.type_id,
+            )
+            .is_some()
+            && crate::query_boundaries::common::callable_shape_for_type(
+                self.ctx.types,
+                derived_prop.type_id,
+            )
+            .is_some()
+        {
+            self.merge_interface_types(derived_prop.type_id, base_prop.type_id)
+        } else {
+            derived_prop.type_id
+        };
+
+        let mut prop = derived_prop.clone();
+        // When the merge produces a new callable type (from concatenating
+        // derived + base call signatures), update BOTH type_id and write_type.
+        // Leaving write_type pointing to the derived-only callable creates a
+        // false "split accessor" (type_id != write_type) that triggers the
+        // contravariant write-type check in check_property_compatibility,
+        // causing false TS2322 errors for interface-extends assignments.
+        if merged_type != derived_prop.type_id && prop.write_type == derived_prop.type_id {
+            prop.write_type = merged_type;
+        }
+        prop.type_id = merged_type;
+        prop
     }
 
     /// Merge derived and base interface properties.
@@ -1367,6 +1467,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         derived: &[tsz_solver::PropertyInfo],
         base: &[tsz_solver::PropertyInfo],
+        mode: InterfaceMergeMode,
     ) -> Vec<tsz_solver::PropertyInfo> {
         use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
@@ -1385,38 +1486,9 @@ impl<'a> CheckerState<'a> {
             // Walk derived first so own members keep their (low) declaration_order
             // and appear before inherited members in the final ordering.
             for prop in derived {
-                let merged_prop = if let Some(base_prop) = base.iter().find(|p| p.name == prop.name)
-                {
-                    let merged_type = if crate::query_boundaries::common::callable_shape_for_type(
-                        self.ctx.types,
-                        base_prop.type_id,
-                    )
-                    .is_some()
-                        && crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            prop.type_id,
-                        )
-                        .is_some()
-                    {
-                        self.merge_interface_types(prop.type_id, base_prop.type_id)
-                    } else {
-                        prop.type_id
-                    };
-
-                    let mut merged_prop = prop.clone();
-                    // When the merge produces a new callable type (from concatenating
-                    // derived + base call signatures), update BOTH type_id and write_type.
-                    // Leaving write_type pointing to the derived-only callable creates a
-                    // false "split accessor" (type_id != write_type) that triggers the
-                    // contravariant write-type check in check_property_compatibility,
-                    // causing false TS2322 errors for interface-extends assignments.
-                    if merged_type != prop.type_id && merged_prop.write_type == prop.type_id {
-                        merged_prop.write_type = merged_type;
-                    }
-                    merged_prop.type_id = merged_type;
-                    merged_prop
-                } else {
-                    prop.clone()
+                let merged_prop = match base.iter().find(|p| p.name == prop.name) {
+                    Some(base_prop) => self.merge_overriding_property(prop, base_prop, mode),
+                    None => prop.clone(),
                 };
                 merged.push(merged_prop);
             }
@@ -1449,31 +1521,9 @@ impl<'a> CheckerState<'a> {
         }
 
         for derived_prop in derived {
-            let merged_prop = if let Some(base_prop) = base_by_name.get(&derived_prop.name) {
-                let merged_type = if crate::query_boundaries::common::callable_shape_for_type(
-                    self.ctx.types,
-                    base_prop.type_id,
-                )
-                .is_some()
-                    && crate::query_boundaries::common::callable_shape_for_type(
-                        self.ctx.types,
-                        derived_prop.type_id,
-                    )
-                    .is_some()
-                {
-                    self.merge_interface_types(derived_prop.type_id, base_prop.type_id)
-                } else {
-                    derived_prop.type_id
-                };
-
-                let mut prop = derived_prop.clone();
-                if merged_type != derived_prop.type_id && prop.write_type == derived_prop.type_id {
-                    prop.write_type = merged_type;
-                }
-                prop.type_id = merged_type;
-                prop
-            } else {
-                derived_prop.clone()
+            let merged_prop = match base_by_name.get(&derived_prop.name) {
+                Some(base_prop) => self.merge_overriding_property(derived_prop, base_prop, mode),
+                None => derived_prop.clone(),
             };
             merged.push(merged_prop);
         }

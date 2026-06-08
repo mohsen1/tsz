@@ -927,16 +927,39 @@ impl ParserState {
             self.pop_label_scope();
             self.context_flags = saved_flags;
             return NodeIndex::NONE;
+        } else if dot_tail_recovery && self.is_token(SyntaxKind::SemicolonToken) {
+            // Dot-tail recovery (`{ a.b }`-style) already produced the relevant
+            // diagnostics; drop the speculative ones and suppress the missing-body
+            // `'{' expected` for the trailing `;` so recovery matches tsc.
+            self.parse_diagnostics.truncate(dot_tail_diag_len);
+            self.last_error_pos = self
+                .parse_diagnostics
+                .last()
+                .map_or(0, |diagnostic| diagnostic.start);
+            NodeIndex::NONE
         } else {
-            if dot_tail_recovery && self.is_token(SyntaxKind::SemicolonToken) {
-                self.parse_diagnostics.truncate(dot_tail_diag_len);
-                self.last_error_pos = self
-                    .parse_diagnostics
-                    .last()
-                    .map_or(0, |diagnostic| diagnostic.start);
+            // An object-literal method whose `{` body is missing is reported by
+            // tsc as `'{' expected` at the current token. For a trailing `;`,
+            // tsc only does so when the method is the *final* member (the `;` is
+            // followed by `}` / EOF); when another member follows, the `;`
+            // recovers as a delimiter and the missing comma is reported at that
+            // member instead. tsz previously suppressed `'{' expected` for *any*
+            // `;`, so the last-member case (`var v = { foo(); }`) wrongly emitted
+            // a spurious `',' expected` from the outer object-literal loop.
+            //
+            // Mirror tsc: emit `'{' expected` here unless a `;` is followed by a
+            // further member. The outer loop's same-position comma error is then
+            // deduped, leaving exactly tsc's single `'{' expected`.
+            let separating_semicolon = self.is_token(SyntaxKind::SemicolonToken)
+                && self.speculate(|parser| {
+                    parser.next_token();
+                    !parser.is_token(SyntaxKind::CloseBraceToken)
+                        && !parser.is_token(SyntaxKind::EndOfFileToken)
+                });
+            if !separating_semicolon {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             }
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             NodeIndex::NONE
         };
         if dot_tail_recovery {

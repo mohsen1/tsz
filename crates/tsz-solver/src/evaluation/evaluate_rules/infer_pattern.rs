@@ -1404,15 +1404,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// not found), which terminates the chain instead of looping. Mirrors tsc's
     /// global `instantiationDepth` cutoff.
     pub(crate) fn evaluate_for_infer_match(&self, type_id: TypeId) -> TypeId {
-        let Some(_guard) = InferMatchExpansionGuard::enter() else {
-            return type_id;
-        };
-        let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-        evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
-        if let Some(query_db) = self.query_db() {
-            evaluator = evaluator.with_query_db(query_db);
-        }
-        evaluator.evaluate(type_id)
+        let nuia = self.no_unchecked_indexed_access();
+        // Per-query memo + cross-instance cycle break (#11586): a recursive
+        // conditional/`infer` application fans out into the same root types across
+        // fresh evaluators; serve a repeat within one query from the memo, and
+        // return `type_id` unchanged on a cross-instance cycle (`None`) so the
+        // in-flight ancestor expansion converges.
+        crate::evaluation::cross_eval_guard::memoized_eval(type_id, nuia, || {
+            let Some(_guard) = InferMatchExpansionGuard::enter() else {
+                return (type_id, false);
+            };
+            let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+            evaluator.set_no_unchecked_indexed_access(nuia);
+            if let Some(query_db) = self.query_db() {
+                evaluator = evaluator.with_query_db(query_db);
+            }
+            let result = evaluator.evaluate(type_id);
+            // Memoize only stable results — a recursion/budget bail is a
+            // stack-context artifact that must not be reused as the answer.
+            (result, !evaluator.recursion_limit_hit())
+        })
+        .unwrap_or(type_id)
     }
 
     /// Match each member of a union source against `pattern`, merging the

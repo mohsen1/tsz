@@ -1215,19 +1215,13 @@ interface Node {
     /// (`compute_type_of_symbol` -> `merge_interface_heritage_types`), which the
     /// `LibContext`-based `lib_heritage_cycle_dom_tests` harness cannot reach.
     ///
-    /// IGNORED pending a correct fix (#12299). The incomplete `Element` body is
-    /// produced and persisted to `type_env` through several resolution paths
-    /// (`resolve_lib_type_by_name` -> `register_finalized_lib_body`,
-    /// `ensure_relation_input_ready` -> `resolve_and_insert_def_type`, cross-arena
-    /// delegation). A blunt "never shrink a lib-interface body" guard at the
-    /// `type_env` write chokepoints DOES make this pass, but it regresses ~25
-    /// conformance fixtures (declaration-emit, conditional-types, variance, …)
-    /// because it cannot tell a real incomplete-heritage drop from a legitimate
-    /// instantiation/contextual re-registration of the same lib interface. The
-    /// correct fix is the precise incomplete-heritage discipline (only refuse to
-    /// persist a body whose heritage base was itself mid-resolution) extended to
-    /// every persistence site — a dedicated campaign, not a single guard.
-    #[ignore = "pending correct #12299 program-file heritage fix; see PR discussion"]
+    /// Fixed by draining cycle-incomplete lib names at the outermost
+    /// `resolve_lib_type_by_name` boundary: once the mutual `Element` ↔ `Node` ↔
+    /// `HTMLElement` cycle fully unwinds, each interface left `Incomplete`
+    /// (because a base was dropped while itself mid-resolution) is re-resolved
+    /// against its now-cached bases and its body is rewritten flat. The
+    /// flattened (not intersection) shape is why generic inference over DOM
+    /// types is unaffected.
     #[test]
     fn dom_element_inherits_node_members_in_program_mode_12299() {
         // Vary the receiver binder name and element type so a fix keyed to a
