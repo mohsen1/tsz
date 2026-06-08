@@ -975,6 +975,124 @@ function f<T extends { a: number }>(k: keyof T) {
 }
 
 #[test]
+fn test_concrete_keyof_union_operand_target_preserves_source_literal() {
+    // Issue #11585 family: `keyof (A | B)` reduces to `keyof A & keyof B`, a finite
+    // unit-literal key set (the common keys), so it is just as much a literal
+    // context as `keyof A`. A fresh literal source assigned to such a target must
+    // keep its as-written spelling — including a literal that *is* a key of one
+    // member but not of the intersection (`"a"`), which previously triggered the
+    // widening. tsz formerly only recognised a single object operand as concrete,
+    // so a union operand widened the source to `string` — and, because the union
+    // key reduction is evaluation-order sensitive, did so only for some incidental
+    // source formatting.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type A = { a: number; c: boolean };
+type B = { b: string; c: boolean };
+type KU = keyof (A | B);
+const k1: KU = "a";
+const k2: KU = "zzz";
+const k3: KU = 5;
+"#,
+    );
+    for (lit, target) in [("\"a\"", "\"c\""), ("\"zzz\"", "\"c\""), ("5", "\"c\"")] {
+        assert!(
+            diagnostics.iter().any(|(code, message)| {
+                *code == 2322
+                    && message == &format!("Type '{lit}' is not assignable to type '{target}'.")
+            }),
+            "Expected `keyof (A | B)` target to preserve source literal {lit} (target {target}).\nActual: {diagnostics:#?}"
+        );
+    }
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && (message.contains("Type 'string' is not assignable")
+                    || message.contains("Type 'number' is not assignable"))
+        }),
+        "Did not expect a widened 'string'/'number' source for a concrete union keyof target.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_concrete_keyof_intersection_operand_target_preserves_source_literal() {
+    // The dual reduction `keyof (A & B)` = `keyof A | keyof B` is likewise a
+    // finite literal key set, so the source literal must be preserved as well.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type A = { a: number };
+type B = { b: string };
+type KI = keyof (A & B);
+const k: KI = "z";
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '\"z\"' is not assignable to type '\"a\" | \"b\"'")
+        }),
+        "Expected `keyof (A & B)` target to preserve source literal '\"z\"'.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'string' is not assignable")
+        }),
+        "Did not expect a widened 'string' source for a concrete intersection keyof target.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_keyof_union_with_indexed_member_preserves_source() {
+    // `keyof (A | B)` = `keyof A & keyof B`. An index signature on one union member
+    // does NOT pollute the result: `"a" & (string | number)` reduces back to the
+    // literal `"a"`, so tsc still treats it as a literal context and keeps the
+    // source `true` as-written. The union rule is therefore "any member literal",
+    // not "all members literal".
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type A = { a: number };
+type B = { [key: string]: number };
+type KU = keyof (A | B);
+const k: KU = true;
+"#,
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2322 && message.contains("Type 'true'") }),
+        "Expected `keyof (A | B)` with an indexed member to preserve source 'true'.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2322 && message.contains("Type 'boolean'") }),
+        "Did not expect a widened 'boolean' source for a union keyof whose intersection stays literal.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_keyof_intersection_with_indexed_member_widens_source() {
+    // `keyof (A & B)` = `keyof A | keyof B`. An index signature on any member adds
+    // the `string`/`number` primitive base to the union, so the key set is no
+    // longer a pure literal context and tsc widens the source `true` -> `boolean`.
+    // The intersection rule is "all members literal".
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type A = { a: number };
+type B = { [key: string]: number };
+type KI = keyof (A & B);
+const k: KI = true;
+"#,
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2322 && message.contains("Type 'boolean'") }),
+        "Expected a widened 'boolean' source when an intersection member has an index signature.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_string_index_constraint_allows_read_but_rejects_write_via_dot_access() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

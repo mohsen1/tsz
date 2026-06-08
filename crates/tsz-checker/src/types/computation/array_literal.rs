@@ -1304,6 +1304,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Snapshot the solver's `union_too_complex` flag before computing this
+        // array's element union. The flag is global and sticky: a recursive
+        // type-alias evaluation triggered while computing the *contextual* element
+        // type (e.g. `RecArray<T> = Array<T | RecArray<T>>` in a generic call
+        // argument position) can set it, and an unrelated earlier expression can
+        // leave it set. Reading it unconditionally below would misattribute that
+        // pre-existing complexity to this array literal — returning `Array<error>`
+        // and emitting a spurious TS2590 — which then poisons argument inference
+        // (the `error` element silently satisfies every assignability check) in a
+        // declaration/cache-order-dependent way. Mirror the evaluator
+        // (`commit_closed_eval_writes`): attribute complexity only when this
+        // array's own union computation newly trips the flag.
+        let union_too_complex_before = self.ctx.types.is_union_too_complex();
+
         // TS2590: Pre-check element count before BCT. tsc's removeSubtypes only
         // increments its cost counter for StructuredOrInstantiable source types —
         // identity-comparable primitives/literals (number/string/boolean literals,
@@ -1358,7 +1372,11 @@ impl<'a> CheckerState<'a> {
 
         // TS2590: Also check the solver's flag in case the union was constructed
         // through a different path (e.g., preserve_literal_types or internal union ops).
-        if self.ctx.types.take_union_too_complex() {
+        // Only attribute the complexity to this array when its own union computation
+        // newly tripped the flag — a flag inherited from contextual-type evaluation
+        // or an earlier expression must not turn this array into `Array<error>`.
+        let union_too_complex_now = self.ctx.types.take_union_too_complex();
+        if union_too_complex_now && !union_too_complex_before {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 idx,
