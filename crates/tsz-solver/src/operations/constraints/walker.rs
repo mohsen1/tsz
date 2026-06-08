@@ -627,9 +627,56 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target
                 };
 
-                for &member in s_members.iter() {
-                    // Skip source members that directly match a fixed target member
-                    if !fixed_targets.contains(&member) {
+                // Mirror tsc's `inferToMultipleTypes` single-type-variable branch:
+                // when the target union has exactly one *naked* type-variable member
+                // (a bare placeholder) and no other placeholder-bearing members, infer
+                // the union of all unmatched source members to that variable as a
+                // single candidate, rather than constraining each source member
+                // separately. Without this, a multi-member source union such as the
+                // element type `number | string` of an array literal, matched against
+                // `T | boolean`, records `number` and `string` as two competing
+                // candidates; common-supertype resolution (especially the
+                // array-element "leftmost wins" rule) then fixes `T` to one member
+                // instead of `number | string`.
+                //
+                // Targets containing a *structured* placeholder member (such as the
+                // recursive `RecArray<T>` arm of `RecArray<T> = Array<T | RecArray<T>>`)
+                // are intentionally excluded: those require tsc's full matched/unmatched
+                // priority accounting across the structured arm, and keep the existing
+                // per-member path below.
+                let unmatched: Vec<TypeId> = s_members
+                    .iter()
+                    .copied()
+                    .filter(|member| !fixed_targets.contains(member))
+                    .collect();
+                let mut naked_var_count = 0usize;
+                let mut single_naked_var = None;
+                let mut has_structured_placeholder = false;
+                let mut placeholder_visited = FxHashSet::default();
+                for &member in t_members_list.iter() {
+                    if var_map.contains_key(&member) {
+                        naked_var_count += 1;
+                        single_naked_var = Some(member);
+                    } else {
+                        placeholder_visited.clear();
+                        if self.type_contains_placeholder(member, var_map, &mut placeholder_visited)
+                        {
+                            has_structured_placeholder = true;
+                        }
+                    }
+                }
+
+                if let Some(naked) = single_naked_var
+                    && naked_var_count == 1
+                    && !has_structured_placeholder
+                    && unmatched.len() > 1
+                {
+                    let union_source = self.interner.union(unmatched);
+                    self.constrain_types(ctx, var_map, union_source, naked, priority);
+                } else {
+                    // Source members that did not match a fixed target member flow to
+                    // the placeholder members of the (reduced) target individually.
+                    for &member in &unmatched {
                         self.constrain_types(ctx, var_map, member, reduced_target, priority);
                     }
                 }
