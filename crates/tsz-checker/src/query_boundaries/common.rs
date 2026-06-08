@@ -28,10 +28,6 @@ pub(crate) use super::construct_signatures::construct_signatures_for_type;
 pub(crate) use super::generic_instantiation::{instantiate_generic, instantiate_type};
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 
-pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
-    tsz_solver::is_compiler_managed_type(name)
-}
-
 /// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
 /// canonical self-keyof indexed-access shape `Foo[keyof Foo]`, return the
 /// body `TypeId` so the caller can evaluate it with a resolver-equipped

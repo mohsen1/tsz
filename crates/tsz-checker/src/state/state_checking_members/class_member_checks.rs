@@ -124,7 +124,7 @@ impl CheckerState<'_> {
         Some((name, method.name, type_id))
     }
 
-    fn get_class_member_name_info(
+    pub(super) fn get_class_member_name_info(
         &self,
         member_idx: NodeIndex,
     ) -> Option<(String, NodeIndex, bool)> {

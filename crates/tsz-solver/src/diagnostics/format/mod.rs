@@ -327,6 +327,15 @@ impl<'a> TypeFormatter<'a> {
         ) {
             return None;
         }
+        // tsc only drops the alias symbol once the application is fully
+        // instantiated. A still-generic application (`Extract<Extract<T, Foo>,
+        // Bar>` with free `T`) stays deferred and is displayed as `Name<Args>`,
+        // even though the display-time evaluator may collapse the unconstrained
+        // conditional to `never`. Gate on the *input* so such a result is never
+        // mistaken for a finished reduction.
+        if crate::type_queries::contains_type_parameters_db(self.interner, type_id) {
+            return None;
+        }
         // Instantiate the conditional body with the concrete arguments and
         // evaluate. `instantiate_generic` substitutes the def body directly,
         // which reduces a nested helper application (`DeepReadonly<{ b }>`)
@@ -350,28 +359,23 @@ impl<'a> TypeFormatter<'a> {
         {
             return None;
         }
-        // A conditional still deferred after evaluation never reduced (an
-        // unresolved operand); the raw node is no more informative than the
-        // application form, so keep the application form. A result identical to
-        // the application itself made no progress, so keep it too — formatting
-        // it again would recurse forever.
-        //
-        // Every *resolved* shape reduces, not just objects: `tsc` drops the
-        // alias `aliasSymbol` once a non-distributive conditional resolves with
-        // concrete arguments, then renders the resolved type structurally for
-        // any shape — scalar (`DeepReadonly<number>` → `number`,
-        // `IsString<number>` → `false`), tuple (`Parameters<F>` →
-        // `[a: number]`), union (`T extends X ? A | B : C` → `A | B`), and
-        // object alike (issue #10914, verified against `tsc` 6.0.2). A result
-        // that is itself a *named* target re-paints its own name through the
-        // formatter's named-type path, so only the dropped outer alias is
-        // suppressed; distributive conditionals keep the outer alias on the
-        // separate distribution path above.
+        // A conditional/indexed access still deferred after evaluation never
+        // reduced (an unresolved operand); the raw node is no more informative
+        // than the application form, so keep the application form. Otherwise tsc
+        // drops the alias symbol and renders the reduced result structurally for
+        // any concrete shape — `Reverse<[1, 2, 3]>` → `[3, 2, 1]`,
+        // `Unbox<Promise<Promise<number>>>` → `number`, `DeepReadonly<{ b }>` →
+        // `{ readonly b: number; }`. Bare literal / union results are excluded
+        // (`application_reduces_to_displayable_shape`): tsc applies literal-union
+        // display widening to those, a separate display concern, so they keep
+        // the application surface.
         if matches!(
             self.interner.lookup(evaluated),
-            Some(TypeData::Conditional(_))
-        ) || evaluated == type_id
-        {
+            Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
+        ) || !alias_underlying::application_reduces_to_displayable_shape(
+            self.interner,
+            evaluated,
+        ) {
             return None;
         }
         Some(evaluated)

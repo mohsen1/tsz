@@ -2,3 +2,4 @@
 
 mod core;
 mod jsdoc_heritage;
+mod member_probe;
