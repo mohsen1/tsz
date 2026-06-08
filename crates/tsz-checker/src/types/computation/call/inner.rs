@@ -936,7 +936,7 @@ impl<'a> CheckerState<'a> {
                 Some(expected),
             ))
         {
-            let fresh_subtype = assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected);
+            let fresh_subtype = self.fresh_object_literal_argument_recovers(actual, expected);
             let recover_object_literal =
                 fresh_subtype
                     && !self.object_literal_has_computed_property_names(arg_idx)
