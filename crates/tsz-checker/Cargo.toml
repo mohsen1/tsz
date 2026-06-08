@@ -1628,6 +1628,10 @@ name = "duplicate_identifier_grouping_allocation_tests"
 path = "tests/duplicate_identifier_grouping_allocation_tests.rs"
 
 [[test]]
+name = "type_alias_body_walk_allocation_tests"
+path = "tests/type_alias_body_walk_allocation_tests.rs"
+
+[[test]]
 name = "duplicate_property_modifier_ts2687_tests"
 path = "tests/duplicate_property_modifier_ts2687_tests.rs"
 
