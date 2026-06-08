@@ -7,17 +7,31 @@
 use crate::types::TypeId;
 
 /// Cache key for option-sensitive type evaluation.
+///
+/// Both `no_unchecked_indexed_access` and `exact_optional_property_types` are
+/// part of the key because both compiler options change evaluation results
+/// (indexed access of optional/array members, homomorphic mapped-modifier
+/// stripping). A cache key that omitted either would return a result computed
+/// under a different option set if the owning interner's options ever change
+/// between writes and reads (the explicit cache reset boundary described in
+/// issue #10970).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct EvaluationCacheKey {
     type_id: TypeId,
     no_unchecked_indexed_access: bool,
+    exact_optional_property_types: bool,
 }
 
 impl EvaluationCacheKey {
-    pub const fn new(type_id: TypeId, no_unchecked_indexed_access: bool) -> Self {
+    pub const fn new(
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+        exact_optional_property_types: bool,
+    ) -> Self {
         Self {
             type_id,
             no_unchecked_indexed_access,
+            exact_optional_property_types,
         }
     }
 
@@ -28,18 +42,24 @@ impl EvaluationCacheKey {
     pub const fn no_unchecked_indexed_access(self) -> bool {
         self.no_unchecked_indexed_access
     }
+
+    pub const fn exact_optional_property_types(self) -> bool {
+        self.exact_optional_property_types
+    }
 }
 
 /// Options that affect type evaluation results.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EvaluationOptions {
     no_unchecked_indexed_access: bool,
+    exact_optional_property_types: bool,
 }
 
 impl EvaluationOptions {
     pub const fn new() -> Self {
         Self {
             no_unchecked_indexed_access: false,
+            exact_optional_property_types: false,
         }
     }
 
@@ -48,8 +68,17 @@ impl EvaluationOptions {
         self
     }
 
+    pub const fn with_exact_optional_property_types(mut self, enabled: bool) -> Self {
+        self.exact_optional_property_types = enabled;
+        self
+    }
+
     pub const fn no_unchecked_indexed_access(self) -> bool {
         self.no_unchecked_indexed_access
+    }
+
+    pub const fn exact_optional_property_types(self) -> bool {
+        self.exact_optional_property_types
     }
 }
 
@@ -82,6 +111,11 @@ impl EvaluationRequest {
         self
     }
 
+    pub const fn with_exact_optional_property_types(mut self, enabled: bool) -> Self {
+        self.options = self.options.with_exact_optional_property_types(enabled);
+        self
+    }
+
     pub const fn type_id(self) -> TypeId {
         self.type_id
     }
@@ -94,8 +128,16 @@ impl EvaluationRequest {
         self.options.no_unchecked_indexed_access()
     }
 
+    pub const fn exact_optional_property_types(self) -> bool {
+        self.options.exact_optional_property_types()
+    }
+
     pub const fn cache_key(self) -> EvaluationCacheKey {
-        EvaluationCacheKey::new(self.type_id, self.options.no_unchecked_indexed_access())
+        EvaluationCacheKey::new(
+            self.type_id,
+            self.options.no_unchecked_indexed_access(),
+            self.options.exact_optional_property_types(),
+        )
     }
 }
 
@@ -114,7 +156,7 @@ mod tests {
         assert!(!request.no_unchecked_indexed_access());
         assert_eq!(
             request.cache_key(),
-            EvaluationCacheKey::new(TypeId::STRING, false)
+            EvaluationCacheKey::new(TypeId::STRING, false, false)
         );
         assert_eq!(request.cache_key().type_id(), TypeId::STRING);
         assert!(!request.cache_key().no_unchecked_indexed_access());
@@ -130,11 +172,34 @@ mod tests {
         assert!(request.no_unchecked_indexed_access());
         assert_eq!(
             request.cache_key(),
-            EvaluationCacheKey::new(TypeId::NUMBER, true)
+            EvaluationCacheKey::new(TypeId::NUMBER, true, false)
         );
         assert_eq!(
             request.with_type_id(TypeId::BOOLEAN).cache_key(),
-            EvaluationCacheKey::new(TypeId::BOOLEAN, true)
+            EvaluationCacheKey::new(TypeId::BOOLEAN, true, false)
+        );
+    }
+
+    #[test]
+    fn request_cache_key_tracks_exact_optional_property_types() {
+        let request = EvaluationRequest::with_options(
+            TypeId::NUMBER,
+            EvaluationOptions::new().with_exact_optional_property_types(true),
+        );
+
+        assert!(request.exact_optional_property_types());
+        assert!(!request.no_unchecked_indexed_access());
+        assert!(request.cache_key().exact_optional_property_types());
+        assert!(!request.cache_key().no_unchecked_indexed_access());
+        assert_eq!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::NUMBER, false, true)
+        );
+        // The two option flags are independent discriminants: flipping one must
+        // not collide with the other being set.
+        assert_ne!(
+            EvaluationCacheKey::new(TypeId::NUMBER, true, false),
+            EvaluationCacheKey::new(TypeId::NUMBER, false, true)
         );
     }
 
