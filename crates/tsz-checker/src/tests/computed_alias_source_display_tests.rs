@@ -39,6 +39,20 @@ fn assert_source_display(source: &str, expected_source: &str) {
     );
 }
 
+fn assert_argument_source_display(source: &str, expected_source: &str) {
+    let messages: Vec<String> = check_source_diagnostics(source)
+        .into_iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text)
+        .collect();
+    assert!(
+        messages.iter().any(|m| m.contains(&format!(
+            "Argument of type '{expected_source}' is not assignable"
+        ))),
+        "expected argument source display '{expected_source}', got: {messages:?}"
+    );
+}
+
 #[test]
 fn conditional_scalar_alias_source_renders_underlying() {
     // `Pick_A` reduces to `string`; tsc shows `string`, not `Pick_A`.
@@ -280,5 +294,163 @@ declare const witness_r: Mixed_R;
 const sink_r: 0 = witness_r;
 "#,
         "Mixed_R",
+    );
+}
+
+// --- generic conditional/indexed-access applications -----------------------
+//
+// A *generic* application whose alias body is a conditional or indexed access
+// (`Classify<"x">`, `Head<[a, b]>`, `Val<{…}>`) drops tsc's `aliasSymbol` once
+// it reduces to a concrete shape, so the diagnostic source must render the
+// resolved structural form. The scalar/literal reductions already collapsed to
+// a shared singleton; the object/tuple/array reductions retained the
+// application surface and leaked the `Classify<"x">` spelling. Binder names are
+// varied so the rule is structural, not keyed on `Classify`/`Head`/`Val`.
+
+#[test]
+fn generic_conditional_application_to_object_renders_structural() {
+    assert_source_display(
+        r#"
+type Sort_Sa<T> = T extends string ? { s: T } : { n: T };
+declare const probe_sa: Sort_Sa<"x">;
+const sink_sa: 0 = probe_sa;
+"#,
+        "{ s: \"x\"; }",
+    );
+}
+
+#[test]
+fn renamed_generic_conditional_application_to_tuple_renders_structural() {
+    assert_source_display(
+        r#"
+type LeadTail_Tb<U> = U extends [infer H, ...infer R] ? [H, ...R] : [];
+declare const probe_tb: LeadTail_Tb<[string, number]>;
+const sink_tb: 0 = probe_tb;
+"#,
+        "[string, number]",
+    );
+}
+
+#[test]
+fn generic_conditional_application_to_array_renders_structural() {
+    assert_source_display(
+        r#"
+type Listify_Uc<V> = V extends unknown ? V[] : never;
+declare const probe_uc: Listify_Uc<string>;
+const sink_uc: 0 = probe_uc;
+"#,
+        "string[]",
+    );
+}
+
+#[test]
+fn generic_indexed_access_application_to_object_renders_structural() {
+    assert_source_display(
+        r#"
+type Center_Vd<W> = W[keyof W];
+declare const probe_vd: Center_Vd<{ only: { z: 1 } }>;
+const sink_vd: 0 = probe_vd;
+"#,
+        "{ z: 1; }",
+    );
+}
+
+#[test]
+fn generic_application_through_alias_chain_renders_structural() {
+    // `Outer_We -> Inner_We<…>` (a generic conditional through an alias chain)
+    // still drops every name down to the resolved object.
+    assert_source_display(
+        r#"
+type Inner_We<X> = X extends unknown ? { wrapped: X } : never;
+type Outer_We<X> = Inner_We<X>;
+declare const probe_we: Outer_We<number>;
+const sink_we: 0 = probe_we;
+"#,
+        "{ wrapped: number; }",
+    );
+}
+
+#[test]
+fn generic_conditional_application_argument_position_renders_structural() {
+    // The same reduction applies to a TS2345 call-argument source.
+    assert_argument_source_display(
+        r#"
+type Shape_Xf<T> = T extends string ? { s: T } : { n: T };
+declare function take_xf(value: 0): void;
+declare const probe_xf: Shape_Xf<"y">;
+take_xf(probe_xf);
+"#,
+        "{ s: \"y\"; }",
+    );
+}
+
+#[test]
+fn generic_mapped_application_keeps_alias_name() {
+    // A mapped body is not a conditional/indexed access; tsc keeps the
+    // homomorphic application name, so the reduction must not fire.
+    assert_source_display(
+        r#"
+type Clone_Yg<T> = { [K in keyof T]: T[K] };
+declare const probe_yg: Clone_Yg<{ a: string }>;
+const sink_yg: 0 = probe_yg;
+"#,
+        "Clone_Yg<{ a: string; }>",
+    );
+}
+
+#[test]
+fn generic_conditional_application_to_union_keeps_alias_name() {
+    // A single application reducing to a *union* keeps its alias name: tsc orders
+    // union members by global creation order, which tsz does not reproduce, so
+    // expanding here would trade an alias surface for a member-order divergence.
+    assert_source_display(
+        r#"
+type Spread_Zh<T> = T extends unknown ? { v: T } : never;
+declare const probe_zh: Spread_Zh<1 | 2>;
+const sink_zh: 0 = probe_zh;
+"#,
+        "Spread_Zh<1 | 2>",
+    );
+}
+
+#[test]
+fn unreduced_generic_conditional_application_keeps_alias_name() {
+    // A free type parameter leaves the conditional deferred, so tsc keeps the
+    // `Defer_Ai<T>` spelling rather than a partially-resolved shape.
+    let messages = ts2322_messages(
+        r#"
+type Defer_Ai<T> = T extends unknown ? { v: T } : never;
+function probe_ai<T>(value: Defer_Ai<T>): void {
+  const sink_ai: 0 = value;
+}
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type 'Defer_Ai<T>' is not assignable")),
+        "expected deferred application to keep its alias name, got: {messages:?}"
+    );
+}
+
+#[test]
+fn non_generic_alias_wrapping_conditional_application_keeps_alias_in_identifier_source() {
+    // Negative guard for the scope boundary: when a *non-generic* alias wraps a
+    // reducible generic application (`type Frozen_Bj = Resolve_Bj<{ a: number }>`)
+    // and appears as a bare identifier source, the reduction here is intentionally
+    // deferred to the non-generic computed-body path (which currently keeps the
+    // `Frozen_Bj` spelling in this position). This proves the generic-application
+    // reduction does not leak into the non-generic-alias identifier-source path —
+    // that residual is tracked separately. The assertion-source RO case (which the
+    // computed-body path *does* render structurally) is covered in
+    // `type_alias_computed_display_tests`.
+    assert_source_display(
+        r#"
+type Resolve_Bj<T> = T extends object ? { readonly [K in keyof T]: T[K] } : T;
+type Frozen_Bj = Resolve_Bj<{ a: number }>;
+declare const probe_bj: Frozen_Bj;
+const sink_bj: 0 = probe_bj;
+"#,
+        "Frozen_Bj",
     );
 }

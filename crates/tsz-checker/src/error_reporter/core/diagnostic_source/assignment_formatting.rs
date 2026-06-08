@@ -162,6 +162,20 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // A generic application of a conditional/indexed-access-bodied type alias
+        // (`Classify<"x">`, `Head<[a, b]>`, `Val<{…}>`, including through an alias
+        // chain) drops tsc's `aliasSymbol` once it reduces to a concrete shape, so
+        // tsc prints the resolved structural form (`{ s: "x"; }`, `[a, b]`, …).
+        // The identifier-source fallbacks below otherwise repaint the source with
+        // the declared annotation text and leak the `Classify<"x">` surface. The
+        // shared reduction policy keeps the alias for free-type-parameter, stalled,
+        // and mapped-bodied applications, and defers a non-generic alias wrapping
+        // such an application (`type RO = DeepReadonly<C>`) to the established
+        // computed-body path, matching tsc.
+        if let Some(display) = self.reduced_generic_application_source_display(source) {
+            return display;
+        }
+
         let has_optional_callable_param =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
                 .is_some_and(|shape| shape.params.iter().any(|param| param.optional))
