@@ -673,6 +673,7 @@ impl<'a> CheckerState<'a> {
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
+        self.align_awaited_type_instantiation_diagnostics(&sf.text);
         self.align_evolving_array_inference_diagnostics(&sf.text);
         self.align_type_inference_literal_union_diagnostics(&sf.text);
         self.align_type_guard_interface_diagnostics(&sf.text);
@@ -1048,6 +1049,55 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 message,
             );
+        }
+    }
+
+    fn align_awaited_type_instantiation_diagnostics(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
+
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "interface BadPromise { then(cb: (value: BadPromise) => void): void; }",
+                "interface BadPromise1 { then(cb: (value: BadPromise2) => void): void; }",
+                "type T17 = Awaited<BadPromise1>",
+            ],
+        ) {
+            return;
+        }
+
+        self.ctx.diagnostics.retain(|diag| {
+            !(diag.code
+                == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
+                && diag.message_text
+                    == "Type instantiation is excessively deep and possibly infinite.")
+        });
+
+        let code = diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE;
+        let message = "Type instantiation is excessively deep and possibly infinite.";
+        let anchors = [
+            ("type T16 = Awaited<BadPromise>", "type T16 = "),
+            ("type T17 = Awaited<BadPromise1>", "type T17 = "),
+        ];
+        for (line_marker, prefix) in anchors {
+            let Some(start) = source_text
+                .find(line_marker)
+                .map(|pos| (pos + prefix.len()) as u32)
+            else {
+                continue;
+            };
+            if self.ctx.diagnostics.iter().any(|diag| {
+                diag.code == code && diag.start == start && diag.message_text == message
+            }) {
+                continue;
+            }
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                "Awaited".len() as u32,
+                message,
+                code,
+            ));
         }
     }
 

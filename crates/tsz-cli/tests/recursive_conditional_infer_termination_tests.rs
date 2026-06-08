@@ -150,35 +150,100 @@ fn lib_awaited_promise_literal_terminates() {
     );
 }
 
-/// Convergence (#11586): a recursive unwrapper applied to a *literal* argument
-/// must not merely terminate — it must resolve to the unwrapped literal, exactly
-/// like `tsc`. Before the per-query cross-evaluator memo this either hung or
-/// bailed to an opaque/deferred form, so assigning the unwrapped literal back
-/// spuriously failed. We assert the *functional* outcome by source line rather
-/// than the rendered type name (which the structural-depth bail may still leave
-/// unexpanded): the inner-literal assignment must type-check and the unrelated
-/// one must error. `assert_terminates` also enforces termination within the
-/// deadline.
-fn assert_convergence(name: &str, source: &str, ok_line: u32, bad_line: u32) {
-    let out = assert_terminates(name, source);
+/// Run `source` through the real binary at the *production* per-query budget
+/// (so the `Awaited` fold runs to completion rather than being forced to bail by
+/// a tiny test budget) and return its combined stdout+stderr. Resolution
+/// correctness — not just termination — is the property under test here.
+fn run_check(name: &str, source: &str) -> String {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping {name}: tsz binary not found");
+        return String::new();
+    };
+    let temp = TempDir::new(name).expect("temp dir");
+    write_file(&temp.path.join("repro.ts"), source);
+
+    let output = Command::new(tsz_bin)
+        .args(["repro.ts", "--noEmit", "--pretty", "false"])
+        .current_dir(&temp.path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run tsz repro");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+/// Regression for issue #11586: a concrete `Awaited<Promise<Promise<T>>>` nest
+/// must resolve to the unwrapped value (matching tsc's `getAwaitedType`), not
+/// bail to a deferred conditional that then fails assignability.
+#[test]
+fn lib_awaited_double_nested_promise_resolves_to_literal() {
+    let out = run_check(
+        "awaited_double_ok",
+        "declare const b: Awaited<Promise<Promise<2>>>;\nconst out: 2 = b;\n",
+    );
     if out.is_empty() {
-        return; // binary not found; assert_terminates already logged the skip.
+        return;
     }
     assert!(
-        out.contains(&format!("repro.ts({bad_line},")),
-        "expected a diagnostic on the unrelated assignment (line {bad_line}) for `{name}`,\n\
-         showing the recursive type resolved to its unwrapped literal.\noutput:\n{out}"
-    );
-    assert!(
-        !out.contains(&format!("repro.ts({ok_line},")),
-        "the inner-literal assignment (line {ok_line}) must type-check for `{name}` — the \
-         recursive type converged to the wrong value.\noutput:\n{out}"
+        !out.contains("TS2322"),
+        "Awaited<Promise<Promise<2>>> must resolve to 2; got:\n{out}"
     );
 }
 
-/// Self-referential unwrapper over an interface resolves a literal argument to
-/// the unwrapped literal. Renamed binders (`Wrapper`/`Peel`/`Held`) keep the
-/// check name-agnostic.
+/// Three Promise layers reach the assignability evaluator deep enough to trip
+/// the instantiation depth/fuel guard. All three layers must still unwrap.
+#[test]
+fn lib_awaited_triple_nested_promise_resolves_to_literal() {
+    let out = run_check(
+        "awaited_triple_ok",
+        "declare const d: Awaited<Promise<Promise<Promise<\"x\">>>>;\nconst out: \"x\" = d;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert!(
+        !out.contains("TS2322"),
+        "Awaited<Promise<Promise<Promise<\"x\">>>> must resolve to \"x\"; got:\n{out}"
+    );
+}
+
+/// The fold must preserve the unwrapped *value*, not erase or widen the type.
+#[test]
+fn lib_awaited_nested_promise_preserves_value_for_negative_case() {
+    let out = run_check(
+        "awaited_double_neg",
+        "declare const b: Awaited<Promise<Promise<2>>>;\nconst out: 3 = b;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert!(
+        out.contains("TS2322"),
+        "resolved literal 2 must not be assignable to 3; got:\n{out}"
+    );
+}
+
+/// Convergence (#11586): a recursive unwrapper applied to a *literal* argument
+/// must not merely terminate — it must resolve to the unwrapped literal.
+fn assert_convergence(name: &str, source: &str, ok_line: u32, bad_line: u32) {
+    let out = assert_terminates(name, source);
+    if out.is_empty() {
+        return;
+    }
+    assert!(
+        out.contains(&format!("repro.ts({bad_line},")),
+        "expected a diagnostic on the unrelated assignment (line {bad_line}) for `{name}`.\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains(&format!("repro.ts({ok_line},")),
+        "the inner-literal assignment (line {ok_line}) must type-check for `{name}`.\noutput:\n{out}"
+    );
+}
+
 #[test]
 fn recursive_unwrapper_literal_resolves_to_inner_literal() {
     assert_convergence(
@@ -193,8 +258,6 @@ fn recursive_unwrapper_literal_resolves_to_inner_literal() {
     );
 }
 
-/// A string-literal argument converges the same way (the bug reproduced for any
-/// fresh literal/object identity, not just numbers).
 #[test]
 fn recursive_unwrapper_string_literal_resolves() {
     assert_convergence(

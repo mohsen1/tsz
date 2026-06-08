@@ -6,5 +6,6 @@ mod core;
 mod formatting;
 pub(crate) mod lazy;
 mod lazy_fuel;
+mod source_location;
 mod type_node_resolution;
 mod type_params;

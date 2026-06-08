@@ -100,6 +100,20 @@ impl<'a> CheckerState<'a> {
             return cached.result;
         }
 
+        // On a cache miss, fold a fully-concrete standard-library `Awaited<...>`
+        // before delegating to the solver evaluator. The environment evaluator
+        // reached here (relation source/target evaluation, annotation
+        // resolution) hits the solver directly, so it needs the same fold
+        // `evaluate_application_type` already applies — otherwise nested promises
+        // bail to a deferred conditional and assignability reports a spurious
+        // `TS2322`. See `fold_concrete_awaited_application`.
+        if let Some(folded) = self.fold_concrete_awaited_application(type_id) {
+            if use_cache {
+                self.ctx.cache_env_eval_result(type_id, folded, false);
+            }
+            return folded;
+        }
+
         // Depth guard: evaluate_type_with_env_impl can recurse through
         // ensure_relation_input_ready → resolve_and_insert_def_type →
         // get_type_of_symbol → evaluate_type_with_env_impl, causing
