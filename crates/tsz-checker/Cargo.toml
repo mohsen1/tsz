@@ -153,6 +153,9 @@ path = "tests/ts2513_abstract_super_access_tests.rs"
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 [[test]]
+name = "mapped_identity_alias_display_pollution_tests"
+path = "tests/mapped_identity_alias_display_pollution_tests.rs"
+[[test]]
 name = "generic_type_alias_lazy_body_tests"
 path = "tests/generic_type_alias_lazy_body_tests.rs"
 
@@ -442,6 +445,9 @@ path = "tests/tuple_variadic_position_elaboration_tests.rs"
 [[test]]
 name = "conditional_alias_source_display_tests"
 path = "tests/conditional_alias_source_display_tests.rs"
+[[test]]
+name = "conditional_application_display_tests"
+path = "tests/conditional_application_display_tests.rs"
 [[test]]
 name = "type_parameter_source_constraint_chain_tests"
 path = "tests/type_parameter_source_constraint_chain_tests.rs"
@@ -1627,6 +1633,10 @@ path = "tests/duplicate_identifier_grouping_allocation_tests.rs"
 [[test]]
 name = "duplicate_property_modifier_ts2687_tests"
 path = "tests/duplicate_property_modifier_ts2687_tests.rs"
+
+[[test]]
+name = "class_member_modifier_ts2687_tests"
+path = "tests/class_member_modifier_ts2687_tests.rs"
 
 [[test]]
 name = "type_alias_signature_body_validation_tests"
