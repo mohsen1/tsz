@@ -667,8 +667,12 @@ fn test_def_symbol_bridge_writes_route_through_dual_env_helper() {
 
 #[test]
 fn test_assignability_checker_routes_relation_queries_through_query_boundaries() {
-    let assignability_source = fs::read_to_string("src/assignability/assignability_checker.rs")
+    let mut assignability_source = fs::read_to_string("src/assignability/assignability_checker.rs")
         .expect("failed to read src/assignability/assignability_checker.rs for architecture guard");
+    assignability_source.push_str(
+        &fs::read_to_string("src/assignability/assignability_relation.rs")
+            .expect("failed to read src/assignability/assignability_relation.rs"),
+    );
     let subtype_source = fs::read_to_string("src/assignability/subtype_identity_checker.rs")
         .expect(
             "failed to read src/assignability/subtype_identity_checker.rs for architecture guard",
@@ -691,8 +695,8 @@ fn test_assignability_checker_routes_relation_queries_through_query_boundaries()
 
     // Assignability helpers live in assignability_checker
     assert!(
-        assignability_source.contains("is_assignable_with_overrides("),
-        "assignability_checker should use query_boundaries::assignability::is_assignable_with_overrides"
+        assignability_source.contains("cached_assignability_with_overrides("),
+        "assignability_checker should use query_boundaries::assignability::cached_assignability_with_overrides"
     );
     assert!(
         assignability_source.contains("is_assignable_bivariant_with_resolver("),
@@ -708,6 +712,33 @@ fn test_assignability_checker_routes_relation_queries_through_query_boundaries()
         subtype_source.contains("is_redeclaration_identical_with_resolver("),
         "subtype_identity_checker should use query_boundaries::assignability::is_redeclaration_identical_with_resolver"
     );
+}
+
+#[test]
+fn test_assignability_cached_relation_uses_boundary_owned_cache_probe() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read src/assignability/assignability_relation.rs");
+    let helper_body = source
+        .split("fn check_assignability_cached(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn namespace_source_has_matching_property_mismatch").next())
+        .expect("failed to locate check_assignability_cached body");
+
+    assert!(
+        helper_body.contains("cached_assignability_with_overrides("),
+        "check_assignability_cached should delegate cache lookup, relation execution, and cache insert to query_boundaries::assignability"
+    );
+    for forbidden in [
+        "assignability_cache_key(",
+        "is_relation_cacheable(",
+        "lookup_assignability_cache(",
+        "insert_assignability_cache(",
+    ] {
+        assert!(
+            !helper_body.contains(forbidden),
+            "check_assignability_cached should not own relation-cache internals: found {forbidden}"
+        );
+    }
 }
 
 #[test]

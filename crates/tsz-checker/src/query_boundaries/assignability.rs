@@ -918,6 +918,44 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::relations::subtype::Ty
     })
 }
 
+/// Execute an assignability relation through the boundary-owned checker cache.
+///
+/// Checker callers provide prepared relation inputs and the override provider,
+/// but the cacheability predicate, cache key construction, lookup, relation
+/// execution, and insert stay together here so cache policy cannot drift across
+/// call sites.
+pub(crate) fn cached_assignability_with_overrides<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
+    inputs: &AssignabilityQueryInputs<'_, R>,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
+) -> tsz_solver::relations::relation_queries::RelationResult {
+    let is_cacheable =
+        is_relation_cacheable(inputs.db.as_type_database(), inputs.source, inputs.target);
+    if is_cacheable {
+        let cache_key = assignability_cache_key(inputs.source, inputs.target, inputs.flags);
+        if let Some(cached) = inputs.db.lookup_assignability_cache(cache_key) {
+            return tsz_solver::relations::relation_queries::RelationResult {
+                kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
+                related: cached,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+            };
+        }
+    }
+
+    let relation_result = is_assignable_with_overrides(inputs, overrides);
+
+    if is_cacheable {
+        let cache_key = assignability_cache_key(inputs.source, inputs.target, inputs.flags);
+        inputs
+            .db
+            .insert_assignability_cache(cache_key, relation_result.is_related());
+    }
+
+    relation_result
+}
+
 /// Like `is_assignable_with_overrides` but skips weak type checks (TS2559).
 ///
 /// This matches tsc's `isTypeAssignableTo` behavior, which does NOT
