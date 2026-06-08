@@ -12,10 +12,13 @@ fn jsx_generic_spread_assignability_uses_relation_outcome_boundary() {
         .expect("find generic JSX spread assignability reporter");
     let function = &source[function_start..];
 
-    assert_eq!(
-        function.matches("jsx_props_relation_outcome").count(),
-        2,
-        "generic JSX spread assignability decisions should route through JSX props relation outcomes"
+    assert!(
+        !function.contains("jsx_props_relation_outcome"),
+        "generic JSX spread assignability decisions should route through the JSX props boundary helper"
+    );
+    assert!(
+        function.contains("checkers::jsx::props_are_assignable("),
+        "generic JSX spread assignability should use query_boundaries::checkers::jsx::props_are_assignable"
     );
     assert!(
         !function.contains("diagnostic_relation_boolean_guard"),
@@ -37,16 +40,13 @@ fn jsx_generic_spread_validation_uses_relation_outcome_boundary() {
         .find("pub(in crate::checkers_domain::jsx) fn normalize_jsx_required_props_target")
         .expect("find next JSX validation helper");
     let function = &rest[..function_end];
-    let compact_function: String = function.chars().filter(|ch| !ch.is_whitespace()).collect();
-
     assert!(
-        function.contains("jsx_props_relation_outcome(*attr_type, expected_type)")
-            && function.contains(".related"),
-        "generic JSX spread explicit attribute mismatch must use JSX props relation outcomes"
+        !function.contains("jsx_props_relation_outcome("),
+        "generic JSX spread attrs validation should route through the JSX props boundary helper"
     );
     assert!(
-        compact_function.contains("jsx_props_relation_outcome(attrs_type,props_type).related"),
-        "generic JSX spread synthesized attrs compatibility must use JSX props relation outcomes"
+        function.matches("props_are_assignable(").count() >= 2,
+        "generic JSX spread attrs validation should use query_boundaries::checkers::jsx::props_are_assignable"
     );
     assert!(
         !function.contains("diagnostic_relation_boolean_guard"),
