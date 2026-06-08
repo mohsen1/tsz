@@ -4,6 +4,7 @@
 //! Contains methods for ensuring type alias bodies are registered in the
 //! type environment and for resolving `DefIds` from qualified names.
 
+use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
 use crate::types_domain::unique_symbol_arena::{
     has_declared_unique_symbol_owner, is_unique_symbol_type_annotation_unwrapped,
@@ -11,7 +12,6 @@ use crate::types_domain::unique_symbol_arena::{
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_solver::TypeId;
-use tsz_solver::is_compiler_managed_type;
 
 use super::type_node::TypeNodeChecker;
 

@@ -438,7 +438,9 @@ impl<'a> CheckerState<'a> {
                 | "symbol"
                 | "object"
         );
-        if (tsz_solver::is_compiler_managed_type(name) || primitive_type) && !shadows_managed_array
+        if (crate::query_boundaries::type_predicates::is_compiler_managed_type(name)
+            || primitive_type)
+            && !shadows_managed_array
         {
             return true;
         }
@@ -889,7 +891,8 @@ impl<'a> CheckerState<'a> {
                 | "symbol"
                 | "object"
         );
-        if (tsz_solver::is_compiler_managed_type(name.as_str()) || primitive_type)
+        if (crate::query_boundaries::type_predicates::is_compiler_managed_type(name.as_str())
+            || primitive_type)
             && !shadows_managed_array
         {
             self.check_type_alias_body_type_reference_args(type_arguments.as_ref());

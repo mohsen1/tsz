@@ -208,3 +208,73 @@ fn recursive_unwrapper_string_literal_resolves() {
         5,
     );
 }
+
+/// Convergence (#11586): a *nested concrete* `Awaited<Promise<Promise<…>>>` must
+/// resolve to the inner literal — exactly like `tsc` — not just terminate. The
+/// lazy conditional/`infer` evaluation of the standard-library `Awaited<T>` alias
+/// did not converge once the inner `Promise` materialized to its structural
+/// `{ then }` Object shape (the outer conditional bailed to its `: T` branch and
+/// yielded the still-wrapped argument), so assigning the unwrapped literal back
+/// spuriously failed. We assert the *functional* outcome by source line: the
+/// matching-literal assignment must type-check and the mismatching one must error
+/// (proving the type converged to the precise literal, not an opaque/widened
+/// form). `assert_terminates` also enforces termination within the deadline.
+fn assert_awaited_convergence(name: &str, source: &str, ok_line: u32, bad_line: u32) {
+    let out = assert_terminates(name, source);
+    if out.is_empty() {
+        return; // binary not found; assert_terminates already logged the skip.
+    }
+    assert!(
+        out.contains(&format!("repro.ts({bad_line},")),
+        "expected a diagnostic on the mismatching assignment (line {bad_line}) for `{name}`, \
+         showing the nested Awaited resolved to its precise inner literal.\noutput:\n{out}"
+    );
+    assert!(
+        !out.contains(&format!("repro.ts({ok_line},")),
+        "the matching-literal assignment (line {ok_line}) must type-check for `{name}` — the \
+         nested Awaited converged to the wrong value.\noutput:\n{out}"
+    );
+}
+
+/// Two levels of plain `Promise` nesting around a numeric literal.
+#[test]
+fn awaited_nested_promise_converges_to_inner_literal() {
+    assert_awaited_convergence(
+        "awaited_converge_num",
+        "declare const a: Awaited<Promise<Promise<2>>>;\n\
+         const ok: 2 = a;\n\
+         const bad: 3 = a;\n",
+        2,
+        3,
+    );
+}
+
+/// Three levels of nesting around a string literal — convergence must hold at
+/// arbitrary depth, not just two.
+#[test]
+fn awaited_deeply_nested_promise_converges_to_inner_string() {
+    assert_awaited_convergence(
+        "awaited_converge_str",
+        "declare const a: Awaited<Promise<Promise<Promise<\"deep\">>>>;\n\
+         const ok: \"deep\" = a;\n\
+         const bad: \"other\" = a;\n",
+        2,
+        3,
+    );
+}
+
+/// A user-declared structural thenable nested inside a `Promise` is unwrapped
+/// too — the fold stays a faithful `getAwaitedType` and does not stop one layer
+/// early on a non-lib thenable. Renamed binders keep the check structural.
+#[test]
+fn awaited_unwraps_user_thenable_nested_in_promise() {
+    assert_awaited_convergence(
+        "awaited_converge_thenable",
+        "interface Holder<Carried> { then(cb: (value: Carried) => void): void; }\n\
+         declare const a: Awaited<Promise<Holder<7>>>;\n\
+         const ok: 7 = a;\n\
+         const bad: 8 = a;\n",
+        3,
+        4,
+    );
+}
