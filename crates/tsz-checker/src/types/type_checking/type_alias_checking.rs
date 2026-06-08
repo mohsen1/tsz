@@ -1364,6 +1364,16 @@ impl<'a> CheckerState<'a> {
                     check_child_type_node!(self, wrapped.type_node);
                 }
             }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                // `keyof`/`readonly`/`unique` operators wrap a regular operand type
+                // node. Recurse into it so nested errors (e.g. an invalid indexed
+                // access `keyof A[T]` → TS2536, or an unresolved name) are reported
+                // just as tsc validates them — the operand was previously dropped by
+                // the catch-all arm, silently swallowing those diagnostics.
+                if let Some(type_op) = self.ctx.arena.get_type_operator(node) {
+                    check_child_type_node!(self, type_op.type_node);
+                }
+            }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
                     let is_bare_scoped_type_parameter = self
