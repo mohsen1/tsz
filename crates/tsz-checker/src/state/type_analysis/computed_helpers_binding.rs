@@ -1,3 +1,4 @@
+use super::computed_helpers_namespace_display::trim_namespace_display_path;
 use crate::context::TypingRequest;
 use crate::query_boundaries::common::{object_shape_for_type, union_members};
 use crate::state::CheckerState;
@@ -1593,6 +1594,24 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(tq_idx.0, narrowed);
                 any_changed = true;
             }
+            // Re-lowering a `typeof X` nested inside a generic type-argument or
+            // indexed access resolves it through `get_type_from_type_query`, which
+            // reads the flow-resolved type from the *expression-name* node rather
+            // than the `TYPE_QUERY` node. Cache it under that key too so the value
+            // type is observed on both lowering paths.
+            if narrowed != TypeId::ERROR
+                && let Some(tq_node) = self.ctx.arena.get(*tq_idx)
+                && let Some(type_query) = self.ctx.arena.get_type_query(tq_node)
+                && self
+                    .ctx
+                    .arena
+                    .get(type_query.expr_name)
+                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+                && self.ctx.node_types.get(&type_query.expr_name.0).copied() != Some(narrowed)
+            {
+                self.ctx.node_types.insert(type_query.expr_name.0, narrowed);
+                any_changed = true;
+            }
         }
 
         if !any_changed {
@@ -1693,7 +1712,77 @@ impl<'a> CheckerState<'a> {
             && let Some(data) = self.ctx.arena.get_array_type(node)
         {
             self.collect_type_query_nodes(data.element_type, out);
+            return;
         }
+
+        // A `typeof X` can also be nested inside a generic type-argument
+        // (`F<typeof X>`), an indexed access (`(typeof X)["k"]`), a parenthesized
+        // type, a tuple, or a type-operator body. These positions must be
+        // descended into as well so a `typeof` of a value that *shares its name
+        // with the alias being resolved* (the common `const X = ...; type X =
+        // Infer<typeof X>` shape from schema libraries) is pre-resolved to the
+        // value type instead of deferring to a `TypeQuery` that re-enters the
+        // in-progress alias and never terminates. Conditional- and mapped-type
+        // bodies are intentionally excluded (see the closing note below).
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(data) = self.ctx.arena.get_type_ref(node)
+            && let Some(type_arguments) = &data.type_arguments
+        {
+            for &arg_idx in &type_arguments.nodes {
+                self.collect_type_query_nodes(arg_idx, out);
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            && let Some(data) = self.ctx.arena.get_indexed_access_type(node)
+        {
+            self.collect_type_query_nodes(data.object_type, out);
+            self.collect_type_query_nodes(data.index_type, out);
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(data) = self.ctx.arena.get_parenthesized(node)
+        {
+            self.collect_type_query_nodes(data.expression, out);
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::TUPLE_TYPE
+            && let Some(data) = self.ctx.arena.get_tuple_type(node)
+        {
+            for &element_idx in &data.elements.nodes {
+                self.collect_type_query_nodes(element_idx, out);
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+            && let Some(data) = self.ctx.arena.get_named_tuple_member(node)
+        {
+            self.collect_type_query_nodes(data.type_node, out);
+            return;
+        }
+
+        if (node.kind == syntax_kind_ext::OPTIONAL_TYPE || node.kind == syntax_kind_ext::REST_TYPE)
+            && let Some(data) = self.ctx.arena.get_wrapped_type(node)
+        {
+            self.collect_type_query_nodes(data.type_node, out);
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR
+            && let Some(data) = self.ctx.arena.get_type_operator(node)
+        {
+            self.collect_type_query_nodes(data.type_node, out);
+        }
+
+        // Conditional- and mapped-type bodies are intentionally NOT descended
+        // into: their check/extends positions and `[K in ...]` scopes drive a
+        // specialized (deferred, distributive) evaluation whose result changes
+        // if a nested `typeof` is eagerly pre-resolved here, so they are left to
+        // the normal lowering path.
     }
 
     /// Check if a symbol is a type-only export (excludable from namespace value type).
@@ -1885,116 +1974,5 @@ impl<'a> CheckerState<'a> {
         };
         let flags = symbol.flags;
         (flags & symbol_flags::INTERFACE) != 0 && (flags & symbol_flags::VALUE) != 0
-    }
-}
-
-/// Normalize a resolved file path to the display form used in `typeof import("...")`.
-///
-/// Rules (mirroring tsc):
-/// - Virtual-FS-root `node_modules` (`/node_modules/pkg/…`, `node_modules_idx == 0`):
-///   keep the full root-relative path so the message reads
-///   `import("node_modules/pkg/index")`.
-/// - Paths with a virtual-root prefix (`/p123/node_modules/…`):
-///   strip the absolute prefix but keep from the `p123` segment onwards.
-/// - Deeper project paths (`/home/user/project/node_modules/pkg/…`):
-///   strip the host/project prefix and keep the package subpath
-///   (`node_modules/pkg/...`) so resolved declaration packages match tsc's
-///   stable display form.
-/// - No `node_modules` segment: return the trimmed path as-is.
-pub(crate) fn trim_namespace_display_path(resolved_name: &str) -> String {
-    let trimmed = resolved_name
-        .strip_prefix("./")
-        .unwrap_or(resolved_name)
-        .trim_start_matches('/');
-
-    let components: Vec<_> = trimmed
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    if let Some(node_modules_idx) = components
-        .iter()
-        .position(|segment| *segment == "node_modules")
-    {
-        if node_modules_idx > 0 {
-            let previous = components[node_modules_idx - 1];
-            let looks_like_virtual_root =
-                previous.starts_with('p') && previous[1..].chars().all(|ch| ch.is_ascii_digit());
-            if looks_like_virtual_root {
-                return components[node_modules_idx - 1..].join("/");
-            }
-        }
-        // Resolved declaration packages display from their stable
-        // package path, not the original bare specifier. Drop any
-        // host temp/project prefix before node_modules, but preserve
-        // the package subpath that tsc includes in diagnostics.
-        return components[node_modules_idx..].join("/");
-    }
-
-    trimmed.to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::trim_namespace_display_path;
-
-    #[test]
-    fn virtual_fs_root_node_modules_keeps_full_path() {
-        // `/node_modules/pkg/index.d.ts` → `node_modules/pkg/index.d.ts`
-        // (caller strips extension; we keep the full path including node_modules)
-        assert_eq!(
-            trim_namespace_display_path("/node_modules/mdast-util-to-string/index.d.ts"),
-            "node_modules/mdast-util-to-string/index.d.ts"
-        );
-    }
-
-    #[test]
-    fn virtual_fs_root_scoped_package_keeps_full_path() {
-        assert_eq!(
-            trim_namespace_display_path("/node_modules/@scope/pkg/index.d.ts"),
-            "node_modules/@scope/pkg/index.d.ts"
-        );
-    }
-
-    #[test]
-    fn deep_project_path_keeps_package_subpath() {
-        // Real project: /home/user/project/node_modules/shortid/index.d.ts →
-        // "node_modules/shortid/index.d.ts" (host/project prefix dropped, package
-        // subpath preserved to match tsc's stable display form).
-        assert_eq!(
-            trim_namespace_display_path("/home/user/project/node_modules/shortid/index.d.ts"),
-            "node_modules/shortid/index.d.ts"
-        );
-    }
-
-    #[test]
-    fn deep_project_scoped_package_keeps_full_subpath() {
-        assert_eq!(
-            trim_namespace_display_path("/home/user/project/node_modules/@types/react/index.d.ts"),
-            "node_modules/@types/react/index.d.ts"
-        );
-    }
-
-    #[test]
-    fn virtual_root_prefix_path_kept() {
-        // /p123/node_modules/csv-parse/lib/index.d.ts → "p123/node_modules/csv-parse/lib/index.d.ts"
-        assert_eq!(
-            trim_namespace_display_path("/p123/node_modules/csv-parse/lib/index.d.ts"),
-            "p123/node_modules/csv-parse/lib/index.d.ts"
-        );
-    }
-
-    #[test]
-    fn no_node_modules_returns_trimmed() {
-        assert_eq!(trim_namespace_display_path("/src/utils.ts"), "src/utils.ts");
-        assert_eq!(
-            trim_namespace_display_path("./src/utils.ts"),
-            "src/utils.ts"
-        );
-        assert_eq!(trim_namespace_display_path("server.d.ts"), "server.d.ts");
-    }
-
-    #[test]
-    fn relative_prefix_stripped() {
-        assert_eq!(trim_namespace_display_path("./mod.d.ts"), "mod.d.ts");
     }
 }
