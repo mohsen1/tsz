@@ -1296,6 +1296,26 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
 }
 
 #[test]
+fn test_excess_property_tail_routes_type_queries_through_state_boundary() {
+    let source = fs::read_to_string("src/state/state_checking/property/excess_property_tail.rs")
+        .expect("failed to read src/state/state_checking/property/excess_property_tail.rs");
+    assert!(
+        !source.contains("tsz_solver::type_queries::"),
+        "state_property_checking excess-property tail should route solver type-query access through query_boundaries::state::checking"
+    );
+    for boundary_call in [
+        "query::intersection_members(",
+        "query::union_members(",
+        "query::object_shape(",
+    ] {
+        assert!(
+            source.contains(boundary_call),
+            "excess-property tail should use {boundary_call} for solver shape queries"
+        );
+    }
+}
+
+#[test]
 fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
     let context_src = fs::read_to_string("src/context/mod.rs")
         .expect("failed to read src/context/mod.rs for guard");
