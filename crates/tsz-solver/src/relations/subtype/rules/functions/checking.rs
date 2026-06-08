@@ -1937,18 +1937,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(&cached) = self.eval_cache.get(&cache_key) {
             return cached;
         }
+        use crate::evaluation::cross_eval_guard;
         use crate::evaluation::evaluate::TypeEvaluator;
-        let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
-        evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
-        // Pass query_db to share the application evaluation cache across evaluations.
-        // This ensures that Application(Lazy(DefId), args) evaluated multiple times produces
-        // the same ObjectShapeId, preventing spurious structural subtype failures when two
-        // independent evaluations of the same generic type (e.g., AsyncGenerator<string, string, string[]>)
-        // produce different shape IDs.
-        if let Some(db) = self.query_db {
-            evaluator = evaluator.with_query_db(db);
-        }
-        let result = evaluator.evaluate(type_id);
+        // Per-query memo + cross-instance cycle break (#11586): the subtype checker
+        // spins up a fresh `TypeEvaluator` here whose per-instance recursion guard
+        // starts empty, so a recursive conditional/`infer` application related
+        // against a structural target can bounce evaluator → subtype-checker →
+        // evaluator, re-entering the same `TypeId` without any guard firing. On a
+        // cross-instance cycle (`None`) leave the type unevaluated and, crucially,
+        // do not record it in `eval_cache` — the in-flight ancestor owns the result.
+        let Some(result) =
+            cross_eval_guard::memoized_eval(type_id, self.no_unchecked_indexed_access, || {
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
+                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
+                // Pass query_db to share the application evaluation cache across
+                // evaluations, so the same generic type produces the same
+                // ObjectShapeId and structural subtype checks stay stable.
+                if let Some(db) = self.query_db {
+                    evaluator = evaluator.with_query_db(db);
+                }
+                let result = evaluator.evaluate(type_id);
+                (result, !evaluator.recursion_limit_hit())
+            })
+        else {
+            return type_id;
+        };
         self.eval_cache.insert(cache_key, result);
         result
     }

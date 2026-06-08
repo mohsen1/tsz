@@ -411,3 +411,140 @@ fn keeps_diagnostic_when_inherited_overloads_miss_required_interface_overload() 
         "expected TS2416/TS2420 when inherited overloads miss a required interface overload; got {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Case 8: A derived interface that re-declares an inherited method OVERRIDES
+// (replaces) the base method — it does not accumulate an overload set across
+// `extends`. Only declaration merging (two `interface Foo {}` blocks) and
+// module augmentation accumulate same-named method overloads. Anonymous call
+// signatures still accumulate because they have no name to override by.
+//
+// Before this was fixed, a generic derived redeclaration kept BOTH the
+// instantiated base signature and the derived one as an overload set, so a
+// failing call reported TS2769 ("No overload matches") instead of the single
+// signature's TS2345, and a call that should fail against the narrowed derived
+// signature was silently accepted against the surviving base signature.
+// ---------------------------------------------------------------------------
+
+// Generic derived redeclares the method with the same (substituted) signature.
+// A call with the wrong argument must resolve against the single derived
+// signature (TS2345), NOT report an overload-set failure (TS2769).
+#[test]
+fn generic_override_failing_call_reports_single_signature_not_overload() {
+    let codes = check_source_codes(
+        "interface Observer<T> { next(value: T): void }
+         interface Subject<T> extends Observer<T> { next(value: T): void }
+         declare const s: Subject<number>;
+         s.next(\"x\");",
+    );
+    assert!(
+        codes.contains(&2345) && !codes.contains(&2769),
+        "expected single-signature TS2345 (not overload TS2769) for a redeclared \
+         generic inherited method; got {codes:?}"
+    );
+}
+
+// The derived signature NARROWS the inherited parameter. A call that matched
+// the wider base parameter must now fail against the narrowed derived
+// signature — the base signature must not survive in an overload set.
+#[test]
+fn generic_override_narrowed_param_rejects_widened_argument() {
+    let codes = check_source_codes(
+        "interface Base { m(x: string | number): void }
+         interface Derived extends Base { m(x: number): void }
+         declare const d: Derived;
+         d.m(\"s\");",
+    );
+    assert!(
+        codes.contains(&2345),
+        "expected TS2345: the narrowed derived signature must replace the base one; got {codes:?}"
+    );
+}
+
+// Renamed variant — the rule is structural, not keyed on identifiers.
+#[test]
+fn generic_override_failing_call_reports_single_signature_renamed() {
+    let codes = check_source_codes(
+        "interface Sink_77<E> { push(item: E): void }
+         interface Queue_77<E> extends Sink_77<E> { push(item: E): void }
+         declare const q: Queue_77<number>;
+         q.push(\"x\");",
+    );
+    assert!(
+        codes.contains(&2345) && !codes.contains(&2769),
+        "expected single-signature TS2345 for renamed redeclared generic method; got {codes:?}"
+    );
+}
+
+// Declaration merging (NOT heritage) of the SAME interface name must still
+// accumulate same-named method signatures into an overload set: both calls are
+// valid and a third unmatched argument reports the overload-set TS2769.
+#[test]
+fn declaration_merging_still_accumulates_method_overloads() {
+    let codes = check_source_codes(
+        "interface Foo<T> { m(x: T): void }
+         interface Foo<T> { m(x: string): void }
+         declare const f: Foo<number>;
+         f.m(42);
+         f.m(\"a\");
+         f.m(true);",
+    );
+    assert!(
+        codes.contains(&2769),
+        "declaration merging must accumulate overloads (true matches neither); got {codes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Case 9: With the override fix above, the interface-extension compatibility
+// check (TS2430) actually relates the derived method against the base method
+// (previously masked because the merged overload set trivially contained the
+// base signature). A self-returning method that drops an input-only
+// method-local generic of a GENERIC base is a valid override and must NOT emit
+// a false TS2430 — the dropped generic does not appear in the return, so the
+// self-family return is an ordinary covariant position.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_false_2430_self_return_drops_input_only_generic_on_generic_base() {
+    assert_no_2430(
+        "interface Base<T> { with<K extends string>(k: K, t: T): Base<T> }
+         interface Sub<T> extends Base<T> { with(k: string, t: T): Sub<T> }
+         declare const d: Sub<number>;",
+    );
+}
+
+// Renamed — structural, not identifier-keyed.
+#[test]
+fn no_false_2430_self_return_drops_input_only_generic_renamed() {
+    assert_no_2430(
+        "interface Cursor<Row> { seek<Key extends string>(k: Key, r: Row): Cursor<Row> }
+         interface Scan<Row> extends Cursor<Row> { seek(k: string, r: Row): Scan<Row> }
+         declare const c: Scan<number>;",
+    );
+}
+
+// Negative control: a genuine parameter mismatch (the override takes `number`
+// where the base's method-local generic is constrained to `string`) on a
+// generic base with a self-family return must still emit TS2430. The
+// self-family return must not suppress a real parameter incompatibility.
+#[test]
+fn keeps_2430_self_return_with_incompatible_param_on_generic_base() {
+    assert_has_2430(
+        "interface Base<T> { with<K extends string>(k: K, t: T): Base<T> }
+         interface Sub<T> extends Base<T> { with(k: number, t: T): Sub<T> }
+         declare const d: Sub<number>;",
+    );
+}
+
+// Negative control: a method-local generic used COVARIANTLY in the return
+// (`m(): T`) cannot be dropped to a concrete return (`m(): string`); TS2430
+// must still fire.
+#[test]
+fn keeps_2430_covariant_method_local_generic_dropped_to_concrete_return() {
+    assert_has_2430(
+        "interface Base { m<T>(): T }
+         interface Sub extends Base { m(): string }
+         declare const d: Sub;",
+    );
+}

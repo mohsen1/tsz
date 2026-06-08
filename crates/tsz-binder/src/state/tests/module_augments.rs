@@ -150,6 +150,100 @@ declare global {
     );
 }
 
+#[test]
+fn declare_global_const_enum_is_cross_file_global() {
+    // A `const enum` declared inside `declare global` in an external module is a
+    // value-level global. Without tracking it as a global augmentation it is
+    // invisible to cross-file resolution and a bare `Color.Red` reports TS2304.
+    // Binder name is deliberately non-default to prove nothing keys on an
+    // identifier string.
+    let (binder, _parser) = parse_and_bind(
+        r#"
+export {};
+declare global {
+    const enum Color { Red, Green, Blue }
+}
+"#,
+    );
+
+    let sym_id = binder
+        .file_locals
+        .get("Color")
+        .expect("declare global const enum should be visible through file_locals");
+    let symbol = binder
+        .get_symbol(sym_id)
+        .expect("declare global const enum symbol exists");
+    assert!(
+        symbol.has_any_flags(symbol_flags::CONST_ENUM),
+        "declare global const enum should keep CONST_ENUM flags"
+    );
+    assert!(
+        binder.global_augmentations.contains_key("Color"),
+        "declare global const enum should be tracked as a global augmentation"
+    );
+}
+
+#[test]
+fn declare_global_regular_enum_is_cross_file_global() {
+    // A regular `enum` inside `declare global` is also a value-level global and
+    // must be tracked so cross-file references resolve like tsc.
+    let (binder, _parser) = parse_and_bind(
+        r#"
+export {};
+declare global {
+    enum Direction { Up, Down }
+}
+"#,
+    );
+
+    let sym_id = binder
+        .file_locals
+        .get("Direction")
+        .expect("declare global enum should be visible through file_locals");
+    let symbol = binder
+        .get_symbol(sym_id)
+        .expect("declare global enum symbol exists");
+    assert!(
+        symbol.has_any_flags(symbol_flags::REGULAR_ENUM),
+        "declare global enum should keep REGULAR_ENUM flags"
+    );
+    assert!(
+        binder.global_augmentations.contains_key("Direction"),
+        "declare global enum should be tracked as a global augmentation"
+    );
+}
+
+#[test]
+fn declare_global_class_is_cross_file_global() {
+    // A `class` inside `declare global` provides a value (its constructor) and a
+    // type. It must be tracked as a global augmentation so a bare `new Widget()`
+    // resolves cross-file instead of reporting TS2304.
+    let (binder, _parser) = parse_and_bind(
+        r#"
+export {};
+declare global {
+    class Widget { id: number; }
+}
+"#,
+    );
+
+    let sym_id = binder
+        .file_locals
+        .get("Widget")
+        .expect("declare global class should be visible through file_locals");
+    let symbol = binder
+        .get_symbol(sym_id)
+        .expect("declare global class symbol exists");
+    assert!(
+        symbol.has_any_flags(symbol_flags::CLASS),
+        "declare global class should keep CLASS flags"
+    );
+    assert!(
+        binder.global_augmentations.contains_key("Widget"),
+        "declare global class should be tracked as a global augmentation"
+    );
+}
+
 // Regression for #6164: a `declare module "<self>"` augmentation must bind its
 // interface declaration to a separate `SymbolId` from the file-scope interface
 // of the same name. Merging the augmentation's declaration node into the

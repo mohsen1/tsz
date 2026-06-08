@@ -1597,7 +1597,27 @@ impl ParserState {
                         self.token(),
                         SyntaxKind::CloseParenToken | SyntaxKind::CloseBraceToken
                     ) {
-                        self.error_comma_expected();
+                        // `error_comma_expected()` suppresses the comma when the
+                        // closer is `)` immediately followed by `;` (a shape it
+                        // treats as call-argument / arrow recovery). For an array
+                        // literal terminated by `)` — e.g. `a0([1, 2);` where the
+                        // inner `[` is never closed — tsc still reports the missing
+                        // separator before the closer, so suppressing it would leak
+                        // a misleading `']' expected` from `parse_expected(])` below.
+                        // Emit `',' expected` directly for that case to match tsc.
+                        let paren_then_semicolon = self.is_token(SyntaxKind::CloseParenToken)
+                            && self.speculate(|parser| {
+                                parser.next_token();
+                                parser.is_token(SyntaxKind::SemicolonToken)
+                            });
+                        if paren_then_semicolon {
+                            self.parse_error_at_current_token(
+                                "',' expected.",
+                                diagnostic_codes::EXPECTED,
+                            );
+                        } else {
+                            self.error_comma_expected();
+                        }
                     }
                     break;
                 }
