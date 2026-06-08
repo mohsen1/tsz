@@ -109,6 +109,10 @@ impl EvalQueryFrame {
         });
         if active == 0 {
             EVAL_QUERY_OPS.with(|c| c.set(0));
+            // A fresh top-level query begins: drop any cross-evaluator result
+            // memo from the previous query so results never leak across queries,
+            // threads, or files (#11586).
+            crate::evaluation::cross_eval_guard::reset_query_memo();
         }
         let ops = EVAL_QUERY_OPS.with(|c| {
             let v = c.get().saturating_add(1);
