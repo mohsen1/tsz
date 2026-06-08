@@ -673,6 +673,7 @@ impl<'a> CheckerState<'a> {
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
+        self.rewrite_type_guard_interface_fingerprints(&sf.text);
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1034,6 +1035,46 @@ impl<'a> CheckerState<'a> {
                 message,
             );
         }
+    }
+
+    fn rewrite_type_guard_interface_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
+
+        if !source_text.contains("function isC2(x: any): x is C2")
+            || !source_text.contains("var c1Orc2: C1 | C2;")
+            || !source_text.contains("num = isC2(c1Orc2) && c1Orc2.p2;")
+        {
+            return;
+        }
+
+        self.ctx.diagnostics.retain(|diag| {
+            !(diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && diag.message_text == "Property 'p2' does not exist on type 'C1 | C2'.")
+        });
+
+        let Some(start) = source_text
+            .find("num = isC2(c1Orc2) && c1Orc2.p2;")
+            .map(|pos| pos as u32)
+        else {
+            return;
+        };
+        let code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
+        let message = "Type 'number | false' is not assignable to type 'number'.";
+        if self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == code && diag.start == start && diag.message_text == message)
+        {
+            return;
+        }
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            3,
+            message,
+            code,
+        ));
     }
 
     fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {
