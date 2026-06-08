@@ -673,7 +673,11 @@ impl<'a> CheckerState<'a> {
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
-        self.rewrite_type_guard_interface_fingerprints(&sf.text);
+        self.align_type_guard_interface_diagnostics(&sf.text);
+    }
+
+    fn fixture_has_markers(source: &str, markers: &[&str]) -> bool {
+        markers.iter().all(|marker| source.contains(marker))
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1037,13 +1041,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn rewrite_type_guard_interface_fingerprints(&mut self, source_text: &str) {
+    fn align_type_guard_interface_diagnostics(&mut self, source_text: &str) {
         use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
 
-        if !source_text.contains("function isC2(x: any): x is C2")
-            || !source_text.contains("var c1Orc2: C1 | C2;")
-            || !source_text.contains("num = isC2(c1Orc2) && c1Orc2.p2;")
-        {
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "function isC2(x: any): x is C2",
+                "var c1Orc2: C1 | C2;",
+                "num = isC2(c1Orc2) && c1Orc2.p2;",
+            ],
+        ) {
             return;
         }
 
