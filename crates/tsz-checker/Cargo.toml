@@ -1689,3 +1689,6 @@ path = "tests/fuel_budget_callback_context_tests.rs"
 [[test]]
 name = "union_property_optional_modifier_tests"
 path = "tests/union_property_optional_modifier_tests.rs"
+[[test]]
+name = "call_argument_boolean_literal_array_display_tests"
+path = "tests/call_argument_boolean_literal_array_display_tests.rs"

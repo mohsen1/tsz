@@ -1,6 +1,6 @@
 use tsz_solver::computation as c;
 use tsz_solver::{
-    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeId,
+    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeData, TypeId,
     TypePredicate, operations::widening,
 };
 
@@ -1060,6 +1060,28 @@ pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
 }
 
+/// When `type_id` is a plain mutable array of a boolean literal element
+/// (`Array<true>` / `Array<false>`), return `Array<boolean>` (which renders as
+/// `boolean[]`); otherwise return `None`.
+///
+/// tsc widens a fresh boolean-literal array element to `boolean` when it renders
+/// the source type in an argument-not-assignable message. Deciding this from the
+/// `Array` shape and the element `TypeId` keeps the policy structural instead of
+/// pattern-matching the rendered `"true[]"` / `"false[]"` text (§25 anti-hardcoding
+/// rule). The match is intentionally limited to a mutable `Array` element so it
+/// stays exactly equivalent to the prior text check: `readonly` arrays, tuples,
+/// and alias applications render differently and are left untouched.
+pub(crate) fn boolean_literal_array_display_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let TypeData::Array(element) = db.lookup(type_id)? else {
+        return None;
+    };
+    let widened = widen_literal_to_primitive(db, element);
+    (widened == TypeId::BOOLEAN && widened != element).then(|| db.array(TypeId::BOOLEAN))
+}
+
 // ── Contextual literal classification ──
 
 pub(crate) use tsz_solver::type_queries::ContextualLiteralAllowKind;
@@ -1895,3 +1917,54 @@ pub(crate) use super::operator_wrappers::{
     is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
+
+#[cfg(test)]
+mod boolean_literal_array_display_tests {
+    use super::boolean_literal_array_display_type;
+    use tsz_solver::TypeId;
+    use tsz_solver::construction::TypeInterner;
+
+    #[test]
+    fn widens_mutable_boolean_literal_array_to_boolean_array() {
+        let db = TypeInterner::new();
+        let boolean_array = db.array(TypeId::BOOLEAN);
+
+        for value in [true, false] {
+            let literal = db.literal_boolean(value);
+            let literal_array = db.array(literal);
+            assert_eq!(
+                boolean_literal_array_display_type(&db, literal_array),
+                Some(boolean_array),
+                "Array<{value}> should widen to boolean[]"
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_non_boolean_literal_arrays_untouched() {
+        let db = TypeInterner::new();
+        // Already-widened `boolean[]` needs no rewrite.
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.array(TypeId::BOOLEAN)),
+            None
+        );
+        // Other literal element kinds keep their own display widening.
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.array(db.literal_number(1.0))),
+            None
+        );
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.array(TypeId::STRING)),
+            None
+        );
+        // Non-array types never match.
+        assert_eq!(
+            boolean_literal_array_display_type(&db, TypeId::BOOLEAN),
+            None
+        );
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.literal_boolean(true)),
+            None
+        );
+    }
+}

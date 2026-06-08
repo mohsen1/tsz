@@ -538,10 +538,16 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
 
             let formats_type =
                 line.contains("format_type(") || line.contains("format_type_diagnostic(");
+            // A decision is any branch that reads the rendered string: substring /
+            // prefix / suffix probes, an `.as_str()` peek, or a `matches!` over the
+            // rendered text. `matches!` closes the single-line form of the same
+            // evasion the multi-line companion below guards (e.g. a one-line
+            // `matches!(self.format_type_diagnostic(t).as_str(), "true[]" | "false[]")`).
             let inspects_rendered = line.contains(".contains(")
                 || line.contains(".starts_with(")
                 || line.contains(".ends_with(")
-                || line.contains(".as_str()");
+                || line.contains(".as_str()")
+                || line.contains("matches!(");
             if formats_type && inspects_rendered {
                 rendered_decisions.push(format!("{}:{}", path.display(), line_num + 1));
             }
@@ -610,6 +616,14 @@ fn test_multiline_rendered_type_decision_patterns_do_not_grow() {
             let var_neq = format!("{var} !=");
             let if_var_dot = format!("if {var}.");
             let if_var_amp = format!("if {var} ");
+            // `matches!(rendered, ...)` and `rendered.as_str() ==/!=` are the
+            // remaining decision forms that read the bound rendered string without
+            // a `.contains`/`.starts_with` probe. They are the exact evasions that
+            // let `matches!(self.format_type_diagnostic(t).as_str(), "true[]" | "false[]")`
+            // slip past the older needle set.
+            let matches_var = format!("matches!({var}");
+            let var_asstr_eq = format!("{var}.as_str() ==");
+            let var_asstr_neq = format!("{var}.as_str() !=");
             // Look ahead up to 30 lines for a decision use of the same name.
             let end = std::cmp::min(i + 30, lines.len());
             for (j, nl) in lines.iter().enumerate().take(end).skip(i + 1) {
@@ -624,6 +638,9 @@ fn test_multiline_rendered_type_decision_patterns_do_not_grow() {
                     || nl.contains(&var_neq)
                     || nl.contains(&if_var_dot)
                     || nl.contains(&if_var_amp)
+                    || nl.contains(&matches_var)
+                    || nl.contains(&var_asstr_eq)
+                    || nl.contains(&var_asstr_neq)
                 {
                     decisions.push(format!("{}:{}-{}", path.display(), i + 1, j + 1));
                     break;

@@ -287,10 +287,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
+        // Widen a fresh boolean-literal array element to `boolean` structurally
+        // (`true[]`/`false[]` -> `boolean[]`) instead of patching the rendered text.
+        let display_arg_type =
+            common::boolean_literal_array_display_type(self.ctx.types, display_arg_type)
+                .unwrap_or(display_arg_type);
         let mut actual_display = self.format_type_diagnostic(display_arg_type);
-        if matches!(actual_display.as_str(), "true[]" | "false[]") {
-            actual_display = "boolean[]".to_string();
-        }
         let mut target_display = self
             .constrained_variadic_tuple_parameter_display(param_type, arg_type)
             .or_else(|| {

@@ -201,7 +201,16 @@ impl<'a> CheckerState<'a> {
                 argument_idx: idx,
             },
         );
-        if param_type == TypeId::BOOLEAN && matches!(arg_str.as_str(), "true[]" | "false[]") {
+        // Widen a fresh boolean-literal array source (`true[]`/`false[]`) to
+        // `boolean[]` against a `boolean` parameter. The decision is structural;
+        // the output string is plain rendering (no rendered-text decision, §25).
+        if param_type == TypeId::BOOLEAN
+            && crate::query_boundaries::common::boolean_literal_array_display_type(
+                self.ctx.types,
+                arg_type,
+            )
+            .is_some()
+        {
             arg_str = "boolean[]".to_string();
         }
         let mut param_str = self.format_type_for_diagnostic_role(
