@@ -130,6 +130,23 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// could short-circuit the expansion that re-derives `TS2589`. See the
     /// `closed_eval` module.
     deep_recursion_seen: bool,
+    /// Monotonic counter of *limit events* (cycle / depth / iteration / divergence
+    /// bails) seen so far in this run. Unlike the sticky `deep_recursion_seen` /
+    /// `silent_depth_bailed` booleans — which, once set by the first bail anywhere,
+    /// stay set for the rest of the run and would disable every later cache write —
+    /// this epoch lets a write be gated on whether a NEW limit event fired during
+    /// the *specific application body* being finalized (see `app_body_limit_epoch`
+    /// and `application_eval_result_cacheable`). Bumped at every limit-event site.
+    limit_epoch: u32,
+    /// Snapshot of `limit_epoch` taken when the application currently being
+    /// evaluated entered its body. Saved/restored around each nested
+    /// `evaluate_application` call so that, at an `application_eval_cache` write
+    /// site, it always reflects the innermost in-flight application. When it still
+    /// equals `limit_epoch`, that application's whole body subtree evaluated
+    /// without truncation, so its result is a complete, stack-independent function
+    /// of `(DefId, args)` and is safe to persist even if an *earlier, unrelated*
+    /// sibling already bailed.
+    app_body_limit_epoch: u32,
     /// Whether this evaluator may *write* the `closed_eval_cache`. Only the
     /// checker's authoritative, context-free type-resolution pass opts in (via
     /// `with_closed_eval_writes`). Evaluators running mid-relation, mid-inference
@@ -200,6 +217,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             silent_depth_bailed: false,
             detection_growth_runs: FxHashMap::default(),
             deep_recursion_seen: false,
+            limit_epoch: 0,
+            app_body_limit_epoch: 0,
             closed_eval_writes_allowed: false,
         }
     }
@@ -260,7 +279,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let depth = self.def_depth.entry(def_id).or_insert(0);
         if *depth >= Self::MAX_DEF_DEPTH {
             // Depth-bounded run (see `deep_recursion_seen`).
-            self.deep_recursion_seen = true;
+            self.mark_deep_recursion_seen();
             return false;
         }
 
@@ -268,7 +287,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         *depth += 1;
         if !was_real_instantiation_depth && *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
             self.real_instantiation_depth_count += 1;
-            self.deep_recursion_seen = true;
+            self.mark_deep_recursion_seen();
         }
         true
     }
@@ -512,6 +531,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) const fn mark_depth_exceeded(&mut self) {
         self.guard.mark_exceeded();
+        self.note_limit_event();
+    }
+
+    /// Record that a recursion/depth/iteration/divergence limit just fired.
+    ///
+    /// Bumping the monotonic `limit_epoch` is how a later
+    /// `application_eval_cache` write learns that *its* body subtree was
+    /// truncated. Over-bumping (calling this where no application body is in
+    /// flight, or twice for one logical event) only ever makes a write more
+    /// conservative — never unsound — so every limit-event site routes through
+    /// here.
+    #[inline]
+    const fn note_limit_event(&mut self) {
+        self.limit_epoch = self.limit_epoch.wrapping_add(1);
+    }
+
+    /// Set the sticky `deep_recursion_seen` flag and record the limit event.
+    #[inline]
+    const fn mark_deep_recursion_seen(&mut self) {
+        self.deep_recursion_seen = true;
+        self.note_limit_event();
+    }
+
+    /// Set the sticky `silent_depth_bailed` flag and record the limit event.
+    #[inline]
+    const fn mark_silent_depth_bailed(&mut self) {
+        self.silent_depth_bailed = true;
+        self.note_limit_event();
+    }
+
+    /// Test hook: simulate an *earlier, unrelated* recursive alias having bailed
+    /// (a cycle / silent-depth / iteration bail that latches the sticky
+    /// recursion-limit state without poisoning the guard). Lets a test exercise
+    /// the [`application_eval_result_cacheable`](Self::application_eval_result_cacheable)
+    /// boundary without first constructing a real divergent type whose own bail
+    /// path (`guard.mark_exceeded`) would short-circuit every later `evaluate`.
+    #[cfg(test)]
+    pub(crate) fn simulate_unrelated_recursion_bail_for_test(&mut self) {
+        self.mark_deep_recursion_seen();
     }
 
     /// Global thread-local depth counter for cross-evaluator stack overflow
@@ -574,7 +632,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // rather than propagating ERROR. The outer evaluator can
                 // proceed at a shallower depth without inheriting a sticky
                 // exceeded flag. See the analogous DepthExceeded arm below.
-                self.silent_depth_bailed = true;
+                self.mark_silent_depth_bailed();
                 return type_id;
             }
             let result = self.evaluate_guarded(type_id);
@@ -607,7 +665,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn evaluate_guarded(&mut self, type_id: TypeId) -> TypeId {
         crate::recursion::with_solver_frame(|| self.evaluate_guarded_inner(type_id)).unwrap_or_else(
             || {
-                self.silent_depth_bailed = true;
+                self.mark_silent_depth_bailed();
                 type_id
             },
         )
@@ -644,7 +702,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             RecursionResult::Cycle => {
                 // Recursion-bounded run: do not persist its intermediates (see
                 // `deep_recursion_seen`).
-                self.deep_recursion_seen = true;
+                self.mark_deep_recursion_seen();
                 // Recursion guard for self-referential mapped/application types.
                 // Recursive mapped types must stay deferred here. Collapsing them to
                 // `{}` loses the constraint structure and can incorrectly make
@@ -662,13 +720,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // the checker can emit TS2589.
                 if self.flag_depth_on_app_cycle && matches!(key, Some(TypeData::Application(_))) {
                     self.guard.mark_exceeded();
+                    self.note_limit_event();
                     return TypeId::ERROR;
                 }
                 return type_id;
             }
             RecursionResult::DepthExceeded => {
                 // Depth-bounded run (see `deep_recursion_seen`).
-                self.deep_recursion_seen = true;
+                self.mark_deep_recursion_seen();
                 // The per-`TypeId` guard's depth limit is structural — it caps the
                 // type-tree walk to protect the stack, not the instantiation chain.
                 // tsc's `instantiationDepth` (the source of TS2589) is mirrored by
@@ -681,13 +740,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return TypeId::ERROR;
                 }
                 self.guard.clear_exceeded();
-                self.silent_depth_bailed = true;
+                self.mark_silent_depth_bailed();
                 self.cache.insert(type_id, type_id);
                 return type_id;
             }
             RecursionResult::IterationExceeded => {
                 // Iteration-limit bail: also a bounded run.
-                self.deep_recursion_seen = true;
+                self.mark_deep_recursion_seen();
                 self.cache.insert(type_id, type_id);
                 return type_id;
             }
@@ -705,7 +764,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .interner
                 .consume_evaluation_fuel(Self::FUEL_CHECK_INTERVAL)
         {
-            self.guard.mark_exceeded();
+            self.mark_depth_exceeded();
             self.guard.leave(type_id);
             self.cache.insert(type_id, TypeId::ERROR);
             return TypeId::ERROR;
@@ -777,6 +836,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             self.decrement_def_depth(def_id);
             self.guard.mark_exceeded();
+            self.note_limit_event();
             return TypeId::ERROR;
         }
 
@@ -800,7 +860,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
+        // Phase 5 — evaluate the body under a fresh application-body epoch
+        // snapshot. Any `application_eval_cache` write made while finalizing THIS
+        // application (or a nested one, which saves/restores this field in turn)
+        // compares `limit_epoch` against `app_body_limit_epoch` to learn whether
+        // its own body subtree bailed, independent of an earlier unrelated
+        // sibling that already set the sticky `deep_recursion_seen` flag (#10834).
+        let saved_app_body_epoch = self.app_body_limit_epoch;
+        self.app_body_limit_epoch = self.limit_epoch;
         let outcome = self.evaluate_application_body(def_id, original_type_id, &app.args, &ctx);
+        self.app_body_limit_epoch = saved_app_body_epoch;
 
         // Phase 6 — outcome-dependent cleanup. ShortCircuit matches the
         // historical decrement-and-return shape; Computed restores the
@@ -1391,19 +1460,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// The cache key is `(DefId, expanded_args, no_unchecked)` — it is
     /// *resolver-* and *substitution-independent*, but it is NOT independent of
     /// the ambient stack depth at the use site. When a recursive alias bails
-    /// because the surrounding evaluation was already deep (see
-    /// [`recursion_limit_hit`](Self::recursion_limit_hit)), the result is a
+    /// because *its own* expansion was already deep, the result is a truncated
     /// stack-context artifact. Persisting it poisons every *other* use site of
     /// the same alias application — the "alias fan-out regression": one deep use
     /// contaminating all of its siblings, which would each converge on their own
-    /// shallower stack. Recomputing (a cache miss) always re-derives the
-    /// correct, stack-local answer, so skipping the write only ever costs work,
-    /// never correctness. Termination is owned by the recursion guards and fuel,
-    /// not by this cache, so a skipped write cannot reintroduce a hang. Mirrors
-    /// the limit gate the `closed_eval_cache` already enforces.
+    /// shallower stack.
+    ///
+    /// The discriminator is the per-application epoch, not the sticky
+    /// `recursion_limit_hit` flag. `deep_recursion_seen` / `silent_depth_bailed`
+    /// are set by the *first* bail anywhere in the run and never reset, so gating
+    /// on them disabled every later write too — including results for unrelated
+    /// applications whose own bodies expanded fully and terminated. Those results
+    /// are complete, stack-independent functions of `(DefId, args)` and are safe,
+    /// indeed necessary, to cache: without them the same finite application is
+    /// re-instantiated combinatorially across each sibling branch, turning a
+    /// terminating type into an effective hang (#10834, the `TypeBox` / zod
+    /// `Static<TObject<…>>` schema shape).
+    ///
+    /// `limit_epoch == app_body_limit_epoch` is true exactly when no
+    /// cycle/depth/iteration/divergence event fired anywhere within the body
+    /// subtree of the application currently being finalized. That is strictly
+    /// more permissive than `!recursion_limit_hit()` (it also admits clean bodies
+    /// that ran *after* an earlier sibling bailed) while still never persisting a
+    /// truncated result — a bail inside this body advances `limit_epoch` past the
+    /// snapshot taken at body entry. Termination is owned by the recursion guards
+    /// and fuel, not by this cache, so a (now rarer) skipped write cannot
+    /// reintroduce a hang.
     #[inline]
     const fn application_eval_result_cacheable(&self) -> bool {
-        !self.recursion_limit_hit()
+        self.limit_epoch == self.app_body_limit_epoch
     }
 
     /// Insert into the application-eval cache iff `query_db` is connected and the

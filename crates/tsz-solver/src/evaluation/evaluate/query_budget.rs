@@ -33,8 +33,8 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     pub(super) fn enter_eval_query_budget(&mut self) -> Option<EvalQueryFrame> {
         let frame = EvalQueryFrame::enter(resolved_max_eval_ops());
         if frame.budget_exhausted {
-            self.deep_recursion_seen = true;
-            self.silent_depth_bailed = true;
+            self.mark_deep_recursion_seen();
+            self.mark_silent_depth_bailed();
             return None;
         }
         Some(frame)
