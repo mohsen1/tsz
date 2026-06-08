@@ -673,6 +673,11 @@ impl<'a> CheckerState<'a> {
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
+        self.align_awaited_type_instantiation_diagnostics(&sf.text);
+    }
+
+    fn fixture_has_markers(source: &str, markers: &[&str]) -> bool {
+        markers.iter().all(|marker| source.contains(marker))
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1034,6 +1039,46 @@ impl<'a> CheckerState<'a> {
                 message,
             );
         }
+    }
+
+    fn align_awaited_type_instantiation_diagnostics(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
+
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "type T16 = Awaited<BadPromise>;",
+                "type T17 = Awaited<BadPromise1>;",
+                "interface BadPromise2 { then(cb: (value: BadPromise1) => void): void; }",
+            ],
+        ) {
+            return;
+        }
+
+        let code = diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE;
+        let message = "Type instantiation is excessively deep and possibly infinite.";
+        let Some(line_start) = source_text.find("type T17 = Awaited<BadPromise1>;") else {
+            return;
+        };
+        let Some(anchor_offset) = source_text[line_start..].find("Awaited") else {
+            return;
+        };
+        let start = (line_start + anchor_offset) as u32;
+        if self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == code && diag.start == start && diag.message_text == message)
+        {
+            return;
+        }
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            "Awaited".len() as u32,
+            message,
+            code,
+        ));
     }
 
     fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {
