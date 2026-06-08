@@ -870,18 +870,11 @@ function isTinyBenchmark(lines) {
 
 function categoryFor(name, lines) {
   if (name === "large-ts-repo" || name === "nextjs") return "Projects: large repositories";
-  if (name === "nextjs-fresh-app" || name === "vite-vanilla-ts-app") return "Projects: generated apps";
-  if (
-    name === "rxjs-project" ||
-    name === "type-fest-project" ||
-    name === "utility-types-project" ||
-    name === "ts-essentials-project" ||
-    name === "ts-toolbelt-project" ||
-    name === "zod-project" ||
-    name === "kysely-project" ||
-    name === "type-challenges-solutions-project"
-  ) {
-    return "Projects: external libraries";
+  const projectRow = PROJECT_ROWS_BY_NAME[name];
+  if (projectRow) {
+    return projectRow.category === "generated"
+      ? "Projects: generated apps"
+      : "Projects: external libraries";
   }
   if (name.startsWith("utility-types/")) return "Single file: utility-types";
   if (name.startsWith("ts-toolbelt/")) return "Single file: ts-toolbelt";
@@ -1519,9 +1512,7 @@ function generateCharts(data, mode = "projects") {
       if (aScore !== bScore) return bScore - aScore;
       return categoryTitle(a).localeCompare(categoryTitle(b));
     });
-  const visibleFailedResults = mode === "projects"
-    ? []
-    : failedResults.filter((row) => failedBelongsToMode(row, mode));
+  const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
   const chartMaxMs = Math.max(
     1,
     ...visibleCategories
