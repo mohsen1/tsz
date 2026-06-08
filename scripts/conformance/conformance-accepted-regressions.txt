@@ -53,7 +53,6 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
-TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 # objectLiteralMemberWithoutBlock1.ts: RESOLVED. `var v = { foo(); }` parsed the
