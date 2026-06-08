@@ -238,7 +238,24 @@ impl<'a> CheckerState<'a> {
                     // cached == ERROR but type_parameter_scope is non-empty: re-resolve
                     // cached != ERROR and type_parameter_scope non-empty: re-resolve (type params may differ)
                 }
-                let result = self.get_type_from_type_reference(idx);
+                let mut result = self.get_type_from_type_reference(idx);
+                // Eagerly reduce a concrete `Awaited<…>` reference to its
+                // unwrapped form, the way tsc computes `getAwaitedType` at the
+                // reference site. The solver's lazy conditional/`infer`
+                // evaluation of the standard-library `Awaited<T>` alias does not
+                // converge once the awaited argument is a nested
+                // `Promise<Promise<…>>` whose inner layers have materialized to
+                // their structural `{ then }` Object shape: the outer conditional
+                // bails to its `: T` branch and yields the still-wrapped
+                // argument, so the relation sees `Promise<Promise<2>>` instead of
+                // `2`. Folding here makes every `Awaited<…>` annotation position
+                // converge to the same literal `tsc` reports. The fold returns
+                // `None` for generic / non-thenable arguments (it only fires when
+                // it actually unwraps a thenable), so deferred and non-`Awaited`
+                // references are unchanged.
+                if let Some(reduced) = self.try_evaluate_awaited_application(result) {
+                    result = reduced;
+                }
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }

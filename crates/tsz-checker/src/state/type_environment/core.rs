@@ -350,19 +350,17 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::is_conditional_type(db, result)
                     || crate::query_boundaries::common::is_index_access_type(db, result)
                     || crate::query_boundaries::common::is_mapped_type(db, result);
-            let result_is_non_empty_object = query::object_shape(self.ctx.types, result)
-                .is_some_and(|shape| {
-                    !shape.properties.is_empty()
-                        || shape.string_index.is_some()
-                        || shape.number_index.is_some()
-                });
-            let result_is_application_arg = app_info.is_some_and(|(_, args)| {
+            // Suppress the reverse alias when the result IS one of the
+            // application's own (resolved) arguments: an identity helper like
+            // `Id<U> = { [K in keyof U]: U[K] }` interns its result to the same
+            // `TypeId` as `U`, so recording `U -> Id<U>` repaints every later
+            // occurrence of `U` (`Id<Id<U>>`, sibling `Part<U>` -> `Part<Id<U>>`).
+            // Must not be gated on result shape — unions/intersections were the leak.
+            let result_is_application_arg = app_info.as_ref().is_some_and(|(_, args)| {
                 args.iter()
                     .any(|&arg| arg == result || self.evaluate_type_with_resolution(arg) == result)
             });
-            if (!has_param_args || is_safe_for_generic_alias)
-                && !(result_is_application_arg && result_is_non_empty_object)
-            {
+            if (!has_param_args || is_safe_for_generic_alias) && !result_is_application_arg {
                 self.ctx.types.store_display_alias(result, type_id);
             }
         }

@@ -164,7 +164,7 @@ impl CheckerState<'_> {
         }
 
         let name = symbol.escaped_name.clone();
-        if crate::query_boundaries::common::is_compiler_managed_type(&name) {
+        if crate::query_boundaries::type_predicates::is_compiler_managed_type(&name) {
             return None;
         }
         if self.ctx.file_local_type_shadow_for_lib_name(&name) {

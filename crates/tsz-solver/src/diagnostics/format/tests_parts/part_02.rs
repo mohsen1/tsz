@@ -859,7 +859,7 @@ fn conditional_alias_application_resolving_to_object_renders_structurally() {
 }
 
 #[test]
-fn conditional_alias_application_resolving_to_tuple_keeps_application_surface() {
+fn conditional_alias_application_resolving_to_tuple_renders_structurally() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -891,11 +891,14 @@ fn conditional_alias_application_resolving_to_tuple_keeps_application_surface() 
     let app = db.application(db.lazy(tuple_box_def), vec![TypeId::STRING]);
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
 
+    // A conditional-bodied alias application drops its alias symbol once the
+    // conditional resolves: tsc 6.0.2 renders the resolved branch structurally
+    // (`TupleBox<string>` → `[string]`), never the `TupleBox<string>` surface.
     assert_eq!(
         fmt.format(app),
-        "TupleBox<string>",
-        "Only anonymous object/mapped conditional alias application results \
-         expand structurally; tuple results keep the application surface"
+        "[string]",
+        "A resolved conditional alias application renders its branch structurally \
+         for any concrete shape, including tuples"
     );
 }
 
