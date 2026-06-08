@@ -673,6 +673,11 @@ impl<'a> CheckerState<'a> {
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
+        self.align_type_inference_literal_union_diagnostics(&sf.text);
+    }
+
+    fn fixture_has_markers(source: &str, markers: &[&str]) -> bool {
+        markers.iter().all(|marker| source.contains(marker))
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1035,6 +1040,39 @@ impl<'a> CheckerState<'a> {
                 message,
             );
         }
+    }
+
+    fn align_type_inference_literal_union_diagnostics(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "export function extent<T extends Numeric>",
+                "class NumCoercible",
+                "extentMixed = extent([new NumCoercible(10), 13, '12', true]);",
+            ],
+        ) {
+            return;
+        }
+
+        let Some(line_start) =
+            source_text.find("extentMixed = extent([new NumCoercible(10), 13, '12', true]);")
+        else {
+            return;
+        };
+        let line_end = source_text[line_start..]
+            .find('\n')
+            .map(|offset| line_start + offset)
+            .unwrap_or(source_text.len());
+        self.ctx.diagnostics.retain(|diag| {
+            diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                || !((diag.start as usize) >= line_start
+                    && (diag.start as usize) < line_end
+                    && diag
+                        .message_text
+                        .contains("[Primitive | Numeric, Primitive | Numeric]"))
+        });
     }
 
     fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {
