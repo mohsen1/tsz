@@ -90,14 +90,19 @@ pub fn type_alias_displayed_as_underlying(
                 | TypeData::TemplateLiteral(_)
                 | TypeData::StringIntrinsic { .. },
             ) => return alias_resolved_body_underlying(interner, body),
-            // A utility/generic application *does* propagate the alias symbol
-            // onto a freshly-constructed structural result (`Pick<…>` → object,
-            // `Array<number>`, `Extract<…>` → union all keep their alias name),
-            // but a result that bottoms out at a shared scalar/literal/`never`
-            // singleton drops it (`ReturnType<() => string>` → `string`). Only
-            // collapse an application when it reduces to such a singleton.
+            // A utility/generic application's display depends on the head alias'
+            // declared body. A *conditional*-bodied utility loses tsc's alias
+            // symbol once the conditional reduces, so the evaluated result is
+            // rendered structurally for any concrete shape (`Reverse<[1, 2, 3]>`
+            // → `[3, 2, 1]`, `Unbox<Promise<Promise<number>>>` → `number`,
+            // `Box<1>` → `{ v: 1; }`). A mapped/object-bodied utility keeps its
+            // alias symbol on a freshly-constructed structural result (`Pick<…>`
+            // → object, `Array<number>`) and drops it only when the result
+            // bottoms out at a shared scalar singleton (`ReturnType<…>` is itself
+            // conditional-bodied; a mapped utility reducing to a primitive is the
+            // residual case here).
             Some(TypeData::Application(_)) => {
-                return alias_application_scalar_underlying(interner, body);
+                return alias_application_underlying(interner, def_store, body);
             }
             _ => return None,
         }
@@ -135,16 +140,26 @@ fn alias_resolved_body_underlying(interner: &dyn TypeDatabase, body: TypeId) -> 
 }
 
 /// Evaluate a utility/generic *application* alias body and return the underlying
-/// type **only** when it collapses to a shared scalar/literal/`never` singleton
-/// — the one case where tsc drops the application's alias name
-/// (`ReturnType<() => string>` → `string`). Structural results
-/// (object/array/tuple/union/…) keep the alias name because tsc stamps the alias
-/// symbol onto the freshly-constructed application result.
+/// type to display in place of the alias name.
 ///
-/// Returns `None` when the body stays generic, structural, errors, or does not
-/// change under evaluation, so those aliases keep their declared name.
-fn alias_application_scalar_underlying(
+/// tsc's `aliasSymbol` policy splits on the head alias' declared body:
+/// * A **conditional**-bodied utility (`Reverse`, `Unbox`, `ReturnType`,
+///   `Parameters`, `Box<T> = T extends … ? … : …`) loses its alias symbol once
+///   the conditional reduces, so tsc renders the evaluated result structurally
+///   for any concrete shape — scalar (`number`), tuple (`[3, 2, 1]`), array
+///   (`1[]`), `never`, or object (`{ v: 1; }`). See
+///   [`application_reduces_to_displayable_shape`] for the shapes covered; bare
+///   literal / union results are excluded because tsc applies literal-union
+///   display widening to those (a separate display concern).
+/// * A **mapped/object**-bodied utility (`Pick`, `Partial`, `Record`) keeps its
+///   alias symbol on a freshly-constructed structural result and drops it only
+///   when the result bottoms out at a shared scalar/`never` singleton.
+///
+/// Returns `None` when the body stays generic, errors, or does not change under
+/// evaluation, so those aliases keep their declared name.
+fn alias_application_underlying(
     interner: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
     body: TypeId,
 ) -> Option<TypeId> {
     let evaluated = crate::evaluation::evaluate::evaluate_type(interner, body);
@@ -154,8 +169,50 @@ fn alias_application_scalar_underlying(
     {
         return None;
     }
-    (crate::visitor::is_primitive_type(interner, evaluated)
-        || matches!(interner.lookup(evaluated), Some(TypeData::Literal(_)))
-        || evaluated == TypeId::NEVER)
+    if crate::type_queries::application_base_has_conditional_alias_body(interner, def_store, body)
+        && application_reduces_to_displayable_shape(interner, evaluated)
+    {
+        return Some(evaluated);
+    }
+    (crate::visitor::is_primitive_type(interner, evaluated) || evaluated == TypeId::NEVER)
         .then_some(evaluated)
+}
+
+/// The set of evaluated shapes that a reduced conditional-bodied alias
+/// application is rendered as structurally (tsc drops the alias symbol):
+/// object/mapped, tuple, array, a primitive keyword, or `never`.
+///
+/// Two carve-outs keep the rendering honest:
+/// * A result that still contains a nested `Recursive` node is a
+///   **non-converged** recursive reduction. Expanding it renders a truncated
+///   cycle (`Reverse<[1, 2, 3]>` would print `[...[...[......, 3], 2], 1]`), so
+///   the alias name is kept — it is strictly clearer than the garbage form.
+///   (A nested `Lazy` alias reference is *not* a disqualifier: a resolved
+///   member such as `{ x: Named }` is fine to render.)
+/// * Bare **literal** and **union** results are excluded: tsc applies
+///   literal-union widening when displaying a fresh conditional result in those
+///   cases (`Extract<"a" | "b" | 1, string>` shows `string`, not `"a" | "b"`),
+///   which is a separate display behavior. Keeping those on the application
+///   surface avoids substituting one divergence for another.
+pub(crate) fn application_reduces_to_displayable_shape(
+    interner: &dyn TypeDatabase,
+    evaluated: TypeId,
+) -> bool {
+    // A non-converged recursive reduction leaves a nested `Recursive` cycle
+    // marker that renders as a truncated cycle; keep the alias name instead.
+    if crate::visitor::contains_type_matching(interner, evaluated, |key| {
+        matches!(key, TypeData::Recursive(_))
+    }) {
+        return false;
+    }
+    if evaluated == TypeId::NEVER
+        || crate::type_queries::is_object_or_mapped_type(interner, evaluated)
+        || crate::type_queries::mapped::is_array_or_tuple_type(interner, evaluated)
+    {
+        return true;
+    }
+    // A primitive keyword (`string`, `number`, `boolean`, …) but not a unit
+    // literal, which the comment above keeps out of scope.
+    crate::visitor::is_primitive_type(interner, evaluated)
+        && !matches!(interner.lookup(evaluated), Some(TypeData::Literal(_)))
 }

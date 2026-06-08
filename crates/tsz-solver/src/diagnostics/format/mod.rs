@@ -346,17 +346,23 @@ impl<'a> TypeFormatter<'a> {
         {
             return None;
         }
-        // A conditional still deferred after evaluation never reduced (an
-        // unresolved operand); the raw node is no more informative than the
-        // application form, so keep the application form. Non-object results
-        // also keep the application surface; expanding tuple/scalar helper
-        // applications produces conformance fingerprint drift in assignment
-        // diagnostics where tsc preserves the helper spelling.
+        // A conditional/indexed access still deferred after evaluation never
+        // reduced (an unresolved operand); the raw node is no more informative
+        // than the application form, so keep the application form. Otherwise tsc
+        // drops the alias symbol and renders the reduced result structurally for
+        // any concrete shape — `Reverse<[1, 2, 3]>` → `[3, 2, 1]`,
+        // `Unbox<Promise<Promise<number>>>` → `number`, `DeepReadonly<{ b }>` →
+        // `{ readonly b: number; }`. Bare literal / union results are excluded
+        // (`application_reduces_to_displayable_shape`): tsc applies literal-union
+        // display widening to those, a separate display concern, so they keep
+        // the application surface.
         if matches!(
             self.interner.lookup(evaluated),
-            Some(TypeData::Conditional(_))
-        ) || !crate::type_queries::is_object_or_mapped_type(self.interner, evaluated)
-        {
+            Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
+        ) || !alias_underlying::application_reduces_to_displayable_shape(
+            self.interner,
+            evaluated,
+        ) {
             return None;
         }
         Some(evaluated)
