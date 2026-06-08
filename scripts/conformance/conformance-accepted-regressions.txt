@@ -51,12 +51,21 @@ TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
-TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
 TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
 TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
+# objectLiteralMemberWithoutBlock1.ts: RESOLVED. `var v = { foo(); }` parsed the
+# body-less object method but suppressed the missing-body `'{' expected` whenever
+# the next token was `;`, so the outer object-literal member loop emitted a
+# spurious `',' expected` instead. tsc reports `'{' expected` at the `;` for a
+# body-less method that is the final member (the `;` is followed by `}`/EOF); when
+# a further member follows, the `;` recovers as a delimiter and the missing comma
+# is reported at that member. The parser now mirrors that, so the single
+# `'{' expected` matches tsc. Covered by
+# parser_improvement_object_array_literal_recovery_tests::
+# object_method_missing_body_as_last_member_reports_open_brace (and siblings).
 # covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its

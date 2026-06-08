@@ -591,3 +591,75 @@ fn object_property_with_explicit_colon_and_missing_value_keeps_distinct_initiali
         "missing value must be a distinct node so the emitter renders `prop:`"
     );
 }
+
+/// Assert that a body-less object method which is the final member reports a
+/// single TS1005 `'{' expected.` at the trailing `;`, with no spurious
+/// `',' expected.` from the outer member-list loop — mirroring tsc.
+fn assert_open_brace_at_final_semicolon(source: &str) {
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let semicolon_pos = source.find(';').expect("semicolon position") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == semicolon_pos
+            && diag.message == "'{' expected."),
+        "expected `'{{' expected.` at the trailing `;` for {source:?}, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.message != "',' expected."),
+        "no spurious `',' expected.` for {source:?}, got {diagnostics:?}"
+    );
+}
+
+/// An object-literal method whose `{` body is missing and which is the final
+/// member (the trailing `;` is followed by `}` / EOF) reports the single TS1005
+/// `'{' expected.` tsc would, not the `',' expected.` tsz used to emit.
+#[test]
+fn object_method_missing_body_as_last_member_reports_open_brace() {
+    assert_open_brace_at_final_semicolon("var v = { foo(); }");
+}
+
+/// Same rule with an explicit return-type annotation before the missing body.
+#[test]
+fn object_method_missing_body_with_return_type_reports_open_brace() {
+    assert_open_brace_at_final_semicolon("var v = { foo(): number; }");
+}
+
+/// The rule also applies when the body-less method follows other members.
+#[test]
+fn object_method_missing_body_after_prior_member_reports_open_brace() {
+    assert_open_brace_at_final_semicolon("var v = { a: 1, foo(); }");
+}
+
+/// When a *further member* follows the `;`, tsc recovers the `;` as a delimiter
+/// and reports a missing comma at the next member instead of `'{' expected.`.
+/// This locks in the surgical scope: the fix must NOT emit `'{' expected.` here.
+#[test]
+fn object_method_missing_body_followed_by_member_keeps_comma_recovery() {
+    let source = "var v = { foo(); b: 2 }";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.message != "'{' expected."),
+        "a `;` followed by a further member must not report `'{{' expected.`, got {diagnostics:?}"
+    );
+}
+
+/// A well-formed object method (`foo() {}`) is unaffected: no TS1005.
+#[test]
+fn object_method_with_body_reports_no_missing_brace() {
+    let source = "var v = { foo() {} }";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 1005),
+        "a well-formed object method must not produce TS1005, got {diagnostics:?}"
+    );
+}
