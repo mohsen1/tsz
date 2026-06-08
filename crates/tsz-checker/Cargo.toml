@@ -1632,6 +1632,10 @@ name = "duplicate_property_modifier_ts2687_tests"
 path = "tests/duplicate_property_modifier_ts2687_tests.rs"
 
 [[test]]
+name = "class_member_modifier_ts2687_tests"
+path = "tests/class_member_modifier_ts2687_tests.rs"
+
+[[test]]
 name = "type_alias_signature_body_validation_tests"
 path = "tests/type_alias_signature_body_validation_tests.rs"
 [[test]]
