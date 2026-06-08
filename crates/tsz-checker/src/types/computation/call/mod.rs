@@ -48,6 +48,37 @@ struct CallFinalizationCtx<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Decide whether a fresh object-literal argument that the call checker
+    /// flagged as an argument-type mismatch should be *recovered* — i.e. treated
+    /// as assignable with only excess-property checking applied — after its type
+    /// is recomputed under the expected contextual type.
+    ///
+    /// Recovery requires the refreshed literal to be genuinely assignable to the
+    /// expected parameter type. The historical gate consulted only
+    /// `is_fresh_subtype_of` (the raw subtype relation), but that relation
+    /// compares object-literal function-typed *property* members bivariantly
+    /// (it honors the member `is_method` hint), so it silently accepts a
+    /// contravariantly-incompatible callback property — e.g.
+    /// `{ f: (x: Dog) => void }` supplied for a parameter of type
+    /// `{ f: (x: Animal) => void }` under `strictFunctionTypes`, which `tsc`
+    /// rejects (TS2322). Property-position function members are owed the strict
+    /// contravariant parameter check, so the canonical assignability relation
+    /// must also hold before the mismatch is recovered. This keeps the recovery
+    /// for genuinely-assignable literals (e.g. callbacks whose parameters were
+    /// only resolved by the contextual refresh) while no longer masking real
+    /// parameter-variance failures.
+    pub(crate) fn fresh_object_literal_argument_recovers(
+        &mut self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            actual,
+            expected,
+        ) && self.call_arg_relation_outcome(actual, expected).related
+    }
+
     pub(crate) fn assertion_predicate_for_call(
         &mut self,
         call_idx: NodeIndex,
@@ -981,7 +1012,7 @@ impl<'a> CheckerState<'a> {
                 Some(expected),
             ))
         {
-            let fresh_subtype = assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected);
+            let fresh_subtype = self.fresh_object_literal_argument_recovers(actual, expected);
             let recover_object_literal =
                 fresh_subtype
                     && !self.object_literal_has_computed_property_names(arg_idx)
