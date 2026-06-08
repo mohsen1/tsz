@@ -88,6 +88,28 @@ impl BinderState {
         sym_id
     }
 
+    /// Register a value-producing declaration that appears inside a
+    /// `declare global { ... }` block as a global augmentation.
+    ///
+    /// Variables, functions, classes, and enums declared inside `declare global`
+    /// in an external module contribute a value binding to the global scope. They
+    /// must be hoisted to `file_locals` (the gateway for cross-file visibility)
+    /// and recorded in `global_augmentations` so cross-file resolution can find
+    /// them; otherwise a bare reference reports a false `TS2304`.
+    fn record_global_value_augmentation(
+        &mut self,
+        name: &str,
+        sym_id: SymbolId,
+        decl: NodeIndex,
+        flags: u32,
+    ) {
+        self.file_locals.set(name.to_string(), sym_id);
+        Arc::make_mut(&mut self.global_augmentations)
+            .entry(name.to_string())
+            .or_default()
+            .push(crate::state::GlobalAugmentation::new(decl, flags));
+    }
+
     // Declaration binding methods
 
     pub(crate) fn bind_variable_declaration(
@@ -154,11 +176,7 @@ impl BinderState {
                 // namespace X` conflicting with `declare global { const X }`).
                 // This mirrors the interface hoisting at bind_interface_declaration.
                 if self.in_global_augmentation {
-                    self.file_locals.set(name.to_string(), sym_id);
-                    Arc::make_mut(&mut self.global_augmentations)
-                        .entry(name.to_string())
-                        .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx, flags));
+                    self.record_global_value_augmentation(name, sym_id, idx, flags);
                 }
             } else {
                 let flags = if is_block_scoped {
@@ -184,11 +202,7 @@ impl BinderState {
                             is_exported,
                         );
                         if self.in_global_augmentation {
-                            self.file_locals.set(name.to_string(), sym_id);
-                            Arc::make_mut(&mut self.global_augmentations)
-                                .entry(name.to_string())
-                                .or_default()
-                                .push(crate::state::GlobalAugmentation::new(ident_idx, flags));
+                            self.record_global_value_augmentation(name, sym_id, ident_idx, flags);
                         }
                     }
                 }
@@ -238,14 +252,12 @@ impl BinderState {
                 let sym_id =
                     self.declare_symbol(arena, name, symbol_flags::FUNCTION, idx, is_exported);
                 if self.in_global_augmentation {
-                    self.file_locals.set(name.to_string(), sym_id);
-                    Arc::make_mut(&mut self.global_augmentations)
-                        .entry(name.to_string())
-                        .or_default()
-                        .push(crate::state::GlobalAugmentation::new(
-                            idx,
-                            symbol_flags::FUNCTION,
-                        ));
+                    self.record_global_value_augmentation(
+                        name,
+                        sym_id,
+                        idx,
+                        symbol_flags::FUNCTION,
+                    );
                 }
                 let tp_count = func
                     .type_parameters
@@ -735,6 +747,16 @@ impl BinderState {
                         ..Default::default()
                     },
                 );
+
+                // Track class declarations inside `declare global { }` blocks as
+                // global augmentations, just like variables, functions, interfaces,
+                // and namespaces. Without this, `declare global { class C { } }`
+                // declared in an external module's `.d.ts` is invisible to
+                // cross-file global resolution, so a bare reference like `new C()`
+                // reports a false TS2304.
+                if self.in_global_augmentation {
+                    self.record_global_value_augmentation(name, sym_id, idx, flags);
+                }
             }
 
             // Enter class scope for members, pre-sized for member count to avoid hash map resizing
@@ -1267,6 +1289,16 @@ impl BinderState {
                     ..Default::default()
                 },
             );
+
+            // Track enum declarations inside `declare global { }` blocks as global
+            // augmentations, just like variables, functions, interfaces, and
+            // namespaces. Without this, `declare global { const enum F { ... } }`
+            // (and regular `enum`) declared in an external module's `.d.ts` is
+            // invisible to cross-file global resolution, so a bare reference like
+            // `F.A` reports a false TS2304 instead of resolving to the global enum.
+            if self.in_global_augmentation {
+                self.record_global_value_augmentation(name, enum_sym_id, idx, enum_flags);
+            }
 
             // Get existing exports (for namespace merging)
             let mut exports = SymbolTable::new();
