@@ -300,15 +300,19 @@ impl<'a> TypeFormatter<'a> {
     /// A non-distributive application of a generic alias whose *declared body is
     /// a conditional type* loses its alias symbol when the conditional resolves:
     /// the operator resolves into its branch and never stamps the enclosing
-    /// alias onto anonymous object/mapped results, so tsc renders those results
-    /// structurally (`DeepReadonly<{ b: number }>` →
-    /// `{ readonly b: number; }`, issue #10914), not as `Name<Args>`.
+    /// alias onto the result, so tsc renders the resolved type structurally for
+    /// any shape — scalar (`DeepReadonly<number>` → `number`), tuple
+    /// (`Parameters<F>` → `[a: number]`), union (`A | B`), and object
+    /// (`DeepReadonly<{ b: number }>` → `{ readonly b: number; }`, issue
+    /// #10914) alike — not as `Name<Args>`.
     ///
     /// Returns the evaluated type to format in place of the application form.
-    /// Returns `None` for a mapped/object-bodied application (`Partial<T>` keeps
-    /// its alias symbol), for a result that stays generic, and for a result that
-    /// fails to reduce (a still-deferred conditional), so those keep their
-    /// existing display. The distributive form is handled earlier by
+    /// Returns `None` only when the conditional cannot drop its name: a
+    /// mapped/object-bodied application (`Partial<T>` keeps its alias symbol)
+    /// fails the structural gate, a result that stays generic is rejected
+    /// above, and a result that fails to reduce (a still-deferred conditional,
+    /// or one whose evaluation made no progress) keeps the application form.
+    /// The distributive form is handled earlier by
     /// [`Self::distributed_conditional_application_display`].
     fn reducing_conditional_application_display(&self, type_id: TypeId) -> Option<TypeId> {
         let def_store = self.def_store?;

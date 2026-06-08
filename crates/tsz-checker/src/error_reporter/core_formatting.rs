@@ -256,6 +256,23 @@ impl<'a> CheckerState<'a> {
             return self.format_type_for_assignability_message_skip_application_alias(ty);
         }
 
+        // A *still-deferred* generic application whose alias body reduces through
+        // a conditional or indexed access (`Classify<"x">`, `Head<[a, b]>`,
+        // `Val<{…}>`, and the same through an alias chain) drops tsc's
+        // `aliasSymbol` once it resolves to a concrete shape, so tsc prints the
+        // evaluated structural form. The scalar/literal reductions already reach
+        // the eager-evaluation path below (the checker collapses them to a shared
+        // singleton with no alias), but object/tuple/array reductions retain the
+        // application surface and would otherwise leak `Classify<"x">` through the
+        // `lookup_type_alias_name_for_display` short-circuit further down. Reuse
+        // the same target-side reduction policy so both diagnostic pair sides
+        // agree; the helper keeps the alias for free-type-parameter, stalled, and
+        // mapped-bodied applications (`Wrap<T>`, `Cond<T>`, `MapIt<…>`) and defers
+        // a non-generic alias wrapping such an application to the path below.
+        if let Some(display) = self.reduced_generic_application_source_display(ty) {
+            return display;
+        }
+
         if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias

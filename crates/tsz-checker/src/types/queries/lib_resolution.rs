@@ -51,6 +51,17 @@ thread_local! {
     /// derived interface reads it as a heritage base.
     static LIB_RESOLUTION_MARKS: std::cell::RefCell<FxHashMap<String, LibResolutionMark>> =
         std::cell::RefCell::new(FxHashMap::default());
+
+    /// Depth of the active `resolve_lib_type_by_name` call stack on this thread.
+    /// `InProgress` markers are installed only by that function, so `depth == 0`
+    /// means no lib resolution is on the stack and every cycle has fully
+    /// unwound. The outermost call uses this boundary to drain names left
+    /// `Incomplete` by a mutual heritage cycle (#12299).
+    static LIB_RESOLUTION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+
+    /// Set while the outermost call is re-resolving cycle-incomplete names, so a
+    /// nested base resolution does not recursively launch another drain.
+    static LIB_RESOLUTION_DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Look up a lib type `name`'s resolution marker, trying the same normalizations
@@ -87,6 +98,66 @@ fn clear_lib_resolution_mark(name: &str) {
     LIB_RESOLUTION_MARKS.with(|marks| {
         marks.borrow_mut().remove(name);
     });
+}
+
+/// Enter a `resolve_lib_type_by_name` frame (increment the active depth).
+fn enter_lib_resolution() {
+    LIB_RESOLUTION_DEPTH.with(|depth| depth.set(depth.get() + 1));
+}
+
+/// Leave a `resolve_lib_type_by_name` frame and return the remaining depth.
+/// `depth == 0` marks the outermost call, where cycle draining runs.
+fn leave_lib_resolution() -> u32 {
+    LIB_RESOLUTION_DEPTH.with(|depth| {
+        let next = depth.get().saturating_sub(1);
+        depth.set(next);
+        next
+    })
+}
+
+/// Whether the outermost call is currently draining cycle-incomplete names.
+fn lib_resolution_is_draining() -> bool {
+    LIB_RESOLUTION_DRAINING.with(std::cell::Cell::get)
+}
+
+fn set_lib_resolution_draining(value: bool) {
+    LIB_RESOLUTION_DRAINING.with(|flag| flag.set(value));
+}
+
+/// Whether any name is currently marked `Incomplete`. A cheap, allocation-free
+/// gate for the hot outermost-call path before the `collect` scan.
+fn has_incomplete_lib_names() -> bool {
+    LIB_RESOLUTION_MARKS.with(|marks| {
+        marks
+            .borrow()
+            .values()
+            .any(|mark| *mark == LibResolutionMark::Incomplete)
+    })
+}
+
+/// Names currently marked `Incomplete` because a mutual heritage cycle dropped a
+/// base that was itself mid-resolution (#12299).
+fn collect_incomplete_lib_names() -> Vec<String> {
+    LIB_RESOLUTION_MARKS.with(|marks| {
+        marks
+            .borrow()
+            .iter()
+            .filter(|(_, mark)| **mark == LibResolutionMark::Incomplete)
+            .map(|(name, _)| name.clone())
+            .collect()
+    })
+}
+
+/// Reset the per-compilation lib-resolution thread-locals at a project-row
+/// boundary. The depth counter and draining flag are balanced in the normal
+/// path, but a mid-resolution bail-out (stack-overflow breaker, fuel
+/// exhaustion, or a panic caught by the batch driver) can leave `depth > 0`,
+/// which would suppress the cycle drain for every later row on this worker
+/// thread. Wired into `clear_all_thread_local_state`.
+pub fn reset_lib_resolution_state() {
+    LIB_RESOLUTION_MARKS.with(|marks| marks.borrow_mut().clear());
+    LIB_RESOLUTION_DEPTH.with(|depth| depth.set(0));
+    LIB_RESOLUTION_DRAINING.with(|flag| flag.set(false));
 }
 
 /// Map a keyword `SyntaxKind` to its built-in `TypeId`.
@@ -503,10 +574,80 @@ impl<'a> CheckerState<'a> {
         lib_resolution_mark(name) == Some(LibResolutionMark::Incomplete)
     }
 
-    /// Resolve a library type by name from lib.d.ts and other library contexts.
+    /// Resolve a library type by name, draining cycle-incomplete names at the
+    /// outermost call boundary.
     ///
-    /// This function resolves types from library definition files like lib.d.ts,
-    /// es2015.d.ts, etc., which provide built-in JavaScript types and DOM APIs.
+    /// `resolve_lib_type_by_name_inner` resolves one name, but a mutual lib
+    /// heritage cycle (the DOM `Element` ↔ `Node` ↔ `HTMLElement` diamond,
+    /// #12299) has no resolution order in which every base is already complete:
+    /// whichever interface resolves first sees the other still in-progress and
+    /// drops it, producing a base-less (`Incomplete`) body. The dropped base is
+    /// often a *nested* interface (`Element` reached through `Node`), not the
+    /// requested name, so the trigger is "any name was left incomplete", not
+    /// "this name". Once the whole call stack unwinds (`depth == 0`) nothing is
+    /// in-progress, so re-resolving each `Incomplete` name finds its bases
+    /// resolvable and merges them into a flattened body. The flattened (not
+    /// intersection) shape keeps generic inference over DOM types intact.
+    pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+        enter_lib_resolution();
+        let result = self.resolve_lib_type_by_name_inner(name);
+        let depth_after = leave_lib_resolution();
+
+        // Only the outermost call drains, never while already draining, and only
+        // when the cascade left some cycle-incomplete name behind. A nested
+        // interface (the DOM `Element` reached through `Node`) is rarely the
+        // outermost request, so the trigger is "any incomplete", not "this name".
+        if depth_after != 0 || lib_resolution_is_draining() || !has_incomplete_lib_names() {
+            return result;
+        }
+
+        set_lib_resolution_draining(true);
+        self.drain_incomplete_lib_heritage(collect_incomplete_lib_names());
+        set_lib_resolution_draining(false);
+
+        // The drain rewired the def body / caches for `name` if it was part of a
+        // cycle; return the now-complete type so the caller does not keep the
+        // base-less value computed during the cycle.
+        self.ctx
+            .lib_type_resolution_cache
+            .get(name)
+            .and_then(|cached| *cached)
+            .or(result)
+    }
+
+    /// Re-resolve cycle-incomplete lib names until none remain or no further
+    /// progress is made. Each re-resolution runs through the public entry so
+    /// nested base lookups still increment depth, but `LIB_RESOLUTION_DRAINING`
+    /// suppresses a recursive drain. Bounded by the number of names left
+    /// incomplete to guarantee termination even if a genuine gap never resolves.
+    fn drain_incomplete_lib_heritage(&mut self, mut incomplete: Vec<String>) {
+        let max_passes = incomplete.len().saturating_add(1);
+        for _ in 0..max_passes {
+            if incomplete.is_empty() {
+                break;
+            }
+            for lib_name in &incomplete {
+                // The cycle pass removed the name from the resolution cache, so
+                // this recomputes from declarations against the now-cached bases.
+                let _ = self.resolve_lib_type_by_name(lib_name);
+            }
+            let remaining = collect_incomplete_lib_names();
+            if remaining.len() >= incomplete.len() {
+                // No name cleared this pass — re-resolving cannot make further
+                // progress (a base is genuinely unresolvable). Clear the stale
+                // markers so later top-level resolutions do not re-drain them.
+                for lib_name in &remaining {
+                    clear_lib_resolution_mark(lib_name);
+                }
+                break;
+            }
+            incomplete = remaining;
+        }
+    }
+
+    /// Resolve a single library type by name from lib.d.ts and other library
+    /// contexts. The public `resolve_lib_type_by_name` wraps this with the
+    /// heritage-cycle drain.
     ///
     /// ## Library Contexts:
     /// - Searches through loaded library contexts (lib.d.ts, es2015.d.ts, etc.)
@@ -537,7 +678,7 @@ impl<'a> CheckerState<'a> {
     /// }
     /// // lib Window type is merged with augmentation
     /// ```
-    pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+    fn resolve_lib_type_by_name_inner(&mut self, name: &str) -> Option<TypeId> {
         use tsz_lowering::TypeLowering;
 
         // When TS5107/TS5101 deprecation diagnostics are present, skip all lib type
@@ -1028,7 +1169,8 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some(current_type) = lib_type_id {
-                            let merged = self.merge_interface_types(current_type, base_type);
+                            let merged =
+                                self.merge_interface_types_heritage(current_type, base_type);
                             if merged != current_type {
                                 lib_type_id = Some(merged);
                             }
