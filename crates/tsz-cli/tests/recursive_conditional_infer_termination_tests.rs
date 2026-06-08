@@ -149,3 +149,85 @@ fn lib_awaited_promise_literal_terminates() {
         "type X = Awaited<Promise<Promise<2>>>;\n",
     );
 }
+
+/// Run `source` through the real binary at the *production* per-query budget
+/// (so the `Awaited` fold runs to completion rather than being forced to bail by
+/// a tiny test budget) and return its combined stdout+stderr. Resolution
+/// correctness — not just termination — is the property under test here.
+fn run_check(name: &str, source: &str) -> String {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping {name}: tsz binary not found");
+        return String::new();
+    };
+    let temp = TempDir::new(name).expect("temp dir");
+    write_file(&temp.path.join("repro.ts"), source);
+
+    let output = Command::new(tsz_bin)
+        .args(["repro.ts", "--noEmit", "--pretty", "false"])
+        .current_dir(&temp.path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run tsz repro");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+/// Regression for issue #11586: a concrete `Awaited<Promise<Promise<T>>>` nest
+/// must resolve to the unwrapped value (matching tsc's `getAwaitedType`), not
+/// bail to a deferred conditional that then fails assignability. Before the fix,
+/// the two-level (and deeper) nest produced a spurious
+/// `TS2322: Type 'Awaited<Promise<Promise<2>>>' is not assignable to type '2'`.
+#[test]
+fn lib_awaited_double_nested_promise_resolves_to_literal() {
+    let out = run_check(
+        "awaited_double_ok",
+        "declare const b: Awaited<Promise<Promise<2>>>;\nconst out: 2 = b;\n",
+    );
+    if out.is_empty() {
+        return; // binary not found; skipped
+    }
+    assert!(
+        !out.contains("TS2322"),
+        "Awaited<Promise<Promise<2>>> must resolve to 2; got:\n{out}"
+    );
+}
+
+/// Three Promise layers reach the assignability evaluator deep enough to trip
+/// the instantiation depth/fuel guard, the path the two-level fix alone did not
+/// cover. All three layers must still unwrap to the literal.
+#[test]
+fn lib_awaited_triple_nested_promise_resolves_to_literal() {
+    let out = run_check(
+        "awaited_triple_ok",
+        "declare const d: Awaited<Promise<Promise<Promise<\"x\">>>>;\nconst out: \"x\" = d;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert!(
+        !out.contains("TS2322"),
+        "Awaited<Promise<Promise<Promise<\"x\">>>> must resolve to \"x\"; got:\n{out}"
+    );
+}
+
+/// The fold must preserve the unwrapped *value*, not erase or widen the type to
+/// pass: assigning the resolved literal to a different literal must still report
+/// `TS2322`. Guards against a fix that silently widens `2` to `number`.
+#[test]
+fn lib_awaited_nested_promise_preserves_value_for_negative_case() {
+    let out = run_check(
+        "awaited_double_neg",
+        "declare const b: Awaited<Promise<Promise<2>>>;\nconst out: 3 = b;\n",
+    );
+    if out.is_empty() {
+        return;
+    }
+    assert!(
+        out.contains("TS2322"),
+        "resolved literal 2 must not be assignable to 3; got:\n{out}"
+    );
+}

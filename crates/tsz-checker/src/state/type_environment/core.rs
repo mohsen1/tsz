@@ -276,6 +276,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Fold a fully-concrete standard-library `Awaited<...>` over its
+        // Promise-like layers before the re-entrancy and instantiation
+        // depth/fuel guards below can short-circuit a deeper application. The
+        // guarded fold further down never runs once those guards trip — which a
+        // three-plus Promise nest reached through the assignability evaluator
+        // (already deep in instantiation) does — leaving the unfolded
+        // `Awaited<...>` Application to fail assignability with a spurious
+        // `TS2322`. See `fold_concrete_awaited_application`.
+        if let Some(folded) = self.fold_concrete_awaited_application(type_id) {
+            let mut cache = self.ctx.narrowing_cache.resolve_cache.borrow_mut();
+            cache.insert(type_id, folded);
+            if let Some(key) = canonical_key {
+                cache.insert(key, folded);
+            }
+            return folded;
+        }
+
         if !self.ctx.application_eval_set.insert(type_id) {
             // Re-entrancy guard: the same Application is already being evaluated
             // up the call stack. Return the type_id as-is to break the cycle.

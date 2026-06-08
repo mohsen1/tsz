@@ -166,6 +166,32 @@ impl<'a> CheckerState<'a> {
         changed.then_some(awaited)
     }
 
+    /// Fold a fully-concrete standard-library `Awaited<...>` application over its
+    /// Promise-like layers, returning the unwrapped value when it differs from
+    /// the input.
+    ///
+    /// tsc resolves `Awaited` through the dedicated `getAwaitedType`, not the
+    /// generic conditional-type machinery. tsz's conditional evaluator converges
+    /// for a single Promise layer, but for nested promises
+    /// (`Awaited<Promise<Promise<T>>>`) the recursive `Awaited<V>` re-enters
+    /// through fresh evaluator/subtype instances whose per-instance guards reset,
+    /// so the cross-instance per-query budget bails it to a deferred conditional
+    /// — a spurious `TS2322` where tsc resolves the value. Folding here mirrors
+    /// `getAwaitedType`.
+    ///
+    /// Returns `None` for generic `Awaited<...>` (which must stay deferred so a
+    /// `Awaited<Promise<U>>` remains `Awaited<U>`), for non-`Awaited` types, and
+    /// for custom thenables / non-Promise arguments — all left to the conditional
+    /// evaluator. The cheap `contains_type_parameters_cached` gate runs first so
+    /// the symbol-resolving `Awaited` check is skipped for generic types.
+    pub(crate) fn fold_concrete_awaited_application(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if self.contains_type_parameters_cached(type_id) {
+            return None;
+        }
+        let folded = self.try_evaluate_awaited_application(type_id)?;
+        (folded != type_id).then_some(folded)
+    }
+
     fn compute_explicit_awaited_application_type(
         &mut self,
         type_id: TypeId,
