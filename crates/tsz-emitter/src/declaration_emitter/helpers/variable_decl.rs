@@ -1048,6 +1048,40 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(k);
                             return;
                         }
+
+                        // Mixed-kind literal union, or a union mixing literals
+                        // with non-literal members (e.g. `1 | "x"`, `1 | null`,
+                        // `1 | { p: number }`). tsc's `getWidenedType` widens
+                        // each fresh literal member to its primitive base while
+                        // keeping the non-literal members, so a `const` inferred
+                        // from a fresh conditional emits `string | number`,
+                        // `number | null`, `number | { p: number }`, etc. The
+                        // same-kind branch above already collapses homogeneous
+                        // literal unions; this completes the per-member widening
+                        // for the heterogeneous case. `as const` unions stay
+                        // un-widened (their literals are non-fresh).
+                        if has_initializer
+                            && self.arena.get(initializer).is_some_and(|node| {
+                                node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                            })
+                        {
+                            // Check the type-level widening first: it short-
+                            // circuits the common case where nothing widens,
+                            // so the recursive `as const` AST walk only runs
+                            // when a widened type would actually be emitted.
+                            let widened = tsz_solver::operations::widening::widen_literal_type(
+                                interner, type_id,
+                            );
+                            if widened != type_id
+                                && self.const_initializer_literals_are_fresh(initializer)
+                            {
+                                let widened_text =
+                                    self.print_type_id_for_inferred_declaration(widened);
+                                self.write(": ");
+                                self.write(&widened_text);
+                                return;
+                            }
+                        }
                     }
                 }
 

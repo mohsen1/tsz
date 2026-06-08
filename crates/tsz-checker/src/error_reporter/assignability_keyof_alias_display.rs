@@ -19,10 +19,9 @@ impl<'a> CheckerState<'a> {
             && self.lookup_type_alias_name_for_display(operand).is_none()
     }
 
-    /// True when `ty` is a `keyof X` whose operand `X` resolves to a plain object
-    /// type with no string/number index signature. Only that shape yields a
-    /// finite unit-literal key set (`"a" | "b"`, `0 | 1`), which tsc treats as a
-    /// literal context — the assignment-source literal must then be displayed
+    /// True when `ty` is a `keyof X` whose operand `X` yields a finite, statically
+    /// enumerable unit-literal key set (`"a" | "b"`, `0 | 1`), which tsc treats as
+    /// a literal context — the assignment-source literal must then be displayed
     /// as-written, not widened. An index signature contributes the `string` or
     /// `number` primitive base to the key set, and a mapped/computed/generic
     /// operand has no statically-enumerable literal keys; both lack a literal
@@ -35,31 +34,63 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        // Resolve a non-generic alias operand to its body so the object shape is
-        // visible; a direct object operand already exposes its shape.
-        let resolved =
-            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
-                .is_some()
-            {
-                operand
-            } else if let Some(def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, operand)
-            {
-                self.ctx
-                    .type_env
-                    .borrow()
-                    .get_def(def_id)
-                    .or_else(|| {
-                        self.ctx
-                            .definition_store
-                            .get(def_id)
-                            .and_then(|def| def.body)
-                    })
-                    .unwrap_or(operand)
-            } else {
-                operand
-            };
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
+        self.keyof_operand_yields_concrete_literal_keyset(operand)
+    }
+
+    /// True when the `X` in `keyof X` reduces to a finite literal key set: a plain
+    /// object type with no string/number index signature, or a union/intersection
+    /// of such objects.
+    ///
+    /// Composites distribute through `keyof` with dual set operations on the
+    /// members' key sets:
+    /// - `keyof (A | B)` = `keyof A & keyof B` — the *intersection* of the key
+    ///   sets, which stays a finite literal set as soon as **any** member
+    ///   contributes one (intersecting with a finite literal set cannot introduce
+    ///   a primitive base).
+    /// - `keyof (A & B)` = `keyof A | keyof B` — the *union* of the key sets, so
+    ///   **every** member must contribute a finite literal key set (a single
+    ///   `string`/`number` base from an index signature pollutes it).
+    ///
+    /// tsc keeps the assignment-source literal as-written whenever the target key
+    /// set is such a literal context. Recognising the composite forms also makes
+    /// the decision depend only on the operand's structure rather than on whether
+    /// the `keyof` happened to be reduced to its key set already (which is
+    /// evaluation-order sensitive for union operands and previously made the
+    /// widening flip on incidental source formatting).
+    fn keyof_operand_yields_concrete_literal_keyset(&mut self, operand: TypeId) -> bool {
+        // The members are collected into an owned `Vec` so the borrow of
+        // `self.ctx.types` taken by `union_members` / `intersection_members` is
+        // released before the `&mut self` recursive call below.
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, operand)
+        {
+            let members: Vec<TypeId> = members.iter().copied().collect();
+            return members
+                .into_iter()
+                .any(|member| self.keyof_operand_yields_concrete_literal_keyset(member));
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, operand)
+        {
+            let members: Vec<TypeId> = members.iter().copied().collect();
+            return !members.is_empty()
+                && members
+                    .into_iter()
+                    .all(|member| self.keyof_operand_yields_concrete_literal_keyset(member));
+        }
+        // A direct object operand exposes its shape; otherwise resolve a
+        // non-generic alias to its body first so the shape becomes visible.
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
+            .or_else(|| {
+                let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, operand)?;
+                let body = self.ctx.type_env.borrow().get_def(def_id).or_else(|| {
+                    self.ctx
+                        .definition_store
+                        .get(def_id)
+                        .and_then(|def| def.body)
+                })?;
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, body)
+            })
             .is_some_and(|shape| shape.string_index.is_none() && shape.number_index.is_none())
     }
 
