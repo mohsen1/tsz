@@ -736,9 +736,13 @@ impl<'a> CheckerState<'a> {
         let access = self.ctx.arena.get_access_expr(parent)?;
         let obj_node = self.ctx.arena.get(access.expression)?;
         let ident = self.ctx.arena.get_identifier(obj_node)?;
+        // Map a well-known global value identifier to the name of its
+        // constructor/static type, the key under which its static members live
+        // in `getScriptTargetFeatures` (e.g. `Object.fromEntries` lives under
+        // `ObjectConstructor`, `Symbol.dispose` under `SymbolConstructor`).
         let constructor_name = match ident.escaped_text.as_str() {
             "Object" => "ObjectConstructor",
-            "Symbol" => "Symbol",
+            "Symbol" => "SymbolConstructor",
             "Map" => "MapConstructor",
             "Atomics" => "Atomics",
             "Array" => "ArrayConstructor",
@@ -746,6 +750,10 @@ impl<'a> CheckerState<'a> {
             "Number" => "NumberConstructor",
             "String" => "StringConstructor",
             "Promise" => "PromiseConstructor",
+            "Reflect" => "Reflect",
+            "Error" => "ErrorConstructor",
+            "RegExp" => "RegExpConstructor",
+            "Uint8Array" => "Uint8ArrayConstructor",
             _ => return None,
         };
         let lib = get_lib_for_type_property(constructor_name, prop_name)?;
@@ -900,126 +908,246 @@ fn is_builtin_lib_file_name(file_name: &str) -> bool {
     basename.starts_with("lib.") && basename.ends_with(".d.ts")
 }
 
-/// Look up the minimum lib version required for a (type, property) pair.
+/// Lib versions for the members every integer/float typed array shares
+/// (`Int8Array` … `Float64Array`, `BigInt64Array`, `BigUint64Array`, and
+/// `Uint8Array`): the es2022 `at` accessor and the es2023 copying helpers.
+/// `Uint8Array` layers its own esnext base64/hex methods on top of these.
+fn typed_array_shared_feature(prop_name: &str) -> Option<&'static str> {
+    Some(match prop_name {
+        "at" => "es2022",
+        "findLastIndex" | "findLast" | "toReversed" | "toSorted" | "toSpliced" | "with" => "es2023",
+        _ => return None,
+    })
+}
+
+/// Look up the lib version that first introduced a (type, property) pair, used
+/// to drive the TS2550 "change your target library" suggestion.
+///
+/// This mirrors the TypeScript compiler's `getScriptTargetFeatures` table
+/// (`src/compiler/utilities.ts`): the key is the *apparent type's symbol name*
+/// (e.g. `Array`, `ObjectConstructor`, `SymbolConstructor`) and the value is
+/// the lib in which the property first appears. Because each property name
+/// occurs under exactly one lib for a given type, a flat `(type, prop) -> lib`
+/// lookup reproduces tsc's "first matching lib wins" iteration order.
+///
+/// Parity rules worth preserving when updating this table:
+/// - Instance and constructor types are kept SEPARATE exactly as tsc does
+///   (`Error` vs `ErrorConstructor`, `Promise` vs `PromiseConstructor`,
+///   `Symbol` vs `SymbolConstructor`). Merging them would synthesize a false
+///   TS2550 where tsc reports TS2339 (e.g. `(new Error()).isError`).
+/// - No catch-all `_ => Some(lib)` arms: tsc lists each feature explicitly, so
+///   an unlisted property must fall through to TS2339 / TS2551 like tsc.
+/// - Types absent from tsc's table (e.g. `ReadonlyArray`, `WeakRef`) are absent
+///   here; their missing members are TS2339 in tsc.
 fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'static str> {
-    match type_name {
-        "Array" | "ReadonlyArray" => match prop_name {
-            "find" | "findIndex" | "fill" | "copyWithin" | "entries" | "keys" | "values" => {
-                Some("es2015")
+    let lib =
+        match type_name {
+            "Array" => {
+                match prop_name {
+                    "find" | "findIndex" | "fill" | "copyWithin" | "entries" | "keys"
+                    | "values" => "es2015",
+                    "includes" => "es2016",
+                    "flat" | "flatMap" => "es2019",
+                    "at" => "es2022",
+                    "findLastIndex" | "findLast" | "toReversed" | "toSorted" | "toSpliced"
+                    | "with" => "es2023",
+                    _ => return None,
+                }
             }
-            "includes" => Some("es2016"),
-            "flatMap" | "flat" => Some("es2019"),
-            "at" => Some("es2022"),
-            "findLast" | "findLastIndex" => Some("es2023"),
-            "toReversed" | "toSorted" | "toSpliced" | "with" => Some("esnext"),
-            _ => None,
-        },
-        "ArrayConstructor" => match prop_name {
-            "from" | "of" => Some("es2015"),
-            "fromAsync" => Some("esnext"),
-            _ => None,
-        },
-        "Math" => match prop_name {
-            "acosh" | "asinh" | "atanh" | "cbrt" | "clz32" | "cosh" | "expm1" | "fround"
-            | "hypot" | "imul" | "log10" | "log1p" | "log2" | "sign" | "sinh" | "tanh"
-            | "trunc" => Some("es2015"),
-            _ => None,
-        },
-        "SharedArrayBuffer" => match prop_name {
-            "grow" | "growable" | "maxByteLength" => Some("esnext"),
-            _ => Some("es2017"),
-        },
-        "Atomics" => match prop_name {
-            "waitAsync" => Some("es2024"),
-            _ => Some("es2017"),
-        },
-        "AsyncIterable" | "AsyncIterableIterator" | "AsyncGenerator" | "AsyncGeneratorFunction" => {
-            Some("es2018")
-        }
-        "RegExp" => match prop_name {
-            "flags" | "sticky" | "unicode" => Some("es2015"),
-            "dotAll" => Some("es2018"),
-            "hasIndices" => Some("es2022"),
-            "unicodeSets" => Some("es2024"),
-            _ => None,
-        },
-        "RegExpMatchArray" => match prop_name {
-            "groups" => Some("es2018"),
-            "indices" => Some("es2022"),
-            _ => None,
-        },
-        "Symbol" => match prop_name {
-            "asyncIterator" => Some("es2018"),
-            "description" => Some("es2019"),
-            _ => None,
-        },
-        "String" => match prop_name {
-            "codePointAt" | "includes" | "endsWith" | "normalize" | "repeat" | "startsWith" => {
-                Some("es2015")
-            }
-            "padStart" | "padEnd" => Some("es2017"),
-            "trimStart" | "trimEnd" | "trimLeft" | "trimRight" => Some("es2019"),
-            "matchAll" => Some("es2020"),
-            "replaceAll" => Some("es2021"),
-            "at" => Some("es2022"),
-            "isWellFormed" | "toWellFormed" => Some("esnext"),
-            _ => None,
-        },
-        "StringConstructor" => match prop_name {
-            "fromCodePoint" | "raw" => Some("es2015"),
-            _ => None,
-        },
-        "ObjectConstructor" => match prop_name {
-            "values" | "entries" => Some("es2017"),
-            "fromEntries" => Some("es2019"),
-            "hasOwn" => Some("es2022"),
-            "groupBy" => Some("es2024"),
-            _ => None,
-        },
-        "BigInt" => Some("es2020"),
-        "BigInt64Array" | "BigUint64Array" => match prop_name {
-            "at" => Some("es2022"),
-            "findLast" | "findLastIndex" => Some("es2023"),
-            "toReversed" | "toSorted" | "with" => Some("esnext"),
-            _ => Some("es2020"),
-        },
-        "Promise" | "PromiseConstructor" => match prop_name {
-            "allSettled" => Some("es2020"),
-            "any" => Some("es2021"),
-            _ => None,
-        },
-        "WeakRef" | "FinalizationRegistry" | "AggregateError" => Some("es2021"),
-        "Int8Array" | "Uint8Array" | "Uint8ClampedArray" | "Int16Array" | "Uint16Array"
-        | "Int32Array" | "Uint32Array" | "Float32Array" | "Float64Array" => match prop_name {
-            "find" | "findIndex" | "fill" | "copyWithin" | "entries" | "keys" | "values" => {
-                Some("es2015")
-            }
-            "includes" => Some("es2016"),
-            "at" => Some("es2022"),
-            "findLast" | "findLastIndex" => Some("es2023"),
-            "toReversed" | "toSorted" | "with" => Some("esnext"),
-            _ => None,
-        },
-        "Error" | "ErrorConstructor" => match prop_name {
-            "cause" => Some("es2022"),
-            _ => None,
-        },
-        "Map" | "Set" | "WeakMap" | "WeakSet" => Some("es2015"),
-        "MapConstructor" => match prop_name {
-            "groupBy" => Some("es2024"),
-            _ => Some("es2015"),
-        },
-        "Intl" => match prop_name {
-            "Segmenter" | "Segments" | "SegmentData" => Some("esnext"),
-            _ => None,
-        },
-        "NumberConstructor" => match prop_name {
-            "isFinite" | "isInteger" | "isNaN" | "isSafeInteger" | "parseFloat" | "parseInt"
-            | "EPSILON" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" => Some("es2015"),
-            _ => None,
-        },
-        _ => None,
-    }
+            "ArrayBuffer" => match prop_name {
+                "maxByteLength"
+                | "resizable"
+                | "resize"
+                | "detached"
+                | "transfer"
+                | "transferToFixedLength" => "es2024",
+                _ => return None,
+            },
+            "Atomics" => match prop_name {
+                "add" | "and" | "compareExchange" | "exchange" | "isLockFree" | "load" | "or"
+                | "store" | "sub" | "wait" | "notify" | "xor" => "es2017",
+                "waitAsync" => "es2024",
+                "pause" => "esnext",
+                _ => return None,
+            },
+            "SharedArrayBuffer" => match prop_name {
+                "byteLength" | "slice" => "es2017",
+                "growable" | "maxByteLength" | "grow" => "es2024",
+                _ => return None,
+            },
+            "RegExp" => match prop_name {
+                "flags" | "sticky" | "unicode" => "es2015",
+                "dotAll" => "es2018",
+                "unicodeSets" => "es2024",
+                _ => return None,
+            },
+            "RegExpConstructor" => match prop_name {
+                "escape" => "es2025",
+                _ => return None,
+            },
+            "Reflect" => match prop_name {
+                "apply"
+                | "construct"
+                | "defineProperty"
+                | "deleteProperty"
+                | "get"
+                | "getOwnPropertyDescriptor"
+                | "getPrototypeOf"
+                | "has"
+                | "isExtensible"
+                | "ownKeys"
+                | "preventExtensions"
+                | "set"
+                | "setPrototypeOf" => "es2015",
+                _ => return None,
+            },
+            "ArrayConstructor" => match prop_name {
+                "from" | "of" => "es2015",
+                "fromAsync" => "esnext",
+                _ => return None,
+            },
+            "ObjectConstructor" => match prop_name {
+                "assign" | "getOwnPropertySymbols" | "keys" | "is" | "setPrototypeOf" => "es2015",
+                "values" | "entries" | "getOwnPropertyDescriptors" => "es2017",
+                "fromEntries" => "es2019",
+                "hasOwn" => "es2022",
+                "groupBy" => "es2024",
+                _ => return None,
+            },
+            "NumberConstructor" => match prop_name {
+                "isFinite" | "isInteger" | "isNaN" | "isSafeInteger" | "parseFloat"
+                | "parseInt" => "es2015",
+                _ => return None,
+            },
+            "Math" => match prop_name {
+                "clz32" | "imul" | "sign" | "log10" | "log2" | "log1p" | "expm1" | "cosh"
+                | "sinh" | "tanh" | "acosh" | "asinh" | "atanh" | "hypot" | "trunc" | "fround"
+                | "cbrt" => "es2015",
+                "f16round" => "es2025",
+                _ => return None,
+            },
+            "Map" => match prop_name {
+                "entries" | "keys" | "values" => "es2015",
+                "getOrInsert" | "getOrInsertComputed" => "esnext",
+                _ => return None,
+            },
+            "MapConstructor" => match prop_name {
+                "groupBy" => "es2024",
+                _ => return None,
+            },
+            "Set" => match prop_name {
+                "entries" | "keys" | "values" => "es2015",
+                "union"
+                | "intersection"
+                | "difference"
+                | "symmetricDifference"
+                | "isSubsetOf"
+                | "isSupersetOf"
+                | "isDisjointFrom" => "es2025",
+                _ => return None,
+            },
+            "PromiseConstructor" => match prop_name {
+                "all" | "race" | "reject" | "resolve" => "es2015",
+                "allSettled" => "es2020",
+                "any" => "es2021",
+                "withResolvers" => "es2024",
+                "try" => "es2025",
+                _ => return None,
+            },
+            "Symbol" => match prop_name {
+                "for" | "keyFor" => "es2015",
+                "description" => "es2019",
+                _ => return None,
+            },
+            "WeakMap" => match prop_name {
+                "entries" | "keys" | "values" => "es2015",
+                "getOrInsert" | "getOrInsertComputed" => "esnext",
+                _ => return None,
+            },
+            "WeakSet" => match prop_name {
+                "entries" | "keys" | "values" => "es2015",
+                _ => return None,
+            },
+            "String" => match prop_name {
+                "codePointAt" | "includes" | "endsWith" | "normalize" | "repeat" | "startsWith"
+                | "anchor" | "big" | "blink" | "bold" | "fixed" | "fontcolor" | "fontsize"
+                | "italics" | "link" | "small" | "strike" | "sub" | "sup" => "es2015",
+                "padStart" | "padEnd" => "es2017",
+                "trimStart" | "trimEnd" | "trimLeft" | "trimRight" => "es2019",
+                "matchAll" => "es2020",
+                "replaceAll" => "es2021",
+                "at" => "es2022",
+                "isWellFormed" | "toWellFormed" => "es2024",
+                _ => return None,
+            },
+            "StringConstructor" => match prop_name {
+                "fromCodePoint" | "raw" => "es2015",
+                _ => return None,
+            },
+            "DateTimeFormat" => match prop_name {
+                "formatToParts" => "es2017",
+                _ => return None,
+            },
+            "Promise" => match prop_name {
+                "finally" => "es2018",
+                _ => return None,
+            },
+            "RegExpMatchArray" | "RegExpExecArray" => match prop_name {
+                "groups" => "es2018",
+                _ => return None,
+            },
+            "Intl" => match prop_name {
+                "PluralRules" => "es2018",
+                "RelativeTimeFormat" | "Locale" | "DisplayNames" => "es2020",
+                "ListFormat" | "DateTimeFormat" => "es2021",
+                "Segmenter" => "es2022",
+                "DurationFormat" => "es2025",
+                _ => return None,
+            },
+            "NumberFormat" => match prop_name {
+                "formatToParts" => "es2018",
+                _ => return None,
+            },
+            "SymbolConstructor" => match prop_name {
+                "matchAll" => "es2020",
+                "metadata" | "dispose" | "asyncDispose" => "esnext",
+                _ => return None,
+            },
+            "DataView" => match prop_name {
+                "setBigInt64" | "setBigUint64" | "getBigInt64" | "getBigUint64" => "es2020",
+                "setFloat16" | "getFloat16" => "es2025",
+                _ => return None,
+            },
+            "RelativeTimeFormat" => match prop_name {
+                "format" | "formatToParts" | "resolvedOptions" => "es2020",
+                _ => return None,
+            },
+            "Int8Array" | "Uint8ClampedArray" | "Int16Array" | "Uint16Array" | "Int32Array"
+            | "Uint32Array" | "Float32Array" | "Float64Array" | "BigInt64Array"
+            | "BigUint64Array" => return typed_array_shared_feature(prop_name),
+            "Uint8Array" => match prop_name {
+                "toBase64" | "setFromBase64" | "toHex" | "setFromHex" => "esnext",
+                _ => return typed_array_shared_feature(prop_name),
+            },
+            "Uint8ArrayConstructor" => match prop_name {
+                "fromBase64" | "fromHex" => "esnext",
+                _ => return None,
+            },
+            "Error" => match prop_name {
+                "cause" => "es2022",
+                _ => return None,
+            },
+            "ErrorConstructor" => match prop_name {
+                "isError" => "esnext",
+                _ => return None,
+            },
+            "Date" => match prop_name {
+                "toTemporalInstant" => "esnext",
+                _ => return None,
+            },
+            _ => return None,
+        };
+    Some(lib)
 }
 
 // =============================================================================

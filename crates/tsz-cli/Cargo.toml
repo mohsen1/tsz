@@ -115,6 +115,10 @@ path = "tests/generic_call_bare_type_param_dts_emit_tests.rs"
 name = "generator_yield_star_dts_emit_tests"
 path = "tests/generator_yield_star_dts_emit_tests.rs"
 
+[[test]]
+name = "lib_target_suggestion_ts2550_tests"
+path = "tests/lib_target_suggestion_ts2550_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
