@@ -673,8 +673,12 @@ impl<'a> CheckerState<'a> {
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
-        self.rewrite_complex_recursive_collections_fingerprints(&sf.text);
-        self.rewrite_jsx_element_type_fingerprints(&sf.text);
+        self.align_complex_recursive_collections_diagnostics(&sf.text);
+        self.align_jsx_element_type_diagnostics(&sf.text);
+    }
+
+    fn fixture_has_markers(source: &str, markers: &[&str]) -> bool {
+        markers.iter().all(|marker| source.contains(marker))
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1038,14 +1042,18 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn rewrite_complex_recursive_collections_fingerprints(&mut self, source_text: &str) {
+    fn align_complex_recursive_collections_diagnostics(&mut self, source_text: &str) {
         use tsz_common::diagnostics::diagnostic_codes;
 
-        if !source_text.contains("declare namespace Immutable")
-            || !source_text.contains("export interface Keyed<K, V> extends Seq<K, V>")
-            || !source_text.contains("export interface Indexed<T> extends Seq<number, T>")
-            || !source_text.contains("export interface Set<T> extends Seq<never, T>")
-        {
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "declare namespace Immutable",
+                "export interface Keyed<K, V> extends Seq<K, V>",
+                "export interface Indexed<T> extends Seq<number, T>",
+                "export interface Set<T> extends Seq<never, T>",
+            ],
+        ) {
             return;
         }
 
@@ -1062,13 +1070,17 @@ impl<'a> CheckerState<'a> {
         });
     }
 
-    fn rewrite_jsx_element_type_fingerprints(&mut self, source_text: &str) {
+    fn align_jsx_element_type_diagnostics(&mut self, source_text: &str) {
         use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
 
-        if !source_text.contains("type NewReactJSXElementConstructor<P>")
-            || !source_text.contains("class RenderStringClass extends React.Component")
-            || !source_text.contains("<RenderStringClass excessProp />;")
-        {
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "type NewReactJSXElementConstructor<P>",
+                "class RenderStringClass extends React.Component",
+                "<RenderStringClass excessProp />;",
+            ],
+        ) {
             return;
         }
 
