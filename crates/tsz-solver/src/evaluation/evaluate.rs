@@ -501,7 +501,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// key does not capture the ambient stack depth (`closed_eval_cache`,
     /// `application_eval_cache`); see the respective limit gates.
     #[inline]
-    const fn recursion_limit_hit(&self) -> bool {
+    pub(crate) const fn recursion_limit_hit(&self) -> bool {
         self.guard.is_exceeded() || self.silent_depth_bailed || self.deep_recursion_seen
     }
 

@@ -818,6 +818,9 @@ impl<'a> CheckerState<'a> {
         // Check for duplicate member names (TS2300, TS2393)
         self.check_duplicate_class_members(&class.members.nodes);
 
+        // Check for duplicate-member modifier disagreements (TS2687)
+        self.check_class_member_modifier_disagreements(&class.members.nodes);
+
         // Check for missing method/constructor implementations (2389, 2390, 2391)
         // Skip for declared classes (ambient declarations don't need implementations)
         if !is_declared {
@@ -1195,6 +1198,9 @@ impl<'a> CheckerState<'a> {
 
         // Check for duplicate member names (TS2300, TS2393)
         self.check_duplicate_class_members(&class.members.nodes);
+
+        // Check for duplicate-member modifier disagreements (TS2687)
+        self.check_class_member_modifier_disagreements(&class.members.nodes);
 
         // Check for missing method/constructor implementations (2389, 2390, 2391)
         self.check_class_member_implementations(&class.members.nodes);

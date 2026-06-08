@@ -187,7 +187,44 @@ impl<'a> CheckerState<'a> {
                 .collect();
             return (self.ctx.types.factory().union(unwrapped), changed);
         }
-        if let Some(inner) = self.builtin_promise_like_application_arg(type_id) {
+        // Unwrap a single thenable layer. The fast path matches the
+        // Application form (`Promise<T>` / `PromiseLike<T>`) without
+        // materializing the structural Promise shape.
+        let mut inner = self.builtin_promise_like_application_arg(type_id);
+        if inner.is_none() {
+            // Not a lib `Promise`/`PromiseLike` application. It may still be a
+            // structural thenable: either an already-materialized `{ then }`
+            // Object shape (a nested lib `Promise` argument that was lowered to
+            // its structural form, which is why the Application fast path misses
+            // it) or a user-declared thenable interface/alias whose Object shape
+            // only appears after evaluation. Evaluate to the structural form and
+            // unwrap through the thenable-aware extractor, mirroring tsc's
+            // `getAwaitedType`, which inspects the `then`/`onfulfilled` callback
+            // at every level regardless of how the thenable was declared. A
+            // non-thenable (plain object, primitive, literal) extracts to `None`,
+            // so the fold stops there and the value passes through unchanged.
+            // Folding both forms keeps the fold a faithful `getAwaitedType`, so
+            // short-circuiting the solver here can never under- or over-reduce.
+            let evaluated = self.evaluate_type_with_env(type_id);
+            let structural = if evaluated != type_id {
+                evaluated
+            } else {
+                type_id
+            };
+            if matches!(
+                query::classify_promise_type(self.ctx.types, structural),
+                query::PromiseTypeKind::Object(_)
+            ) {
+                inner = self.promise_like_return_type_argument(structural);
+            }
+        }
+        if let Some(inner) = inner {
+            // A self-referential thenable (`onfulfilled` yields the thenable
+            // itself) must not spin; stop and let the conditional evaluator and
+            // its cycle detection own that case.
+            if inner == type_id {
+                return (type_id, false);
+            }
             let (awaited, _) = self.compute_explicit_awaited_application_type(inner, depth + 1);
             return (awaited, true);
         }

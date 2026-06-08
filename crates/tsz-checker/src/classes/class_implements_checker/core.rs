@@ -899,11 +899,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Abstract classes don't need to implement interface members —
-        // their abstract members satisfy the interface contract.
-        if self.has_abstract_modifier(&class_data.modifiers) {
-            return;
-        }
+        // Abstract classes are exempt only from the *completeness* requirement (they
+        // need not implement every member — subclasses do), but a member they *do*
+        // declare must still be type-/visibility-compatible (tsc still reports
+        // TS2416/TS2420). Per-member checks keep running; only the completeness
+        // diagnostics below are gated by `is_abstract_class`.
+        let is_abstract_class = self.has_abstract_modifier(&class_data.modifiers);
 
         let mut class_type_param_names: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
@@ -1559,27 +1560,15 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                 );
                             }
-                        } else {
-                            // Before reporting as missing, check the class instance type.
-                            // Members from module augmentations or declaration merging appear
-                            // in the computed instance type but not in the AST body or
-                            // inheritance chain. E.g., `class X implements X {}` where X is
-                            // augmented from another file via `declare module`.
-                            let in_instance_type = {
-                                let inst = self.get_class_instance_type(class_idx, class_data);
-                                if let Some(shape) =
-                                    crate::query_boundaries::common::object_shape_for_type(
-                                        self.ctx.types,
-                                        inst,
-                                    )
-                                {
-                                    let member_atom = self.ctx.types.intern_string(&member_name);
-                                    shape.properties.iter().any(|p| p.name == member_atom)
-                                } else {
-                                    false
-                                }
-                            };
-                            if !in_instance_type {
+                        } else if !is_abstract_class {
+                            // Abstract classes may leave members unimplemented (skip the
+                            // probe). Otherwise report missing unless the instance type
+                            // exposes it (module-augmented / merged members).
+                            if !self.class_instance_type_has_member(
+                                class_idx,
+                                class_data,
+                                &member_name,
+                            ) {
                                 missing_members.push(member_name);
                             }
                         }
@@ -1592,7 +1581,11 @@ impl<'a> CheckerState<'a> {
                     // instead of silently passing. We detect this by checking
                     // assignability through the solver, which includes weak type
                     // detection via the compat layer.
-                    if missing_members.is_empty() && incompatible_members.is_empty() {
+                    // Weak-type detection is a completeness check; abstract exempt.
+                    if !is_abstract_class
+                        && missing_members.is_empty()
+                        && incompatible_members.is_empty()
+                    {
                         // Check if the interface is a weak type: all properties optional
                         let is_weak = !interface_properties.is_empty()
                             && interface_properties.iter().all(|p| p.optional)
@@ -1632,12 +1625,15 @@ impl<'a> CheckerState<'a> {
                     // For interfaces, the type-level check is only done when
                     // member-by-member found no issues (catches index signature
                     // incompatibilities that member-by-member misses).
+                    // Whole-type assignability is a completeness check, so restrict it
+                    // to concrete classes (matching tsc).
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
-                    let check_whole_type = extends_same_base
-                        || (interface_has_index_signature
-                            && missing_members.is_empty()
-                            && incompatible_members.is_empty());
+                    let check_whole_type = !is_abstract_class
+                        && (extends_same_base
+                            || (interface_has_index_signature
+                                && missing_members.is_empty()
+                                && incompatible_members.is_empty()));
                     if check_whole_type {
                         let class_instance_type =
                             self.get_class_instance_type(class_idx, class_data);
@@ -1742,7 +1738,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    if report_inaccessible_privates
+                    // Inaccessible-private brand satisfaction is a completeness check
+                    // (whole-type), so abstract classes are exempt too.
+                    if !is_abstract_class
+                        && report_inaccessible_privates
                         && missing_members.is_empty()
                         && incompatible_members.is_empty()
                     {

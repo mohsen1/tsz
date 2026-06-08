@@ -1482,6 +1482,7 @@ impl QueryDatabase for QueryCache<'_> {
             query_id
         });
 
+        let union_too_complex_before = self.interner.is_union_too_complex();
         let mut evaluator = self.query_backed_evaluator();
         let result = evaluator.evaluate_request_result(request).into_type_id();
 
@@ -1491,7 +1492,23 @@ impl QueryDatabase for QueryCache<'_> {
         // that would otherwise be recomputed in subsequent top-level evaluate
         // calls. Only persist entries where the result differs from the input
         // (identity mappings are free to recompute) and skip intrinsics.
-        {
+        //
+        // CORRECTNESS GATE: a run that hit a recursion / depth / iteration /
+        // union-complexity limit must NOT persist its results here. The
+        // `eval_cache` key is `(TypeId, options)` — it does not capture the
+        // ambient stack depth at which a bail occurred — so a depth-bailed
+        // intermediate (e.g. a recursive array alias `RecArray<T> =
+        // Array<T | RecArray<T>>` evaluated while the def-depth was already high,
+        // collapsing to `error`) would otherwise be cached and then read back at
+        // top level where it should have converged. That poisons later
+        // type-checking (an `error` element silently satisfies assignability) in a
+        // declaration/cache-order-dependent way — the exact non-determinism that
+        // makes recursive-utility fixtures flip with surrounding code. This
+        // mirrors the gate the evaluator already applies to `closed_eval_cache`
+        // and `application_eval_cache` (see `recursion_limit_hit`).
+        let newly_union_too_complex =
+            self.interner.is_union_too_complex() && !union_too_complex_before;
+        if !evaluator.recursion_limit_hit() && !newly_union_too_complex {
             let mut cache = self.eval_cache.borrow_mut();
             cache.insert(key, result);
             // Also write to shared cache for cross-file benefit.
