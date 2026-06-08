@@ -568,7 +568,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// boundary without first constructing a real divergent type whose own bail
     /// path (`guard.mark_exceeded`) would short-circuit every later `evaluate`.
     #[cfg(test)]
-    pub(crate) fn simulate_unrelated_recursion_bail_for_test(&mut self) {
+    pub(crate) const fn simulate_unrelated_recursion_bail_for_test(&mut self) {
         self.mark_deep_recursion_seen();
     }
 
