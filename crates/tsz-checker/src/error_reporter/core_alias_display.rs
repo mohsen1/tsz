@@ -2,6 +2,30 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// The non-generic `TypeAlias` `DefId` registered against `ty`, if any.
+    /// Prefers the raw alias body registration (`find_type_alias_by_body`) and
+    /// falls back to the checker's evaluated-form registration
+    /// (`find_def_for_type`); generic aliases (which need type-argument display)
+    /// return `None`. The diagnostic formatter resolves an alias name through the
+    /// same registration, so this is the canonical "does `ty` render as a bare
+    /// non-generic alias name" query.
+    pub(crate) fn registered_non_generic_type_alias_def(
+        &self,
+        ty: TypeId,
+    ) -> Option<tsz_solver::def::DefId> {
+        let def_id = self
+            .ctx
+            .definition_store
+            .find_type_alias_by_body(ty)
+            .or_else(|| {
+                let def_id = self.ctx.definition_store.find_def_for_type(ty)?;
+                let def = self.ctx.definition_store.get(def_id)?;
+                (def.kind == tsz_solver::def::DefKind::TypeAlias).then_some(def_id)
+            })?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        def.type_params.is_empty().then_some(def_id)
+    }
+
     /// Look up a displayable non-generic type alias name for a `TypeId`.
     pub(crate) fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
         // Only check composite types - tsc does NOT preserve alias names for
@@ -62,27 +86,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Try body_to_alias first (raw alias body), then fall back to
-        // type_to_def (evaluated alias form registered by the checker).
-        let def_id = self
-            .ctx
-            .definition_store
-            .find_type_alias_by_body(ty)
-            .or_else(|| {
-                let def_id = self.ctx.definition_store.find_def_for_type(ty)?;
-                let def = self.ctx.definition_store.get(def_id)?;
-                if def.kind == tsz_solver::def::DefKind::TypeAlias {
-                    Some(def_id)
-                } else {
-                    None
-                }
-            })?;
+        // Only a non-generic type alias registered against this `TypeId` is a
+        // candidate; generic aliases need type-argument display (`B<string>`,
+        // not `B`).
+        let def_id = self.registered_non_generic_type_alias_def(ty)?;
         let def = self.ctx.definition_store.get(def_id)?;
-        // Only use the alias for non-generic type aliases. Generic aliases
-        // need type argument display (e.g., B<string> not B).
-        if !def.type_params.is_empty() {
-            return None;
-        }
         // `type T = typeof value` aliases display as the resolved value type
         // in assignment diagnostics. Do not repaint that resolved body as `T`.
         if def.body.is_some_and(|body| {
