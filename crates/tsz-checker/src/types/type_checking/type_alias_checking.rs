@@ -1668,8 +1668,9 @@ impl<'a> CheckerState<'a> {
                 // Recurse into tuple elements to validate nested type nodes
                 // (e.g., indexed access types inside tuples need TS2536/TS4105 checks).
                 if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
-                    let elements = tuple.elements.nodes.clone();
-                    for &element_idx in &elements {
+                    // Arena-backed `&'a` borrow (never mutated during checking):
+                    // iterate in place instead of cloning a throwaway `Vec` per node (#11617).
+                    for &element_idx in &tuple.elements.nodes {
                         check_child_type_node!(self, element_idx);
                     }
                 }
@@ -1690,11 +1691,12 @@ impl<'a> CheckerState<'a> {
                 // the time we reach this sibling check the scope no longer contains
                 // the inner signature's type parameters.
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
-                    let type_parameters = func_type.type_parameters.clone();
-                    let parameters = func_type.parameters.nodes.clone();
-                    let type_annotation = func_type.type_annotation;
-                    let (_type_params, tp_updates) = self.push_type_parameters(&type_parameters);
-                    for &param_idx in &parameters {
+                    // Arena-backed `&'a` borrow: `func_type`'s type-parameter and
+                    // parameter lists outlive the `&mut self` checks below, so reference
+                    // them in place instead of cloning two throwaway `Vec`s per node (#11617).
+                    let (_type_params, tp_updates) =
+                        self.push_type_parameters(&func_type.type_parameters);
+                    for &param_idx in &func_type.parameters.nodes {
                         let param_type_annotation = (|| {
                             let param_node = self.ctx.arena.get(param_idx)?;
                             let param = self.ctx.arena.get_parameter(param_node)?;
@@ -1707,10 +1709,10 @@ impl<'a> CheckerState<'a> {
                             check_child_type_node_in_current_scope!(self, param_type_annotation);
                         }
                     }
-                    if type_annotation.is_some() {
-                        check_child_type_node_in_current_scope!(self, type_annotation);
+                    if func_type.type_annotation.is_some() {
+                        check_child_type_node_in_current_scope!(self, func_type.type_annotation);
                     }
-                    self.check_rest_parameter_types(&parameters);
+                    self.check_rest_parameter_types(&func_type.parameters.nodes);
                     self.pop_type_parameters(tp_updates);
                 }
             }
@@ -1719,8 +1721,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(type_query) = self.ctx.arena.get_type_query(node)
                     && let Some(args) = &type_query.type_arguments
                 {
-                    let args_nodes = args.nodes.clone();
-                    for &arg_idx in &args_nodes {
+                    // Arena-backed `&'a` borrow: the type-argument list outlives the
+                    // `&mut self` checks, so iterate and reuse it in place instead of
+                    // cloning a throwaway `Vec` per node (#11617).
+                    for &arg_idx in &args.nodes {
                         check_child_type_node!(self, arg_idx);
                     }
                     let expr_name = type_query.expr_name;
@@ -1734,12 +1738,12 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.get_type_of_node(expr_name)
                     };
-                    let num_type_args = args_nodes.len();
+                    let num_type_args = args.nodes.len();
                     self.check_instantiation_expression_type_args(
                         expr_type,
                         num_type_args,
                         node_idx,
-                        &args_nodes,
+                        &args.nodes,
                     );
                 }
             }

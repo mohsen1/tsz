@@ -60,8 +60,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let members = type_lit.members.nodes.clone();
-        if !members.iter().copied().all(|member_idx| {
+        // Arena-backed `&'a` borrow (never mutated during checking): scan and walk
+        // the member list in place — including across the `&mut self` checks in the
+        // loop below — instead of cloning a throwaway `Vec` per signature-only
+        // type-literal alias (#11617).
+        if !type_lit.members.nodes.iter().all(|&member_idx| {
             self.ctx.arena.get(member_idx).is_some_and(|member| {
                 member.kind == syntax_kind_ext::CALL_SIGNATURE
                     || member.kind == syntax_kind_ext::CONSTRUCT_SIGNATURE
@@ -70,7 +73,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        for member_idx in members {
+        for &member_idx in &type_lit.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };

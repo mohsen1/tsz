@@ -22,6 +22,18 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_type_literal_duplicate_properties(&mut self, members: &[NodeIndex]) {
         use crate::diagnostics::diagnostic_codes;
 
+        // A duplicate name (TS2300), a subsequent-declaration type mismatch
+        // (TS2717), or a modifier disagreement (TS2687) all require at least two
+        // property signatures that share a name, so a literal with fewer than two
+        // members can never trip any of them. Bail before touching the heap — this
+        // is the common case (most object types carry zero or one members) and the
+        // check runs on every type literal in the program. (TS1170/TS2464 computed
+        // -property checks live in a separate per-member pass in `core.rs` and are
+        // unaffected by this early return.) (#11617)
+        if members.len() < 2 {
+            return;
+        }
+
         // Track (member_idx, type_annotation, is_syntactic_name) for TS2717 comparison.
         // `is_syntactic_name` is true when the name was determined from syntax alone
         // (literal property name), false when it required evaluating a computed expression.

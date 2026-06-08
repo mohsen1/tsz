@@ -688,8 +688,9 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
-                    let elements = tuple.elements.nodes.clone();
-                    for element_idx in elements {
+                    // Arena-backed `&'a` borrow (never mutated during checking):
+                    // iterate in place instead of cloning a throwaway `Vec` per node (#11617).
+                    for &element_idx in &tuple.elements.nodes {
                         self.check_type_alias_body_for_missing_names_after_type_node_check(
                             element_idx,
                         );
@@ -708,8 +709,9 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-                    let members = composite.types.nodes.clone();
-                    for member_idx in members {
+                    // Arena-backed `&'a` borrow: iterate the constituent list in place
+                    // rather than cloning it on every union/intersection node (#11617).
+                    for &member_idx in &composite.types.nodes {
                         self.check_type_alias_body_for_missing_names_after_type_node_check(
                             member_idx,
                         );
@@ -806,8 +808,8 @@ impl<'a> CheckerState<'a> {
                         self.ctx.report_mapped_type_missing_template(type_idx);
                     }
                     if let Some(ref members) = mapped.members {
-                        let member_nodes = members.nodes.clone();
-                        for member_idx in member_nodes {
+                        // Arena-backed `&'a` borrow: no throwaway clone per mapped node (#11617).
+                        for &member_idx in &members.nodes {
                             self.check_type_member_for_missing_names(member_idx);
                         }
                     }
@@ -825,8 +827,8 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
                 if let Some(template) = self.ctx.arena.get_template_literal_type(node) {
-                    let spans = template.template_spans.nodes.clone();
-                    for span_idx in spans {
+                    // Arena-backed `&'a` borrow: no throwaway clone per template node (#11617).
+                    for &span_idx in &template.template_spans.nodes {
                         let Some(span_node) = self.ctx.arena.get(span_idx) else {
                             continue;
                         };
@@ -932,8 +934,9 @@ impl<'a> CheckerState<'a> {
         args: Option<&tsz_parser::parser::base::NodeList>,
     ) {
         if let Some(args) = args {
-            let arg_nodes = args.nodes.clone();
-            for arg_idx in arg_nodes {
+            // `args` borrows the caller's arena-backed node list, not `self`, so the
+            // recursive walk can iterate it in place without a throwaway clone (#11617).
+            for &arg_idx in &args.nodes {
                 self.check_type_alias_body_for_missing_names_after_type_node_check(arg_idx);
             }
         }
