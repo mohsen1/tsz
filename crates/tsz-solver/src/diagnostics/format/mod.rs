@@ -323,6 +323,15 @@ impl<'a> TypeFormatter<'a> {
         ) {
             return None;
         }
+        // tsc only drops the alias symbol once the application is fully
+        // instantiated. A still-generic application (`Extract<Extract<T, Foo>,
+        // Bar>` with free `T`) stays deferred and is displayed as `Name<Args>`,
+        // even though the display-time evaluator may collapse the unconstrained
+        // conditional to `never`. Gate on the *input* so such a result is never
+        // mistaken for a finished reduction.
+        if crate::type_queries::contains_type_parameters_db(self.interner, type_id) {
+            return None;
+        }
         // Instantiate the conditional body with the concrete arguments and
         // evaluate. `instantiate_generic` substitutes the def body directly,
         // which reduces a nested helper application (`DeepReadonly<{ b }>`)

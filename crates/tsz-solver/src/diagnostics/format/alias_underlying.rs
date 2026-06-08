@@ -169,7 +169,11 @@ fn alias_application_underlying(
     {
         return None;
     }
+    // tsc only drops the alias symbol once the application is fully instantiated;
+    // a still-generic application stays deferred as `Name<Args>` even when the
+    // display-time evaluator collapses an unconstrained conditional to `never`.
     if crate::type_queries::application_base_has_conditional_alias_body(interner, def_store, body)
+        && !crate::type_queries::contains_type_parameters_db(interner, body)
         && application_reduces_to_displayable_shape(interner, evaluated)
     {
         return Some(evaluated);

@@ -99,6 +99,26 @@ const y: { q: { z: 1 } } = x;
 }
 
 #[test]
+fn generic_conditional_application_keeps_alias_name() {
+    // `Extract<Extract<T, Foo>, Bar>` is generic (free `T`): tsc keeps the
+    // deferred `Extract<…>` application form even though the display-time
+    // evaluator may collapse the unconstrained conditional to `never`. The
+    // input-genericity guard prevents that `never` from leaking into display.
+    // (Conformance fixture `conditionalTypes2.ts`.)
+    let source = r#"
+type Extract<T, U> = T extends U ? T : never;
+type Foo = { foo: string };
+type Bar = { bar: string };
+declare function fooBat(x: { foo: string; bat: string }): void;
+function f<T>(x: Extract<Extract<T, Foo>, Bar>) {
+  fooBat(x);
+}
+"#;
+    assert_any_contains(source, "Extract<Extract<T, Foo>, Bar>");
+    assert_none_contains(source, "type 'never'");
+}
+
+#[test]
 fn deferred_generic_conditional_keeps_branch_union() {
     // Still generic (free `T`): tsc shows the branch union, never expanding to a
     // concrete shape. Matches today's behavior; locks in the no-over-reach guard.
