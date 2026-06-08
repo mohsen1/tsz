@@ -416,6 +416,11 @@ struct ParallelCheckPlan<'a> {
     resolved_modules: Arc<FxHashSet<String>>,
     checker_lib_files: Vec<Arc<LibFile>>,
     lib_contexts: Arc<Vec<LibContext>>,
+    /// Prebuilt union of lib `file_locals` names, shared (`Arc`) into every
+    /// per-file checker so identifier resolution can skip the `O(num_lib_files)`
+    /// `file_locals` scan for names no lib declares. Built once here rather than
+    /// per file (it is `O(total lib symbols)`).
+    lib_file_local_names: Option<Arc<FxHashSet<String>>>,
     all_binders: Arc<Vec<Arc<BinderState>>>,
     all_arenas: Arc<Vec<Arc<NodeArena>>>,
     global_symbol_file_index: Arc<FxHashMap<tsz_binder::SymbolId, usize>>,
@@ -458,6 +463,13 @@ impl<'a> ParallelCheckPlan<'a> {
                 })
                 .collect(),
         );
+
+        // Build the lib `file_locals` name index once and share it (Arc) into
+        // every per-file checker, so type/value-position identifier resolution
+        // can skip the per-identifier `O(num_lib_files)` lib scan for names no
+        // lib declares (the common case for a project's own symbols).
+        let lib_file_local_names =
+            tsz_checker::context::build_lib_file_local_names(&lib_contexts);
 
         // PERF: Pre-compute merged augmentation data ONCE instead of per-file.
         // This reduces augmentation merging from O(N_files^2) to O(N_files).
@@ -557,6 +569,7 @@ impl<'a> ParallelCheckPlan<'a> {
             resolved_modules,
             checker_lib_files,
             lib_contexts,
+            lib_file_local_names,
             all_binders,
             all_arenas,
             global_symbol_file_index,
@@ -642,6 +655,9 @@ impl<'a> ParallelCheckPlan<'a> {
             checker
                 .ctx
                 .set_lib_contexts_shared(Arc::clone(&self.lib_contexts));
+            checker
+                .ctx
+                .set_lib_file_local_names(self.lib_file_local_names.clone());
             checker.ctx.set_actual_lib_file_count(self.lib_contexts.len());
         }
 

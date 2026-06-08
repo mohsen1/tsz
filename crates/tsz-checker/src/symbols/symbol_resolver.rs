@@ -621,34 +621,39 @@ impl<'a> CheckerState<'a> {
         if result.is_none() && !ignore_libs {
             // Get the identifier name
             let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
-            // Check lib_contexts directly for global symbols
-            for (lib_idx, lib_ctx) in self.ctx.lib_contexts.iter().enumerate() {
-                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
-                    trace!(
-                        name = name,
-                        lib_idx = lib_idx,
-                        lib_sym_id = ?lib_sym_id,
-                        "Found symbol in lib_context"
-                    );
-                    if !should_skip_lib_symbol(lib_sym_id) {
-                        // Use file binder's sym_id for correct ID space after lib merge.
-                        // Never return lib-context SymbolIds directly: they may collide with
-                        // unrelated symbols in the current binder ID space.
-                        let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
-                            continue;
-                        };
-                        // Filter out string-literal ambient module symbols (e.g., `declare module "foobar"`)
-                        // — they should not resolve as bare identifiers.
-                        if self.is_string_literal_module_symbol(file_sym_id, &lib_binders) {
-                            continue;
-                        }
+            // Check lib_contexts directly for global symbols. Skip the whole
+            // scan when the prebuilt index proves no lib declares `name`: the
+            // loop body keys every probe on `file_locals.get(name)`, so an
+            // absent name makes it a guaranteed no-op (byte-identical skip).
+            if self.ctx.lib_name_possible(name) {
+                for (lib_idx, lib_ctx) in self.ctx.lib_contexts.iter().enumerate() {
+                    if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                         trace!(
                             name = name,
-                            file_sym_id = ?file_sym_id,
+                            lib_idx = lib_idx,
                             lib_sym_id = ?lib_sym_id,
-                            "Returning symbol from lib_contexts fallback"
+                            "Found symbol in lib_context"
                         );
-                        return Some(file_sym_id);
+                        if !should_skip_lib_symbol(lib_sym_id) {
+                            // Use file binder's sym_id for correct ID space after lib merge.
+                            // Never return lib-context SymbolIds directly: they may collide with
+                            // unrelated symbols in the current binder ID space.
+                            let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
+                                continue;
+                            };
+                            // Filter out string-literal ambient module symbols (e.g., `declare module "foobar"`)
+                            // — they should not resolve as bare identifiers.
+                            if self.is_string_literal_module_symbol(file_sym_id, &lib_binders) {
+                                continue;
+                            }
+                            trace!(
+                                name = name,
+                                file_sym_id = ?file_sym_id,
+                                lib_sym_id = ?lib_sym_id,
+                                "Returning symbol from lib_contexts fallback"
+                            );
+                            return Some(file_sym_id);
+                        }
                     }
                 }
             }
@@ -943,7 +948,7 @@ impl<'a> CheckerState<'a> {
         // Robustness audit (PR #B, item 2): see the matching comment at
         // `resolve_identifier_symbol`. This is the type-position twin of
         // that bypass.
-        if !ignore_libs && !name_in_local_scope {
+        if !ignore_libs && !name_in_local_scope && self.ctx.lib_name_possible(name) {
             for lib_ctx in self.ctx.lib_contexts.iter() {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                     // After lib merge, the file binder has the same symbols with

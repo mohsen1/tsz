@@ -279,6 +279,7 @@ impl<'a> CheckerContext<'a> {
             type_only_nodes: FxHashSet::default(),
             lib_contexts: Arc::new(Vec::new()),
             lib_binders_cached: Arc::new(Vec::new()),
+            lib_file_local_names: None,
             actual_lib_file_count: 0,
             typescript_dom_replacement_loaded: false,
             typescript_dom_replacement_has_window: false,
