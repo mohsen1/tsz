@@ -1716,12 +1716,13 @@ impl<'a> CheckerState<'a> {
 
         // A `typeof X` can also be nested inside a generic type-argument
         // (`F<typeof X>`), an indexed access (`(typeof X)["k"]`), a parenthesized
-        // type, a tuple, or a conditional/mapped/operator body. These positions
-        // must be descended into as well so a `typeof` of a value that *shares its
-        // name with the alias being resolved* (the common `const X = ...; type X =
+        // type, a tuple, or a type-operator body. These positions must be
+        // descended into as well so a `typeof` of a value that *shares its name
+        // with the alias being resolved* (the common `const X = ...; type X =
         // Infer<typeof X>` shape from schema libraries) is pre-resolved to the
         // value type instead of deferring to a `TypeQuery` that re-enters the
-        // in-progress alias and never terminates.
+        // in-progress alias and never terminates. Conditional- and mapped-type
+        // bodies are intentionally excluded (see the closing note below).
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(data) = self.ctx.arena.get_type_ref(node)
             && let Some(type_arguments) = &data.type_arguments
@@ -1774,6 +1775,7 @@ impl<'a> CheckerState<'a> {
             && let Some(data) = self.ctx.arena.get_type_operator(node)
         {
             self.collect_type_query_nodes(data.type_node, out);
+            return;
         }
 
         // Conditional- and mapped-type bodies are intentionally NOT descended
