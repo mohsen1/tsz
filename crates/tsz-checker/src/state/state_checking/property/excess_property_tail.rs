@@ -108,8 +108,7 @@ impl<'a> CheckerState<'a> {
         nested_target: TypeId,
         outer_intersection: TypeId,
     ) -> TypeId {
-        let Some(outer_members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, outer_intersection)
+        let Some(outer_members) = query::intersection_members(self.ctx.types, outer_intersection)
         else {
             return nested_target;
         };
@@ -132,8 +131,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn single_non_undefined_member(&self, type_id: TypeId) -> Option<(TypeId, bool)> {
-        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
-        else {
+        let Some(members) = query::union_members(self.ctx.types, type_id) else {
             return (type_id != TypeId::UNDEFINED).then_some((type_id, false));
         };
         let has_undefined = members.contains(&TypeId::UNDEFINED);
@@ -147,9 +145,8 @@ impl<'a> CheckerState<'a> {
     /// Returns the `TypeId` of an enclosing intersection reachable from `target`:
     /// the type itself, its `Lazy` body, or an intersection member of a union wrapper.
     fn recover_outer_intersection_from_target(&self, target: TypeId) -> Option<TypeId> {
-        let is_intersection = |t: TypeId| {
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, t).is_some()
-        };
+        let is_intersection =
+            |t: TypeId| query::intersection_members(self.ctx.types, t).is_some();
         if is_intersection(target) {
             return Some(target);
         }
@@ -159,7 +156,7 @@ impl<'a> CheckerState<'a> {
         {
             return Some(body);
         }
-        tsz_solver::type_queries::get_union_members(self.ctx.types, target)?
+        query::union_members(self.ctx.types, target)?
             .into_iter()
             .find(|&member| is_intersection(member))
     }
@@ -175,9 +172,7 @@ impl<'a> CheckerState<'a> {
         nested_target: TypeId,
         outer_object: TypeId,
     ) -> TypeId {
-        let Some(_outer_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, outer_object)
-        else {
+        let Some(_outer_shape) = query::object_shape(self.ctx.types, outer_object) else {
             return nested_target;
         };
 
@@ -194,8 +189,7 @@ impl<'a> CheckerState<'a> {
             return nested_target;
         };
 
-        let Some(body_shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, body)
-        else {
+        let Some(body_shape) = query::object_shape(self.ctx.types, body) else {
             return nested_target;
         };
 
@@ -251,8 +245,7 @@ impl<'a> CheckerState<'a> {
         ) {
             return true;
         }
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
             return members
                 .iter()
                 .any(|&m| self.type_directly_references_def(m, target_def_id));
