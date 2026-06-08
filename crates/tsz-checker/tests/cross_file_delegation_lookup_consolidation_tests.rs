@@ -2,8 +2,8 @@
 //! (`delegate_cross_arena_symbol_resolution`).
 //!
 //! The delegation entry point resolves the requested symbol once and reuses that
-//! identity across its read-only guard blocks (TYPE_ALIAS / CLASS / FUNCTION /
-//! NAMESPACE / INTERFACE). These tests pin that the consolidated single lowering
+//! identity across its read-only guard blocks (`TYPE_ALIAS` / `CLASS` /
+//! `FUNCTION` / `NAMESPACE` / `INTERFACE`). These tests pin that the consolidated single lowering
 //! still drives every guard branch correctly: a clean program importing each
 //! symbol kind across files must type-check with no spurious cross-file
 //! diagnostics (`TS2304` cannot-find-name, `TS2307` cannot-find-module,
