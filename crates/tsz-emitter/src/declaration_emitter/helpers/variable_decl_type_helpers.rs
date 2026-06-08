@@ -51,6 +51,54 @@ impl<'a> DeclarationEmitter<'a> {
         (widened != type_id).then(|| self.print_type_id_for_inferred_declaration(widened))
     }
 
+    /// Returns `true` when a `const` initializer's literal members are *fresh*
+    /// and should be widened to their primitive base for declaration emit,
+    /// mirroring tsc's `getWidenedType` for an inferred variable declaration.
+    ///
+    /// tsc widens fresh literal types but preserves the non-widening literal
+    /// types produced by an `as const` (or `<const>`) assertion. tsz does not
+    /// track freshness for primitive literal types (a fresh `1` and a
+    /// `1 as const` share the same interned `TypeId`), so this inspects the
+    /// initializer AST instead: a `const` assertion in any value position of a
+    /// conditional means the literal union must be preserved (`false`);
+    /// otherwise the members are fresh and widenable (`true`).
+    pub(in crate::declaration_emitter) fn const_initializer_literals_are_fresh(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        !self.expression_contains_const_assertion(initializer, 0)
+    }
+
+    fn expression_contains_const_assertion(&self, expr_idx: NodeIndex, depth: u32) -> bool {
+        // Be conservative on pathologically deep nesting: assume a const
+        // assertion may be present and preserve the literal union.
+        if depth > 64 {
+            return true;
+        }
+        let Some(node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::AS_EXPRESSION || k == syntax_kind_ext::TYPE_ASSERTION => {
+                self.arena
+                    .get_type_assertion(node)
+                    .is_some_and(|assertion| self.type_assertion_is_const(assertion.type_node))
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.arena.get_parenthesized(node).is_some_and(|paren| {
+                    self.expression_contains_const_assertion(paren.expression, depth + 1)
+                })
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                self.arena.get_conditional_expr(node).is_some_and(|cond| {
+                    self.expression_contains_const_assertion(cond.when_true, depth + 1)
+                        || self.expression_contains_const_assertion(cond.when_false, depth + 1)
+                })
+            }
+            _ => false,
+        }
+    }
+
     pub(in crate::declaration_emitter) fn preserve_spread_argument_tuple_labels_in_call_return_type(
         &self,
         initializer: NodeIndex,

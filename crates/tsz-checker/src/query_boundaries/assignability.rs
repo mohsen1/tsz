@@ -15,7 +15,7 @@ use tsz_solver::relations::relation_queries::{
 };
 
 use super::relation_policy;
-pub(crate) use super::relation_request::{RelationKind, RelationRequest};
+pub(crate) use super::relation_request::RelationRequest;
 
 pub(crate) use super::common::{contains_type_parameters, is_callable_type, object_shape_for_type};
 
@@ -1154,11 +1154,11 @@ pub(crate) struct RelationOutcome {
 /// 2. When not related, collects a structured failure reason.
 /// 3. Detects weak-union violations.
 ///
-/// The boundary currently translates only `allow_erased_generic_signature_retry`
-/// into solver flags. Freshness, excess-property mode, and missing-property mode
-/// are carried on `RelationRequest` as explicit policy descriptors for follow-up
-/// centralization, but existing caller-side EPC/missing-property diagnostics still
-/// own those decisions.
+/// The boundary translates request policy into solver flags and the
+/// property-classification work the diagnostic layer can consume. Existing
+/// caller-side EPC/missing-property emission still owns source anchors and
+/// diagnostic wording, but the request decides whether property classification
+/// is part of the relation outcome.
 pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     request: &RelationRequest,
     db: &dyn QueryDatabase,
@@ -1176,22 +1176,10 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     )
     .entered();
 
-    let mut relation_flags = flags;
-    if request.allow_erased_generic_signature_retry {
-        relation_flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
-    }
-
     // BivariantCallbacks treats callback parameter types bivariantly by stripping
     // strict-function-types. The decision and the failure reason both run under
     // this policy so they cannot diverge.
-    let (solver_kind, solver_flags) = if request.kind == RelationKind::BivariantCallbacks {
-        (
-            SolverRelationKind::AssignableBivariantCallbacks,
-            relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES,
-        )
-    } else {
-        (SolverRelationKind::Assignable, relation_flags)
-    };
+    let (solver_kind, solver_flags) = request.solver_relation_policy(flags);
 
     // Decide the relation and, on failure, capture the structured reason from the
     // SAME configured checker (single pass). This is the canonical fix for the
@@ -1236,11 +1224,11 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
         None => (false, None),
     };
 
-    // Always populate property classification when the relation fails.
-    // This provides the canonical property-level analysis that callers like
-    // `should_skip_weak_union_error` need without re-enumerating properties.
-    let property_classification =
-        classify_object_properties(db.as_type_database(), request.source, request.target);
+    let property_classification = if request.requires_property_classification() {
+        classify_object_properties(db.as_type_database(), request.source, request.target)
+    } else {
+        None
+    };
 
     // Suppress ExcessProperty failure when the target has structural features
     // that make EPC inapplicable.
