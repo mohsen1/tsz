@@ -1344,10 +1344,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return Some(elem);
         }
 
+        // Expand a single alias / application layer so recursive array aliases
+        // such as `RecArray<T> = Array<T | RecArray<T>>` are recognised as
+        // array-like by their evaluated structural form. Without this a
+        // `number[]` source would not share outer structure with the
+        // `RecArray<T>` arm of a union target and would leak into the naked
+        // type-variable inference instead of being decomposed element-wise.
         let evaluated = self.checker.evaluate_type(type_id);
-        (evaluated != type_id)
-            .then(|| self.named_array_object_element_for_constraint(evaluated))
-            .flatten()
+        if evaluated == type_id {
+            return None;
+        }
+        if let Some(elem) = crate::type_queries::get_array_element_type(self.interner, evaluated) {
+            return Some(elem);
+        }
+        self.named_array_object_element_for_constraint(evaluated)
     }
 
     fn named_array_object_element_for_constraint(&self, type_id: TypeId) -> Option<TypeId> {
