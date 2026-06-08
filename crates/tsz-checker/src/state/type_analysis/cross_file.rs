@@ -374,8 +374,14 @@ impl<'a> CheckerState<'a> {
         // the lib arena. Delegating to the lib arena loses the type alias declaration (which
         // lives in the user arena), causing property access on the instantiated type to fail.
         // If the type alias declaration exists in the current arena, handle it locally.
+        //
+        // Resolved once and reused across the read-only guard blocks below (the first
+        // guard already required it unconditionally): avoids re-running the alias-pin +
+        // `resolve_symbol_file_index` + binder lookups (and the fallback O(N) binder
+        // scan) several times per delegation. Byte-identical — no guard mutates state.
+        let cross_file_symbol = self.get_cross_file_symbol(sym_id);
         {
-            let sym_found = self.get_cross_file_symbol(sym_id);
+            let sym_found = cross_file_symbol;
             let has_type_alias =
                 sym_found.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
             if has_type_alias {
@@ -403,7 +409,7 @@ impl<'a> CheckerState<'a> {
         // compute_class_symbol_type to fail to find the class node and return UNKNOWN,
         // triggering false TS18046 errors. Handle the class locally instead.
         {
-            let sym_found = self.get_cross_file_symbol(sym_id);
+            let sym_found = cross_file_symbol;
             if let Some(symbol) = sym_found
                 && symbol.has_any_flags(symbol_flags::CLASS)
             {
@@ -423,7 +429,7 @@ impl<'a> CheckerState<'a> {
         // When the user re-declares a lib global function, keep the user's overloads in scope
         // (delegating to the lib arena would drop them and mis-resolve calls).
         {
-            let sym_found = self.get_cross_file_symbol(sym_id);
+            let sym_found = cross_file_symbol;
             if let Some(symbol) = sym_found
                 && symbol.has_any_flags(symbol_flags::FUNCTION)
                 && !symbol.has_any_flags(
@@ -446,7 +452,7 @@ impl<'a> CheckerState<'a> {
         let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
 
         if !is_known_cross_file
-            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            && let Some(symbol) = cross_file_symbol
             && symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
         {
             return None;
@@ -474,7 +480,7 @@ impl<'a> CheckerState<'a> {
         // this decision for merged interfaces across user files.
         let mut interface_has_local_decl = false;
         if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
-            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            && let Some(symbol) = cross_file_symbol
             && symbol.has_any_flags(symbol_flags::INTERFACE)
         {
             let has_local_interface = symbol.declarations.iter().any(|&d| {
@@ -517,7 +523,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
-            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            && let Some(symbol) = cross_file_symbol
         {
             // For INTERFACE symbols whose primary arena is already the current arena,
             // do NOT scan per-declaration arenas for delegation. Interfaces split across
