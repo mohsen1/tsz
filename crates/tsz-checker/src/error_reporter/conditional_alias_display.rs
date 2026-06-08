@@ -50,6 +50,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // `tsc` only drops the `aliasSymbol` once the application is instantiated
+        // with *concrete* arguments. An application whose arguments still mention
+        // a free type parameter (`ReturnType<T[M]>`) keeps its alias spelling even
+        // when the conditional reduces to a concrete type (e.g. `unknown` once the
+        // constraint is applied) — tsc renders `ReturnType<T[M]>`, not `unknown`.
+        // Decline before evaluating so the deferred application keeps its name.
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, candidate) {
+            return None;
+        }
+
         let evaluated = self.evaluate_type_for_assignability(candidate);
         // `tsc` renders a reduced conditional/indexed-access application
         // structurally, but a *union* result's member ordering follows `tsc`'s

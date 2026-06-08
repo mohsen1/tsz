@@ -434,6 +434,32 @@ function probe_ai<T>(value: Defer_Ai<T>): void {
 }
 
 #[test]
+fn free_type_parameter_application_reducing_to_concrete_keeps_alias_name() {
+    // Regression for the conformance fixture
+    // `genericConditionalConstrainedToUnknownNotAssignableToConcreteObject`: tsc
+    // only drops the `aliasSymbol` once an application is instantiated with
+    // *concrete* arguments. `Ret_Cj<T>` reduces to a concrete type under `T`'s
+    // constraint, but its argument `T` is a free type parameter, so tsc keeps
+    // `Ret_Cj<T>` rather than rendering the reduced result. (Mirrors the fixture's
+    // `ReturnType<T[M]>`, whose argument `T[M]` reduces to `unknown` with the lib
+    // loaded yet stays spelled `ReturnType<T[M]>`.)
+    let messages = ts2322_messages(
+        r#"
+type Ret_Cj<F> = F extends () => infer R ? R : never;
+function probe_cj<T extends () => string>(value: Ret_Cj<T>, sink: number) {
+  sink = value;
+}
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type 'Ret_Cj<T>' is not assignable")),
+        "expected free-type-parameter application to keep its alias name, got: {messages:?}"
+    );
+}
+
+#[test]
 fn non_generic_alias_wrapping_conditional_application_keeps_alias_in_identifier_source() {
     // Negative guard for the scope boundary: when a *non-generic* alias wraps a
     // reducible generic application (`type Frozen_Bj = Resolve_Bj<{ a: number }>`)
