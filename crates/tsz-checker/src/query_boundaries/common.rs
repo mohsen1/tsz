@@ -1052,16 +1052,16 @@ pub(crate) fn are_same_base_literal_kind(db: &dyn TypeDatabase, a: TypeId, b: Ty
     tsz_solver::type_queries::are_same_base_literal_kind(db, a, b)
 }
 
-// ── Literal widening to primitive ──
-
-/// Widen a literal type to its primitive base (`1` → `number`, `"x"` → `string`,
-/// `true` → `boolean`, `1n` → `bigint`). Non-literal types are returned unchanged.
 pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
 }
 
-// ── Contextual literal classification ──
-
+pub(crate) fn boolean_literal_array_display_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::boolean_literal_array_display_type(db, type_id)
+}
 pub(crate) use tsz_solver::type_queries::ContextualLiteralAllowKind;
 
 pub(crate) fn classify_for_contextual_literal(
