@@ -28,6 +28,10 @@ pub(crate) use super::construct_signatures::construct_signatures_for_type;
 pub(crate) use super::generic_instantiation::{instantiate_generic, instantiate_type};
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 
+pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
+    tsz_solver::is_compiler_managed_type(name)
+}
+
 /// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
 /// canonical self-keyof indexed-access shape `Foo[keyof Foo]`, return the
 /// body `TypeId` so the caller can evaluate it with a resolver-equipped
@@ -155,10 +159,6 @@ pub(crate) fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 
 pub(crate) fn has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
     tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
-}
-
-pub(crate) fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::type_may_display_iterator_protocol(db, type_id)
 }
 
 pub(crate) fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
@@ -1247,31 +1247,6 @@ pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 
 pub(crate) fn is_type_query_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_type_query_type(db, type_id)
-}
-
-/// Return `true` if `type_id` resolves to a `Function` shape — or a
-/// `Callable` whose call signatures collectively — carry a `TypeQuery`
-/// in any param or return position. Used by display-side normalization
-/// to skip `evaluate_type_for_assignability` on self-referential
-/// `typeof X` shapes (so the inner reference stays as `typeof X`
-/// rather than being expanded into another wrapper of the same shape).
-pub(crate) fn function_signature_has_typeof(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(shape) = function_shape_for_type(db, type_id)
-        && (is_type_query_type(db, shape.return_type)
-            || shape
-                .params
-                .iter()
-                .any(|p| is_type_query_type(db, p.type_id)))
-    {
-        return true;
-    }
-    if let Some(shape) = callable_shape_for_type(db, type_id) {
-        return shape.call_signatures.iter().any(|sig| {
-            is_type_query_type(db, sig.return_type)
-                || sig.params.iter().any(|p| is_type_query_type(db, p.type_id))
-        });
-    }
-    false
 }
 
 pub(crate) fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

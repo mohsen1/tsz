@@ -34,3 +34,29 @@ fn test_relation_request_property_policy_is_executed() {
         "execute_relation must ask RelationRequest for solver kind/flags instead of open-coding request policy"
     );
 }
+
+/// Display-only diagnostic helpers should not live in the catch-all
+/// `query_boundaries::common` module.
+#[test]
+fn test_display_diagnostic_helpers_have_domain_boundary() {
+    let common_source = fs::read_to_string("src/query_boundaries/common.rs")
+        .expect("failed to read query_boundaries/common.rs");
+    let diagnostic_source = fs::read_to_string("src/query_boundaries/diagnostics.rs")
+        .expect("failed to read query_boundaries/diagnostics.rs");
+
+    for helper in [
+        "indexed_access_alias_body",
+        "is_unresolved_for_display",
+        "type_may_display_iterator_protocol",
+        "function_signature_has_typeof",
+    ] {
+        assert!(
+            !common_source.contains(&format!("fn {helper}(")),
+            "{helper} belongs in query_boundaries::diagnostics, not common.rs"
+        );
+        assert!(
+            diagnostic_source.contains(&format!("fn {helper}(")),
+            "{helper} must remain available through query_boundaries::diagnostics"
+        );
+    }
+}

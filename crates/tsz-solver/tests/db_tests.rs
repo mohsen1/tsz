@@ -1,3 +1,4 @@
+use crate::caches::db::TypeApplicationEvalCache;
 use crate::construction::{QueryCache, QueryCacheStatistics, RelationCacheProbe};
 use crate::relations::relation_queries::RelationPolicy;
 use crate::{
@@ -459,5 +460,87 @@ fn query_cache_statistics_merge_preserves_estimated_size() {
         merged_size,
         size_a + size_b,
         "merged estimated_size_bytes should equal sum of parts"
+    );
+}
+
+/// Regression for issue #10970: the closed-evaluation cache must encode
+/// `exactOptionalPropertyTypes` in its key.
+///
+/// A closed type's evaluation can depend on `exactOptionalPropertyTypes` (a
+/// homomorphic mapped type's optional-modifier stripping is gated on it). The
+/// owning interner's option can change between a cache write and a later read
+/// (the explicit reset boundary the issue asks for). Without the option in the
+/// key, a stale result computed under the old option value would be returned.
+///
+/// This drives the `TypeApplicationEvalCache` boundary directly: a value is
+/// stored under one option value, then the option is flipped. Before the fix
+/// the lookup ignored the option and returned the stale entry; after the fix
+/// the key differs and the lookup correctly misses.
+#[test]
+fn closed_eval_cache_keys_on_exact_optional_property_types() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let key_type = interner.literal_string("payload");
+    let stored = TypeId::STRING;
+
+    // Store a result under exactOptionalPropertyTypes = false.
+    db.set_exact_optional_property_types(false);
+    db.insert_closed_eval_cache(key_type, false, stored);
+    assert_eq!(
+        db.lookup_closed_eval_cache(key_type, false),
+        Some(stored),
+        "the entry must be visible under the option value it was written with"
+    );
+
+    // Flip the option. The entry computed under the old value must not be
+    // reused: the option is part of the cache identity.
+    db.set_exact_optional_property_types(true);
+    assert_eq!(
+        db.lookup_closed_eval_cache(key_type, false),
+        None,
+        "closed-eval lookup must miss after exactOptionalPropertyTypes changes"
+    );
+
+    // Restoring the original option value makes the original entry visible
+    // again, proving the two option values address distinct slots.
+    db.set_exact_optional_property_types(false);
+    assert_eq!(db.lookup_closed_eval_cache(key_type, false), Some(stored));
+}
+
+/// Companion to the closed-eval test for the generic-application evaluation
+/// cache, which shares the same option-sensitivity (a `Foo<Args>` application
+/// can expand to a mapped type whose stripping depends on the option).
+#[test]
+fn application_eval_cache_keys_on_exact_optional_property_types() {
+    use crate::def::DefId;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let def_id = DefId(7);
+    let args = [TypeId::STRING];
+    let stored = TypeId::NUMBER;
+
+    db.set_exact_optional_property_types(false);
+    // Disambiguate from the inherent `QueryCache::insert_application_eval_cache`
+    // (which takes a pre-built tuple key) by calling the trait method directly.
+    TypeApplicationEvalCache::insert_application_eval_cache(&db, def_id, &args, false, stored);
+    assert_eq!(
+        db.lookup_application_eval_cache(def_id, &args, false),
+        Some(stored)
+    );
+
+    db.set_exact_optional_property_types(true);
+    assert_eq!(
+        db.lookup_application_eval_cache(def_id, &args, false),
+        None,
+        "application-eval lookup must miss after exactOptionalPropertyTypes changes"
+    );
+
+    db.set_exact_optional_property_types(false);
+    assert_eq!(
+        db.lookup_application_eval_cache(def_id, &args, false),
+        Some(stored)
     );
 }

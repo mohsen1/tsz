@@ -1,6 +1,7 @@
 //! Call parameter display helpers for call diagnostics.
 
 use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::diagnostics as query_diagnostics;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -587,7 +588,7 @@ impl<'a> CheckerState<'a> {
         }
         let shape = query_common::callable_shape_for_type(self.ctx.types, evaluated)?;
         if shape.call_signatures.len() <= 1
-            || !query_common::function_signature_has_typeof(self.ctx.types, evaluated)
+            || !query_diagnostics::function_signature_has_typeof(self.ctx.types, evaluated)
         {
             return None;
         }

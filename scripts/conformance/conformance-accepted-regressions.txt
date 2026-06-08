@@ -18,7 +18,6 @@
 #   seven additional current-head rows after the stale type-query-flow module
 #   deletion made the checker buildable again.
 # - PR #12649 run 27008940643 at f2db335b3d found five rows returned and five
-#   previous accepted rows resolved after exact-head shard rerun.
 # - PR #12649 run 27013631682 at synthetic merge 9a9f5fb46f found four rows
 #   returned and twelve previous accepted rows resolved after merging main.
 # - PR #12649 run 27015324920 attempt 2 at synthetic merge 2f1ff2f987 found
@@ -80,6 +79,8 @@ TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 # eliminated at least one impossible arm. Covered by
 # intersection_type_param_tests::
 # test_type_param_union_undefined_intersect_empty_or_null_assignable_to_type_param.
+
+
 # excessPropertyCheckIntersectionWithRecursiveType.ts: RESOLVED. A nested TS2353
 # was dropped for a fresh literal checked against a recursive homomorphic mapped
 # target `{ [K in keyof T]: F<T[K]> }` whose property value stays a *raw* mapped

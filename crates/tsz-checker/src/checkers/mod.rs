@@ -112,6 +112,12 @@ pub fn clear_all_thread_local_state() {
 
     // Reset type-alias resolution recursion guards and scratch pools.
     crate::types_domain::reset_type_resolution_guards();
+
+    // Reset lib-resolution marks plus the heritage-cycle drain depth/draining
+    // counters. The depth counter is balanced in the normal path, but a
+    // mid-resolution bail-out could leave it non-zero and suppress the cycle
+    // drain for every later row on this worker thread (#12299).
+    crate::types_domain::queries::lib_resolution::reset_lib_resolution_state();
 }
 
 /// Explicit context for synthesized JSX children, threaded from dispatch

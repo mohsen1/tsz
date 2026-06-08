@@ -54,7 +54,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> TypeId {
-        let body = match crate::query_boundaries::common::indexed_access_alias_body(
+        let body = match crate::query_boundaries::diagnostics::indexed_access_alias_body(
             self.ctx.types.as_type_database(),
             &self.ctx.definition_store,
             ty,
@@ -64,7 +64,7 @@ impl<'a> CheckerState<'a> {
         };
         let resolved = self.evaluate_type_with_env(body);
         if resolved == body
-            || crate::query_boundaries::common::is_unresolved_for_display(
+            || crate::query_boundaries::diagnostics::is_unresolved_for_display(
                 self.ctx.types.as_type_database(),
                 resolved,
             )
