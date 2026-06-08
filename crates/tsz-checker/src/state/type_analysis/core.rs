@@ -1549,6 +1549,23 @@ impl<'a> CheckerState<'a> {
                 // registration below to stay clear of free type parameters and
                 // self-referential cycles, and only runs once the cheap
                 // structural gates above have matched.
+                //
+                // The shape gate stays object/mapped-only here on purpose,
+                // even though the solver formatter's
+                // `reducing_conditional_application_display` reduces *every*
+                // resolved shape (scalar, tuple, union, object) for direct and
+                // nested `Application` display. The two paths own different
+                // surfaces: the formatter renders an application node in place,
+                // whereas marking a body "computed" here also drives the def
+                // store's `find_type_alias_by_body` reverse lookup. A reduced
+                // *scalar* never needs the mark (a primitive-bodied alias
+                // already displays as its underlying type), and a reduced
+                // *tuple*/*union* shares its interned `TypeId` with any
+                // directly-written alias of the same shape — marking it
+                // "computed" would let that shared shape repaint the structural
+                // result with the colliding alias's name. So this top-level
+                // name-display gate stays conservative; the formatter owns the
+                // broader shape reduction where no reverse lookup intervenes.
                 let reducing_object_application = alias_is_non_generic
                     && diagnostic_query::application_base_has_conditional_alias_body(
                         self.ctx.types.as_type_database(),
