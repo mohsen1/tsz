@@ -1169,7 +1169,8 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some(current_type) = lib_type_id {
-                            let merged = self.merge_interface_types(current_type, base_type);
+                            let merged =
+                                self.merge_interface_types_heritage(current_type, base_type);
                             if merged != current_type {
                                 lib_type_id = Some(merged);
                             }

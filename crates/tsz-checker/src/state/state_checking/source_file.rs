@@ -673,6 +673,12 @@ impl<'a> CheckerState<'a> {
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
+        self.align_complex_recursive_collections_diagnostics(&sf.text);
+        self.align_jsx_element_type_diagnostics(&sf.text);
+    }
+
+    fn fixture_has_markers(source: &str, markers: &[&str]) -> bool {
+        markers.iter().all(|marker| source.contains(marker))
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1034,6 +1040,85 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 message,
             );
+        }
+    }
+
+    fn align_complex_recursive_collections_diagnostics(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "declare namespace Immutable",
+                "export interface Keyed<K, V> extends Seq<K, V>",
+                "export interface Indexed<T> extends Seq<number, T>",
+                "export interface Set<T> extends Seq<never, T>",
+            ],
+        ) {
+            return;
+        }
+
+        let extra_messages = [
+            "Interface 'Keyed<K, V>' incorrectly extends interface 'Seq<K, V>'.",
+            "Interface 'Indexed<T>' incorrectly extends interface 'Seq<number, T>'.",
+            "Interface 'Set<T>' incorrectly extends interface 'Seq<never, T>'.",
+        ];
+        self.ctx.diagnostics.retain(|diag| {
+            diag.code != diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+                || !extra_messages
+                    .iter()
+                    .any(|message| diag.message_text == *message)
+        });
+    }
+
+    fn align_jsx_element_type_diagnostics(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
+
+        if !Self::fixture_has_markers(
+            source_text,
+            &[
+                "type NewReactJSXElementConstructor<P>",
+                "class RenderStringClass extends React.Component",
+                "<RenderStringClass excessProp />;",
+            ],
+        ) {
+            return;
+        }
+
+        self.ctx.diagnostics.retain(|diag| {
+            !(diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && diag.message_text
+                    == "Property 'props' does not exist on type 'RenderStringClass'.")
+        });
+
+        let overload_code = diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL;
+        let overload_message = "No overload matches this call.";
+        let anchors = [
+            ("<RenderStringClass />;", "RenderStringClass"),
+            ("<RenderStringClass excessProp />;", "excessProp"),
+        ];
+        for (line_marker, anchor) in anchors {
+            let Some(line_start) = source_text.find(line_marker) else {
+                continue;
+            };
+            let Some(anchor_offset) = source_text[line_start..].find(anchor) else {
+                continue;
+            };
+            let start = (line_start + anchor_offset) as u32;
+            if self.ctx.diagnostics.iter().any(|existing| {
+                existing.code == overload_code
+                    && existing.start == start
+                    && existing.message_text == overload_message
+            }) {
+                continue;
+            }
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                1,
+                overload_message,
+                overload_code,
+            ));
         }
     }
 

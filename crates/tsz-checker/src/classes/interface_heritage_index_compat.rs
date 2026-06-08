@@ -23,19 +23,20 @@ impl<'a> CheckerState<'a> {
         let Some(current_iface_def_id) = current_iface_def_id else {
             return false;
         };
-        let Some(source_shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
-        else {
+        // Extract the return type from either a plain `Function` shape or a
+        // single-signature `Callable`. A method that carries method-local type
+        // parameters (e.g. `with<K extends string>(k: K): Base`) is represented
+        // as a `Callable`, for which `function_shape_for_type` returns `None`;
+        // without the callable fallback the covariant self-return bypass would
+        // silently fail for generic methods, producing a false `TS2430` on a
+        // valid self-narrowing override (`with(k: string): Sub` overriding
+        // `with<K extends string>(k: K): Base`).
+        let Some(source_return) = self.single_call_signature_return_type(source) else {
             return false;
         };
-        let Some(target_shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, target)
-        else {
+        let Some(target_return) = self.single_call_signature_return_type(target) else {
             return false;
         };
-
-        let source_return = source_shape.return_type;
-        let target_return = target_shape.return_type;
         if self.is_direct_this_type(target_return) {
             return false;
         }
@@ -221,7 +222,32 @@ impl<'a> CheckerState<'a> {
         ) else {
             return false;
         };
-        self.no_erase_generics_relation_outcome(derived_return, base_return)
+        if self
+            .no_erase_generics_relation_outcome(derived_return, base_return)
+            .related
+        {
+            return true;
+        }
+        // The no-erase return relation keeps the base's method-local type
+        // parameter opaque so a covariant misuse of the dropped generic
+        // (`m(): string` overriding `m<T>(): T`, where the dropped `T` appears
+        // in the return) is rejected — so when the base return DOES mention its
+        // own method-local generic, that rejection stands.
+        if crate::query_boundaries::class::callable_return_mentions_own_method_local_generic(
+            self, base,
+        ) {
+            return false;
+        }
+        // Otherwise the base return is independent of the dropped generic — e.g.
+        // a self-returning method `with<K extends string>(...): Base<T>` — so it
+        // is an ordinary covariant position. The no-erase mode spuriously fails
+        // on generics reached through the named return type (the inner members
+        // of `Base<T>` carry their own method-local generics), so route the
+        // return through the dedicated interface-heritage relation outcome
+        // (ambient flags, not the no-erase mode) instead. This is reached only
+        // when the no-erase relation above already failed, so the two relations
+        // are consulted on mutually exclusive return shapes.
+        self.interface_heritage_generic_method_relation_outcome(derived_return, base_return)
             .related
     }
 
