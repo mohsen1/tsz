@@ -381,6 +381,13 @@ try {
   assert.equal(typeChallengesSolutionsPage.failed, true);
   assert.match(typeChallengesSolutionsPage.status_label, /compile canary/i);
 
+  const valibotPage = pages.find((page) => page.name === "valibot-project");
+  assert.ok(valibotPage, "expected compile-canary Valibot project page");
+  assert.equal(valibotPage.category, "Projects: external libraries");
+  assert.equal(valibotPage.kind, "project");
+  assert.equal(valibotPage.source_files.length, 0);
+  assert.match(valibotPage.detail_focus, /Full project type-check throughput/i);
+
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
   assert.match(charts, /Utility types project/);
@@ -409,29 +416,15 @@ try {
   assert.match(failedOnlyCharts, /Compile canaries and incomplete project timings/);
   assert.match(failedOnlyCharts, /RxJS project/);
   const failedOnlyCompatibility = getProjectCompatibilityDashboard();
-  assert.match(failedOnlyCompatibility, /artifact: complete/);
-  assert.match(failedOnlyCompatibility, /failure: relations-assignability/);
-  assert.match(failedOnlyCompatibility, /owner track: Track 4 relation diagnostics\/compatibility/);
-  assert.match(failedOnlyCompatibility, /repro: src\/operators\/map\.ts/);
-  assert.match(failedOnlyCompatibility, /source: rxjs @ rxjs-ref/);
-  assert.match(failedOnlyCompatibility, /run: 1002 attempt 2 \(cancelled\)/);
-  assert.match(failedOnlyCompatibility, /freshness warning: older than latest completed bench run 1003/);
-  assert.match(failedOnlyCompatibility, /freshness warning: older than 2026-05-17T00:00:00Z bench artifact/);
-  assert.match(failedOnlyCompatibility, /freshness warning: run status: cancelled/);
-  assert.match(failedOnlyCompatibility, /failure: tsc oracle unavailable/);
-  assert.match(failedOnlyCompatibility, /owner track: Track 1 tsc oracle evidence/);
-  assert.match(failedOnlyCompatibility, /source: large-ts-repo @ large-ref/);
-  assert.match(failedOnlyCompatibility, /owner track: Tracks 1, 2, 5/);
-  assert.match(failedOnlyCompatibility, /compatibility metadata malformed/);
-  assert.match(failedOnlyCompatibility, /owner family: mapped\/conditional\/key-space utility surface/);
-  assert.equal(
-    [...failedOnlyCompatibility.matchAll(/fixture sources missing\/malformed\/unpinned/g)].length,
-    3,
-  );
-  // utility-types-project has peak_memory_bytes: null with a reason; the row
-  // must surface "peak RSS: n/a (not measured on platform)" so the residency
-  // gap is triageable from the dashboard rather than appearing as a blank.
-  assert.match(failedOnlyCompatibility, /peak RSS: n\/a \(not measured on platform\)/);
+  assert.match(failedOnlyCompatibility, /data-compat-sort="project"/);
+  assert.match(failedOnlyCompatibility, /data-compat-sort="state"/);
+  assert.match(failedOnlyCompatibility, /data-compat-sort="exit"/);
+  assert.match(failedOnlyCompatibility, /data-compat-sort="phase"/);
+  assert.match(failedOnlyCompatibility, /data-compat-sort="files"/);
+  assert.match(failedOnlyCompatibility, /data-compat-sort="peak"/);
+  assert.match(failedOnlyCompatibility, /RxJS[\s\S]*compat-state yellow[\s\S]*diagnostic mismatch[\s\S]*12 files[\s\S]*100 MiB peak/);
+  assert.match(failedOnlyCompatibility, /large-ts-repo[\s\S]*compat-state gray[\s\S]*oracle unavailable[\s\S]*6,061 files/);
+  assert.match(failedOnlyCompatibility, /utility-types[\s\S]*compat-state red[\s\S]*exit success[\s\S]*10 files[\s\S]*—/);
 
   const slugs = new Map();
   for (const page of pages) {
