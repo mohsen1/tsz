@@ -23,6 +23,7 @@ pub use cross_file_type_params_cache::{
 };
 mod constructors;
 mod core;
+pub use core::build_lib_file_local_names;
 mod cross_file_query;
 mod diagnostic_indices;
 mod diagnostic_push;
@@ -1344,6 +1345,25 @@ pub struct CheckerContext<'a> {
     ///
     /// Wrapped in `Arc` for the same O(1) sharing reasons as `lib_contexts`.
     pub lib_binders_cached: Arc<Vec<Arc<tsz_binder::BinderState>>>,
+
+    /// Union of every name declared in any `lib_contexts[*].binder.file_locals`,
+    /// precomputed once and shared (`Arc`) across all per-file checkers.
+    ///
+    /// Type/value-position identifier resolution probes `lib_contexts` directly
+    /// for module-scoped lib symbols the binder merge intentionally excludes
+    /// (see `resolve_identifier_symbol*`). That probe is an `O(num_lib_files)`
+    /// scan of `file_locals` run per unresolved identifier. The overwhelming
+    /// majority of names a project resolves (its own type aliases, generics,
+    /// imports) are absent from every lib, so the scan is a guaranteed no-op for
+    /// them. Gating the scan on membership in this set turns the common case
+    /// into one hash lookup while staying byte-identical: a name absent from the
+    /// set cannot match any `file_locals.get(name)`, so skipping the loop is
+    /// exactly equivalent to running it and finding nothing.
+    ///
+    /// `None` means the index was not built for this context (e.g. a child
+    /// checker created without it); callers then fall back to the full scan, so
+    /// resolution stays correct regardless of whether the index is present.
+    pub lib_file_local_names: Option<Arc<rustc_hash::FxHashSet<String>>>,
 
     /// Number of actual lib files loaded (not including user files).
     /// Used by `has_lib_loaded()` to correctly determine if standard library is available.

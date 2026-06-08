@@ -19,6 +19,28 @@ use tsz_solver::TypeId;
 
 use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
 
+/// Build the union of every name declared in any lib context's `file_locals`.
+///
+/// Used to populate [`CheckerContext::lib_file_local_names`]. Returns `None`
+/// when there are no lib contexts (no index needed; lib scans are already
+/// skipped via `ignore_libs`/`has_lib_loaded`). The set owns its `String` keys
+/// so it is lifetime-free and can be shared (`Arc`) across per-file checkers.
+#[must_use]
+pub fn build_lib_file_local_names(lib_contexts: &[LibContext]) -> Option<Arc<FxHashSet<String>>> {
+    if lib_contexts.is_empty() {
+        return None;
+    }
+    let mut names: FxHashSet<String> = FxHashSet::default();
+    for lib_ctx in lib_contexts {
+        for (name, _sym_id) in lib_ctx.binder.file_locals.iter() {
+            if !names.contains(name.as_str()) {
+                names.insert(name.clone());
+            }
+        }
+    }
+    Some(Arc::new(names))
+}
+
 /// Kill-switch for order-independent cross-file alias/`export =` resolution.
 ///
 /// When enabled (default), overlay writes that record a symbol's owning file
@@ -321,10 +343,20 @@ impl<'a> CheckerContext<'a> {
                 .map(|lc| Arc::clone(&lc.binder))
                 .collect(),
         );
+        self.lib_file_local_names = build_lib_file_local_names(&lib_contexts);
         self.lib_contexts = Arc::new(lib_contexts);
     }
 
     /// Set pre-wrapped Arc lib contexts (for O(1) sharing between checkers).
+    ///
+    /// Clears [`Self::lib_file_local_names`] rather than rebuilding it: the name
+    /// index is `O(total lib symbols)` to build and this is the hot per-file
+    /// path, so the caller shares a prebuilt index via
+    /// [`Self::set_lib_file_local_names`] *after* this call (the parallel checker
+    /// builds it once). Clearing also guarantees a stale index from a previous
+    /// `lib_contexts` can never pair with these contexts; when the index is
+    /// absent, identifier resolution falls back to the full lib scan, so
+    /// correctness never depends on it being set.
     pub fn set_lib_contexts_shared(&mut self, lib_contexts: Arc<Vec<LibContext>>) {
         self.lib_binders_cached = Arc::new(
             lib_contexts
@@ -332,7 +364,28 @@ impl<'a> CheckerContext<'a> {
                 .map(|lc| Arc::clone(&lc.binder))
                 .collect(),
         );
+        self.lib_file_local_names = None;
         self.lib_contexts = lib_contexts;
+    }
+
+    /// Share a prebuilt lib `file_locals` name index (see
+    /// [`Self::lib_file_local_names`]). Cheap `Arc` clone; built once per program.
+    pub fn set_lib_file_local_names(&mut self, names: Option<Arc<rustc_hash::FxHashSet<String>>>) {
+        self.lib_file_local_names = names;
+    }
+
+    /// Whether `name` could be declared in any loaded lib `file_locals`.
+    ///
+    /// Returns `true` when the index is absent (forcing the full scan, so
+    /// behavior is unchanged) and otherwise `true` only when the prebuilt index
+    /// contains `name`. A `false` result means no lib context declares `name`,
+    /// so a direct `lib_contexts` `file_locals` scan is a guaranteed no-op and
+    /// can be skipped without changing the resolved symbol.
+    #[must_use]
+    pub fn lib_name_possible(&self, name: &str) -> bool {
+        self.lib_file_local_names
+            .as_ref()
+            .is_none_or(|names| names.contains(name))
     }
 
     /// Set the count of actual lib files loaded (not including user files).
@@ -1768,6 +1821,39 @@ mod tests {
             cache.def_to_name.get(&def_id).map(String::as_str),
             Some("ConcatArray")
         );
+    }
+
+    #[test]
+    fn lib_name_possible_gates_on_index_membership() {
+        let arena = NodeArena::new();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+        let mut ctx = CheckerContext::new_with_shared_def_store(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+            store,
+        );
+
+        // No index: every name forces the full scan (behavior unchanged).
+        assert!(ctx.lib_name_possible("Anything"));
+        assert!(ctx.lib_name_possible("HTMLDivElement"));
+
+        // With an index, only names present in it may be in a lib `file_locals`.
+        // A name absent from the index cannot match any `file_locals.get(name)`,
+        // so the scan is safely skippable (`lib_name_possible == false`).
+        let mut names = FxHashSet::default();
+        names.insert("HTMLDivElement".to_string());
+        names.insert("Array".to_string());
+        ctx.set_lib_file_local_names(Some(Arc::new(names)));
+
+        assert!(ctx.lib_name_possible("HTMLDivElement"));
+        assert!(ctx.lib_name_possible("Array"));
+        assert!(!ctx.lib_name_possible("MyProjectUtility"));
+        assert!(!ctx.lib_name_possible("BuildTuple"));
     }
 
     #[test]
