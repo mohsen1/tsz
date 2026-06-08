@@ -1273,7 +1273,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3174→3163 after missing-property display shape queries
         # moved through query_boundaries::diagnostics.
-        3163,
+        #
+        # Ratcheted 3163→3155 after arch-smoke caught current-main slack in the
+        # live direct-reference count.
+        3155,
     ),
 ]
 
