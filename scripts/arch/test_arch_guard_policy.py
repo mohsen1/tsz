@@ -71,6 +71,21 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("recovery.rs:1", hits[0])
         self.assertIn("recovery.rs:2", hits[1])
 
+    def test_flags_extra_export_surface_handoff_bridges(self):
+        pattern, max_lines = self._check_by_name("ExportSurface handoff")
+        root = self._make_tree(
+            {
+                "crates/tsz-emitter/src/declaration_emitter/core/setup.rs": (
+                    "pub fn set_export_surface(&mut self, surface: ExportSurface) {}\n"
+                    "pub fn set_export_surface(&mut self, surface: ExportSurface) {}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, max_lines)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("setup.rs:1", hits[0])
+        self.assertIn("setup.rs:2", hits[1])
+
     def test_flags_recovered_variable_typeof_source_scanners(self):
         pattern, _max_lines = self._check_by_name("recovered variable typeof")
         root = self._make_tree(
@@ -500,6 +515,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("post-check" in name for name in names))
         self.assertTrue(any("source_text.contains" in name for name in names))
         self.assertTrue(any("Emitter boundary" in name for name in names))
+        self.assertTrue(any("ExportSurface handoff" in name for name in names))
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
         self.assertTrue(any("rendered message predicates" in name for name in names))

@@ -1273,7 +1273,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3174→3163 after missing-property display shape queries
         # moved through query_boundaries::diagnostics.
-        3163,
+        #
+        # Ratcheted 3163→3155 after arch-smoke caught current-main slack in the
+        # live direct-reference count.
+        3155,
     ),
 ]
 
@@ -1404,6 +1407,16 @@ REGEX_LINE_COUNT_CHECKS = [
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text(?:\[[^\n\]]+\])?\.contains\s*\("),
         0,
+    ),
+    (
+        # `set_export_surface` is the one documented compatibility bridge for
+        # older declaration-emitter callers. New DTS facts should enter through
+        # `DeclarationSummary` query methods instead of growing raw
+        # `ExportSurface` handoff points.
+        "Emitter DTS boundary: raw ExportSurface handoff compatibility bridge (#8275)",
+        [ROOT / "crates" / "tsz-emitter" / "src" / "declaration_emitter"],
+        re.compile(r"\bfn\s+set_export_surface\s*\("),
+        1,
     ),
     (
         "Emitter boundary: recovered variable typeof tails use parser facts (#8276)",

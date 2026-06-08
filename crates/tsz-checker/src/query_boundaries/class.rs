@@ -111,15 +111,25 @@ fn has_method_local_type_params(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     callable_signature_is_generic(db, type_id).unwrap_or(false)
 }
 
+/// Resolve a signature's method-local type parameters to their `TypeId`s, the
+/// form they take when reached through `collect_all_types`. Shared by the
+/// local/nonlocal type-parameter membership predicates below.
+fn signature_local_type_param_ids(
+    checker: &CheckerState<'_>,
+    type_params: &[tsz_solver::types::TypeParamInfo],
+) -> Vec<TypeId> {
+    type_params
+        .iter()
+        .map(|tp| checker.ctx.types.type_param(*tp))
+        .collect()
+}
+
 fn callable_mentions_nonlocal_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
     let signature_mentions_nonlocal = |type_params: &[tsz_solver::types::TypeParamInfo],
                                        params: &[tsz_solver::types::ParamInfo],
                                        this_type: Option<TypeId>,
                                        return_type: TypeId| {
-        let local_tp_ids: Vec<TypeId> = type_params
-            .iter()
-            .map(|tp| checker.ctx.types.type_param(*tp))
-            .collect();
+        let local_tp_ids = signature_local_type_param_ids(checker, type_params);
         let mentions_nonlocal = |referenced: TypeId| {
             tsz_solver::visitor::collect_all_types(checker.ctx.types, referenced)
                 .into_iter()
@@ -157,6 +167,58 @@ fn callable_mentions_nonlocal_type_params(checker: &CheckerState<'_>, type_id: T
         );
     }
     false
+}
+
+/// True when the base method's single call signature uses one of its own
+/// method-local type parameters in its return type.
+///
+/// Interface-heritage override checking (`TS2430`) drops a base method's
+/// method-local generics to decide whether a non-generic override is a valid
+/// specialization. The strict `no_erase` return relation keeps those generics
+/// opaque to reject a covariant misuse (`m(): string` overriding `m<T>(): T`,
+/// where the dropped `T` appears in the return). But when the return does NOT
+/// reference the dropped generic — e.g. a self-returning method
+/// `with<K extends string>(...): Base<T>` — the no-erase mode is spuriously
+/// strict on generics reached through the named return type, and the return is
+/// an ordinary covariant position. This boundary lets the checker make that
+/// distinction structurally (keyed on signature shape, not identifiers).
+///
+/// Conservative (`true`, keeping the strict relation) for overloaded or
+/// constructor members and for non-callable shapes without a single call
+/// signature.
+pub(crate) fn callable_return_mentions_own_method_local_generic(
+    checker: &CheckerState<'_>,
+    base: TypeId,
+) -> bool {
+    // Resolve the local type-param ids and return type without cloning the
+    // type-parameter list out of the `Arc`-backed shape.
+    let (local_tp_ids, return_type) = if let Some(shape) =
+        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, base)
+    {
+        (
+            signature_local_type_param_ids(checker, &shape.type_params),
+            shape.return_type,
+        )
+    } else if let Some(shape) =
+        crate::query_boundaries::common::callable_shape_for_type(checker.ctx.types, base)
+    {
+        if shape.call_signatures.len() != 1 || !shape.construct_signatures.is_empty() {
+            return true;
+        }
+        let sig = &shape.call_signatures[0];
+        (
+            signature_local_type_param_ids(checker, &sig.type_params),
+            sig.return_type,
+        )
+    } else {
+        return true;
+    };
+    if local_tp_ids.is_empty() {
+        return false;
+    }
+    tsz_solver::visitor::collect_all_types(checker.ctx.types, return_type)
+        .into_iter()
+        .any(|ty| local_tp_ids.contains(&ty))
 }
 
 fn unwrap_single_property_value_type(checker: &CheckerState<'_>, type_id: TypeId) -> TypeId {
