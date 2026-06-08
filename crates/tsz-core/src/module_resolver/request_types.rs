@@ -381,6 +381,14 @@ pub const fn is_path_relative(specifier: &str) -> bool {
     )
 }
 
+/// Matches TypeScript's `isExternalModuleNameRelative`: a specifier is relative
+/// for resolution purposes when it is [`is_path_relative`] (`./`, `../`, `.`,
+/// `..`) or a rooted disk path (`/…`). tsconfig `paths`/`baseUrl` are consulted
+/// only for names where this returns `false`.
+pub const fn is_external_module_name_relative(specifier: &str) -> bool {
+    is_path_relative(specifier) || matches!(specifier.as_bytes(), [b'/', ..])
+}
+
 impl ModuleExtension {
     /// Parse extension from file path
     pub fn from_path(path: &Path) -> Self {

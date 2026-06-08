@@ -545,12 +545,17 @@ impl ModuleResolver {
             );
         }
 
-        // Step 2: Try path mappings first (if configured and baseUrl is available).
-        // TypeScript treats `paths` mappings as requiring `baseUrl` to avoid surprising
-        // absolute lookups that behave like relative resolution.
+        // Step 2: Try path mappings, but only for non-relative, non-rooted
+        // specifiers (see `is_external_module_name_relative`); a catch-all `"*"`
+        // mapping would otherwise intercept `./sibling` imports and resolve them
+        // to the mapped stub instead of the adjacent source file. This keeps the
+        // solver-backed core resolver — which `lookup` consults first — in
+        // agreement with the CLI driver and tsc. The config gate runs first so
+        // projects without `paths` never scan the specifier.
         let mut path_mapping_attempted = false;
-        if let Some(base_url) = self.base_url.as_deref()
-            && !self.path_mappings.is_empty()
+        if !self.path_mappings.is_empty()
+            && let Some(base_url) = self.base_url.as_deref()
+            && !is_external_module_name_relative(specifier)
         {
             let attempt = self.try_path_mappings(specifier, base_url, importer_package_type);
             if let Some(resolved) = attempt.resolved {
