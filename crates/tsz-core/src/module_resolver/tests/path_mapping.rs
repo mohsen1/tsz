@@ -680,3 +680,88 @@ fn test_path_mapping_unbalanced_parent_dirs_preserve_leading_dotdot() {
         resolved.resolved_path,
     );
 }
+
+// ── relative / rooted specifiers bypass `paths` ──────────────────────────────
+//
+// tsc consults tsconfig `paths`/`baseUrl` only for module names that are NOT
+// relative and NOT rooted (`tryLoadModuleUsingOptionalResolutionSettings` is
+// gated on `!isExternalModuleNameRelative`, i.e. `pathIsRelative ||
+// isRootedDiskPath`). A catch-all `"*"` pattern matches *every* string,
+// including `./sibling`, so without that guard the core resolver intercepts
+// relative imports and resolves them to the catch-all stub — a wrong module
+// identity that surfaces as false `TS2307`/`TS2614`/`TS2305`. The witness rows
+// vary the binder names and the relative shape so the rule stays structural.
+
+#[test]
+fn test_path_mapping_catch_all_does_not_intercept_relative_imports() {
+    // The catch-all `"*"` must not capture relative imports (see banner above).
+    struct Row {
+        sibling: &'static str,
+        importer: &'static str,
+        specifier: &'static str,
+    }
+    let rows = [
+        Row {
+            sibling: "sibling.ts",
+            importer: "main.ts",
+            specifier: "./sibling",
+        },
+        Row {
+            sibling: "shared/api.ts",
+            importer: "shared/sub/consumer.ts",
+            specifier: "../api",
+        },
+        Row {
+            sibling: "feature/nested/widget.ts",
+            importer: "feature/host.ts",
+            specifier: "./nested/widget",
+        },
+    ];
+    for row in rows {
+        let fx = TempFixture::new();
+        fx.write(row.sibling, "export const value = 1;");
+        fx.write(row.importer, "");
+        // The catch-all target exists on disk; the relative target must still
+        // win, proving `paths` was not consulted for the relative specifier.
+        fx.write("stub.d.ts", "declare const v: any; export default v;");
+
+        let options = make_options(fx.path(), vec![pm("*", "", &["./stub.d.ts"])]);
+        let mut resolver = ModuleResolver::new(&options);
+        let resolved = resolver
+            .resolve(row.specifier, &fx.join(row.importer), Span::new(0, 1))
+            .unwrap_or_else(|_| panic!("{} must resolve relative to its importer", row.specifier));
+        assert_eq!(
+            resolved.resolved_path,
+            fx.join(row.sibling),
+            "{}: a relative import must resolve to its sibling file, not the \
+             catch-all \"*\" stub",
+            row.specifier,
+        );
+    }
+}
+
+#[test]
+fn test_path_mapping_catch_all_still_resolves_bare_specifiers_alongside_relative() {
+    // Control for the guard above: with the same catch-all `"*"` mapping, a
+    // *bare* (non-relative) specifier must still resolve through it. The guard
+    // only excludes relative/rooted names, not bare module names.
+    let fx = TempFixture::new();
+    fx.write("sibling.ts", "export const value = 1;");
+    fx.write("stub.d.ts", "declare const v: any; export default v;");
+    fx.write("main.ts", "");
+
+    let options = make_options(fx.path(), vec![pm("*", "", &["./stub.d.ts"])]);
+    let mut resolver = ModuleResolver::new(&options);
+
+    // Relative: resolves to the sibling, bypassing the catch-all.
+    let relative = resolver
+        .resolve("./sibling", &fx.join("main.ts"), Span::new(0, 1))
+        .expect("./sibling must resolve to the sibling file");
+    assert_eq!(relative.resolved_path, fx.join("sibling.ts"));
+
+    // Bare: still flows through the catch-all to the stub.
+    let bare = resolver
+        .resolve("some-bare-pkg", &fx.join("main.ts"), Span::new(0, 1))
+        .expect("a bare specifier must still resolve through the catch-all");
+    assert_eq!(bare.resolved_path, fx.join("stub.d.ts"));
+}
