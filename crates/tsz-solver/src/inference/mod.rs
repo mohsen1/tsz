@@ -7,6 +7,7 @@ pub(crate) mod infer_matching_tuples;
 #[allow(dead_code)]
 pub(crate) mod infer_resolve;
 pub(crate) mod infer_variance;
+mod partially_inferable;
 mod template_anchor;
 mod template_segment_prefix;
 

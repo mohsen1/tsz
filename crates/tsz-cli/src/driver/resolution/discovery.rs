@@ -29,14 +29,23 @@ pub(crate) fn collect_module_requests_from_text(
     if !text_may_contain_module_specifiers(text) {
         return Vec::new();
     }
-    if let Some(requests) = collect_simple_module_requests_from_text(text) {
+    // The token-based fast path cannot see specifiers that live inside JSDoc
+    // comments (`@import ... from` tags or `import("...")` type expressions),
+    // because the scanner treats comments as trivia. A code-level `import(`
+    // already forces the full parse (the token scanner bails on it), so gating
+    // on `import(` here only additionally routes JSDoc-only import-type files to
+    // the full parse, where `collect_module_specifiers_for_source_discovery`
+    // collects them.
+    if !text.contains("import(")
+        && let Some(requests) = collect_simple_module_requests_from_text(text)
+    {
         return requests;
     }
     let file_name = path.to_string_lossy().into_owned();
     let mut parser = ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();
     let (arena, _diagnostics) = parser.into_parts();
-    let mut requests: Vec<_> = collect_module_specifiers_for_source_discovery(&arena, source_file)
+    collect_module_specifiers_for_source_discovery(&arena, source_file)
         .into_iter()
         .map(
             |(specifier, specifier_idx, import_kind, resolution_mode_override)| {
@@ -48,15 +57,7 @@ pub(crate) fn collect_module_requests_from_text(
                 )
             },
         )
-        .collect();
-    if let Some(source) = arena.get_source_file_at(source_file) {
-        requests.extend(collect_jsdoc_import_requests(source).into_iter().map(
-            |(specifier, import_kind, resolution_mode_override)| {
-                (specifier, import_kind, resolution_mode_override, false)
-            },
-        ));
-    }
-    requests
+        .collect()
 }
 
 /// Quick text scan to determine if a source file might contain module specifiers.
@@ -326,7 +327,18 @@ pub(crate) fn reject_import_attributes_after_string(
     }
 }
 
-pub(crate) fn collect_jsdoc_import_requests(
+/// Collect JSDoc module references from a source file's comments in a single
+/// pass: `@import ... from "..."` tags and `import("...")` type expressions
+/// (`@typedef`/`@type`/`@param`/`@returns`, indexed/array/union forms, etc.).
+///
+/// tsc treats both as module references: each target is pulled into the program
+/// and resolved like a real import. tsz previously collected `import(...)` only
+/// from AST type nodes, so a JSDoc import-type to a bare/package specifier never
+/// populated `resolved_module_paths`; the checker's JSDoc resolver then failed
+/// to find the export, silently degrading `@param` to `any` and emitting a false
+/// TS2304/TS2552 in `@type` position. These specifiers originate from comment
+/// text rather than AST nodes, so callers pair each with a `NodeIndex::NONE`.
+pub(crate) fn collect_jsdoc_module_requests(
     source: &tsz::parser::node::SourceFileData,
 ) -> Vec<(
     String,
@@ -336,30 +348,98 @@ pub(crate) fn collect_jsdoc_import_requests(
     use tsz::module_resolver::ImportKind;
     use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
-    if source.comments.is_empty() || !source.text.contains("@import") {
+    let source_text = source.text.as_ref();
+    let has_import_tag = source_text.contains("@import");
+    let has_import_call = source_text.contains("import(");
+    if source.comments.is_empty() || (!has_import_tag && !has_import_call) {
         return Vec::new();
     }
 
-    let source_text = source.text.as_ref();
     let mut requests = Vec::new();
     for comment in &source.comments {
         if !is_jsdoc_comment(comment, source_text) {
             continue;
         }
-
-        let content = get_jsdoc_content(comment, source_text);
-        for line in content.lines() {
-            let trimmed = line.trim_start_matches('*').trim();
-            let Some(rest) = strip_jsdoc_import_tag_prefix(trimmed) else {
-                continue;
-            };
-            if let Some(specifier) = parse_jsdoc_import_module_specifier(rest) {
-                requests.push((specifier, ImportKind::EsmImport, None));
+        // `import("...")` type expressions anywhere in the comment text.
+        if has_import_call {
+            let end = (comment.end as usize).min(source_text.len());
+            let start = (comment.pos as usize).min(end);
+            let mut specifiers = Vec::new();
+            push_jsdoc_import_call_specifiers(&source_text[start..end], &mut specifiers);
+            requests.extend(
+                specifiers
+                    .into_iter()
+                    .map(|specifier| (specifier, ImportKind::EsmImport, None)),
+            );
+        }
+        // `@import ... from "..."` tags, parsed per content line.
+        if has_import_tag {
+            let content = get_jsdoc_content(comment, source_text);
+            for line in content.lines() {
+                let trimmed = line.trim_start_matches('*').trim();
+                let Some(rest) = strip_jsdoc_import_tag_prefix(trimmed) else {
+                    continue;
+                };
+                if let Some(specifier) = parse_jsdoc_import_module_specifier(rest) {
+                    requests.push((specifier, ImportKind::EsmImport, None));
+                }
             }
         }
     }
 
     requests
+}
+
+/// True for bytes that can appear inside a JS identifier (so the byte before an
+/// `import` keyword can be checked for a word boundary).
+const fn is_identifier_part_byte(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
+}
+
+/// Append every `import(<quote>specifier<quote>)` specifier found in `text` to
+/// `out`. Requires a word boundary before `import` so identifiers ending in
+/// `import` (e.g. `reimport(`) are not matched. Whitespace between `(` and the
+/// string literal is tolerated.
+pub(crate) fn push_jsdoc_import_call_specifiers(text: &str, out: &mut Vec<String>) {
+    let bytes = text.as_bytes();
+    let mut search_from = 0usize;
+    while let Some(rel) = text[search_from..].find("import(") {
+        let keyword_start = search_from + rel;
+        let mut cursor = keyword_start + "import(".len();
+        // Reject when `import` is the tail of a longer identifier.
+        if keyword_start
+            .checked_sub(1)
+            .is_some_and(|i| is_identifier_part_byte(bytes[i]))
+        {
+            search_from = keyword_start + "import".len();
+            continue;
+        }
+        // Skip whitespace between `(` and the string literal.
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let Some(&quote) = bytes.get(cursor) else {
+            break;
+        };
+        if quote != b'"' && quote != b'\'' && quote != b'`' {
+            search_from = cursor + 1;
+            continue;
+        }
+        cursor += 1;
+        let spec_start = cursor;
+        while cursor < bytes.len() && bytes[cursor] != quote {
+            cursor += 1;
+        }
+        if cursor >= bytes.len() {
+            // Unterminated specifier — stop scanning this comment.
+            break;
+        }
+        let specifier = &text[spec_start..cursor];
+        if !specifier.is_empty() {
+            out.push(specifier.to_string());
+        }
+        search_from = cursor + 1;
+    }
 }
 
 pub(crate) fn strip_jsdoc_import_tag_prefix(text: &str) -> Option<&str> {
@@ -719,6 +799,16 @@ pub(crate) fn collect_module_specifiers_impl(
         &strip_quotes,
         &mut specifiers,
     );
+
+    // JSDoc module references (`@import ... from "..."` tags and `import("...")`
+    // type expressions inside `@typedef`/`@type`/`@param`/`@returns`). These
+    // live in comment text, so they are invisible to the AST and token scans
+    // above. Pair each with `NodeIndex::NONE` since there is no AST node to
+    // anchor a span to; module-not-found diagnostics for JSDoc imports are
+    // emitted by the JSDoc checker, not by import-node resolution.
+    for (specifier, kind, resolution_mode_override) in collect_jsdoc_module_requests(source) {
+        specifiers.push((specifier, NodeIndex::NONE, kind, resolution_mode_override));
+    }
 
     specifiers
 }

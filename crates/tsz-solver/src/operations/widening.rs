@@ -957,6 +957,32 @@ pub fn widen_literal_type(db: &dyn crate::construction::TypeDatabase, type_id: T
     }
 }
 
+/// Combine the source constituents of a union that did not match any structured
+/// arm of a union target into a single inference candidate for the lone naked
+/// type variable, mirroring tsc's
+/// `inferFromTypes(getUnionType(unmatched), nakedTypeVariable)`.
+///
+/// A single constituent is returned unchanged so the resolver still sees a fresh
+/// literal and widens it uniformly with the structured-arm candidates. Several
+/// constituents are unioned, but because that union is no longer a fresh literal
+/// its members are widened here (unless `in_readonly_source` suppresses freshness,
+/// as in an `as const` argument) to mirror tsc's `getWidenedLiteralType`.
+pub fn union_unmatched_naked_candidate(
+    db: &dyn crate::construction::TypeDatabase,
+    members: Vec<TypeId>,
+    in_readonly_source: bool,
+) -> TypeId {
+    if members.len() > 1 && !in_readonly_source {
+        let widened: Vec<TypeId> = members
+            .iter()
+            .map(|&member| widen_literal_type(db, member))
+            .collect();
+        crate::utils::union_or_single(db, widened)
+    } else {
+        crate::utils::union_or_single(db, members)
+    }
+}
+
 /// Widen number and boolean literal types but preserve string and bigint literals.
 ///
 /// tsc's TS2367 diagnostic uses widened types for number/boolean operands
