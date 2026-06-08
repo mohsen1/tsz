@@ -369,8 +369,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // When both applications have the same base (e.g., Array<T>), we can use
         // variance annotations to check type arguments without expanding the
         // entire structure. This is critical for O(1) performance.
+        //
+        // Exception: an indexed-access type-alias base (a transform such as
+        // TypeBox's `Static<T,P> = (T & {params:P})['static']`) has no sound
+        // declared variance — `DefKind::TypeAlias` is transparent and `tsc`
+        // always expands it. Comparing the raw arguments here instead lets nested
+        // same-base applications hit the coinductive cycle assumption and wrongly
+        // report `Static<A>` assignable to `Static<B>`. Skip the fast path for
+        // those bases so the structural-expansion slow path evaluates both to
+        // concrete shapes. (Conditional-bodied alias bases keep their existing
+        // variance handling, which is intentionally retained for differing args.)
         // =======================================================================
-        if same_application_family {
+        if same_application_family && !self.is_indexed_access_alias_base_inline(s_app.base) {
             // Try to resolve DefId from the base to query variance
             let def_id = variance_def_id;
 
@@ -626,6 +636,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // mechanism). When arguments differ, keep the variance path available
         // so genuine leaf mismatches are not hidden by a DefId-only cycle.
         if s_app.args == t_app.args && self.is_conditional_alias_base_inline(s_app.base) {
+            return None;
+        }
+
+        // An indexed-access type alias (`Static<T,P> = (T & {params:P})['static']`)
+        // is transparent and has no sound declared variance: comparing its raw
+        // arguments here lets nested same-base applications hit the coinductive
+        // cycle assumption and hide a real leaf mismatch (a missing property in
+        // the expanded object). `tsc` always expands type aliases, so force the
+        // structural-expansion path for these bases instead of the variance fast
+        // path.
+        if self.is_indexed_access_alias_base_inline(s_app.base) {
             return None;
         }
 

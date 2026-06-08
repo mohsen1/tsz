@@ -132,6 +132,9 @@ mod class_extends_generic_override_variance_tests;
 #[path = "tests/class_extends_index_relation_routing_arch_tests.rs"]
 mod class_extends_index_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/class_implements_abstract_member_compat_tests.rs"]
+mod class_implements_abstract_member_compat_tests;
+#[cfg(test)]
 #[path = "tests/class_implements_generic_override_variance_tests.rs"]
 mod class_implements_generic_override_variance_tests;
 #[cfg(test)]
@@ -251,6 +254,9 @@ mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
 #[path = "tests/index_sig_param_resolved_key_type_tests.rs"]
 mod index_sig_param_resolved_key_type_tests;
+#[cfg(test)]
+#[path = "../tests/indexed_access_alias_application_relation_tests.rs"]
+mod indexed_access_alias_application_relation_tests;
 #[cfg(test)]
 #[path = "tests/instantiation_expression_inline_utility_modifier_tests.rs"]
 mod instantiation_expression_inline_utility_modifier_tests;
@@ -944,6 +950,9 @@ mod jsx_type_arg_arity_suppresses_ts2604_tests;
 #[cfg(test)]
 #[path = "tests/jsx_union_props_relation_routing_arch_tests.rs"]
 mod jsx_union_props_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/keyof_alias_composite_display_tests.rs"]
+mod keyof_alias_composite_display_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_function_type_is_never_tests.rs"]
 mod keyof_function_type_is_never_tests;

@@ -1083,4 +1083,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         false
     }
+
+    /// Whether an `Application` base is an *indexed-access* type alias that must
+    /// be expanded structurally rather than compared through the same-base
+    /// variance fast path.
+    ///
+    /// `DefKind::TypeAlias` is transparent: `tsc` never compares two
+    /// applications of a type alias nominally — it substitutes the arguments and
+    /// relates the resulting structural types. For an alias whose body is an
+    /// `IndexAccess` transform — the `TypeBox` shape
+    /// `Static<T, P> = (T & { params: P })['static']` — the alias has no sound
+    /// declared variance: the same-base variance fast path would compare the raw
+    /// arguments (`typeof Input` vs `typeof Output`) and, through their nested
+    /// same-base applications, hit the coinductive cycle assumption — silently
+    /// reporting `Static<typeof Input>` assignable to `Static<typeof Output>`
+    /// even when the expanded objects differ (a missing property). Skipping the
+    /// fast path routes the comparison through structural expansion, which
+    /// evaluates both applications to their concrete shapes and relates those,
+    /// matching `tsc`.
+    ///
+    /// Conditional-bodied aliases are handled separately (their variance path is
+    /// intentionally retained for differing arguments so genuine leaf mismatches
+    /// are caught). Plain (union/object/tuple-bodied) type aliases and nominal
+    /// interface/class applications keep the variance fast path; mapped-type
+    /// alias bodies rely on the variance prober's structural-fallback signal.
+    pub(crate) fn is_indexed_access_alias_base_inline(&self, base: TypeId) -> bool {
+        let Some(def_id) = lazy_def_id(self.interner, base) else {
+            return false;
+        };
+        if !matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::TypeAlias)
+        ) {
+            return false;
+        }
+        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            note_lazy_resolve_failure();
+            return false;
+        };
+        matches!(
+            self.interner.lookup(body),
+            Some(TypeData::IndexAccess(_, _))
+        )
+    }
 }

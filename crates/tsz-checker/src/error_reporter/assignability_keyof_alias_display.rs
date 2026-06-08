@@ -19,10 +19,9 @@ impl<'a> CheckerState<'a> {
             && self.lookup_type_alias_name_for_display(operand).is_none()
     }
 
-    /// True when `ty` is a `keyof X` whose operand `X` resolves to a plain object
-    /// type with no string/number index signature. Only that shape yields a
-    /// finite unit-literal key set (`"a" | "b"`, `0 | 1`), which tsc treats as a
-    /// literal context — the assignment-source literal must then be displayed
+    /// True when `ty` is a `keyof X` whose operand `X` yields a finite, statically
+    /// enumerable unit-literal key set (`"a" | "b"`, `0 | 1`), which tsc treats as
+    /// a literal context — the assignment-source literal must then be displayed
     /// as-written, not widened. An index signature contributes the `string` or
     /// `number` primitive base to the key set, and a mapped/computed/generic
     /// operand has no statically-enumerable literal keys; both lack a literal
@@ -35,31 +34,63 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        // Resolve a non-generic alias operand to its body so the object shape is
-        // visible; a direct object operand already exposes its shape.
-        let resolved =
-            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
-                .is_some()
-            {
-                operand
-            } else if let Some(def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, operand)
-            {
-                self.ctx
-                    .type_env
-                    .borrow()
-                    .get_def(def_id)
-                    .or_else(|| {
-                        self.ctx
-                            .definition_store
-                            .get(def_id)
-                            .and_then(|def| def.body)
-                    })
-                    .unwrap_or(operand)
-            } else {
-                operand
-            };
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
+        self.keyof_operand_yields_concrete_literal_keyset(operand)
+    }
+
+    /// True when the `X` in `keyof X` reduces to a finite literal key set: a plain
+    /// object type with no string/number index signature, or a union/intersection
+    /// of such objects.
+    ///
+    /// Composites distribute through `keyof` with dual set operations on the
+    /// members' key sets:
+    /// - `keyof (A | B)` = `keyof A & keyof B` — the *intersection* of the key
+    ///   sets, which stays a finite literal set as soon as **any** member
+    ///   contributes one (intersecting with a finite literal set cannot introduce
+    ///   a primitive base).
+    /// - `keyof (A & B)` = `keyof A | keyof B` — the *union* of the key sets, so
+    ///   **every** member must contribute a finite literal key set (a single
+    ///   `string`/`number` base from an index signature pollutes it).
+    ///
+    /// tsc keeps the assignment-source literal as-written whenever the target key
+    /// set is such a literal context. Recognising the composite forms also makes
+    /// the decision depend only on the operand's structure rather than on whether
+    /// the `keyof` happened to be reduced to its key set already (which is
+    /// evaluation-order sensitive for union operands and previously made the
+    /// widening flip on incidental source formatting).
+    fn keyof_operand_yields_concrete_literal_keyset(&mut self, operand: TypeId) -> bool {
+        // The members are collected into an owned `Vec` so the borrow of
+        // `self.ctx.types` taken by `union_members` / `intersection_members` is
+        // released before the `&mut self` recursive call below.
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, operand)
+        {
+            let members: Vec<TypeId> = members.iter().copied().collect();
+            return members
+                .into_iter()
+                .any(|member| self.keyof_operand_yields_concrete_literal_keyset(member));
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, operand)
+        {
+            let members: Vec<TypeId> = members.iter().copied().collect();
+            return !members.is_empty()
+                && members
+                    .into_iter()
+                    .all(|member| self.keyof_operand_yields_concrete_literal_keyset(member));
+        }
+        // A direct object operand exposes its shape; otherwise resolve a
+        // non-generic alias to its body first so the shape becomes visible.
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
+            .or_else(|| {
+                let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, operand)?;
+                let body = self.ctx.type_env.borrow().get_def(def_id).or_else(|| {
+                    self.ctx
+                        .definition_store
+                        .get(def_id)
+                        .and_then(|def| def.body)
+                })?;
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, body)
+            })
             .is_some_and(|shape| shape.string_index.is_none() && shape.number_index.is_none())
     }
 
@@ -246,19 +277,106 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(rest.len());
         let operand = rest[..end].trim();
+        // This textual fallback only validly reconstructs a *bare named* operand
+        // (`type X = keyof Foo`). A compound operand cannot be stitched together
+        // from source text: the scan above stops at the first `{`, so a
+        // parenthesized operand such as `keyof ({ a: 1 } & { b: 2 })` would
+        // otherwise leave a dangling `(` and emit the malformed `keyof (`.
+        //
+        // For such an alias `tsc` renders the *evaluated key set* (`"a" | "b"`),
+        // because the `keyof` of an anonymous composite carries no writable name.
+        // Eager `keyof` evaluation has already erased the operator from the alias
+        // body, but the source spelling here proves the alias is a `keyof`, so
+        // render the reduced literal key union directly.
         if operand.is_empty()
             || operand.contains('|')
             || operand.contains('&')
             || operand.contains('[')
             || operand.contains('{')
+            || operand.contains('(')
+            || operand.contains(')')
             || operand.contains("=>")
         {
-            return None;
+            return self.keyof_alias_reduced_keyset_display(name);
         }
         Some(format!(
             "keyof {}",
             self.format_annotation_like_type(operand)
         ))
+    }
+
+    /// Render the evaluated key set of a non-generic `keyof` type alias by its
+    /// members (`"a" | "b"`), matching how `tsc` displays the `keyof` of an
+    /// anonymous composite operand whose result has no writable `keyof Name`
+    /// form. Returns `None` unless the alias body reduces to a finite union (or
+    /// a single instance) of string/number literal keys.
+    fn keyof_alias_reduced_keyset_display(&mut self, name: &str) -> Option<String> {
+        let name_atom = self.ctx.types.intern_string(name);
+        let def_id = self
+            .ctx
+            .definition_store
+            .find_defs_by_name(name_atom)?
+            .into_iter()
+            .find(|&def_id| {
+                self.ctx.definition_store.get(def_id).is_some_and(|def| {
+                    def.kind == tsz_solver::def::DefKind::TypeAlias
+                        && def.type_params.is_empty()
+                        && def.name == name_atom
+                })
+            })?;
+        let body = self.ctx.definition_store.get(def_id)?.body?;
+        let evaluated = self.evaluate_type_for_assignability(body);
+        self.finite_literal_keyset_display(evaluated)
+    }
+
+    /// Format `ty` as a literal key union (`"a" | "b"`) when it is a finite union
+    /// (or a single instance) of string/number literals. Members are rendered
+    /// directly from their literal values rather than through the type formatter,
+    /// so an unrelated global `union -> keyof Name` display alias on a shared
+    /// literal cannot repaint a reduced key. Returns `None` for any other shape.
+    fn finite_literal_keyset_display(&mut self, ty: TypeId) -> Option<String> {
+        if let Some(value) = crate::query_boundaries::common::literal_value(self.ctx.types, ty) {
+            return self.literal_key_display(value);
+        }
+        let members: Vec<TypeId> =
+            crate::query_boundaries::common::union_members(self.ctx.types, ty)?
+                .iter()
+                .copied()
+                .collect();
+        if members.is_empty() {
+            return None;
+        }
+        let mut parts = Vec::with_capacity(members.len());
+        for member in members {
+            let value = crate::query_boundaries::common::literal_value(self.ctx.types, member)?;
+            parts.push(self.literal_key_display(value)?);
+        }
+        Some(parts.join(" | "))
+    }
+
+    /// Render a single literal key as `tsc` does in a key union: string keys are
+    /// quoted (`"a"`), number keys are bare (`0`). Non-key literals (`boolean`)
+    /// return `None`.
+    fn literal_key_display(&self, value: tsz_solver::LiteralValue) -> Option<String> {
+        match value {
+            tsz_solver::LiteralValue::String(atom) => {
+                Some(format!("\"{}\"", self.ctx.types.resolve_atom_ref(atom)))
+            }
+            tsz_solver::LiteralValue::Number(value) => {
+                let value = value.0;
+                if value == 0.0 {
+                    Some("0".to_string())
+                } else if value.is_finite() && value.fract() == 0.0 {
+                    Some(format!("{value:.0}"))
+                } else {
+                    Some(value.to_string())
+                }
+            }
+            tsz_solver::LiteralValue::BigInt(atom) => {
+                Some(format!("{}n", self.ctx.types.resolve_atom_ref(atom)))
+            }
+            tsz_solver::LiteralValue::Boolean(_) => None,
+        }
     }
 }
 
