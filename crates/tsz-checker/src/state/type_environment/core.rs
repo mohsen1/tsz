@@ -1,14 +1,12 @@
 //! Core type environment building, application type evaluation, and
 //! property access type resolution.
 
-use crate::query_boundaries::common::SourceLocation;
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use rustc_hash::FxHashSet;
 use std::cell::Cell;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
-use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::MappedTypeId;
 use tsz_solver::TypeId;
@@ -1455,22 +1453,5 @@ impl<'a> CheckerState<'a> {
         // type_env and type_environment are already populated in-place by
         // get_type_of_symbol -> compute_type_of_symbol -> register_def_in_envs.
         // No clone needed.
-    }
-
-    /// Create a union type from multiple types.
-    ///
-    /// Handles empty (→ NEVER), single (→ that type), and multi-member cases.
-    /// Automatically normalizes: flattens nested unions, deduplicates, sorts.
-    pub fn get_union_type(&self, types: Vec<TypeId>) -> TypeId {
-        tsz_solver::utils::union_or_single(self.ctx.types, types)
-    }
-
-    pub fn get_source_location(&self, idx: NodeIndex) -> Option<SourceLocation> {
-        let node = self.ctx.arena.get(idx)?;
-        Some(SourceLocation::new(
-            self.ctx.file_name.clone(),
-            node.pos,
-            node.end,
-        ))
     }
 }
