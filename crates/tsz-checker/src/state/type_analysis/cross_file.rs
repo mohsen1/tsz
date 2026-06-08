@@ -1799,8 +1799,8 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
         sym_id: SymbolId,
     ) -> TypeId {
+        use crate::query_boundaries::type_predicates::is_compiler_managed_type;
         use tsz_lowering::TypeLowering;
-        use tsz_solver::is_compiler_managed_type;
 
         let arena_ref: &tsz_parser::parser::node::NodeArena = arena.as_ref();
         let lib_binders = self.get_lib_binders();

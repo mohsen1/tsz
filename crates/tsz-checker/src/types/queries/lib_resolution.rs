@@ -2,6 +2,7 @@
 //! augmentations. Keep resolver logic here as shared helpers to preserve stable
 //! SymbolId/DefId identity across lib arenas.
 
+use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -11,7 +12,6 @@ use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
-use tsz_solver::is_compiler_managed_type;
 
 pub(crate) use super::lib_decls::{
     collect_lib_decls_with_arenas, collect_lib_decls_with_arenas_in_contexts, dedup_decl_arenas,
