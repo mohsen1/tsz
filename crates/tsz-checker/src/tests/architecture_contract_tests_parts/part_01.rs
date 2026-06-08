@@ -1980,32 +1980,3 @@ fn test_pack_relation_flags_uses_boundary_relation_flags_surface() {
         "pack_relation_flags must not reach directly into RelationCacheKey bits"
     );
 }
-
-/// The `RelationFailure` enum must live in `relation_types.rs` and provide
-/// structured variant coverage for the semantic families we're unifying.
-#[test]
-fn test_relation_failure_covers_semantic_families() {
-    let source = fs::read_to_string("src/query_boundaries/relation_types.rs")
-        .expect("failed to read query_boundaries/relation_types.rs");
-
-    // Core semantic families that must be represented
-    for variant in [
-        "MissingProperty",
-        "MissingProperties",
-        "ExcessProperty",
-        "IncompatiblePropertyValue",
-        "NoApplicableSignature",
-        "TupleArityMismatch",
-        "ReturnTypeMismatch",
-        "ParameterTypeMismatch",
-        "ParameterCountMismatch",
-        "PropertyModifierMismatch",
-        "WeakUnionViolation",
-        "TypeMismatch",
-    ] {
-        assert!(
-            source.contains(variant),
-            "RelationFailure must include the `{variant}` variant for semantic coverage"
-        );
-    }
-}

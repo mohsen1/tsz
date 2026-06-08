@@ -40,6 +40,20 @@ pub fn application_base_has_conditional_alias_body(
         .is_some_and(|body| matches!(db.lookup(body), Some(TypeData::Conditional(_))))
 }
 
+/// When `type_id` is a plain mutable array of a boolean literal element
+/// (`Array<true>` / `Array<false>`), return `Array<boolean>` (which renders as
+/// `boolean[]`); otherwise return `None`.
+pub fn boolean_literal_array_display_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let TypeData::Array(element) = db.lookup(type_id)? else {
+        return None;
+    };
+    let widened = super::widen_literal_to_primitive(db, element);
+    (widened == TypeId::BOOLEAN && widened != element).then(|| db.array(TypeId::BOOLEAN))
+}
+
 // =============================================================================
 // Core Type Queries
 // =============================================================================
@@ -1597,4 +1611,51 @@ pub fn is_unresolved_inference_result(db: &dyn TypeDatabase, type_id: TypeId) ->
     type_id == TypeId::ERROR
         || super::data::contains_infer_types_db(db, type_id)
         || crate::visitor::collect_referenced_types(db, type_id).contains(&TypeId::ERROR)
+}
+#[cfg(test)]
+mod boolean_literal_array_display_tests {
+    use super::boolean_literal_array_display_type;
+    use crate::TypeId;
+    use crate::construction::TypeInterner;
+
+    #[test]
+    fn widens_mutable_boolean_literal_array_to_boolean_array() {
+        let db = TypeInterner::new();
+        let boolean_array = db.array(TypeId::BOOLEAN);
+
+        for value in [true, false] {
+            let literal = db.literal_boolean(value);
+            let literal_array = db.array(literal);
+            assert_eq!(
+                boolean_literal_array_display_type(&db, literal_array),
+                Some(boolean_array),
+                "Array<{value}> should widen to boolean[]"
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_non_boolean_literal_arrays_untouched() {
+        let db = TypeInterner::new();
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.array(TypeId::BOOLEAN)),
+            None
+        );
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.array(db.literal_number(1.0))),
+            None
+        );
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.array(TypeId::STRING)),
+            None
+        );
+        assert_eq!(
+            boolean_literal_array_display_type(&db, TypeId::BOOLEAN),
+            None
+        );
+        assert_eq!(
+            boolean_literal_array_display_type(&db, db.literal_boolean(true)),
+            None
+        );
+    }
 }
