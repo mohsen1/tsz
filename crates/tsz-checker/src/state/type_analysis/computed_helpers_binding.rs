@@ -1775,7 +1775,6 @@ impl<'a> CheckerState<'a> {
             && let Some(data) = self.ctx.arena.get_type_operator(node)
         {
             self.collect_type_query_nodes(data.type_node, out);
-            return;
         }
 
         // Conditional- and mapped-type bodies are intentionally NOT descended
