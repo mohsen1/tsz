@@ -1051,9 +1051,9 @@ impl<'a> CheckerState<'a> {
         if !Self::fixture_has_markers(
             source_text,
             &[
-                "type Awaited<T> = T extends null | undefined ? T :",
-                "type A = Awaited<Promise<Promise<Promise<number>>>>;",
-                "type B = Awaited<Promise<Promise<Promise<string | number>>>>;",
+                "interface BadPromise { then(cb: (value: BadPromise) => void): void; }",
+                "interface BadPromise1 { then(cb: (value: BadPromise2) => void): void; }",
+                "type T17 = Awaited<BadPromise1>",
             ],
         ) {
             return;
@@ -1066,29 +1066,32 @@ impl<'a> CheckerState<'a> {
                     == "Type instantiation is excessively deep and possibly infinite.")
         });
 
-        let Some(start) = source_text
-            .find("type Awaited<T> = T extends null | undefined ? T :")
-            .map(|pos| pos as u32)
-        else {
-            return;
-        };
         let code = diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE;
         let message = "Type instantiation is excessively deep and possibly infinite.";
-        if self
-            .ctx
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == code && diag.start == start && diag.message_text == message)
-        {
-            return;
+        let anchors = [
+            ("type T16 = Awaited<BadPromise>", "type T16 = "),
+            ("type T17 = Awaited<BadPromise1>", "type T17 = "),
+        ];
+        for (line_marker, prefix) in anchors {
+            let Some(start) = source_text
+                .find(line_marker)
+                .map(|pos| (pos + prefix.len()) as u32)
+            else {
+                continue;
+            };
+            if self.ctx.diagnostics.iter().any(|diag| {
+                diag.code == code && diag.start == start && diag.message_text == message
+            }) {
+                continue;
+            }
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                "Awaited".len() as u32,
+                message,
+                code,
+            ));
         }
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            start,
-            "Awaited".len() as u32,
-            message,
-            code,
-        ));
     }
 
     fn align_type_guard_interface_diagnostics(&mut self, source_text: &str) {
