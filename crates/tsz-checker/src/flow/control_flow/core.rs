@@ -4,7 +4,7 @@ use crate::query_boundaries::flow_analysis as query;
 use crate::query_boundaries::flow_analysis::{tuple_elements_for_type, union_members_for_type};
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use tsz_binder::BinderState;
 use tsz_binder::{FlowNode, FlowNodeArena, FlowNodeId, SymbolId, flow_flags};
@@ -201,6 +201,13 @@ impl CallPredicateMap {
 const FLOW_STEP_BUDGET_MIN: usize = 10_000;
 const FLOW_STEP_BUDGET_SCALE: usize = 12;
 const FLOW_STEP_BUDGET_MAX: usize = 40_000;
+
+/// Maximum nesting depth of re-entrant flow-type queries before narrowing bails
+/// to the un-narrowed declared type. Matches tsc's `flowDepth` ceiling of 2000
+/// in `getFlowTypeOfReference`: deep enough that no realistic narrowing chain is
+/// truncated, low enough that the native stack cannot overflow (each level adds
+/// one `check_flow` frame; 2000 frames stay well within the 128MB worker stack).
+const MAX_FLOW_QUERY_DEPTH: u32 = 2000;
 
 const fn flow_step_budget(flow_node_count: usize) -> usize {
     let scaled = flow_node_count.saturating_mul(FLOW_STEP_BUDGET_SCALE);
@@ -440,6 +447,15 @@ pub struct FlowAnalyzer<'a> {
     /// session-stable synthetic cache symbol, so the flow cache is shared across
     /// occurrences of the same path instead of being keyed per syntactic node.
     pub(crate) shared_flow_reference_keys: Option<&'a FlowReferenceKeyInterner>,
+    /// Current nesting depth of re-entrant flow-type queries. Narrowing one
+    /// reference can require the flow type of *another* reference (e.g. an
+    /// aliased condition or optional-chain guard), so `get_flow_type` →
+    /// `check_flow` → `get_flow_type` re-enters. `flow_step_budget` bounds the
+    /// work *within* a single traversal but not this nesting, so deeply nested
+    /// narrowing (large modules such as the `effect` canary) would otherwise
+    /// recurse until the native stack overflows. Mirrors tsc's `flowDepth`
+    /// guard in `getFlowTypeOfReference`.
+    pub(crate) flow_query_depth: Cell<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -651,6 +667,7 @@ impl<'a> FlowAnalyzer<'a> {
             destructured_bindings: None,
             concrete_this_type: None,
             shared_flow_reference_keys: None,
+            flow_query_depth: Cell::new(0),
         }
     }
 
@@ -689,6 +706,7 @@ impl<'a> FlowAnalyzer<'a> {
             destructured_bindings: None,
             concrete_this_type: None,
             shared_flow_reference_keys: None,
+            flow_query_depth: Cell::new(0),
         }
     }
 
@@ -978,6 +996,28 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
+        // Bound re-entrant flow-query nesting. Each nested `get_flow_type`
+        // resolution adds a `check_flow` frame; without a ceiling, deeply
+        // nested narrowing in large modules overflows the native stack. tsc
+        // applies the same guard (`flowDepth === 2000` in
+        // `getFlowTypeOfReference`), returning the un-narrowed declared type
+        // rather than narrowing further. We mirror that: bail to `initial_type`.
+        let depth = self.flow_query_depth.get();
+        if depth >= MAX_FLOW_QUERY_DEPTH {
+            return initial_type;
+        }
+        self.flow_query_depth.set(depth + 1);
+        let result = self.get_flow_type_uncorrelated_inner(reference, initial_type, flow_node);
+        self.flow_query_depth.set(depth);
+        result
+    }
+
+    fn get_flow_type_uncorrelated_inner(
+        &self,
+        reference: NodeIndex,
+        initial_type: TypeId,
+        flow_node: FlowNodeId,
+    ) -> TypeId {
         // Resolve symbol for caching purposes.
         //
         // Member-like references (`a.b`, `a[b]`, `this.x`) must NOT key by a bare
