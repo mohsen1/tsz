@@ -72,10 +72,12 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|sid| self.is_control_flow_typed_any_symbol(sid));
         let skip_cache_for_control_flow_typed_any = control_flow_typed_any_symbol;
 
-        // Use a synthetic cache symbol for references that don't resolve to a symbol
-        // (for example complex/property references). This enables cache reuse while
-        // keeping symbol-backed keys disjoint.
-        let cache_symbol = symbol_id.unwrap_or(SymbolId(reference.0.wrapping_add(1) | 0x8000_0000));
+        // Select the cache symbol (disjoint spaces — see `core.rs`): real binder
+        // symbol → structural path key (shared across occurrences) → per-node
+        // fallback for anything non-pathy (e.g. `f().x`).
+        let cache_symbol = symbol_id
+            .or_else(|| self.flow_reference_path_symbol(reference))
+            .unwrap_or_else(|| super::per_node_flow_cache_symbol(reference));
 
         // Initialize worklist with the entry point
         worklist.push_back((flow_id, initial_type));

@@ -104,6 +104,7 @@ impl<'a> CheckerContext<'a> {
                 128,
                 Default::default(),
             )),
+            flow_reference_keys: RefCell::new(FxHashMap::default()),
             narrowable_identifier_cache: RefCell::new(
                 crate::context::NarrowableIdentifierCache::with_capacity(arena.nodes.len()),
             ),
