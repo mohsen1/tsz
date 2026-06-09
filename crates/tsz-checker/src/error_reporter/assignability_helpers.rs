@@ -22,7 +22,8 @@ impl<'a> CheckerState<'a> {
         depth: u32,
     ) -> TypeId {
         if depth != 0
-            || crate::query_boundaries::common::array_element_type(self.ctx.types, source).is_none()
+            || crate::query_boundaries::diagnostics::array_element_type(self.ctx.types, source)
+                .is_none()
         {
             return source;
         }
@@ -53,16 +54,14 @@ impl<'a> CheckerState<'a> {
                 return source;
             }
 
-            let element_type =
-                crate::query_boundaries::common::array_element_type(self.ctx.types, first_arg_type)
-                    .or_else(|| {
-                        tsz_solver::operations::get_iterator_info(
-                            self.ctx.types,
-                            first_arg_type,
-                            false,
-                        )
-                        .map(|info| info.yield_type)
-                    });
+            let element_type = crate::query_boundaries::diagnostics::array_element_type(
+                self.ctx.types,
+                first_arg_type,
+            )
+            .or_else(|| {
+                tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
+                    .map(|info| info.yield_type)
+            });
             let Some(element_type) = element_type else {
                 return source;
             };
@@ -157,22 +156,22 @@ impl<'a> CheckerState<'a> {
                 let (pos, end) = self.get_node_span(anchor_idx).unwrap_or((0, 0));
                 self.normalized_anchor_span(anchor_idx, pos, end.saturating_sub(pos))
             });
-        let source_is_function_like = crate::query_boundaries::common::callable_shape_for_type(
+        let source_is_function_like = crate::query_boundaries::diagnostics::callable_shape_for_type(
             self.ctx.types,
             source_for_display,
         )
         .is_some()
-            || crate::query_boundaries::common::function_shape_for_type(
+            || crate::query_boundaries::diagnostics::function_shape_for_type(
                 self.ctx.types,
                 source_for_display,
             )
             .is_some();
-        let target_is_function_like = crate::query_boundaries::common::callable_shape_for_type(
+        let target_is_function_like = crate::query_boundaries::diagnostics::callable_shape_for_type(
             self.ctx.types,
             target_for_display,
         )
         .is_some()
-            || crate::query_boundaries::common::function_shape_for_type(
+            || crate::query_boundaries::diagnostics::function_shape_for_type(
                 self.ctx.types,
                 target_for_display,
             )
@@ -675,9 +674,9 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<Vec<tsz_common::interner::Atom>> {
-        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::diagnostics::{IndexKind, IndexSignatureResolver};
 
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, source) {
+        if crate::query_boundaries::diagnostics::is_type_parameter_like(self.ctx.types, source) {
             return None;
         }
 
@@ -722,17 +721,23 @@ impl<'a> CheckerState<'a> {
             ]
             .into_iter()
             .find(|candidate| {
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
-                    .is_some()
+                crate::query_boundaries::diagnostics::object_shape_for_type(
+                    self.ctx.types,
+                    *candidate,
+                )
+                .is_some()
             })?
         };
 
         let source_shape = {
             source_candidates.iter().copied().find_map(|candidate| {
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+                crate::query_boundaries::diagnostics::object_shape_for_type(
+                    self.ctx.types,
+                    candidate,
+                )
             })
         };
-        let target_shape = crate::query_boundaries::common::object_shape_for_type(
+        let target_shape = crate::query_boundaries::diagnostics::object_shape_for_type(
             self.ctx.types,
             target_with_shape,
         )?;
@@ -804,10 +809,10 @@ impl<'a> CheckerState<'a> {
             })
         };
 
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_type)
+        crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, target_type)
             .and_then(|shape| find_member(&shape.properties))
             .or_else(|| {
-                crate::query_boundaries::common::callable_shape_for_type(
+                crate::query_boundaries::diagnostics::callable_shape_for_type(
                     self.ctx.types,
                     target_type,
                 )
@@ -932,13 +937,13 @@ impl<'a> CheckerState<'a> {
         // type's symbol, meaning it was declared directly on the target type (not
         // inherited). tsc lists own properties before inherited ones in TS2739/TS2741.
         let target_symbol =
-            crate::query_boundaries::common::get_object_symbol(self.ctx.types, target_type);
+            crate::query_boundaries::diagnostics::get_object_symbol(self.ctx.types, target_type);
         let mut property_ranks: FxHashMap<tsz_common::interner::Atom, (u32, usize, bool)> =
             FxHashMap::default();
 
         let mut collect_ranks = |ty: TypeId, tgt_sym: Option<tsz_binder::SymbolId>| {
             if let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+                crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, ty)
             {
                 for (index, prop) in shape.properties.iter().enumerate() {
                     let is_own = tgt_sym.is_some() && prop.parent_id == tgt_sym;
@@ -950,7 +955,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if let Some(shape) =
-                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+                crate::query_boundaries::diagnostics::callable_shape_for_type(self.ctx.types, ty)
             {
                 for (index, prop) in shape.properties.iter().enumerate() {
                     let is_own = tgt_sym.is_some() && prop.parent_id == tgt_sym;

@@ -49,6 +49,7 @@ fn test_display_diagnostic_helpers_have_domain_boundary() {
         "is_unresolved_for_display",
         "type_may_display_iterator_protocol",
         "function_signature_has_typeof",
+        "get_object_symbol",
     ] {
         assert!(
             !common_source.contains(&format!("fn {helper}(")),

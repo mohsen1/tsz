@@ -589,22 +589,25 @@ impl<'a> CheckerState<'a> {
             })
             .or_else(|| {
                 target_candidates.iter().find_map(|&candidate| {
-                    crate::query_boundaries::common::get_object_symbol(self.ctx.types, candidate)
-                        .or_else(|| {
-                            crate::query_boundaries::common::object_shape_for_type(
-                                self.ctx.types,
-                                candidate,
-                            )
-                            .and_then(|shape| {
-                                shape.properties.iter().find_map(|prop| {
-                                    prop.parent_id.filter(|sym| {
-                                        self.ctx.binder.get_symbol(*sym).is_some_and(|symbol| {
-                                            symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
-                                        })
+                    crate::query_boundaries::diagnostics::get_object_symbol(
+                        self.ctx.types,
+                        candidate,
+                    )
+                    .or_else(|| {
+                        crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            candidate,
+                        )
+                        .and_then(|shape| {
+                            shape.properties.iter().find_map(|prop| {
+                                prop.parent_id.filter(|sym| {
+                                    self.ctx.binder.get_symbol(*sym).is_some_and(|symbol| {
+                                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
                                     })
                                 })
                             })
                         })
+                    })
                 })
             })?;
 

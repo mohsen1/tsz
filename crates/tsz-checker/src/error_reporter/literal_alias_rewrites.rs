@@ -51,7 +51,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .types
             .get_display_alias(source)
-            .and_then(|alias| crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias))
+            .and_then(|alias| {
+                crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, alias)
+            })
             .and_then(|def_id| self.ctx.definition_store.get(def_id))
             .is_some_and(|def| {
                 def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty()
@@ -59,15 +61,17 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        let application = crate::query_boundaries::common::application_info(self.ctx.types, source)
-            .or_else(|| {
-                let alias = self.ctx.types.get_display_alias(source)?;
-                crate::query_boundaries::common::application_info(self.ctx.types, alias)
-            });
+        let application =
+            crate::query_boundaries::diagnostics::application_info(self.ctx.types, source).or_else(
+                || {
+                    let alias = self.ctx.types.get_display_alias(source)?;
+                    crate::query_boundaries::diagnostics::application_info(self.ctx.types, alias)
+                },
+            );
         let Some((base, _)) = application else {
             return false;
         };
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        let Some(def_id) = crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, base)
         else {
             return false;
         };

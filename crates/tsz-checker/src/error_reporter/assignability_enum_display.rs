@@ -8,7 +8,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> Option<String> {
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
+        let members = crate::query_boundaries::diagnostics::union_members(self.ctx.types, ty)?;
         if members.len() < 2 {
             return None;
         }
@@ -99,7 +99,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> Option<(tsz_binder::SymbolId, tsz_binder::SymbolId)> {
-        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
+        let def_id = crate::query_boundaries::diagnostics::enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         symbol
