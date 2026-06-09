@@ -42,14 +42,11 @@ use phases::TailCallStep;
 /// invented diagnostics (false negatives such as missing **TS2536** on indexed
 /// access through such a key space).
 ///
-/// WASM keeps a smaller bound for memory safety; native CLI/server builds can
-/// afford a larger one. The values intentionally mirror `DEFAULT_MAX_MAPPED_KEYS`
-/// (the analogous "evaluate a large key space" cap), which was already raised
-/// from `100` for the same real-world reason.
-#[cfg(target_arch = "wasm32")]
+/// Keep this at the conservative mapped-key floor. `DEFAULT_MAX_MAPPED_KEYS` is
+/// target-split elsewhere, but a single cross-target conditional-distribution
+/// budget avoids making native CI eagerly materialize React-sized surfaces that
+/// the 250-budget path still defers.
 pub(crate) const MAX_CONDITIONAL_DISTRIBUTION_SIZE: usize = 250;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const MAX_CONDITIONAL_DISTRIBUTION_SIZE: usize = 500;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.

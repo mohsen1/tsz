@@ -13,7 +13,7 @@
 //!
 //! Structural rule: distributing a conditional over a union of N members must
 //! produce the same result for N just below and just above the old `100` cap.
-//! The cap now mirrors `DEFAULT_MAX_MAPPED_KEYS` (native 500) so realistic key
+//! The cap now uses the conservative mapped-key floor (250) so realistic key
 //! spaces (DOM tag maps, generated SDK surfaces, large literal enums) evaluate
 //! like `tsc` instead of bailing.
 //!
