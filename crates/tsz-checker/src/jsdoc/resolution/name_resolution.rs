@@ -236,10 +236,14 @@ impl<'a> CheckerState<'a> {
         type_expr: &str,
     ) -> Option<TypeId> {
         let (module_specifier, member_name) = Self::parse_jsdoc_import_type(type_expr)?;
+        let resolution_mode = Self::jsdoc_import_type_resolution_mode(type_expr);
 
         if let Some(member_name) = member_name {
-            if let Some(sym_id) = self.resolve_jsdoc_import_member(&module_specifier, &member_name)
-            {
+            if let Some(sym_id) = self.resolve_jsdoc_import_member_with_mode(
+                &module_specifier,
+                &member_name,
+                resolution_mode,
+            ) {
                 let resolved = self.resolve_jsdoc_symbol_type(sym_id);
                 if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                     return Some(resolved);

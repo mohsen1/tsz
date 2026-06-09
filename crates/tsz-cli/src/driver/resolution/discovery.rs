@@ -369,7 +369,7 @@ pub(crate) fn collect_jsdoc_module_requests(
             requests.extend(
                 specifiers
                     .into_iter()
-                    .map(|specifier| (specifier, ImportKind::EsmImport, None)),
+                    .map(|(specifier, mode)| (specifier, ImportKind::EsmImport, mode)),
             );
         }
         // `@import ... from "..."` tags, parsed per content line.
@@ -401,7 +401,10 @@ const fn is_identifier_part_byte(byte: u8) -> bool {
 /// `out`. Requires a word boundary before `import` so identifiers ending in
 /// `import` (e.g. `reimport(`) are not matched. Whitespace between `(` and the
 /// string literal is tolerated.
-pub(crate) fn push_jsdoc_import_call_specifiers(text: &str, out: &mut Vec<String>) {
+pub(crate) fn push_jsdoc_import_call_specifiers(
+    text: &str,
+    out: &mut Vec<(String, Option<tsz::module_resolver::ImportingModuleKind>)>,
+) {
     let bytes = text.as_bytes();
     let mut search_from = 0usize;
     while let Some(rel) = text[search_from..].find("import(") {
@@ -436,8 +439,17 @@ pub(crate) fn push_jsdoc_import_call_specifiers(text: &str, out: &mut Vec<String
             break;
         }
         let specifier = &text[spec_start..cursor];
+        // Read an optional `, { with: { "resolution-mode": ... } }` argument up
+        // to the call's closing paren (the attribute object holds no `)`) so the
+        // inline `import("m", { ... }).X` type query resolves under the requested
+        // ESM/CJS condition, like its `@import` tag form.
+        let after_spec = &text[cursor + 1..];
+        let mode = after_spec.find(')').and_then(|paren| {
+            tsz_common::parse_jsdoc_resolution_mode_attribute_clause(&after_spec[..paren])
+                .map(tsz::module_resolver::ImportingModuleKind::from)
+        });
         if !specifier.is_empty() {
-            out.push(specifier.to_string());
+            out.push((specifier.to_string(), mode));
         }
         search_from = cursor + 1;
     }
