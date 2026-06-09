@@ -201,8 +201,7 @@ impl<'a> CheckerState<'a> {
         if !crate::query_boundaries::common::type_id_is_known_to_db(self.ctx.types, type_id) {
             return false;
         }
-        for def_id in crate::query_boundaries::common::collect_lazy_def_ids(self.ctx.types, type_id)
-        {
+        for &def_id in self.ctx.collect_lazy_def_ids_cached(type_id).iter() {
             let has_body_in_env = self
                 .ctx
                 .type_env

@@ -440,9 +440,11 @@ impl<'a> CheckerState<'a> {
                 .any(|sym_ref| sym_ref.0 == sym_id.0);
         let has_deferred_resolution_chain_ref =
             common::is_structurally_deferred_type(self.ctx.types, resolved_type)
-                && common::collect_lazy_def_ids(self.ctx.types, resolved_type)
-                    .into_iter()
-                    .any(|def_id| {
+                && self
+                    .ctx
+                    .collect_lazy_def_ids_cached(resolved_type)
+                    .iter()
+                    .any(|&def_id| {
                         self.ctx
                             .def_to_symbol
                             .borrow()

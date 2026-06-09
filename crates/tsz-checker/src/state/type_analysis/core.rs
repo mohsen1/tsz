@@ -41,8 +41,7 @@ impl<'a> CheckerState<'a> {
         alias_def_id: tsz_solver::def::DefId,
         type_id: TypeId,
     ) -> bool {
-        let mut pending =
-            crate::query_boundaries::common::collect_lazy_def_ids(self.ctx.types, type_id);
+        let mut pending = self.ctx.collect_lazy_def_ids_cached(type_id).to_vec();
         if pending.is_empty() {
             return true;
         }
@@ -71,10 +70,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
-                self.ctx.types,
-                body,
-            ));
+            pending.extend(self.ctx.collect_lazy_def_ids_cached(body).iter().copied());
         }
 
         true
