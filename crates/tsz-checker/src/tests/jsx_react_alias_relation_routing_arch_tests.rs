@@ -17,9 +17,9 @@ fn jsx_react_props_alias_storage_uses_relation_outcome_boundary() {
     let function = &source[function_start..function_end];
 
     assert_eq!(
-        function.matches("jsx_props_relation_outcome").count(),
+        function.matches("props_are_assignable").count(),
         2,
-        "JSX props display-alias storage should route both compatibility decisions through JSX props relation outcomes"
+        "JSX props display-alias storage should route both compatibility decisions through the props_are_assignable boundary"
     );
     assert!(
         !function.contains("assign_relation_outcome"),

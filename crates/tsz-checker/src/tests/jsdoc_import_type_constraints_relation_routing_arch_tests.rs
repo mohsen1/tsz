@@ -17,9 +17,13 @@ fn jsdoc_import_type_constraints_use_relation_outcome_boundary() {
         .expect("slice helper body before scope restoration");
 
     assert!(
-        helper.contains("assign_relation_outcome(type_arg, constraint)")
+        helper.contains("jsdoc_type_constraint_relation_outcome(type_arg, constraint)")
             && helper.contains(".related"),
         "JSDoc import type constraint diagnostics should use the shared relation outcome boundary"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome("),
+        "JSDoc import type constraint diagnostics should not regress to the generic assign request"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),

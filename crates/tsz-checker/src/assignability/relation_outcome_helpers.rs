@@ -684,20 +684,15 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
-    /// Whether a source is assignable to a bare type parameter's constraint,
-    /// shaped as a `RelationOutcome` for the "could be instantiated with an
-    /// arbitrary type which could be unrelated to" related-information
-    /// elaboration (TS2322/TS2345 family).
+    /// Whether a source satisfies a bare type parameter's constraint, shaped as a
+    /// `RelationOutcome` for the "could be instantiated with an arbitrary type
+    /// which could be unrelated to" related-information elaboration.
     ///
-    /// This intentionally mirrors the checker's compat-aware assignability
-    /// decision (`diagnostic_relation_outcome` → `is_assignable_to`) rather than
-    /// the strict solver relation used by the `execute_relation_request` helpers:
-    /// the related-info must be suppressed in exactly the cases where the source
-    /// would in fact satisfy the constraint, including the checker-side variance
-    /// and index-access fast paths that the strict relation does not replicate.
-    /// Keeping the call site on a named, grep-distinct outcome boundary lets the
-    /// residual relation-routing ratchet forbid raw boolean guards in diagnostic
-    /// elaboration without changing parity.
+    /// Routes through `diagnostic_relation_outcome` (the compat-aware
+    /// `is_assignable_to` path), not the strict `execute_relation_request` path,
+    /// so the related-info is suppressed in exactly the cases where the source
+    /// would satisfy the constraint — preserving parity while keeping the call
+    /// site off a raw boolean guard.
     pub(crate) fn type_parameter_constraint_elaboration_relation_outcome(
         &mut self,
         source: TypeId,

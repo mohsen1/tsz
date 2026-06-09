@@ -45,6 +45,11 @@ fn collect_rust_sources(dir: &Path, sources: &mut Vec<PathBuf>) {
 
 fn allowed_raw_relation(relative_path: &str, line: &str) -> bool {
     if relative_path.starts_with("src/assignability/") {
+        // The assignability boundary owns these primitives — `is_*` relations,
+        // `is_subtype_of`, and the `diagnostic_relation_boolean_guard*` family —
+        // and composes them into the named `*_relation_outcome` helpers. Only the
+        // generic `assign_relation_outcome*` requests must still be wrapped in a
+        // domain-named outcome before a diagnostic decision consumes them.
         return !line.contains(".assign_relation_outcome(")
             && !line.contains(".assign_relation_outcome_with_env(");
     }
