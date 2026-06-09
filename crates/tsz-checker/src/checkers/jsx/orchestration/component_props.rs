@@ -693,10 +693,11 @@ impl<'a> CheckerState<'a> {
                 if !crate::query_boundaries::common::is_template_literal_type(
                     self.ctx.types,
                     key_type,
-                ) || !self
-                    .jsx_props_relation_outcome(tag_literal, key_type)
-                    .related
-                {
+                ) || !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                    self,
+                    tag_literal,
+                    key_type,
+                ) {
                     continue;
                 }
 
@@ -716,23 +717,31 @@ impl<'a> CheckerState<'a> {
             let mut i = 0;
             while i < best_matches.len() {
                 let (best_key, _) = best_matches[i];
-                let candidate_more_specific = self
-                    .jsx_props_relation_outcome(candidate_key, best_key)
-                    .related
-                    && !self
-                        .jsx_props_relation_outcome(best_key, candidate_key)
-                        .related;
+                let candidate_more_specific =
+                    crate::query_boundaries::checkers::jsx::props_are_assignable(
+                        self,
+                        candidate_key,
+                        best_key,
+                    ) && !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                        self,
+                        best_key,
+                        candidate_key,
+                    );
                 if candidate_more_specific {
                     best_matches.swap_remove(i);
                     continue;
                 }
 
-                let best_more_specific = self
-                    .jsx_props_relation_outcome(best_key, candidate_key)
-                    .related
-                    && !self
-                        .jsx_props_relation_outcome(candidate_key, best_key)
-                        .related;
+                let best_more_specific =
+                    crate::query_boundaries::checkers::jsx::props_are_assignable(
+                        self,
+                        best_key,
+                        candidate_key,
+                    ) && !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                        self,
+                        candidate_key,
+                        best_key,
+                    );
                 if best_more_specific {
                     candidate_is_best = false;
                     break;
@@ -905,7 +914,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let tag_type = self.ctx.types.literal_string(tag);
-        if self.jsx_props_relation_outcome(tag_type, evaluated).related {
+        if crate::query_boundaries::checkers::jsx::props_are_assignable(self, tag_type, evaluated) {
             return;
         }
 

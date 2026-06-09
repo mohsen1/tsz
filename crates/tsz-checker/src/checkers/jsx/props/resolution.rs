@@ -150,13 +150,11 @@ impl<'a> CheckerState<'a> {
                                 type_id,
                             );
                             match attr_type {
-                                Some(attr_type) => {
-                                    *attr_type == TypeId::ANY
-                                        || *attr_type == TypeId::ERROR
-                                        || self
-                                            .jsx_props_relation_outcome(*attr_type, expected)
-                                            .related
-                                }
+                                Some(attr_type) => *attr_type == TypeId::ANY
+                                    || *attr_type == TypeId::ERROR
+                                    || crate::query_boundaries::checkers::jsx::props_are_assignable(
+                                        self, *attr_type, expected,
+                                    ),
                                 None => expected != TypeId::NEVER && expected != TypeId::ERROR,
                             }
                         }
@@ -364,12 +362,15 @@ impl<'a> CheckerState<'a> {
                         .map(|type_id| self.normalize_jsx_function_context_type(type_id));
                     if attr_name == "key"
                         && expected_special_type.is_some_and(|expected_type| {
-                            !self
-                                .jsx_props_relation_outcome(TypeId::STRING, expected_type)
-                                .related
-                                && !self
-                                    .jsx_props_relation_outcome(TypeId::NUMBER, expected_type)
-                                    .related
+                            !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                                self,
+                                TypeId::STRING,
+                                expected_type,
+                            ) && !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                                self,
+                                TypeId::NUMBER,
+                                expected_type,
+                            )
                         })
                     {
                         expected_special_type = None;
@@ -452,10 +453,11 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(expected_type) = expected_special_type {
                         if attr_data.initializer.is_none() {
-                            if !self
-                                .jsx_props_relation_outcome(TypeId::BOOLEAN_TRUE, expected_type)
-                                .related
-                            {
+                            if !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                                self,
+                                TypeId::BOOLEAN_TRUE,
+                                expected_type,
+                            ) {
                                 let target_str = self.format_type(expected_type);
                                 let message = format_message(
                                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -733,10 +735,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(entry) = outcome.provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
-                    if !self
-                        .jsx_props_relation_outcome(TypeId::BOOLEAN_TRUE, expected_type)
-                        .related
-                    {
+                    if !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                        self,
+                        TypeId::BOOLEAN_TRUE,
+                        expected_type,
+                    ) {
                         let is_literal_target = crate::query_boundaries::common::is_literal_type(
                             self.ctx.types,
                             expected_type,
@@ -902,9 +905,11 @@ impl<'a> CheckerState<'a> {
                     if is_special_named_attr {
                         if actual_type != TypeId::ANY
                             && actual_type != TypeId::ERROR
-                            && !self
-                                .jsx_props_relation_outcome(actual_type, expected_type)
-                                .related
+                            && !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                                self,
+                                actual_type,
+                                expected_type,
+                            )
                         {
                             outcome.needs_special_attr_object_assignability = true;
                         }

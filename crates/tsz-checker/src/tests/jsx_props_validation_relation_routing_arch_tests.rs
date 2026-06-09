@@ -7,10 +7,14 @@ fn jsx_props_validation_uses_relation_outcome_boundary() {
     let source_path = Path::new(manifest_dir).join("src/checkers/jsx/props/validation.rs");
     let source = fs::read_to_string(source_path).expect("read JSX props validation source");
 
-    assert_eq!(
-        source.matches("jsx_props_relation_outcome(").count(),
-        8,
-        "JSX props validation relation probes should route through JSX props relation outcomes"
+    assert!(
+        !source.contains("jsx_props_relation_outcome("),
+        "JSX props validation relation probes should route through the JSX props boundary helper"
+    );
+    assert!(
+        source.contains("jsx::props_are_assignable(")
+            || source.contains("checkers::jsx::props_are_assignable("),
+        "JSX props validation should use query_boundaries::checkers::jsx::props_are_assignable"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard("),
@@ -50,4 +54,39 @@ fn jsx_generic_managed_attrs_uses_jsx_props_boundary() {
         !function.contains("jsx::types_are_assignable("),
         "generic managed attrs final assignability should not use the generic JSX assignment helper"
     );
+}
+
+#[test]
+fn jsx_checker_props_boolean_probes_use_domain_boundary() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let jsx_dir = Path::new(manifest_dir).join("src/checkers/jsx");
+    let mut violations = Vec::new();
+    collect_jsx_props_relation_violations(&jsx_dir, &jsx_dir, &mut violations);
+
+    assert!(
+        violations.is_empty(),
+        "JSX checker props boolean probes should use query_boundaries::checkers::jsx::props_are_assignable; violations: {violations:?}"
+    );
+}
+
+fn collect_jsx_props_relation_violations(dir: &Path, root: &Path, violations: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_jsx_props_relation_violations(&path, root, violations);
+            continue;
+        }
+        if path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("read JSX checker source");
+        if source.contains("jsx_props_relation_outcome(") {
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            violations.push(rel.display().to_string());
+        }
+    }
 }

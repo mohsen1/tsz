@@ -234,12 +234,16 @@ impl<'a> CheckerState<'a> {
         }
         let alias_evaluated = self.evaluate_type_with_env(alias);
         if alias_evaluated != TypeId::ERROR
-            && self
-                .jsx_props_relation_outcome(alias_evaluated, props_type)
-                .related
-            && self
-                .jsx_props_relation_outcome(props_type, alias_evaluated)
-                .related
+            && crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                alias_evaluated,
+                props_type,
+            )
+            && crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                props_type,
+                alias_evaluated,
+            )
         {
             self.ctx.types.store_display_alias(props_type, alias);
         }

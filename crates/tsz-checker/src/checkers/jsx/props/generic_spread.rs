@@ -74,9 +74,11 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            !self
-                .jsx_props_relation_outcome(*actual_type, expected_type)
-                .related
+            !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                *actual_type,
+                expected_type,
+            )
         });
 
         let has_alias_string_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
@@ -105,9 +107,9 @@ impl<'a> CheckerState<'a> {
 
         if !has_explicit_prop_mismatch
             && !has_alias_string_prop_mismatch
-            && self
-                .jsx_props_relation_outcome(attrs_type, props_type)
-                .related
+            && crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self, attrs_type, props_type,
+            )
         {
             return false;
         }

@@ -667,8 +667,12 @@ fn test_def_symbol_bridge_writes_route_through_dual_env_helper() {
 
 #[test]
 fn test_assignability_checker_routes_relation_queries_through_query_boundaries() {
-    let assignability_source = fs::read_to_string("src/assignability/assignability_checker.rs")
+    let mut assignability_source = fs::read_to_string("src/assignability/assignability_checker.rs")
         .expect("failed to read src/assignability/assignability_checker.rs for architecture guard");
+    assignability_source.push_str(
+        &fs::read_to_string("src/assignability/assignability_relation.rs")
+            .expect("failed to read src/assignability/assignability_relation.rs"),
+    );
     let subtype_source = fs::read_to_string("src/assignability/subtype_identity_checker.rs")
         .expect(
             "failed to read src/assignability/subtype_identity_checker.rs for architecture guard",
@@ -691,12 +695,12 @@ fn test_assignability_checker_routes_relation_queries_through_query_boundaries()
 
     // Assignability helpers live in assignability_checker
     assert!(
-        assignability_source.contains("is_assignable_with_overrides("),
-        "assignability_checker should use query_boundaries::assignability::is_assignable_with_overrides"
+        assignability_source.contains("cached_assignability_with_overrides("),
+        "assignability_checker should use query_boundaries::assignability::cached_assignability_with_overrides"
     );
     assert!(
-        assignability_source.contains("is_assignable_bivariant_with_resolver("),
-        "assignability_checker should use query_boundaries::assignability::is_assignable_bivariant_with_resolver"
+        assignability_source.contains("cached_bivariant_assignability_with_resolver("),
+        "assignability_checker should use query_boundaries::assignability::cached_bivariant_assignability_with_resolver"
     );
 
     // Subtype/redecl/union helpers live in subtype_identity_checker
@@ -708,6 +712,60 @@ fn test_assignability_checker_routes_relation_queries_through_query_boundaries()
         subtype_source.contains("is_redeclaration_identical_with_resolver("),
         "subtype_identity_checker should use query_boundaries::assignability::is_redeclaration_identical_with_resolver"
     );
+}
+
+#[test]
+fn test_assignability_cached_relation_uses_boundary_owned_cache_probe() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read src/assignability/assignability_relation.rs");
+    let helper_body = source
+        .split("fn check_assignability_cached(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn namespace_source_has_matching_property_mismatch").next())
+        .expect("failed to locate check_assignability_cached body");
+
+    assert!(
+        helper_body.contains("cached_assignability_with_overrides("),
+        "check_assignability_cached should delegate cache lookup, relation execution, and cache insert to query_boundaries::assignability"
+    );
+    for forbidden in [
+        "assignability_cache_key(",
+        "is_relation_cacheable(",
+        "lookup_assignability_cache(",
+        "insert_assignability_cache(",
+    ] {
+        assert!(
+            !helper_body.contains(forbidden),
+            "check_assignability_cached should not own relation-cache internals: found {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn test_bivariant_assignability_relation_uses_boundary_owned_cache_probe() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read src/assignability/assignability_relation.rs");
+    let helper_body = source
+        .split("fn is_assignable_to_bivariant_with_extra_flags(")
+        .nth(1)
+        .and_then(|tail| tail.split("pub fn are_types_overlapping").next())
+        .expect("failed to locate is_assignable_to_bivariant_with_extra_flags body");
+
+    assert!(
+        helper_body.contains("cached_bivariant_assignability_with_resolver("),
+        "bivariant assignability should delegate cache lookup, relation execution, and cache insert to query_boundaries::assignability"
+    );
+    for forbidden in [
+        "assignability_cache_key(",
+        "is_relation_cacheable(",
+        "lookup_assignability_cache(",
+        "insert_assignability_cache(",
+    ] {
+        assert!(
+            !helper_body.contains(forbidden),
+            "bivariant assignability should not own relation-cache internals: found {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -1235,6 +1293,26 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
             && !generic_checker_src.contains("self.ensure_refs_resolved(instantiated_constraint);"),
         "generic constraint checks should rely on centralized assignability preconditions instead of local ref-resolution traversal"
     );
+}
+
+#[test]
+fn test_excess_property_tail_routes_type_queries_through_state_boundary() {
+    let source = fs::read_to_string("src/state/state_checking/property/excess_property_tail.rs")
+        .expect("failed to read src/state/state_checking/property/excess_property_tail.rs");
+    assert!(
+        !source.contains("tsz_solver::type_queries::"),
+        "state_property_checking excess-property tail should route solver type-query access through query_boundaries::state::checking"
+    );
+    for boundary_call in [
+        "query::intersection_members(",
+        "query::union_members(",
+        "query::object_shape(",
+    ] {
+        assert!(
+            source.contains(boundary_call),
+            "excess-property tail should use {boundary_call} for solver shape queries"
+        );
+    }
 }
 
 #[test]
