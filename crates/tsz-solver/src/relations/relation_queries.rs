@@ -245,6 +245,9 @@ impl RelationPolicy {
             // perspective. The `SubtypeChecker` refines this to
             // `TopLevelOnlyNested` at depth > 0 when it builds its own key.
             AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyAtTop,
+            // Depth-independent: the overload subtype pass behaves the same
+            // at every nesting level, so one cached mode covers all depths.
+            AnyPropagationMode::AnySourceNotRelated => CachedAnyMode::AnySourceNotRelated,
         };
         self.cache_config_with_cached_any_mode(any_mode)
     }
@@ -630,6 +633,10 @@ pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     checker.set_inheritance_graph(context.inheritance_graph);
     checker.set_strict_subtype_checking(policy.strict_subtype_checking);
     checker.set_strict_any_propagation(policy.strict_any_propagation);
+    checker.set_any_source_not_related(matches!(
+        policy.any_propagation_mode,
+        AnyPropagationMode::AnySourceNotRelated
+    ));
     checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
     checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
     checker.set_erase_generics(policy.erase_generics);

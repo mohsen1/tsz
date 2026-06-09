@@ -667,12 +667,17 @@ impl<'a> CheckerState<'a> {
                 None => &[],
             };
             let check_excess_properties = false;
+            // Keep the per-argument provider empty (no fabricated contextual
+            // `any` for callbacks), but expose the `any` callable so spread
+            // position checks know the callee imposes no parameter-arity
+            // shape: `new anyCtor(...args)` must not emit TS2556 (tsc resolves
+            // it through the any-signature path with no spread restriction).
             self.collect_call_argument_types_with_context(
                 args,
                 |_i, _arg_count| None, // No parameter type info for ANY callee
                 check_excess_properties,
                 None, // No skipping needed
-                CallableContext::none(),
+                CallableContext::new(TypeId::ANY),
             );
 
             return TypeId::ANY;

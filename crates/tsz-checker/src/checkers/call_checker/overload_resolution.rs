@@ -231,6 +231,17 @@ impl<'a> CheckerState<'a> {
         // a fallback and continue trying later overloads which might have better
         // return context inference.
         let mut no_rcs_fallback: Option<NoReturnContextFallback> = None;
+        // tsc's `chooseOverload` runs twice over the candidate list: first
+        // with the subtype relation (where an `any` argument is NOT related
+        // to concrete parameter types, at every nesting level), then with the
+        // assignable relation. A candidate that only succeeds under the
+        // assignable relation must not win immediately: a later candidate may
+        // still pass the subtype pass (e.g. a generic overload instantiated
+        // with `U = any`). The first assignable-only success is stashed here
+        // and accepted after the loop, preserving declaration order for the
+        // fallback pass. Single-signature calls keep today's behavior.
+        let overload_two_pass = signatures.len() > 1;
+        let mut assignable_pass_fallback: Option<NoReturnContextFallback> = None;
         // Mark arguments whose type comes from a type annotation (typed
         // identifier, `as`/`satisfies`/`as const`). The direct (non-overloaded)
         // call path computes the same markers so generic inference treats their
@@ -281,20 +292,48 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
+            // Pass 1 (subtype pass): when the candidate fails under the
+            // stricter any-source-not-related relation, roll back any
+            // speculative state from the attempt and re-resolve with the
+            // normal assignable relation. A success from that second attempt
+            // is deferred (see `assignable_pass_fallback`) instead of
+            // selected immediately.
+            let mut subtype_pass_deferred = false;
             let (mut result, instantiated_predicate, instantiated_params) = if let Some(result) =
                 self.overload_string_argument_array_parameter_mismatch(&sig, &arg_types)
             {
                 (result, None, None)
             } else {
-                self.resolve_call_with_checker_adapter_maybe_arg_sources(
-                    resolved_func_type,
-                    &arg_types,
-                    force_bivariant_callbacks,
-                    sig_contextual_type,
-                    None,
-                    &arg_source_markers,
-                    &arg_readonly_markers,
-                )
+                let mut resolution = None;
+                if overload_two_pass {
+                    let subtype_pass_snap = self.snapshot_overload_retry_state();
+                    let pass1 = self.resolve_call_with_checker_adapter_subtype_pass(
+                        resolved_func_type,
+                        &arg_types,
+                        force_bivariant_callbacks,
+                        sig_contextual_type,
+                        None,
+                        &arg_source_markers,
+                        &arg_readonly_markers,
+                    );
+                    if matches!(pass1.0, CallResult::Success(_)) {
+                        resolution = Some(pass1);
+                    } else {
+                        self.rollback_overload_retry_state(&subtype_pass_snap);
+                        subtype_pass_deferred = true;
+                    }
+                }
+                resolution.unwrap_or_else(|| {
+                    self.resolve_call_with_checker_adapter_maybe_arg_sources(
+                        resolved_func_type,
+                        &arg_types,
+                        force_bivariant_callbacks,
+                        sig_contextual_type,
+                        None,
+                        &arg_source_markers,
+                        &arg_readonly_markers,
+                    )
+                })
             };
             if let CallResult::ArgumentTypeMismatch {
                 expected,
@@ -805,6 +844,23 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // This candidate failed the subtype pass and only matched
+                    // under the assignable relation. Mirror tsc: keep scanning
+                    // for a later candidate that passes the subtype pass; the
+                    // first assignable-only success is preserved (declaration
+                    // order) as the pass-2 fallback accepted after the loop.
+                    if subtype_pass_deferred {
+                        if assignable_pass_fallback.is_none() {
+                            assignable_pass_fallback = Some((
+                                final_arg_types.clone(),
+                                final_return_type,
+                                selected_type_predicate.clone(),
+                                self.ctx.snapshot_full(),
+                            ));
+                        }
+                        continue;
+                    }
+
                     // Merge the node types inferred during argument collection.
                     // If we did the instantiated retry, node_types already contains the
                     // refreshed entries; otherwise merge the first-pass temp_node_types.
@@ -872,6 +928,21 @@ impl<'a> CheckerState<'a> {
         // but no later overload succeeded, accept the deferred fallback.
         if let Some((fallback_arg_types, fallback_return_type, fallback_predicate, fallback_snap)) =
             no_rcs_fallback
+        {
+            self.ctx.rollback_full(&fallback_snap);
+            self.ctx.node_types.merge(&temp_node_types);
+            return Some(OverloadResolution {
+                arg_types: fallback_arg_types,
+                result: CallResult::Success(fallback_return_type),
+                selected_type_predicate: fallback_predicate,
+            });
+        }
+
+        // No candidate passed the subtype pass: accept the first candidate
+        // (declaration order) that matched under the assignable relation,
+        // mirroring tsc's second `chooseOverload` pass.
+        if let Some((fallback_arg_types, fallback_return_type, fallback_predicate, fallback_snap)) =
+            assignable_pass_fallback
         {
             self.ctx.rollback_full(&fallback_snap);
             self.ctx.node_types.merge(&temp_node_types);

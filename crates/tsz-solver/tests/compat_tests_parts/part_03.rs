@@ -1401,3 +1401,108 @@ fn test_unknown_not_assignable_to_union_missing_empty_object() {
         "unknown should not be assignable to `string | null | undefined` (no `{{}}` member)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Overload subtype pass: `any` source is not related to concrete targets
+// (tsc `chooseOverload` with `subtypeRelation`; issue #13042).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_any_source_not_related_top_level() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_any_source_not_related(true);
+
+    assert!(
+        !checker.is_assignable(TypeId::ANY, TypeId::STRING),
+        "subtype pass: `any` source must not be related to a concrete target"
+    );
+    assert!(
+        checker.is_assignable(TypeId::STRING, TypeId::ANY),
+        "subtype pass: `any` target still accepts everything"
+    );
+    assert!(
+        checker.is_assignable(TypeId::ANY, TypeId::ANY),
+        "subtype pass: `any` is related to `any`"
+    );
+    assert!(
+        checker.is_assignable(TypeId::ANY, TypeId::UNKNOWN),
+        "subtype pass: `any` is related to `unknown`"
+    );
+    assert!(
+        !checker.is_assignable(TypeId::ANY, TypeId::NEVER),
+        "`any` is never assignable to `never`"
+    );
+}
+
+#[test]
+fn test_any_source_not_related_applies_at_nested_levels() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_any_source_not_related(true);
+
+    let any_array = interner.array(TypeId::ANY);
+    let string_array = interner.array(TypeId::STRING);
+
+    assert!(
+        !checker.is_assignable(any_array, string_array),
+        "subtype pass: nested `any` source (array element) must not be related"
+    );
+    assert!(
+        checker.is_assignable(string_array, any_array),
+        "subtype pass: nested `any` target still accepts everything"
+    );
+}
+
+#[test]
+fn test_any_source_not_related_inside_callback_param_comparison() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_function_types(true);
+    checker.set_any_source_not_related(true);
+
+    let takes_string = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let takes_any = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::ANY)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Contravariant parameter check compares target-param -> source-param,
+    // so the target's `any` parameter becomes a nested relation SOURCE and
+    // must be rejected by the subtype pass.
+    assert!(
+        !checker.is_assignable(takes_string, takes_any),
+        "subtype pass: `any` appearing as a nested contravariant source must be rejected"
+    );
+    // The reverse direction relates string -> any (any as nested target).
+    assert!(
+        checker.is_assignable(takes_any, takes_string),
+        "subtype pass: `any` as a nested target still accepts the parameter"
+    );
+}
+
+#[test]
+fn test_any_source_not_related_off_keeps_default_any_behavior() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_any_source_not_related(true);
+    checker.set_any_source_not_related(false);
+
+    assert!(
+        checker.is_assignable(TypeId::ANY, TypeId::STRING),
+        "default relation: `any` source is assignable to everything but never"
+    );
+}

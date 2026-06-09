@@ -353,6 +353,12 @@ pub enum CachedAnyMode {
     TopLevelOnlyAtTop,
     /// Configured `TopLevelOnly`, currently nested (depth > 0).
     TopLevelOnlyNested,
+    /// Overload-resolution subtype pass: an `any` source is not related to
+    /// non-`any`/`unknown` targets at every depth, while an `any` target
+    /// still accepts everything. Depth-independent, so it needs no
+    /// at-top/nested split. Results computed under this mode must never
+    /// share a cache slot with the default assignable relation.
+    AnySourceNotRelated,
 }
 
 /// Canonical cache-partitioning configuration for relation queries.

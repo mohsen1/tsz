@@ -151,6 +151,13 @@ pub struct AnyPropagationRules {
     /// When false, `any` is treated more strictly and structural errors
     /// are still reported even when `any` is involved.
     pub(crate) allow_any_suppression: bool,
+    /// Overload-resolution subtype pass (tsc `chooseOverload` with
+    /// `subtypeRelation`): an `any` SOURCE is not related to concrete
+    /// targets at every nesting level, while an `any`/`unknown` TARGET
+    /// still accepts everything. Takes precedence over
+    /// `allow_any_suppression` when set, because the subtype pass is a
+    /// dedicated relation mode rather than a Sound-Mode strictness knob.
+    pub(crate) any_source_not_related: bool,
 }
 
 impl AnyPropagationRules {
@@ -161,6 +168,7 @@ impl AnyPropagationRules {
     pub const fn new() -> Self {
         Self {
             allow_any_suppression: true,
+            any_source_not_related: false,
         }
     }
 
@@ -172,6 +180,7 @@ impl AnyPropagationRules {
     pub const fn strict() -> Self {
         Self {
             allow_any_suppression: false,
+            any_source_not_related: false,
         }
     }
 
@@ -180,9 +189,17 @@ impl AnyPropagationRules {
         self.allow_any_suppression = allow;
     }
 
+    /// Toggle the overload subtype-pass mode where an `any` source is not
+    /// related to concrete targets (see `any_source_not_related`).
+    pub const fn set_any_source_not_related(&mut self, enabled: bool) {
+        self.any_source_not_related = enabled;
+    }
+
     /// Return the propagation mode for `any` handling in the subtype engine.
     pub const fn any_propagation_mode(&self) -> AnyPropagationMode {
-        if self.allow_any_suppression {
+        if self.any_source_not_related {
+            AnyPropagationMode::AnySourceNotRelated
+        } else if self.allow_any_suppression {
             AnyPropagationMode::All
         } else {
             AnyPropagationMode::TopLevelOnly

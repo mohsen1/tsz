@@ -183,18 +183,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
         // Fast paths (no cycle tracking needed)
         // =========================================================================
-        let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
+        let allow_any_source = self
+            .any_propagation
+            .allows_any_source_at_depth(self.guard.depth());
+        let allow_any_target = self
+            .any_propagation
+            .allows_any_target_at_depth(self.guard.depth());
         let mut source = source;
         let mut target = target;
-        if !allow_any {
-            if source == TypeId::ANY {
-                // In strict mode, any doesn't match everything structurally.
-                // We demote it to STRICT_ANY so it only matches top types or itself.
-                source = TypeId::STRICT_ANY;
-            }
-            if target == TypeId::ANY {
-                target = TypeId::STRICT_ANY;
-            }
+        if !allow_any_source && source == TypeId::ANY {
+            // In strict mode, any doesn't match everything structurally.
+            // We demote it to STRICT_ANY so it only matches top types or itself.
+            source = TypeId::STRICT_ANY;
+        }
+        if !allow_any_target && target == TypeId::ANY {
+            target = TypeId::STRICT_ANY;
         }
 
         // Same type is always a subtype of itself
@@ -242,7 +245,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Any is assignable to anything except never (when allowed).
         // tsc: `if (s & TypeFlags.Any) return !(t & TypeFlags.Never);`
-        if allow_any
+        if allow_any_source
             && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
             && target != TypeId::NEVER
         {
@@ -250,17 +253,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Everything is assignable to any (when allowed)
-        if allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
+        if allow_any_target && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
             return SubtypeResult::True;
         }
 
-        // If not allowing any (nested strict any / identity mode), STRICT_ANY
-        // can only match STRICT_ANY, ANY, or UNKNOWN as a top-type source.
-        // Crucially, non-any types are NOT assignable to STRICT_ANY in this mode.
+        // If not allowing any sources (nested strict any / identity mode /
+        // overload subtype pass), STRICT_ANY can only match STRICT_ANY, ANY,
+        // or UNKNOWN as a top-type source. Crucially, non-any types are NOT
+        // assignable to STRICT_ANY in the symmetric strict modes.
         // This ensures that bidirectional subtype checks used for identity (TS2403)
         // correctly reject `number <: any` at nested depths, matching tsc's
         // isTypeIdenticalTo where `any` is only identical to `any`.
-        if !allow_any
+        if !allow_any_source
             && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
             && (target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN)
         {

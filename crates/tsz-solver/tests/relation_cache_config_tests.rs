@@ -301,6 +301,7 @@ fn any_propagation_mode_differences_produce_distinct_keys() {
         CachedAnyMode::All,
         CachedAnyMode::TopLevelOnlyAtTop,
         CachedAnyMode::TopLevelOnlyNested,
+        CachedAnyMode::AnySourceNotRelated,
     ];
     for (i, &a) in any_modes.iter().enumerate() {
         for (j, &b) in any_modes.iter().enumerate() {

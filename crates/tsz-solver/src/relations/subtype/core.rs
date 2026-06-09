@@ -107,13 +107,32 @@ pub enum AnyPropagationMode {
     All,
     /// `any` is treated as top/bottom only at the top-level comparison.
     TopLevelOnly,
+    /// Overload-resolution subtype pass (tsc `chooseOverload` with
+    /// `subtypeRelation`): an `any` SOURCE is not related to non-`any`/
+    /// non-`unknown` targets, at every nesting level. An `any`/`unknown`
+    /// TARGET still accepts everything, matching tsc's
+    /// `isSimpleTypeRelatedTo`, where a source `any` returns `true` only for
+    /// the assignable/comparable relations while a target `any` returns
+    /// `true` for every relation.
+    AnySourceNotRelated,
 }
 
 impl AnyPropagationMode {
+    /// Whether an `any` SOURCE may match arbitrary targets at this depth.
     #[inline]
-    pub(crate) const fn allows_any_at_depth(self, depth: u32) -> bool {
+    pub(crate) const fn allows_any_source_at_depth(self, depth: u32) -> bool {
         match self {
             Self::All => true,
+            Self::TopLevelOnly => depth == 0,
+            Self::AnySourceNotRelated => false,
+        }
+    }
+
+    /// Whether an `any` TARGET accepts arbitrary sources at this depth.
+    #[inline]
+    pub(crate) const fn allows_any_target_at_depth(self, depth: u32) -> bool {
+        match self {
+            Self::All | Self::AnySourceNotRelated => true,
             Self::TopLevelOnly => depth == 0,
         }
     }

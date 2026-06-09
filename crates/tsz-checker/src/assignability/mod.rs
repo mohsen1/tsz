@@ -18,6 +18,7 @@ pub(crate) mod compound_assignment;
 mod constrained_type_param_assertion;
 mod index_access_normalization;
 mod nullish_error_targets;
+mod overload_subtype_pass;
 mod polymorphic_this_diagnostics;
 mod readonly_tuple_diagnostics;
 mod relation_outcome_helpers;

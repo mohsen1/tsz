@@ -815,6 +815,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.cache.clear();
     }
 
+    /// Toggle the overload subtype-pass mode (tsc `chooseOverload` with
+    /// `subtypeRelation`): an `any` source is not related to non-`any`/
+    /// non-`unknown` targets, at every nesting level, while an `any` target
+    /// still accepts everything.
+    pub fn set_any_source_not_related(&mut self, enabled: bool) {
+        if self.lawyer.any_source_not_related != enabled {
+            self.lawyer.set_any_source_not_related(enabled);
+            self.cache.clear();
+        }
+    }
+
     /// Get a reference to the lawyer layer for `any` propagation rules.
     pub const fn lawyer(&self) -> &AnyPropagationRules {
         &self.lawyer
@@ -1441,6 +1452,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // `isSimpleTypeRelatedTo`: `if (s & TypeFlags.Any) return !(t & TypeFlags.Never);`
             if source == TypeId::ANY && target == TypeId::NEVER {
                 return Some(false);
+            }
+            // Overload subtype pass: an `any` target still accepts every
+            // source, but an `any` source is related only to `any`/`unknown`
+            // targets, mirroring tsc's `isSimpleTypeRelatedTo` for the
+            // subtype relation (a source `any` returns true only for the
+            // assignable/comparable relations).
+            if self.lawyer.any_source_not_related {
+                return Some(target == TypeId::ANY || target == TypeId::UNKNOWN);
             }
             // If legacy suppression is allowed, we still return true here.
             if self.lawyer.allow_any_suppression {

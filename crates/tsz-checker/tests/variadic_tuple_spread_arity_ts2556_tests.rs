@@ -334,3 +334,61 @@ fn open_ended_tuple_into_iife_all_annotated_emits_ts2556() {
         diagnostic_codes(&diags)
     );
 }
+
+// ---------------------------------------------------------------------------
+// `any` callee: no parameter-arity shape, so non-tuple spreads never overflow
+// a fixed parameter list. tsc resolves `new anyCtor(...args)` through the
+// any-signature path with no TS2556 (comlink canary, issue #13042).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn any_constructor_spread_arguments_do_not_emit_ts2556() {
+    let source = "\
+declare const makerish: any;
+declare const packedBlob: any;
+declare const packedList: any[];
+const built = new makerish(...packedBlob);
+const builtFromList = new makerish(...packedList);
+";
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        0,
+        "spread into an `any` constructor must not emit TS2556, got {:?}",
+        diagnostic_codes(&diags)
+    );
+}
+
+#[test]
+fn any_callee_call_spread_arguments_do_not_emit_ts2556() {
+    let source = "\
+declare const invoker: any;
+declare const looseArgs: any[];
+const out = invoker(...looseArgs);
+";
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        0,
+        "spread into an `any` callee must not emit TS2556, got {:?}",
+        diagnostic_codes(&diags)
+    );
+}
+
+#[test]
+fn known_constructor_non_tuple_spread_still_emits_ts2556() {
+    let source = "\
+declare class CrateBox {
+    constructor(width: number, label: string);
+}
+declare const loosePair: number[];
+const crated = new CrateBox(...loosePair);
+";
+    let diags = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        1,
+        "non-tuple spread into a fixed-arity constructor keeps TS2556, got {:?}",
+        diagnostic_codes(&diags)
+    );
+}

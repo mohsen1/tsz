@@ -678,6 +678,15 @@ impl<'a> ContextualTypeContext<'a> {
         let Some(expected) = self.expected else {
             return false;
         };
+        // An `any` (or error) callable imposes no parameter-arity shape, so a
+        // non-tuple spread can never overflow a fixed parameter list. tsc
+        // resolves `new anyCtor(...args)` through the any-signature path with
+        // no TS2556. This mirrors the no-callable fallback probe used when no
+        // contextual callable type is available, which also accepts every
+        // position for an `any` callee.
+        if expected == TypeId::ANY || expected == TypeId::ERROR {
+            return true;
+        }
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);

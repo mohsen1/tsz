@@ -54,6 +54,12 @@ pub(crate) struct OverloadResolution {
 
 pub(super) struct CheckerCallAssignabilityAdapter<'s, 'ctx> {
     pub(super) state: &'s mut CheckerState<'ctx>,
+    /// Overload-resolution subtype pass (tsc `chooseOverload` with
+    /// `subtypeRelation`): when set, the three relation probes below route
+    /// through the subtype-pass relation entries where an `any` source is
+    /// not related to concrete targets at every nesting level. Non-relation
+    /// adapter methods are unaffected.
+    pub(super) overload_subtype_pass: bool,
 }
 
 impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
@@ -68,7 +74,15 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        if self
+        if self.overload_subtype_pass {
+            if self
+                .state
+                .overload_subtype_pass_compatibility_relation_outcome(source, target)
+                .related
+            {
+                return true;
+            }
+        } else if self
             .state
             .call_adapter_compatibility_relation_outcome(source, target)
             .related
@@ -94,6 +108,12 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
+        if self.overload_subtype_pass {
+            return self
+                .state
+                .overload_subtype_pass_strict_relation_outcome(source, target)
+                .related;
+        }
         self.state.strict_relation_outcome(source, target).related
     }
 
@@ -107,6 +127,12 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
                 .is_some()
         {
             return false;
+        }
+        if self.overload_subtype_pass {
+            return self
+                .state
+                .overload_subtype_pass_bivariant_relation_outcome(source, target)
+                .related;
         }
         self.state
             .bivariant_callbacks_relation_outcome(source, target)
