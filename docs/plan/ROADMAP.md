@@ -379,7 +379,8 @@ toward the `2x` target or move a red runtime/residency row toward green.
 Track these as counters or periodic audit bullets. They are more useful than
 subjective "cleanup" language.
 
-1. `CheckerContext` field count, currently pinned at `244`, plus the number of
+1. `CheckerContext` field count, currently pinned at `245` (bumped for the
+   `deferred_flow_env_writes` mirror-replay queue in #13036), plus the number of
    checker `source_text.contains` / file-name / rendered-message
    diagnostic decisions.
 2. Number of post-check `rewrite_*_fingerprints` passes still active.

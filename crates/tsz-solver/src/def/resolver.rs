@@ -881,6 +881,104 @@ impl TypeEnvironment {
         }
     }
 
+    /// Vacancy-fill every local registration map from `source` into `self`.
+    ///
+    /// This is the comprehensive reconciliation used to make the flow-analyzer
+    /// environment (`type_environment`) a complete mirror of the evaluator
+    /// environment (`type_env`) after a file's type environment is built. Unlike
+    /// a full `clone()` it never reallocates maps that are already populated and
+    /// never discards entries that only exist in `self` (e.g. mappings written
+    /// directly into the flow-analyzer env), so it is a strict superset merge:
+    /// `self := self ∪ source`, keeping `self`'s value on key collisions.
+    ///
+    /// Entries are copied only where `self` lacks the key, so the common case
+    /// (where `source` and `self` were kept in lock-step by the dual-write
+    /// registration helpers) touches nothing. The shared `DefinitionStore`,
+    /// `this_type`, and array-base scalars are filled only when `self` has no
+    /// value, mirroring the previous full-snapshot behavior at the file
+    /// preparation boundary where those scalars are otherwise unset.
+    ///
+    /// Maintenance contract: this overlay must list **every** local field so it
+    /// can reconcile registrations that the checker writes into the evaluator
+    /// env only (for example symbol-keyed `types`, `enum_parents`,
+    /// `numeric_enums`, and `unresolved_name_resolutions`), which are never
+    /// dual-written and therefore never reach the deferred-replay queue. When a
+    /// new field is added to `TypeEnvironment`, add it here too or the
+    /// flow-analyzer env will silently diverge from the evaluator env.
+    pub fn overlay_missing_from(&mut self, source: &Self) {
+        use std::collections::hash_map::Entry;
+        let mut changed = false;
+
+        // `copy` for `Copy` values, `clone` for owned (`Vec`/`Arc`) values.
+        macro_rules! fill_map {
+            ($field:ident, copy) => {
+                for (key, value) in &source.$field {
+                    if let Entry::Vacant(entry) = self.$field.entry(key.clone()) {
+                        entry.insert(*value);
+                        changed = true;
+                    }
+                }
+            };
+            ($field:ident, clone) => {
+                for (key, value) in &source.$field {
+                    if let Entry::Vacant(entry) = self.$field.entry(key.clone()) {
+                        entry.insert(value.clone());
+                        changed = true;
+                    }
+                }
+            };
+        }
+
+        fill_map!(types, copy);
+        fill_map!(type_params, clone);
+        fill_map!(boxed_types, copy);
+        fill_map!(def_types, copy);
+        fill_map!(def_type_params, clone);
+        fill_map!(declared_variances, clone);
+        fill_map!(def_to_symbol, copy);
+        fill_map!(symbol_to_def, copy);
+        fill_map!(def_kinds, copy);
+        fill_map!(enum_namespace_types, copy);
+        fill_map!(enum_parents, copy);
+        fill_map!(enum_members, clone);
+        fill_map!(class_instance_types, copy);
+        fill_map!(boxed_def_ids, clone);
+        fill_map!(class_extends, copy);
+        fill_map!(instance_type_to_class, copy);
+        fill_map!(unresolved_name_resolutions, copy);
+        fill_map!(well_known_symbol_name_to_ref, copy);
+
+        for value in &source.numeric_enums {
+            if self.numeric_enums.insert(*value) {
+                changed = true;
+            }
+        }
+
+        if self.array_base_type.is_none() && source.array_base_type.is_some() {
+            self.array_base_type = source.array_base_type;
+            self.array_base_type_params = source.array_base_type_params.clone();
+            changed = true;
+        }
+        if self.readonly_array_base_type.is_none() && source.readonly_array_base_type.is_some() {
+            self.readonly_array_base_type = source.readonly_array_base_type;
+            changed = true;
+        }
+        if self.this_type.is_none() && source.this_type.is_some() {
+            self.this_type = source.this_type;
+            changed = true;
+        }
+        if self.definition_store.is_none()
+            && let Some(store) = source.definition_store.as_ref()
+        {
+            self.definition_store = Some(Arc::clone(store));
+            changed = true;
+        }
+
+        if changed {
+            self.bump_generation();
+        }
+    }
+
     /// Snapshot the local DefId -> TypeId cache for downstream consumers like declaration emit.
     pub fn snapshot_def_types(&self) -> FxHashMap<u32, TypeId> {
         self.def_types.clone()
@@ -1521,6 +1619,66 @@ mod tests {
             env.get_def_kind(def_id),
             Some(DefKind::TypeAlias),
             "get_def_kind must find kind via store fallback after set_definition_store"
+        );
+    }
+
+    /// `overlay_missing_from` must fill flow-analyzer-env-local maps that only
+    /// the evaluator env carries (e.g. `enum_parents`, `class_extends`, and the
+    /// symbol-keyed `types` map) while preserving entries unique to the target
+    /// and not overwriting existing keys.
+    #[test]
+    fn overlay_missing_from_fills_evaluator_only_maps_without_clobbering() {
+        let source_def = DefId(10);
+        let parent_def = DefId(11);
+        let child_def = DefId(12);
+        let shared_def = DefId(13);
+
+        let mut source = TypeEnvironment::new();
+        source.insert_def(source_def, TypeId(100));
+        source.register_enum_parent(child_def, parent_def);
+        source.register_class_extends(child_def, parent_def);
+        source.insert(SymbolRef(7), TypeId(200));
+        // A key both envs already agree on, but with the target's own value kept.
+        source.insert_def(shared_def, TypeId(300));
+
+        let mut target = TypeEnvironment::new();
+        // Target keeps a flow-analyzer-only mapping the evaluator never wrote.
+        target.register_class_extends(DefId(99), DefId(98));
+        // Target already has `shared_def` with a different value; overlay must
+        // not clobber it.
+        target.insert_def(shared_def, TypeId(301));
+
+        target.overlay_missing_from(&source);
+
+        assert_eq!(
+            target.get_def(source_def),
+            Some(TypeId(100)),
+            "evaluator-only def body must be filled"
+        );
+        assert_eq!(
+            target.get_enum_parent(child_def),
+            Some(parent_def),
+            "evaluator-only enum-parent must be filled"
+        );
+        assert_eq!(
+            target.get_class_extends_def(child_def),
+            Some(parent_def),
+            "evaluator-only class-extends must be filled"
+        );
+        assert_eq!(
+            target.get(SymbolRef(7)),
+            Some(TypeId(200)),
+            "evaluator-only symbol-keyed type must be filled"
+        );
+        assert_eq!(
+            target.get_class_extends_def(DefId(99)),
+            Some(DefId(98)),
+            "flow-analyzer-only entry must be preserved"
+        );
+        assert_eq!(
+            target.get_def(shared_def),
+            Some(TypeId(301)),
+            "existing target value must not be overwritten on key collision"
         );
     }
 }

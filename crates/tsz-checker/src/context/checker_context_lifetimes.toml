@@ -46,6 +46,7 @@ request_node_types = { lifetime = "SpeculationScoped", capability = "Speculation
 object_literal_tracking = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 request_cache_counters = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 type_environment = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+deferred_flow_env_writes = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "queued flow-analyzer-env mirror writes that lost the type_environment RefCell borrow race; replayed before reads and cleared at file-session boundary" }
 application_eval_set = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 mapped_eval_set = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 type_resolution_visiting = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

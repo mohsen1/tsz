@@ -94,6 +94,7 @@ impl<'a> CheckerContext<'a> {
             object_literal_tracking: crate::context::ObjectLiteralTracking::default(),
             request_cache_counters: crate::context::RequestCacheCounters::default(),
             type_environment: RefCell::new(TypeEnvironment::new()),
+            deferred_flow_env_writes: RefCell::new(Vec::new()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
