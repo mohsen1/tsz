@@ -536,9 +536,9 @@ impl ParserState {
             // They belong to the enclosing context (e.g., object literal list).
             // This prevents `get e,` from consuming `,` as a parameter delimiter
             // and cascading errors into subsequent properties.
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else if self.is_token(SyntaxKind::CloseParenToken) {
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else if self.is_token(SyntaxKind::CommaToken) {
             use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.parse_error_at_current_token(
@@ -546,7 +546,7 @@ impl ParserState {
                 diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
             );
             self.next_token();
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
             // Report error at the accessor name, matching tsc behavior
@@ -650,9 +650,9 @@ impl ParserState {
         let parameters = if !had_open_paren {
             // If ( was missing entirely, don't consume following tokens as parameters.
             // They belong to the enclosing context (e.g., object literal list).
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else if self.is_token(SyntaxKind::CloseParenToken) {
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else {
             self.parse_parameter_list()
         };
@@ -729,7 +729,7 @@ impl ParserState {
             let mod_idx = self
                 .arena
                 .create_modifier(SyntaxKind::AsyncKeyword, start_pos);
-            self.make_node_list(vec![mod_idx])
+            Self::make_node_list(vec![mod_idx])
         });
 
         // Check for generator after async: async *foo()
@@ -780,7 +780,7 @@ impl ParserState {
                 self.parse_expected(SyntaxKind::CloseParenToken);
                 params
             } else {
-                self.make_node_list(vec![])
+                Self::make_node_list(vec![])
             };
 
             let saved_flags = self.context_flags;
@@ -892,7 +892,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
             body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         };
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
@@ -974,7 +974,7 @@ impl ParserState {
             let mod_idx = self
                 .arena
                 .create_modifier(SyntaxKind::AsyncKeyword, start_pos);
-            self.make_node_list(vec![mod_idx])
+            Self::make_node_list(vec![mod_idx])
         });
 
         let end_pos = self.token_end();

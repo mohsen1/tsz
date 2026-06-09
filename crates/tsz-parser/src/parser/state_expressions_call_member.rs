@@ -277,7 +277,7 @@ impl ParserState {
                             CallExprData {
                                 expression: expr,
                                 type_arguments: Some(type_args),
-                                arguments: Some(self.make_node_list(Vec::new())),
+                                arguments: Some(Self::make_node_list(Vec::new())),
                             },
                         );
                         let optional_chain_flag =

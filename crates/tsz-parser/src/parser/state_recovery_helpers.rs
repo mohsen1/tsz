@@ -626,8 +626,7 @@ impl ParserState {
     }
 
     /// Create a `NodeList` from a Vec of `NodeIndex`
-    pub(crate) const fn make_node_list(&self, nodes: Vec<NodeIndex>) -> NodeList {
-        let _ = self;
+    pub(crate) const fn make_node_list(nodes: Vec<NodeIndex>) -> NodeList {
         NodeList {
             nodes,
             pos: 0,

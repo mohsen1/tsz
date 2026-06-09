@@ -31,7 +31,7 @@ impl ParserState {
                     name: NodeIndex::NONE,
                     type_parameters: None,
                     heritage_clauses: None,
-                    members: self.make_node_list(Vec::new()),
+                    members: Self::make_node_list(Vec::new()),
                 },
             );
         }
@@ -64,7 +64,7 @@ impl ParserState {
 
         let (type_parameters, heritage_clauses, members) =
             if recover_reserved_class_name_as_statement {
-                (None, None, self.make_node_list(Vec::new()))
+                (None, None, Self::make_node_list(Vec::new()))
             } else {
                 let type_parameters = self
                     .is_token(SyntaxKind::LessThanToken)
@@ -75,7 +75,7 @@ impl ParserState {
                     self.next_token();
                     self.non_block_close_brace_statement_errors_remaining =
                         CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT;
-                    self.make_node_list(Vec::new())
+                    Self::make_node_list(Vec::new())
                 } else {
                     let class_saved_flags = self.context_flags;
                     self.context_flags |= CONTEXT_FLAG_IN_CLASS;
@@ -137,7 +137,7 @@ impl ParserState {
 
         let (type_parameters, heritage_clauses, members) =
             if recover_reserved_class_name_as_statement {
-                (None, None, self.make_node_list(Vec::new()))
+                (None, None, Self::make_node_list(Vec::new()))
             } else {
                 let type_parameters = self
                     .is_token(SyntaxKind::LessThanToken)
@@ -148,7 +148,7 @@ impl ParserState {
                     self.next_token();
                     self.non_block_close_brace_statement_errors_remaining =
                         CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT;
-                    self.make_node_list(Vec::new())
+                    Self::make_node_list(Vec::new())
                 } else {
                     let class_saved_flags = self.context_flags;
                     self.context_flags |= CONTEXT_FLAG_IN_CLASS;
@@ -221,7 +221,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ClassData {
-                modifiers: Some(self.make_node_list(vec![abstract_modifier])),
+                modifiers: Some(Self::make_node_list(vec![abstract_modifier])),
                 name,
                 type_parameters,
                 heritage_clauses,
@@ -269,7 +269,7 @@ impl ParserState {
                 tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
             );
             self.recover_parenthesized_class_declaration_tail();
-            self.make_node_list(Vec::new())
+            Self::make_node_list(Vec::new())
         } else {
             // Preserve existing fallback behavior for other malformed class bodies.
             let saved_flags = self.context_flags;
@@ -286,7 +286,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ClassData {
-                modifiers: Some(self.make_node_list(vec![declare_modifier])),
+                modifiers: Some(Self::make_node_list(vec![declare_modifier])),
                 name,
                 type_parameters,
                 heritage_clauses,
@@ -342,7 +342,7 @@ impl ParserState {
                 tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
             );
             self.recover_parenthesized_class_declaration_tail();
-            self.make_node_list(Vec::new())
+            Self::make_node_list(Vec::new())
         } else {
             let saved_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
@@ -358,7 +358,10 @@ impl ParserState {
             start_pos,
             end_pos,
             ClassData {
-                modifiers: Some(self.make_node_list(vec![declare_modifier, abstract_modifier])),
+                modifiers: Some(Self::make_node_list(vec![
+                    declare_modifier,
+                    abstract_modifier,
+                ])),
                 name,
                 type_parameters,
                 heritage_clauses,
@@ -498,7 +501,7 @@ impl ParserState {
                 );
                 let mut nodes = decorators.map(|list| list.nodes).unwrap_or_default();
                 nodes.push(default_modifier);
-                let modifiers = Some(self.make_node_list(nodes));
+                let modifiers = Some(Self::make_node_list(nodes));
 
                 match self.token() {
                     SyntaxKind::ClassKeyword => {
@@ -603,7 +606,7 @@ impl ParserState {
         if decorators.is_empty() {
             None
         } else {
-            Some(self.make_node_list(decorators))
+            Some(Self::make_node_list(decorators))
         }
     }
 
@@ -797,9 +800,9 @@ impl ParserState {
             // Add abstract modifier to decorator list
             let mut nodes: Vec<NodeIndex> = dec_list.nodes;
             nodes.push(abstract_modifier);
-            Some(self.make_node_list(nodes))
+            Some(Self::make_node_list(nodes))
         } else {
-            Some(self.make_node_list(vec![abstract_modifier]))
+            Some(Self::make_node_list(vec![abstract_modifier]))
         };
 
         self.arena.add_class(
@@ -845,7 +848,7 @@ impl ParserState {
         if clauses.is_empty() {
             None
         } else {
-            Some(self.make_node_list(clauses))
+            Some(Self::make_node_list(clauses))
         }
     }
 
@@ -895,7 +898,7 @@ impl ParserState {
                 end_pos,
                 crate::parser::node::HeritageData {
                     token: SyntaxKind::ExtendsKeyword as u16,
-                    types: self.make_node_list(Vec::new()),
+                    types: Self::make_node_list(Vec::new()),
                 },
             ));
         }
@@ -940,7 +943,7 @@ impl ParserState {
             end_pos,
             crate::parser::node::HeritageData {
                 token: SyntaxKind::ExtendsKeyword as u16,
-                types: self.make_node_list(type_refs),
+                types: Self::make_node_list(type_refs),
             },
         ))
     }
@@ -1013,7 +1016,7 @@ impl ParserState {
             end_pos,
             crate::parser::node::HeritageData {
                 token: SyntaxKind::ImplementsKeyword as u16,
-                types: self.make_node_list(types),
+                types: Self::make_node_list(types),
             },
         ))
     }
@@ -1275,7 +1278,7 @@ impl ParserState {
                         end_pos,
                         crate::parser::node::CallExprData {
                             expression: expr,
-                            type_arguments: Some(self.make_node_list(type_args)),
+                            type_arguments: Some(Self::make_node_list(type_args)),
                             arguments: Some(args),
                         },
                     ))
@@ -1286,7 +1289,7 @@ impl ParserState {
                         self.token_end(),
                         crate::parser::node::ExprWithTypeArgsData {
                             expression: expr,
-                            type_arguments: Some(self.make_node_list(type_args)),
+                            type_arguments: Some(Self::make_node_list(type_args)),
                         },
                     ))
                 }
@@ -1328,6 +1331,6 @@ impl ParserState {
         }
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::CloseParenToken);
-        (end_pos, self.make_node_list(args))
+        (end_pos, Self::make_node_list(args))
     }
 }

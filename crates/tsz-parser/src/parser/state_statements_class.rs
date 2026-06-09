@@ -653,7 +653,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(params)
+        Self::make_node_list(params)
     }
 
     /// Check if current token is a valid parameter modifier
@@ -835,7 +835,7 @@ impl ParserState {
         if modifiers.is_empty() {
             None
         } else {
-            Some(self.make_node_list(modifiers))
+            Some(Self::make_node_list(modifiers))
         }
     }
 
@@ -947,7 +947,7 @@ impl ParserState {
                 );
                 nodes.extend(decorators.nodes);
                 nodes.extend(param_modifiers.nodes);
-                Some(self.make_node_list(nodes))
+                Some(Self::make_node_list(nodes))
             }
         };
 

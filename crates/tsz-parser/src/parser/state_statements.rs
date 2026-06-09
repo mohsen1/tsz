@@ -522,7 +522,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(statements)
+        Self::make_node_list(statements)
     }
 
     /// Parse list of statements (for blocks, function bodies, etc.).
@@ -712,7 +712,7 @@ impl ParserState {
         }
 
         self.statement_list_depth -= 1;
-        self.make_node_list(statements)
+        Self::make_node_list(statements)
     }
 
     fn recover_orphan_case_assignment_before_if(&mut self) -> bool {
@@ -1039,7 +1039,7 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseBraceToken);
             stmts
         } else {
-            self.make_node_list(Vec::new())
+            Self::make_node_list(Vec::new())
         };
         let end_pos = self.token_end();
 
@@ -1089,7 +1089,7 @@ impl ParserState {
             end_pos,
             VariableData {
                 modifiers,
-                declarations: self.make_node_list(vec![declaration_list]),
+                declarations: Self::make_node_list(vec![declaration_list]),
                 recovered_typeof_member_calls: Vec::new(),
             },
         )
@@ -1850,7 +1850,7 @@ impl ParserState {
             end_pos,
             VariableData {
                 modifiers: None,
-                declarations: self.make_node_list(declarations),
+                declarations: Self::make_node_list(declarations),
                 recovered_typeof_member_calls,
             },
             flags,

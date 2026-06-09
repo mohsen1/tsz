@@ -274,7 +274,7 @@ impl ParserState {
             end_pos,
             crate::parser::node::BindingPatternData {
                 elements: {
-                    let mut list = self.make_node_list(elements);
+                    let mut list = Self::make_node_list(elements);
                     list.has_trailing_comma = has_trailing_comma;
                     list
                 },
@@ -455,7 +455,7 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::BindingPatternData {
-                elements: self.make_node_list(elements),
+                elements: Self::make_node_list(elements),
             },
         )
     }
@@ -1053,7 +1053,7 @@ impl ParserState {
         if let Some(opt) = options {
             args.push(opt);
         }
-        let arguments = self.make_node_list(args);
+        let arguments = Self::make_node_list(args);
 
         self.arena.add_call_expr(
             syntax_kind_ext::CALL_EXPRESSION,
@@ -1146,7 +1146,7 @@ impl ParserState {
             }
         };
 
-        (end_pos, self.make_node_list(spans))
+        (end_pos, Self::make_node_list(spans))
     }
 
     fn parse_template_expression_span(&mut self) -> (u32, NodeIndex, bool) {
@@ -1638,7 +1638,7 @@ impl ParserState {
             start_pos,
             end_pos,
             LiteralExprData {
-                elements: self.make_node_list(elements),
+                elements: Self::make_node_list(elements),
                 multi_line: false,
             },
         )

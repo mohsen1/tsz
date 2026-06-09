@@ -7,7 +7,7 @@
 //! patterns, JSX, signatures, source files).
 
 use super::base::{NodeIndex, NodeList};
-use super::node::{Node, NodeArena};
+use super::node::{Node, NodeArenaInner};
 use super::syntax_kind_ext::{
     ARRAY_BINDING_PATTERN, ARRAY_LITERAL_EXPRESSION, ARRAY_TYPE, ARROW_FUNCTION, AS_EXPRESSION,
     AWAIT_EXPRESSION, BINARY_EXPRESSION, BINDING_ELEMENT, BLOCK, BREAK_STATEMENT, CALL_EXPRESSION,
@@ -38,7 +38,7 @@ use super::syntax_kind_ext::{
     YIELD_EXPRESSION,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     #[inline]
     pub(crate) fn add_opt_child(children: &mut Vec<NodeIndex>, idx: NodeIndex) {
         if idx.is_some() {
