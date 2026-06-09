@@ -501,6 +501,111 @@ const parsed: "string" = ZodParsedType.string;
     );
 }
 
+/// Shared `arrayToEnum` helper module used by the imported-recovery tests below.
+const ARRAY_TO_ENUM_UTIL_TS: &str = r#"
+export const arrayToEnum = <T extends string, U extends [T, ...T[]]>(
+    items: U
+): { [k in U[number]]: k } => {
+    const obj: any = {};
+    for (const item of items) obj[item] = item;
+    return obj as any;
+};
+"#;
+
+/// Shared module that exports a const produced by `arrayToEnum`.
+const ARRAY_TO_ENUM_CODES_TS: &str = r#"
+import { arrayToEnum } from "./util";
+
+export const ZodIssueCode = arrayToEnum(["invalid_type", "custom"]);
+"#;
+
+#[test]
+fn renamed_array_to_enum_value_import_preserves_literal_members() {
+    // The named import is renamed (`ZodIssueCode as Codes`). Member recovery must
+    // resolve through the binder's import_name (the original export), not the
+    // local alias name, so the literal members survive the rename.
+    let diags = check_multi_file(
+        &[
+            ("util.ts", ARRAY_TO_ENUM_UTIL_TS),
+            ("codes.ts", ARRAY_TO_ENUM_CODES_TS),
+            (
+                "main.ts",
+                r#"
+import { ZodIssueCode as Codes } from "./codes";
+
+const code: "invalid_type" = Codes.invalid_type;
+const other: "custom" = Codes.custom;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 2345 | 2353))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected renamed arrayToEnum import to keep literal value members, got: {:?}",
+        relevant
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn type_only_array_to_enum_import_does_not_recover_value_members() {
+    // A `import type { ZodIssueCode }` edge is erased at runtime. The recovery
+    // path must respect the type-only status reported by the resolver boundary
+    // and NOT synthesize literal value members from a type-only import. tsc
+    // reports TS2339 for the value-space property access here.
+    let diags = check_multi_file(
+        &[
+            ("util.ts", ARRAY_TO_ENUM_UTIL_TS),
+            ("codes.ts", ARRAY_TO_ENUM_CODES_TS),
+            (
+                "main.ts",
+                r#"
+import type { ZodIssueCode } from "./codes";
+
+const bad = (ZodIssueCode as any).invalid_type;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    // The point of this case is that recovery does not fabricate a literal-string
+    // member type from a type-only import; the cast to `any` keeps the program
+    // otherwise diagnostic-free so the test stays focused on the recovery path.
+    let assignment_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2345))
+        .collect();
+    assert_eq!(
+        assignment_errors.len(),
+        0,
+        "Type-only arrayToEnum import should not surface assignment diagnostics, got: {:?}",
+        assignment_errors
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn zod_issue_5030_defaults_path_with_logical_or_array_literal() {
     let diags = check_source_diagnostics(
