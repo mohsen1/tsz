@@ -93,6 +93,9 @@ path = "tests/lib_heritage_cycle_dom_tests.rs"
 name = "keyof_operand_indexed_access_validation_tests"
 path = "tests/keyof_operand_indexed_access_validation_tests.rs"
 [[test]]
+name = "large_union_conditional_distribution_tests"
+path = "tests/large_union_conditional_distribution_tests.rs"
+[[test]]
 name = "union_protected_intersection_property_tests"
 path = "tests/union_protected_intersection_property_tests.rs"
 [[test]]

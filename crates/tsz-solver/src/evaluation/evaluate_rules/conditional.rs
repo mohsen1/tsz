@@ -27,6 +27,30 @@ use super::super::evaluate::TypeEvaluator;
 use crate::type_queries::get_application_base;
 use phases::TailCallStep;
 
+/// Maximum number of union members a distributive conditional type
+/// (`Exclude`, `Extract`, `NonNullable`, and any user `T extends U ? X : Y`
+/// distributed over a union) may expand before the solver bails with
+/// `TypeId::ERROR`.
+///
+/// Distribution is linear in the member count — one conditional is evaluated
+/// per member — so the dominant cost is bounded CPU/allocation rather than a
+/// combinatorial blow-up. The previous value of `100` was far below the size of
+/// real-world key spaces: filtering `keyof` over a generated API surface, a DOM
+/// tag-name map, or an SDK enum routinely produces unions of 150–500 members.
+/// When the cap was hit the conditional collapsed to `TypeId::ERROR`, which then
+/// poisoned downstream `keyof`/relation decisions and silently dropped or
+/// invented diagnostics (false negatives such as missing **TS2536** on indexed
+/// access through such a key space).
+///
+/// WASM keeps a smaller bound for memory safety; native CLI/server builds can
+/// afford a larger one. The values intentionally mirror `DEFAULT_MAX_MAPPED_KEYS`
+/// (the analogous "evaluate a large key space" cap), which was already raised
+/// from `100` for the same real-world reason.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const MAX_CONDITIONAL_DISTRIBUTION_SIZE: usize = 250;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_CONDITIONAL_DISTRIBUTION_SIZE: usize = 500;
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
     /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
@@ -1502,9 +1526,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         true_type: TypeId,
         false_type: TypeId,
     ) -> TypeId {
-        // Limit distribution to prevent OOM with large unions
-        const MAX_DISTRIBUTION_SIZE: usize = 100;
-        if members.len() > MAX_DISTRIBUTION_SIZE {
+        // Limit distribution to prevent OOM with pathologically large unions.
+        if members.len() > MAX_CONDITIONAL_DISTRIBUTION_SIZE {
             self.mark_depth_exceeded();
             return TypeId::ERROR;
         }
