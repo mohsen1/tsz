@@ -12,6 +12,7 @@ mod optional_chain_cache;
 mod optional_fast_path;
 mod partial_initializer;
 mod resolve;
+mod value_import;
 
 #[cfg(test)]
 mod resolve_tests;
