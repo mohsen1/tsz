@@ -388,6 +388,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let members = self.interner.type_list(list_id);
                 members.iter().any(|&m| self.is_complex_type(m))
             }
+            // A generic-dependent application (`Foo<DB, TB>` with type-parameter
+            // arguments) expands to a type the bypass-evaluation subtype checker
+            // cannot judge soundly (e.g. an alias body `keyof DB[TB] & string`
+            // looks string-like and gets absorbed by an object member). tsc does
+            // not subtype-reduce union members that depend on unresolved type
+            // parameters, so keep them. Fully-concrete applications stay
+            // simplifiable via the canonicalizer.
+            TypeData::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                app.args.iter().any(|&arg| self.is_complex_type(arg))
+            }
             TypeData::Array(_) | TypeData::Tuple(_) => self.has_nested_complex_marker(type_id),
             // Function types with Application/Lazy return *or parameter* types are
             // complex because the simplify-union subtype checker runs with

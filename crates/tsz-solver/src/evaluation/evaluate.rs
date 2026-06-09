@@ -804,3 +804,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/evaluate_application_orchestrator_tests.rs"]
 mod orchestrator_tests;
+
+#[cfg(test)]
+#[path = "../../tests/union_simplification_generic_member_tests.rs"]
+mod union_simplification_generic_member_tests;
