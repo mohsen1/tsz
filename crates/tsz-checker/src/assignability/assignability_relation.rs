@@ -2,10 +2,10 @@
 
 use crate::query_boundaries::assignability::{
     AssignabilityQueryInputs, RelationOutcome, RelationRequest, are_types_overlapping_with_env,
-    assignability_cache_key, check_application_variance_assignability, get_allowed_keys,
-    get_keyof_type, get_string_literal_value, get_union_members,
-    intersection_source_has_target_constituent, is_assignable_bivariant_with_resolver,
-    is_assignable_with_overrides, is_relation_cacheable, object_shape_for_type,
+    cached_assignability_with_overrides, cached_bivariant_assignability_with_resolver,
+    check_application_variance_assignability, get_allowed_keys, get_keyof_type,
+    get_string_literal_value, get_union_members, intersection_source_has_target_constituent,
+    object_shape_for_type,
 };
 use crate::query_boundaries::common::{
     has_call_signatures, has_construct_signatures, intersection_members, is_empty_object_type,
@@ -33,18 +33,10 @@ impl<'a> CheckerState<'a> {
         extra_flags: u16,
         label: &str,
     ) -> bool {
-        let is_cacheable = is_relation_cacheable(self.ctx.types, source, target);
         let flags = self.ctx.pack_relation_flags() | extra_flags;
 
-        if is_cacheable {
-            let cache_key = assignability_cache_key(source, target, flags);
-            if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
-                return cached;
-            }
-        }
-
         let overrides = CheckerOverrideProvider::new(self, None);
-        let relation_result = is_assignable_with_overrides(
+        let relation_result = cached_assignability_with_overrides(
             &AssignabilityQueryInputs {
                 db: self.ctx.types,
                 resolver: &self.ctx,
@@ -62,11 +54,6 @@ impl<'a> CheckerState<'a> {
             relation_result.depth_exceeded,
             relation_result.iteration_exceeded,
         );
-
-        if is_cacheable {
-            let cache_key = assignability_cache_key(source, target, flags);
-            self.ctx.types.insert_assignability_cache(cache_key, result);
-        }
 
         trace!(source = source.0, target = target.0, result, "{label}");
         result
@@ -1823,7 +1810,7 @@ impl<'a> CheckerState<'a> {
             let env = self.ctx.type_env.borrow();
             let flags = self.ctx.pack_relation_flags();
             let overrides = CheckerOverrideProvider::new(self, Some(&*env));
-            let relation_result = is_assignable_with_overrides(
+            let relation_result = cached_assignability_with_overrides(
                 &AssignabilityQueryInputs {
                     db: self.ctx.types,
                     resolver: &*env,
@@ -1917,11 +1904,6 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
-        // Check relation cache for non-inference types
-        // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
-        // Note: Use ORIGINAL types for cache key, not evaluated types
-        let is_cacheable = is_relation_cacheable(self.ctx.types, source, target);
-
         // For bivariant checks, we strip the strict_function_types flag
         // so the cache key is distinct from regular assignability checks.
         // `extra_flags` lets callers force additional policy (e.g.
@@ -1930,19 +1912,9 @@ impl<'a> CheckerState<'a> {
             & !crate::query_boundaries::assignability::RelationFlags::STRICT_FUNCTION_TYPES)
             | extra_flags;
 
-        if is_cacheable {
-            // Note: For assignability checks, we use AnyPropagationMode::All (0)
-            // since the checker doesn't track depth like SubtypeChecker does
-            let cache_key = assignability_cache_key(source, target, flags);
-
-            if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
-                return cached;
-            }
-        }
-
         let env = self.ctx.type_env.borrow();
         // Preserve existing behavior: bivariant path does not use checker overrides.
-        let relation_result = is_assignable_bivariant_with_resolver(
+        let relation_result = cached_bivariant_assignability_with_resolver(
             self.ctx.types,
             &*env,
             source,
@@ -1956,14 +1928,6 @@ impl<'a> CheckerState<'a> {
             relation_result.iteration_exceeded,
         );
         let result = relation_result.is_related();
-
-        // Cache the result for non-inference types
-        // Use ORIGINAL types for cache key (not evaluated types)
-        if is_cacheable {
-            let cache_key = assignability_cache_key(source, target, flags);
-
-            self.ctx.types.insert_assignability_cache(cache_key, result);
-        }
 
         trace!(
             source = source.0,
