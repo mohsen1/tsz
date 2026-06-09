@@ -717,17 +717,21 @@ export const x = foo();
             !ts2883_diags.is_empty(),
             "Expected at least one TS2883 diagnostic for nested node_modules type reference, got: {diagnostics:?}"
         );
+        // tsc order: "reference to 'TYPE_NAME' from 'MODULE_PATH'"
+        let msg = &ts2883_diags[0].message_text;
         assert!(
-            ts2883_diags[0].message_text.contains("NestedProps"),
-            "TS2883 message should reference 'NestedProps', got: {}",
-            ts2883_diags[0].message_text
+            msg.contains("NestedProps"),
+            "TS2883 message should reference 'NestedProps', got: {msg}"
         );
         assert!(
-            ts2883_diags[0]
-                .message_text
-                .contains("foo/node_modules/nested"),
-            "TS2883 message should reference 'foo/node_modules/nested', got: {}",
-            ts2883_diags[0].message_text
+            msg.contains("foo/node_modules/nested"),
+            "TS2883 message should reference 'foo/node_modules/nested', got: {msg}"
+        );
+        let ref_pos = msg.find("reference to 'NestedProps'").unwrap_or(usize::MAX);
+        let from_pos = msg.find("from 'foo/node_modules/nested'").unwrap_or(usize::MAX);
+        assert!(
+            ref_pos < from_pos,
+            "TS2883 message should have type name before module path (tsc order), got: {msg}"
         );
     }
 

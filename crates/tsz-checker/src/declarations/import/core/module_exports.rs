@@ -262,7 +262,7 @@ impl<'a> CheckerState<'a> {
                                     self.error_at_node_msg(
                                         diagnostic_node,
                                         crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
-                                        &["default", &type_name, &from_path],
+                                        &["default", &from_path, &type_name],
                                     );
                                 }
                             }

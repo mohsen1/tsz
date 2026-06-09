@@ -153,106 +153,28 @@ pub(super) fn resolve_declaration_reference_path_file(
 }
 
 pub(super) fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
-    let mut exact_seen: FxHashMap<(u32, String, u32, u32, String), usize> = FxHashMap::default();
-    let mut unique: Vec<(Diagnostic, bool)> = Vec::new();
-
-    for diagnostic in diagnostics {
-        let mut diagnostic = diagnostic;
-        let mut was_canonicalized = false;
-        if diagnostic.code == 2883
-            && let Some(message) =
-                canonical_ts2883_named_reference_message(&diagnostic.message_text)
-        {
-            diagnostic.message_text = message;
-            was_canonicalized = true;
-        }
-        let exact_key = (
-            diagnostic.code,
-            diagnostic.file.clone(),
-            diagnostic.start,
-            diagnostic.length,
-            diagnostic.message_text.clone(),
-        );
-        if let Some(&existing_idx) = exact_seen.get(&exact_key) {
-            if !was_canonicalized && unique[existing_idx].1 {
-                unique[existing_idx] = (diagnostic, was_canonicalized);
-            }
-            continue;
-        }
-
-        exact_seen.insert(exact_key, unique.len());
-        unique.push((diagnostic, was_canonicalized));
-    }
-
-    let surviving_canonical_sites: FxHashSet<_> = unique
-        .iter()
-        .filter_map(|(diagnostic, was_canonicalized)| {
-            if diagnostic.code != 2883 || *was_canonicalized {
-                return None;
-            }
-            let (first, second) = parse_ts2883_named_reference_message(&diagnostic.message_text)?;
-            (!looks_like_module_path(&first) && looks_like_module_path(&second))
-                .then(|| (diagnostic.file.clone(), diagnostic.start, diagnostic.length))
-        })
-        .collect();
-
-    unique
+    // Deduplicate by exact key first, then by location for TS2883 (checker and
+    // emitter both walk non-portable references; keep only the first per site).
+    let mut exact_seen: FxHashSet<(u32, String, u32, u32, String)> = FxHashSet::default();
+    let mut ts2883_locations: FxHashSet<(String, u32, u32)> = FxHashSet::default();
+    diagnostics
         .into_iter()
-        .filter_map(|(diagnostic, was_canonicalized)| {
-            if diagnostic.code != 2883 {
-                return Some(diagnostic);
+        .filter(|d| {
+            if !exact_seen.insert((
+                d.code,
+                d.file.clone(),
+                d.start,
+                d.length,
+                d.message_text.clone(),
+            )) {
+                return false;
             }
-
-            let Some((first, second)) =
-                parse_ts2883_named_reference_message(&diagnostic.message_text)
-            else {
-                return Some(diagnostic);
-            };
-
-            if !was_canonicalized
-                || looks_like_module_path(&first)
-                || !looks_like_module_path(&second)
-            {
-                return Some(diagnostic);
+            if d.code == 2883 {
+                return ts2883_locations.insert((d.file.clone(), d.start, d.length));
             }
-
-            (!surviving_canonical_sites.contains(&(
-                diagnostic.file.clone(),
-                diagnostic.start,
-                diagnostic.length,
-            )))
-            .then_some(diagnostic)
+            true
         })
         .collect()
-}
-
-pub(super) fn parse_ts2883_named_reference_message(message: &str) -> Option<(String, String)> {
-    let prefix = "cannot be named without a reference to '";
-    let start = message.find(prefix)? + prefix.len();
-    let rest = &message[start..];
-    let (first, tail) = rest.split_once("' from '")?;
-    let (second, _) = tail.split_once('\'')?;
-    Some((first.to_string(), second.to_string()))
-}
-
-pub(super) fn canonical_ts2883_named_reference_message(message: &str) -> Option<String> {
-    let (first, second) = parse_ts2883_named_reference_message(message)?;
-    if !looks_like_module_path(&first) || looks_like_module_path(&second) {
-        return None;
-    }
-
-    Some(message.replace(
-        &format!("reference to '{first}' from '{second}'"),
-        &format!("reference to '{second}' from '{first}'"),
-    ))
-}
-
-pub(super) fn looks_like_module_path(text: &str) -> bool {
-    text.starts_with('.')
-        || text.starts_with('/')
-        || text.contains('/')
-        || text.contains('\\')
-        || text.contains("node_modules")
 }
 
 pub(super) fn map_output_info(output_path: &Path) -> Option<(PathBuf, String, String)> {
