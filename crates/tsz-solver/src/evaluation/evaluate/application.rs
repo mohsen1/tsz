@@ -1,0 +1,1216 @@
+//! Generic type application evaluation (`Base<Args>`) for [`TypeEvaluator`].
+//!
+//! The orchestrator [`TypeEvaluator::evaluate_application`] resolves an
+//! application's callee to a [`DefId`], guards per-`DefId` recursion depth and
+//! divergent growth, builds an [`ApplicationEvalContext`], then dispatches to
+//! the known-params or extracted-params body path. Body-aware shortcuts
+//! (homomorphic mapped passthrough, mapped-union distribution,
+//! recursive-call-return placeholders, `typeof f<Args>` specialization) and the
+//! application-eval cache live here, along with the display-alias bookkeeping
+//! that repaints evaluated structural forms back to their alias names.
+//!
+//! Split out of `evaluate.rs` so the core evaluator state and the `evaluate`
+//! dispatch loop stay separable from the application-instantiation machinery.
+
+use super::*;
+
+impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Evaluate a generic type application: Base<Args>
+    ///
+    /// Algorithm:
+    /// 1. Look up the base type - if it's a Ref, resolve it
+    /// 2. Get the type parameters for the base symbol
+    /// 3. If we have type params, instantiate the resolved type with args
+    /// 4. Recursively evaluate the result
+    pub(super) fn evaluate_application(
+        &mut self,
+        app_id: TypeApplicationId,
+        original_type_id: TypeId,
+    ) -> TypeId {
+        let app = self.interner.type_application(app_id);
+
+        // Phase 1 — callee normalization. `Lazy(DefId)` is the dominant
+        // shape from the binder, but `TypeQuery`, `UnresolvedTypeName`, and
+        // symbol-backed objects can also reach this entrypoint after
+        // cross-file lowering or value-position queries. Bases without a
+        // defining `DefId` stay opaque so later passes with a richer
+        // resolver can expand them.
+        let Some(def_id) = self.resolve_application_def_id(app.base) else {
+            return self.evaluate_application_no_def_id(app_id, original_type_id);
+        };
+
+        tracing::trace!(
+            base = app.base.0,
+            ?def_id,
+            num_args = app.args.len(),
+            "evaluate_application"
+        );
+
+        // Phase 2 — per-DefId recursion guard. Up to MAX_DEF_DEPTH bounded
+        // recursive expansions are allowed before bailing to `TypeId::ERROR`,
+        // matching tsc's TS2589 behavior.
+        if !self.increment_def_depth(def_id) {
+            self.guard.mark_exceeded();
+            return TypeId::ERROR;
+        }
+
+        // Divergence guard. MAX_DEF_DEPTH bounds the *number* of re-expansions
+        // but not the *size* of each, so a growing recursive alias can build
+        // enormous types within that budget. Gating on depth >= 2 keeps flat,
+        // non-recursive instantiation from feeding the detector.
+        if self.def_depth.get(&def_id).is_some_and(|&d| d >= 2)
+            && self.detect_recursive_growth(def_id, &app.args)
+        {
+            self.decrement_def_depth(def_id);
+            self.guard.mark_exceeded();
+            self.note_limit_event();
+            return TypeId::ERROR;
+        }
+
+        // Phase 3 — build the evaluation context.
+        let ctx = self.application_evaluation_context(def_id, app.base);
+
+        // See `ApplicationEvalOutcome` for why ShortCircuit branches do not
+        // restore `saved_apparent` — outer caller observes `None`.
+        let saved_apparent = self.apparent_conditional_branch.take();
+
+        // Phase 4 — raw-args cache shortcut. Only evaluators with an explicit
+        // `query_db` consume this cache: limited/noop resolvers can otherwise
+        // observe a result computed under stronger resolution assumptions and
+        // skip the fallback behavior that preserves recursive/inference parity.
+        if let Some(db) = self.query_db {
+            let no_unchecked = self.no_unchecked_indexed_access;
+            if let Some(cached) = db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
+            {
+                self.decrement_def_depth(def_id);
+                return cached;
+            }
+        }
+
+        // Phase 5 — evaluate the body under a fresh application-body epoch
+        // snapshot. Any `application_eval_cache` write made while finalizing THIS
+        // application (or a nested one, which saves/restores this field in turn)
+        // compares `limit_epoch` against `app_body_limit_epoch` to learn whether
+        // its own body subtree bailed, independent of an earlier unrelated
+        // sibling that already set the sticky `deep_recursion_seen` flag (#10834).
+        let saved_app_body_epoch = self.app_body_limit_epoch;
+        self.app_body_limit_epoch = self.limit_epoch;
+        let outcome = self.evaluate_application_body(def_id, original_type_id, &app.args, &ctx);
+        self.app_body_limit_epoch = saved_app_body_epoch;
+
+        // Phase 6 — outcome-dependent cleanup. ShortCircuit matches the
+        // historical decrement-and-return shape; Computed restores the
+        // outer apparent branch and runs display-alias bookkeeping.
+        match outcome {
+            ApplicationEvalOutcome::ShortCircuit(value) => {
+                self.decrement_def_depth(def_id);
+                value
+            }
+            ApplicationEvalOutcome::Computed(result) => {
+                // Read the apparent conditional branch set during THIS
+                // application, then restore whatever was saved for the
+                // outer caller.
+                let my_apparent_branch = self.apparent_conditional_branch.take();
+                self.apparent_conditional_branch = saved_apparent;
+                self.decrement_def_depth(def_id);
+
+                // Phase 7 — display-alias bookkeeping. Skip entirely when
+                // the result is the original `Application` itself (the
+                // historical `if result != original_type_id` gate).
+                if result != original_type_id {
+                    self.record_application_evaluation_display_aliases(
+                        result,
+                        original_type_id,
+                        &app.args,
+                        ctx.is_type_alias_def,
+                        ctx.prefer_application_display_alias,
+                        my_apparent_branch,
+                    );
+                }
+                result
+            }
+        }
+    }
+
+    /// Phase-1 helper: resolve an `Application` base to a [`DefId`].
+    ///
+    /// Returns `None` when the application's base does not normalize to a
+    /// defining `DefId` (e.g. an interned base that no longer resolves, or
+    /// a base whose `TypeData` shape simply has no associated `DefId`).
+    /// Both cases must keep the application opaque, so the caller treats
+    /// `None` the same way.
+    pub(super) fn resolve_application_def_id(&self, base: TypeId) -> Option<DefId> {
+        let base_key = self.interner.lookup(base)?;
+        match base_key {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
+            TypeData::UnresolvedTypeName(atom) => {
+                // `Application(UnresolvedTypeName(name), args)` residue from
+                // cross-file lowering can resolve through the merged binder
+                // graph at evaluation time — e.g. `util.OmitKeys` whose
+                // lowering pass missed the imported namespace's def_id.
+                let name = self.interner.resolve_atom(atom);
+                self.resolver.resolve_unresolved_type_name(&name)
+            }
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => self
+                .interner
+                .object_shape(shape_id)
+                .symbol
+                .and_then(|sym_id| {
+                    self.resolver
+                        .symbol_to_def_id(crate::types::SymbolRef(sym_id.0))
+                }),
+            _ => None,
+        }
+    }
+
+    /// Phase-3 helper: assemble the [`ApplicationEvalContext`] for a
+    /// resolved `DefId`.
+    ///
+    /// Reads type parameters and the resolved body from the resolver,
+    /// records whether the body is a conditional alias (which drives both
+    /// the marker on the base type and the display-alias policy), and
+    /// emits the matching trace event the historical inline code emitted.
+    fn application_evaluation_context(
+        &mut self,
+        def_id: DefId,
+        app_base: TypeId,
+    ) -> ApplicationEvalContext {
+        let type_params = self.resolver.get_lazy_type_params(def_id);
+        let base_is_type_query =
+            matches!(self.interner.lookup(app_base), Some(TypeData::TypeQuery(_)));
+        // For `typeof ClassName<T>` (TypeQuery base), use `resolve_type_query` to get
+        // the constructor type rather than the instance type that `resolve_lazy` returns
+        // for classes. Type-position references (`ClassName<T>`) continue to use
+        // `resolve_lazy` which correctly provides the instance type.
+        let resolved = if base_is_type_query {
+            if let Some(TypeData::TypeQuery(sym_ref)) = self.interner.lookup(app_base) {
+                self.resolver
+                    .resolve_type_query(sym_ref, self.interner)
+                    .or_else(|| self.resolver.resolve_lazy(def_id, self.interner))
+            } else {
+                self.resolver.resolve_lazy(def_id, self.interner)
+            }
+        } else {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        };
+        let def_kind = self.resolver.get_def_kind(def_id);
+        let is_type_alias_def = matches!(def_kind, Some(DefKind::TypeAlias));
+        let resolved_has_conditional_body = resolved.is_some_and(|body| {
+            matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+        });
+        if is_type_alias_def && resolved_has_conditional_body {
+            self.interner.mark_conditional_alias_base(app_base);
+        }
+        let prefer_application_display_alias = is_type_alias_def && !resolved_has_conditional_body;
+
+        tracing::trace!(
+            ?def_id,
+            has_type_params = type_params.is_some(),
+            type_params_count = type_params.as_ref().map(std::vec::Vec::len),
+            has_resolved = resolved.is_some(),
+            resolved_key = ?resolved.and_then(|r| self.interner.lookup(r)),
+            "evaluate_application resolve"
+        );
+
+        ApplicationEvalContext {
+            type_params,
+            resolved,
+            is_type_alias_def,
+            prefer_application_display_alias,
+            base_is_type_query,
+        }
+    }
+
+    /// Phase-5 dispatch between the canonical known-params path and the
+    /// lite-resolver fallback that extracts parameters from the resolved
+    /// type's shape.
+    fn evaluate_application_body(
+        &mut self,
+        def_id: DefId,
+        original_type_id: TypeId,
+        args: &[TypeId],
+        ctx: &ApplicationEvalContext,
+    ) -> ApplicationEvalOutcome {
+        // Recursive-call-return placeholder: an `Application(Lazy(value_def),
+        // type_args)` whose `value_def` is a value-space symbol (a function or
+        // `const`/`let`/`var` initialized to a function) with a callable type
+        // denotes the RETURN type of a self-referential generic call
+        // `f<type_args>(...)` whose return type was still being inferred when
+        // the placeholder was built (see the checker's circular-call path).
+        // It must evaluate to the matching call signature's return type
+        // instantiated with `type_args`, not to the instantiated function
+        // value, so property access, assignability, and display observe the
+        // object the call returns. Instantiation expressions (`f<T>` /
+        // `typeof f<T>`) never reach here as a `Lazy`-based application — they
+        // are instantiated eagerly and `typeof f<T>` carries a `TypeQuery`
+        // base — so this shape is unambiguous.
+        if !ctx.base_is_type_query
+            && let Some(resolved) = ctx.resolved
+            && let Some(call_return) = self.value_call_return_application(def_id, resolved, args)
+        {
+            return ApplicationEvalOutcome::Computed(call_return);
+        }
+
+        // `typeof f<Args>` instantiation expression: specialize per-signature
+        // (consume, not shadow, the callable's type params) — see helper (#10933).
+        if let Some(specialized) = self.try_specialize_typeof_instantiation_expression(ctx, args) {
+            return ApplicationEvalOutcome::Computed(specialized);
+        }
+
+        if let Some(type_params) = ctx.type_params.as_ref() {
+            let Some(resolved) = ctx.resolved else {
+                return ApplicationEvalOutcome::Computed(original_type_id);
+            };
+            // When the resolver returns `unknown` for the alias body, the
+            // body hasn't been registered yet (e.g. cross-file alias whose
+            // declaring file is still being processed in parallel
+            // checking). Substituting an `unknown` body would collapse
+            // `Foo<Args>` to bare `unknown` and erase its structural shape
+            // downstream. Bail out and keep the original `Application`
+            // opaque so later evaluator passes (with a populated body) can
+            // expand it correctly.
+            if resolved == TypeId::UNKNOWN {
+                return ApplicationEvalOutcome::Computed(original_type_id);
+            }
+
+            // The same situation arises when the body resolves to the alias's
+            // own self-lazy wrapper `Lazy(def_id)`: the structural body (e.g. a
+            // mapped type registered on demand in the type environment) is not
+            // available on this query, so substituting `Args` into
+            // `Lazy(def_id)` yields bare `Lazy(def_id)` — dropping the type
+            // arguments. Caching that degenerate result poisons every later
+            // use: a nested `Partial<X>` first evaluated while `Partial`'s body
+            // is still self-lazy makes the enclosing `Omit<Partial<X>, K>`
+            // collapse to `{}`, producing a false `TS2345` against a fresh
+            // object literal with a valid optional subset (see #10682). Keep
+            // the application opaque so a later pass (with the populated body)
+            // expands it correctly.
+            //
+            // Gate on the outermost (non-recursive) expansion of this def:
+            // `increment_def_depth` has already run for this entry, so depth 1
+            // is the first expansion. For a genuinely recursive alias the
+            // self-lazy wrapper is the legitimate cycle breaker at deeper
+            // entries, where bailing must not interfere.
+            if self.def_depth.get(&def_id).copied().unwrap_or(0) <= 1
+                && matches!(
+                    self.interner.lookup(resolved),
+                    Some(TypeData::Lazy(body_def_id)) if body_def_id == def_id
+                )
+            {
+                return ApplicationEvalOutcome::Computed(original_type_id);
+            }
+            self.evaluate_application_with_known_params(
+                def_id,
+                original_type_id,
+                args,
+                resolved,
+                type_params,
+                ctx.prefer_application_display_alias,
+                ctx.base_is_type_query,
+            )
+        } else if let Some(resolved) = ctx.resolved {
+            // Lite-resolver fallback: extract type parameters from the
+            // resolved type's properties. A `typeof X<Args>` base whose
+            // signatures could consume `Args` was already specialized at the
+            // top of this function; reaching here means the arity did not
+            // match, so keep it opaque (invalid instantiation, TS2635/TS2344
+            // parity) instead of feeding it to the extracted-params path.
+            if ctx.base_is_type_query
+                && matches!(self.interner.lookup(resolved), Some(TypeData::Callable(_)))
+                && !args.is_empty()
+            {
+                return ApplicationEvalOutcome::Computed(original_type_id);
+            }
+            let extracted_params = self.extract_type_params_from_type(resolved);
+            if !extracted_params.is_empty() && extracted_params.len() == args.len() {
+                self.evaluate_application_with_extracted_params(
+                    def_id,
+                    original_type_id,
+                    args,
+                    resolved,
+                    &extracted_params,
+                    ctx.prefer_application_display_alias,
+                )
+            } else {
+                ApplicationEvalOutcome::Computed(original_type_id)
+            }
+        } else {
+            ApplicationEvalOutcome::Computed(original_type_id)
+        }
+    }
+
+    /// Known-params application path: argument preparation, expanded-args
+    /// cache lookup, homomorphic passthrough, class-instance extraction,
+    /// mapped-union distribution, then the main `instantiate_generic` +
+    /// evaluate sequence with display-alias storage.
+    fn evaluate_application_with_known_params(
+        &mut self,
+        def_id: DefId,
+        original_type_id: TypeId,
+        args: &[TypeId],
+        resolved: TypeId,
+        type_params: &[TypeParamInfo],
+        prefer_application_display_alias: bool,
+        base_is_type_query: bool,
+    ) -> ApplicationEvalOutcome {
+        let expanded_args = self.prepare_expanded_args_for_body(resolved, args);
+        let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+
+        if let Some(db) = self.query_db
+            && let Some(cached) = db.lookup_application_eval_cache(
+                def_id,
+                &expanded_args,
+                no_unchecked_indexed_access,
+            )
+        {
+            return ApplicationEvalOutcome::ShortCircuit(cached);
+        }
+
+        // Homomorphic mapped-type passthrough for non-object arguments.
+        // tsc's `instantiateMappedType` returns the argument directly when
+        // the body is `{ [P in keyof T]: ... }` and T is not an object
+        // type. Runs BEFORE instantiation because `instantiate_generic`
+        // eagerly evaluates `keyof T` when T is concrete, destroying the
+        // structural information needed for passthrough detection later.
+        if let Some(passthrough) = self.try_homomorphic_mapped_passthrough(
+            def_id,
+            resolved,
+            type_params,
+            &expanded_args,
+            no_unchecked_indexed_access,
+        ) {
+            return ApplicationEvalOutcome::ShortCircuit(passthrough);
+        }
+
+        // Class instance extraction: when a class is used in type position
+        // via `Application` (e.g. `Component<P, S>`), the INSTANCE type
+        // (the first construct signature's return type) is what we want,
+        // not the class constructor type. Only applies for
+        // `DefKind::Class`; interfaces with construct signatures keep
+        // their Callable shape intact.
+        //
+        // Exception: when the base is a `TypeQuery` (`typeof ClassName<T>`),
+        // the caller wants the constructor type — skipping extraction keeps
+        // the specialized constructor so `InstanceType<typeof Cls<T>>` can
+        // correctly reduce to the class instance type via conditional infer.
+        let effective_body = if base_is_type_query {
+            resolved
+        } else {
+            self.extract_class_instance_body(def_id, resolved)
+        };
+
+        // Homomorphic mapped-type union distribution: when the alias body
+        // is `{ [K in keyof T]: ... }` and T's argument resolves to a
+        // union, distribute over union members BEFORE calling
+        // `instantiate_generic` so the mapped evaluator can distinguish
+        // the post-instantiation constraint from the declared one.
+        if let Some(distributed) = self.try_distribute_mapped_union_arg(
+            def_id,
+            effective_body,
+            type_params,
+            &expanded_args,
+            no_unchecked_indexed_access,
+        ) {
+            return ApplicationEvalOutcome::ShortCircuit(distributed);
+        }
+
+        let evaluated = self.instantiate_and_finalize_application(
+            def_id,
+            original_type_id,
+            args,
+            &expanded_args,
+            effective_body,
+            type_params,
+            prefer_application_display_alias,
+            /* record_structural_back_reference */ true,
+            no_unchecked_indexed_access,
+        );
+        ApplicationEvalOutcome::Computed(evaluated)
+    }
+
+    /// Lite-resolver fallback application path. Used when the resolver
+    /// does not surface formal type parameters (`get_lazy_type_params`
+    /// returned `None`) but the resolved body itself embeds
+    /// `TypeParameter` types that can be recovered structurally.
+    fn evaluate_application_with_extracted_params(
+        &mut self,
+        def_id: DefId,
+        original_type_id: TypeId,
+        args: &[TypeId],
+        resolved: TypeId,
+        type_params: &[TypeParamInfo],
+        prefer_application_display_alias: bool,
+    ) -> ApplicationEvalOutcome {
+        let expanded_args = self.expand_type_args(args);
+        let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+
+        if let Some(db) = self.query_db
+            && let Some(cached) = db.lookup_application_eval_cache(
+                def_id,
+                &expanded_args,
+                no_unchecked_indexed_access,
+            )
+        {
+            return ApplicationEvalOutcome::ShortCircuit(cached);
+        }
+
+        let evaluated = self.instantiate_and_finalize_application(
+            def_id,
+            original_type_id,
+            args,
+            &expanded_args,
+            resolved,
+            type_params,
+            prefer_application_display_alias,
+            /* record_structural_back_reference */ false,
+            no_unchecked_indexed_access,
+        );
+        ApplicationEvalOutcome::Computed(evaluated)
+    }
+
+    /// Expand `Application(base, args)` arguments based on the alias body
+    /// shape.
+    ///
+    /// * Conditional bodies preserve `TypeParameter` args (the conditional
+    ///   evaluator needs them in generic form to match at the `infer`
+    ///   site) but eagerly expand concrete args.
+    /// * Bodies whose extends-side is `Application(...infer...)` preserve
+    ///   `Application` args so the matcher can compare at the application
+    ///   level (e.g. `Promise<string>` vs `Promise<infer U>`).
+    /// * Everything else uses the default `expand_type_args` which
+    ///   evaluates `TypeQuery`, `Application`, and meta-types.
+    fn prepare_expanded_args_for_body<'b>(
+        &mut self,
+        body: TypeId,
+        args: &'b [TypeId],
+    ) -> std::borrow::Cow<'b, [TypeId]> {
+        let arg_preservation =
+            crate::type_queries::classify_body_for_arg_preservation(self.interner, body);
+        let body_is_conditional =
+            matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)));
+        if matches!(
+            arg_preservation,
+            crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+        ) {
+            std::borrow::Cow::Owned(
+                args.iter()
+                    .map(|&arg| self.prepare_conditional_application_infer_arg(arg))
+                    .collect(),
+            )
+        } else if body_is_conditional {
+            std::borrow::Cow::Owned(
+                args.iter()
+                    .map(|&arg| {
+                        if crate::visitor::contains_type_parameters(self.interner, arg) {
+                            arg
+                        } else {
+                            self.try_expand_type_arg(arg)
+                        }
+                    })
+                    .collect(),
+            )
+        } else if matches!(
+            arg_preservation,
+            crate::type_queries::BodyArgPreservation::ConditionalInfer
+                | crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+        ) {
+            std::borrow::Cow::Owned(self.expand_type_args_preserve_applications(args))
+        } else {
+            self.expand_type_args(args)
+        }
+    }
+
+    fn prepare_conditional_application_infer_arg(&mut self, arg: TypeId) -> TypeId {
+        if crate::visitor::contains_type_parameters(self.interner, arg) {
+            return arg;
+        }
+        if let Some(reduced) = self.reduce_alias_body_to_application_form(arg)
+            && matches!(
+                self.interner.lookup(reduced),
+                Some(TypeData::Application(_))
+            )
+        {
+            return reduced;
+        }
+        if matches!(self.interner.lookup(arg), Some(TypeData::Application(_))) {
+            arg
+        } else {
+            self.try_expand_type_arg(arg)
+        }
+    }
+
+    /// Homomorphic mapped-type passthrough.
+    ///
+    /// Returns `Some(value)` (with the cache populated) when the body is a
+    /// `{ [P in keyof T]: ... }` mapped type and the argument for `T`
+    /// matches one of two passthrough rules:
+    /// * primitive (or array-constrained any/unknown/never) — return the
+    ///   argument directly;
+    /// * identity body `{ [P in keyof T]: T[P] }` over `any` — return
+    ///   `{ [x: string]: any; [x: number]: any }` so the result is not
+    ///   assignable to `any[]`.
+    fn try_homomorphic_mapped_passthrough(
+        &mut self,
+        def_id: DefId,
+        body: TypeId,
+        type_params: &[TypeParamInfo],
+        expanded_args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        let preamble = self.homomorphic_mapped_arg(body, type_params, expanded_args)?;
+        let HomomorphicMappedArg {
+            mapped,
+            source,
+            tp,
+            resolved_arg,
+            ..
+        } = preamble;
+
+        // Passthrough for genuine primitives. For `any`/`unknown`/`never`/
+        // `error`: only passthrough when the type parameter is constrained
+        // to array/tuple types (e.g. `Arrayish<T extends unknown[]>`).
+        // Otherwise these top/bottom types must flow through mapped type
+        // expansion so `Objectish<any>` becomes
+        // `{ [x: string]: any; [x: number]: any }` (matching tsc).
+        let is_any_like = resolved_arg == TypeId::ANY
+            || resolved_arg == TypeId::UNKNOWN
+            || resolved_arg == TypeId::NEVER
+            || resolved_arg == TypeId::ERROR;
+        let should_passthrough = if is_any_like {
+            tp.constraint.is_some_and(|c| {
+                let eval_c = self.evaluate(c);
+                matches!(
+                    self.interner.lookup(eval_c),
+                    Some(TypeData::Array(_) | TypeData::Tuple(_))
+                )
+            })
+        } else {
+            Self::is_primitive_or_primitive_union(self.interner, resolved_arg)
+        };
+        if should_passthrough {
+            self.insert_application_eval_cache_if_some(
+                def_id,
+                expanded_args,
+                no_unchecked_indexed_access,
+                resolved_arg,
+            );
+            return Some(resolved_arg);
+        }
+
+        // Objectish<any>: identity homomorphic mapped type with `any`
+        // argument and non-array constraint. tsc produces
+        // `{ [x: string]: any; [x: number]: any }` (NOT `any`), keeping
+        // the result not assignable to `any[]`. Previously handled in
+        // checker-local object construction; centralized here for
+        // architectural correctness.
+        if resolved_arg == TypeId::ANY
+            && let Some((obj, key)) = crate::index_access_parts(self.interner, mapped.template)
+            && obj == source
+            && matches!(
+                self.interner.lookup(key),
+                Some(TypeData::TypeParameter(kp)) if kp.name == mapped.type_param.name
+            )
+        {
+            use crate::types::{IndexSignature, ObjectShape};
+            let result = self.interner.object_with_index(ObjectShape {
+                flags: crate::types::ObjectFlags::empty(),
+                properties: vec![],
+                string_index: Some(IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: TypeId::ANY,
+                    readonly: false,
+                    param_name: None,
+                }),
+                number_index: Some(IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type: TypeId::ANY,
+                    readonly: false,
+                    param_name: None,
+                }),
+                symbol: None,
+            });
+            self.insert_application_eval_cache_if_some(
+                def_id,
+                expanded_args,
+                no_unchecked_indexed_access,
+                result,
+            );
+            return Some(result);
+        }
+
+        None
+    }
+
+    /// Shared opening preamble for the two body-aware homomorphic-mapped
+    /// shortcuts. Returns the structured `(mapped, source, tp, idx,
+    /// resolved_arg)` tuple when `body` is `{ [P in keyof Tᵢ]: ... }` and
+    /// the argument for `Tᵢ` resolves cleanly. Returns `None` if any guard
+    /// in the chain fails.
+    ///
+    /// Extracted from the two call sites so a future change to the
+    /// guard cannot drift between passthrough and union-distribute.
+    fn homomorphic_mapped_arg(
+        &mut self,
+        body: TypeId,
+        type_params: &[TypeParamInfo],
+        expanded_args: &[TypeId],
+    ) -> Option<HomomorphicMappedArg> {
+        let TypeData::Mapped(mapped_id) = self.interner.lookup(body)? else {
+            return None;
+        };
+        let mapped = self.interner.get_mapped(mapped_id);
+        let TypeData::KeyOf(source) = self.interner.lookup(mapped.constraint)? else {
+            return None;
+        };
+        let TypeData::TypeParameter(tp) = self.interner.lookup(source)? else {
+            return None;
+        };
+        let idx = type_params.iter().position(|p| p.name == tp.name)?;
+        if idx >= expanded_args.len() {
+            return None;
+        }
+        let arg = expanded_args[idx];
+        let resolved_arg = self.evaluate(arg);
+        Some(HomomorphicMappedArg {
+            mapped,
+            source,
+            tp,
+            idx,
+            resolved_arg,
+        })
+    }
+
+    /// Whether an application-eval result produced by this run may be persisted
+    /// to the cross-evaluator `application_eval_cache`.
+    ///
+    /// The cache key is `(DefId, expanded_args, no_unchecked)` — it is
+    /// *resolver-* and *substitution-independent*, but it is NOT independent of
+    /// the ambient stack depth at the use site. When a recursive alias bails
+    /// because *its own* expansion was already deep, the result is a truncated
+    /// stack-context artifact. Persisting it poisons every *other* use site of
+    /// the same alias application — the "alias fan-out regression": one deep use
+    /// contaminating all of its siblings, which would each converge on their own
+    /// shallower stack.
+    ///
+    /// The discriminator is the per-application epoch, not the sticky
+    /// `recursion_limit_hit` flag. `deep_recursion_seen` / `silent_depth_bailed`
+    /// are set by the *first* bail anywhere in the run and never reset, so gating
+    /// on them disabled every later write too — including results for unrelated
+    /// applications whose own bodies expanded fully and terminated. Those results
+    /// are complete, stack-independent functions of `(DefId, args)` and are safe,
+    /// indeed necessary, to cache: without them the same finite application is
+    /// re-instantiated combinatorially across each sibling branch, turning a
+    /// terminating type into an effective hang (#10834, the `TypeBox` / zod
+    /// `Static<TObject<…>>` schema shape).
+    ///
+    /// `limit_epoch == app_body_limit_epoch` is true exactly when no
+    /// cycle/depth/iteration/divergence event fired anywhere within the body
+    /// subtree of the application currently being finalized. That is strictly
+    /// more permissive than `!recursion_limit_hit()` (it also admits clean bodies
+    /// that ran *after* an earlier sibling bailed) while still never persisting a
+    /// truncated result — a bail inside this body advances `limit_epoch` past the
+    /// snapshot taken at body entry. Termination is owned by the recursion guards
+    /// and fuel, not by this cache, so a (now rarer) skipped write cannot
+    /// reintroduce a hang.
+    #[inline]
+    const fn application_eval_result_cacheable(&self) -> bool {
+        self.limit_epoch == self.app_body_limit_epoch
+    }
+
+    /// Insert into the application-eval cache iff `query_db` is connected and the
+    /// current run has not hit any recursion/depth limit.
+    ///
+    /// Folds the two-line `if let Some(db) = self.query_db { … }` idiom
+    /// repeated in every body-aware shortcut and finalize helper.
+    ///
+    /// Writes stay gated on an authoritative (full-resolver) `query_db`
+    /// context: a limited resolver could otherwise store an under-resolved
+    /// result under the resolver-independent `(DefId, args)` key and poison
+    /// sibling reads. Reads use the same explicit `query_db` gate for the same
+    /// reason. They are additionally gated on
+    /// [`application_eval_result_cacheable`](Self::application_eval_result_cacheable)
+    /// so a depth-bounded run never persists a stack-context artifact.
+    fn insert_application_eval_cache_if_some(
+        &self,
+        def_id: DefId,
+        expanded_args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+        evaluated: TypeId,
+    ) {
+        if !self.application_eval_result_cacheable() {
+            return;
+        }
+        if let Some(db) = self.query_db {
+            db.insert_application_eval_cache(
+                def_id,
+                expanded_args,
+                no_unchecked_indexed_access,
+                evaluated,
+            );
+        }
+    }
+
+    /// Extract the instance side of a class-shaped resolved body.
+    ///
+    /// Returns the body unchanged for interfaces and aliases. For
+    /// `DefKind::Class`, returns the first construct signature's return
+    /// type (the INSTANCE type) so `Component<P, S>` in type position
+    /// refers to the instance rather than `typeof Component`. Interfaces
+    /// with construct signatures (e.g. `ComponentClass<P>`) keep their
+    /// Callable shape — only classes are unwrapped.
+    fn extract_class_instance_body(&self, def_id: DefId, resolved: TypeId) -> TypeId {
+        let is_class_def = matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::Class)
+        );
+        if !is_class_def {
+            return resolved;
+        }
+        let Some(TypeData::Callable(cs_id)) = self.interner.lookup(resolved) else {
+            return resolved;
+        };
+        let shape = self.interner.callable_shape(cs_id);
+        match shape.construct_signatures.first() {
+            Some(construct_sig) => construct_sig.return_type,
+            None => resolved,
+        }
+    }
+
+    /// Resolve a recursive-call-return placeholder `Application(Lazy(value_def),
+    /// type_args)` to the call signature's return type, instantiated with
+    /// `type_args`.
+    ///
+    /// Returns `Some` only when `def_id` is a value-space symbol
+    /// (`DefKind::Variable`/`DefKind::Function`) and `resolved` is a callable
+    /// with a generic call signature whose arity matches `type_args`. The
+    /// returned type is instantiated one level and left otherwise un-evaluated:
+    /// nested self-referential returns stay deferred (they carry the inner
+    /// signature's free type parameter) and expand lazily on demand, matching
+    /// `tsc`'s recursive object type — never eagerly expanding into an
+    /// excessively deep instantiation.
+    ///
+    /// `None` keeps the normal generic-instantiation path, so type aliases,
+    /// classes, interfaces, and non-generic value functions are unaffected.
+    fn value_call_return_application(
+        &self,
+        def_id: DefId,
+        resolved: TypeId,
+        type_args: &[TypeId],
+    ) -> Option<TypeId> {
+        if type_args.is_empty() {
+            return None;
+        }
+        if !matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::Variable | crate::def::DefKind::Function)
+        ) {
+            return None;
+        }
+        // The resolved value type is either a single-signature `Function` or a
+        // multi-signature `Callable`; in both cases pick the generic call
+        // signature whose type-parameter arity matches the supplied
+        // `type_args` and instantiate its return type.
+        match self.interner.lookup(resolved)? {
+            TypeData::Function(fs_id) => {
+                let shape = self.interner.function_shape(fs_id);
+                if shape.is_constructor
+                    || shape.type_params.is_empty()
+                    || shape.type_params.len() != type_args.len()
+                {
+                    return None;
+                }
+                Some(self.cached_generic_instantiation(
+                    shape.return_type,
+                    &shape.type_params,
+                    type_args,
+                ))
+            }
+            TypeData::Callable(cs_id) => {
+                let shape = self.interner.callable_shape(cs_id);
+                let signature = shape.call_signatures.iter().find(|sig| {
+                    !sig.type_params.is_empty() && sig.type_params.len() == type_args.len()
+                })?;
+                Some(self.cached_generic_instantiation(
+                    signature.return_type,
+                    &signature.type_params,
+                    type_args,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Homomorphic mapped-type distribution over a union argument.
+    ///
+    /// Returns `Some(union)` (with cache populated) when the body is a
+    /// homomorphic mapped type and the argument for `T` resolves to a
+    /// non-array/non-tuple union. Distributes per member, calling
+    /// `instantiate_generic` once per non-primitive member; primitive
+    /// members pass through unchanged so `Partial<string | { x: number }>`
+    /// becomes `string | { x?: number }` instead of `string | string`.
+    fn try_distribute_mapped_union_arg(
+        &mut self,
+        def_id: DefId,
+        effective_body: TypeId,
+        type_params: &[TypeParamInfo],
+        expanded_args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        let HomomorphicMappedArg {
+            idx, resolved_arg, ..
+        } = self.homomorphic_mapped_arg(effective_body, type_params, expanded_args)?;
+        let TypeData::Union(list_id) = self.interner.lookup(resolved_arg)? else {
+            return None;
+        };
+        let members = self.interner.type_list(list_id).to_vec();
+        let mut distributed = Vec::with_capacity(members.len());
+        for member in members {
+            if crate::visitors::visitor_predicates::is_primitive_type(self.interner, member) {
+                distributed.push(member);
+                continue;
+            }
+            let mut member_args = expanded_args.to_vec();
+            member_args[idx] = member;
+            let instantiated =
+                self.cached_generic_instantiation(effective_body, type_params, &member_args);
+            distributed.push(self.evaluate(instantiated));
+        }
+        let evaluated = self.interner.union(distributed);
+        self.insert_application_eval_cache_if_some(
+            def_id,
+            expanded_args,
+            no_unchecked_indexed_access,
+            evaluated,
+        );
+        Some(evaluated)
+    }
+
+    /// Instantiate + evaluate the body for an application and record the
+    /// appropriate display-alias provenance.
+    ///
+    /// Display-alias storage is gated on `prefer_application_display_alias`:
+    /// type-alias applications whose evaluation produces an intermediate
+    /// `Application` form store a forward display alias so diagnostics show
+    /// the apparent name (e.g. `DeepReadonlyObject<Part>`).
+    ///
+    /// `record_structural_back_reference` is `true` only on the known-params
+    /// path where the resolver surfaced a nominal interface/class signal
+    /// strong enough to back-reference from the evaluated structural form to
+    /// the original `Application`. The lite-resolver fallback path keeps
+    /// this off because it cannot prove the nominal origin.
+    #[allow(clippy::too_many_arguments)]
+    fn instantiate_and_finalize_application(
+        &mut self,
+        def_id: DefId,
+        original_type_id: TypeId,
+        original_args: &[TypeId],
+        expanded_args: &[TypeId],
+        body: TypeId,
+        type_params: &[TypeParamInfo],
+        prefer_application_display_alias: bool,
+        record_structural_back_reference: bool,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        let mut instantiated = self.cached_generic_instantiation(body, type_params, expanded_args);
+        // Rebind polymorphic `this` to the concrete application so
+        // interface bodies like `constraint: Constraint<this>` preserve
+        // their receiver-specific invariance.
+        if crate::contains_this_type(self.interner, instantiated) {
+            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                instantiated,
+                original_type_id,
+            );
+        }
+        // Preserve discriminated object intersections after instantiation.
+        // Re-evaluating them here distributes impossible branches again,
+        // which breaks both fresh EPC and `keyof` on generic applications.
+        let evaluated = if crate::type_queries::is_discriminated_object_intersection(
+            self.interner,
+            instantiated,
+        ) {
+            instantiated
+        } else {
+            self.evaluate(instantiated)
+        };
+        if prefer_application_display_alias {
+            self.store_intermediate_application_display_alias(
+                instantiated,
+                original_type_id,
+                evaluated,
+                original_args,
+            );
+        } else if record_structural_back_reference {
+            self.store_parametric_structural_back_reference(evaluated, original_type_id);
+        }
+        self.insert_application_eval_cache_if_some(
+            def_id,
+            expanded_args,
+            no_unchecked_indexed_access,
+            evaluated,
+        );
+        evaluated
+    }
+
+    /// Record display-alias provenance after a successful application
+    /// evaluation.
+    ///
+    /// Decides whether to repaint the alias name onto the evaluated
+    /// structural form. Skipping the repaint protects unrelated diagnostics
+    /// from being relabeled when:
+    /// * the result is a non-empty structural shape that already existed
+    ///   before this application,
+    /// * the result is itself one of the application arguments,
+    /// * a conditional branch alias is already pinned on `result`.
+    ///
+    /// When `my_apparent_branch` is set by the conditional evaluator and is
+    /// distinct from the original application, also installs a one-step
+    /// forward alias so the formatter shows the apparent intermediate name
+    /// (e.g. `DeepReadonlyObject<Part>` instead of `DeepReadonly<Part>`).
+    fn record_application_evaluation_display_aliases(
+        &mut self,
+        result: TypeId,
+        original_type_id: TypeId,
+        original_args: &[TypeId],
+        is_type_alias_def: bool,
+        prefer_application_display_alias: bool,
+        my_apparent_branch: Option<TypeId>,
+    ) {
+        let display_origin = if self.expand_application_display_alias_args
+            && let Some(TypeData::Application(original_app_id)) =
+                self.interner.lookup(original_type_id)
+        {
+            let original_app = self.interner.type_application(original_app_id);
+            let expanded_args = self.expand_type_args(&original_app.args);
+            if expanded_args.as_ref() != original_app.args.as_slice() {
+                let candidate = self
+                    .interner
+                    .application(original_app.base, expanded_args.into_owned());
+                if crate::visitor::contains_type_by_id(self.interner, candidate, result) {
+                    original_type_id
+                } else {
+                    candidate
+                }
+            } else {
+                original_type_id
+            }
+        } else {
+            original_type_id
+        };
+        let has_param_args = original_args.iter().any(|&arg| {
+            crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
+        });
+        // For concrete args the alias repaint is unconditional; for
+        // generic args only Conditional/IndexAccess/Mapped results get
+        // repainted (deferred mapped aliases retain the as-written
+        // relationship needed for diagnostics like `Mapped<K>[Remapped<K>]`).
+        if has_param_args
+            && !matches!(
+                self.interner.lookup(result),
+                Some(
+                    crate::types::TypeData::Conditional(_)
+                        | crate::types::TypeData::IndexAccess(_, _)
+                        | crate::types::TypeData::Mapped(_)
+                )
+            )
+        {
+            return;
+        }
+
+        let result_is_non_empty_structural = match self.interner.lookup(result) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                !shape.properties.is_empty()
+                    || shape.string_index.is_some()
+                    || shape.number_index.is_some()
+            }
+            Some(TypeData::Intersection(_)) => true,
+            _ => false,
+        };
+        let result_is_application_arg = original_args.contains(&result);
+        let skip_type_alias_repaint = matches!(
+            self.interner.lookup(display_origin),
+            Some(TypeData::Application(_))
+        ) && result_is_non_empty_structural
+            && (result_is_application_arg
+                || (is_type_alias_def
+                    && match (
+                        self.interner.lookup_alloc_order(result),
+                        self.interner.lookup_alloc_order(display_origin),
+                    ) {
+                        (Some(result_order), Some(display_order)) => result_order <= display_order,
+                        _ => result.0 <= display_origin.0,
+                    }));
+        let keep_existing_conditional_branch_alias = is_type_alias_def
+            && !prefer_application_display_alias
+            && matches!(
+                self.interner.lookup(display_origin),
+                Some(TypeData::Application(_))
+            )
+            && display_provenance::display_alias(self.interner, result).is_some();
+        if self.should_record_application_alias(
+            result,
+            display_origin,
+            skip_type_alias_repaint,
+            keep_existing_conditional_branch_alias,
+        ) {
+            let priority = if prefer_application_display_alias
+                || (self.expand_application_display_alias_args
+                    && matches!(
+                        self.interner.lookup(display_origin),
+                        Some(TypeData::Application(_))
+                    )) {
+                AliasApplicationPriority::PreferApplication
+            } else {
+                AliasApplicationPriority::PreserveExisting
+            };
+            display_provenance::record_alias_application(
+                self.interner,
+                AliasApplicationProvenance {
+                    evaluated: result,
+                    application: display_origin,
+                },
+                priority,
+            );
+        }
+
+        // If the conditional branch resolved to an intermediate
+        // Application (e.g. `DeepReadonly<Part>` -> conditional ->
+        // `DeepReadonlyObject<Part>`), store a forward display alias so
+        // the formatter shows the one-step apparent type name that tsc
+        // displays.
+        if let Some(branch_app) = my_apparent_branch
+            && branch_app != original_type_id
+            && branch_app != result
+            && !has_param_args
+            && matches!(
+                self.interner.lookup(branch_app),
+                Some(crate::types::TypeData::Application(_))
+            )
+        {
+            display_provenance::record_alias_application(
+                self.interner,
+                AliasApplicationProvenance {
+                    evaluated: original_type_id,
+                    application: branch_app,
+                },
+                AliasApplicationPriority::PreserveExisting,
+            );
+        }
+    }
+
+    pub(super) fn store_intermediate_application_display_alias(
+        &self,
+        instantiated: TypeId,
+        original_type_id: TypeId,
+        evaluated: TypeId,
+        original_args: &[TypeId],
+    ) {
+        if instantiated == original_type_id || evaluated == TypeId::ERROR {
+            return;
+        }
+        // Only install this forward alias when the intermediate application
+        // appears to have been introduced after the outer application.
+        // If the instantiated application predates the outer one, it can be a
+        // user-authored type occurrence and globally aliasing it risks repainting
+        // unrelated diagnostics.
+        let instantiated_is_new_intermediate = match (
+            self.interner.lookup_alloc_order(instantiated),
+            self.interner.lookup_alloc_order(original_type_id),
+        ) {
+            (Some(instantiated_order), Some(original_order)) => instantiated_order > original_order,
+            _ => instantiated.0 > original_type_id.0,
+        };
+        if !instantiated_is_new_intermediate {
+            return;
+        }
+        let instantiated_is_application = matches!(
+            self.interner.lookup(instantiated),
+            Some(TypeData::Application(_))
+        );
+        let original_is_application = matches!(
+            self.interner.lookup(original_type_id),
+            Some(TypeData::Application(_))
+        );
+
+        if !original_is_application {
+            return;
+        }
+
+        if !instantiated_is_application {
+            // Structural-body path: the type alias body resolved to a structural
+            // type rather than another Application (e.g.
+            // `type LinkedList<T> = T & { next: LinkedList<T> }` evaluates to an
+            // Intersection). Map `evaluated → original_type_id` so diagnostics show
+            // the alias name instead of the expanded structural form.
+            //
+            // `evaluated_is_mapped` is checked first: Mapped is a subset of structural,
+            // so true short-circuits the more expensive `is_structural_display_alias_result`
+            // call and avoids a duplicate `lookup(evaluated)`.
+            let evaluated_is_mapped =
+                matches!(self.interner.lookup(evaluated), Some(TypeData::Mapped(_)));
+            if evaluated_is_mapped
+                || Self::is_structural_display_alias_result(self.interner, evaluated)
+            {
+                // Only store the display alias when `evaluated` was freshly produced
+                // by this evaluation (allocated after `original_type_id`). If it
+                // pre-exists, it was already interned by a different alias and
+                // overwriting its alias would corrupt diagnostics for that other alias.
+                // For example, `NestedRecord<"x.y.z", string>` and `Id<...string...>`
+                // can evaluate to the same structural object; the NestedRecord evaluation
+                // must not replace the `Id<...>` alias that was recorded first.
+                let evaluated_is_fresh = match (
+                    self.interner.lookup_alloc_order(evaluated),
+                    self.interner.lookup_alloc_order(original_type_id),
+                ) {
+                    (Some(eval_order), Some(orig_order)) => eval_order > orig_order,
+                    _ => evaluated.0 > original_type_id.0,
+                };
+                // Safe to store in two cases:
+                // 1. Recursive aliases: the recursive self-reference ensures the structural
+                //    type is unique to this instantiation, so aliasing is unambiguous.
+                // 2. Generic aliases whose body evaluates to a fresh Mapped type: each
+                //    distinct set of type-argument TypeIds produces a distinct MappedType
+                //    node (the constraint is baked into the interned key). Storing the
+                //    alias lets diagnostics show e.g. `Mapped2<K>` instead of the
+                //    expanded `{ [P in K as \`get${P}\`]: ... }` form, matching tsc.
+                if evaluated_is_fresh
+                    && self.should_store_structural_display_alias(
+                        evaluated,
+                        original_type_id,
+                        evaluated_is_mapped,
+                    )
+                {
+                    self.interner
+                        .store_display_alias_preferring_application(evaluated, original_type_id);
+                }
+            }
+            return;
+        }
+
+        // Application→Application chain: when the outer application's args contain
+        // generic type parameters, skip storing the alias. Intermediate Applications
+        // in a type-alias chain (e.g. `Outer<T>` instantiated to `Inner<T>`) must not
+        // displace the outer Application as the canonical display alias.
+        if original_args.iter().any(|&arg| {
+            crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
+        }) {
+            return;
+        }
+
+        if !Self::is_structural_display_alias_result(self.interner, evaluated) {
+            return;
+        }
+
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated: instantiated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
+    }
+}
