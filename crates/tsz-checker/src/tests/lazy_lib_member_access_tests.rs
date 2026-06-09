@@ -269,3 +269,105 @@ export {};
         "inherited member via global receiver should resolve cleanly, got {codes:?}",
     );
 }
+
+/// A `readonly` own plain property read resolves through the single-member fast
+/// path (the `readonly` modifier is write-only and does not change the read
+/// type). Proven across two distinct interfaces + member spellings
+/// (`Element.tagName`, `Node.nodeName`) so the behavior follows the shape, not a
+/// name. Before this, `readonly` members forced the receiver's full structural
+/// materialization.
+#[test]
+fn readonly_own_member_read_resolves_without_diagnostics() {
+    let codes = dom_codes(
+        r#"
+declare const el: Element;
+declare const node: Node;
+const t: string = el.tagName;
+const n: string = node.nodeName;
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "readonly own-member reads should not produce diagnostics, got {codes:?}",
+    );
+}
+
+/// A type mismatch on a `readonly` own member must still report TS2322 — the fast
+/// path resolves the real member type, it does not widen it.
+#[test]
+fn readonly_own_member_type_mismatch_still_errors() {
+    let codes = dom_codes(
+        r#"
+declare const el: Element;
+const wrong: number = el.tagName;
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "readonly string member assigned to number should report TS2322, got {codes:?}",
+    );
+}
+
+/// Writing to a `readonly` member must still report TS2540. The readonly *write*
+/// diagnostic is decided by `check_readonly_assignment`, which re-materializes the
+/// receiver independently of the read fast path, so keeping readonly reads on the
+/// fast path does not suppress it. Proven across two interfaces so it follows the
+/// shape, not a spelling.
+#[test]
+fn readonly_member_write_still_reports_ts2540() {
+    let codes = dom_codes(
+        r#"
+declare const el: Element;
+declare const node: Node;
+el.tagName = "x";
+node.nodeName = "y";
+export {};
+"#,
+    );
+    assert_eq!(
+        codes,
+        vec![2540, 2540],
+        "writes to readonly members should each report TS2540, got {codes:?}",
+    );
+}
+
+/// A chained read through a `readonly` member that is itself typed as a simple
+/// lib interface (`Document.documentElement: HTMLElement`) resolves each link
+/// lazily and types correctly. This exercises both levers together: the readonly
+/// member resolves through the fast path AND, being a bare lib-interface
+/// reference, stays `Lazy` so the leaf `tagName` resolves without materializing
+/// `HTMLElement`.
+#[test]
+fn readonly_lib_interface_reference_member_chains_cleanly() {
+    let codes = dom_codes(
+        r#"
+declare const d: Document;
+const t: string = d.documentElement.tagName;
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "chained read through a readonly lib-interface-reference member should resolve cleanly, got {codes:?}",
+    );
+}
+
+/// A type mismatch on the leaf of a chained `readonly` lib-interface-reference
+/// member read must still report TS2322 — keeping the intermediate readonly
+/// member lazy does not widen the leaf member type.
+#[test]
+fn readonly_lib_interface_reference_chain_leaf_mismatch_still_errors() {
+    let codes = dom_codes(
+        r#"
+declare const d: Document;
+const wrong: number = d.documentElement.tagName;
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "string leaf assigned to number through a readonly chain should report TS2322, got {codes:?}",
+    );
+}

@@ -10,10 +10,12 @@
 //!
 //! Scope (intentionally narrow for soundness — anything else returns `None` and
 //! falls back to the full-materialization path):
-//! - Plain property signatures (`prop: T` / `prop?: T`) and unambiguous method
-//!   signature groups. Accessors, index signatures, call/construct signatures,
-//!   readonly writes, optional methods, and computed/symbol-named members take
-//!   the full path.
+//! - Plain property signatures (`prop: T` / `prop?: T`, including `readonly`
+//!   ones — `readonly` is write-only and does not change the read type) and
+//!   unambiguous method signature groups. Accessors, index signatures,
+//!   call/construct signatures, optional methods, and computed/symbol-named
+//!   members take the full path. Readonly *writes* (TS2540) are decided
+//!   independently in `check_readonly_assignment`, never through this read path.
 //! - A single own property declaration, or one method overload group in one
 //!   arena. Split declarations and mixed property/method members take the full
 //!   path.
@@ -289,13 +291,22 @@ impl CheckerState<'_> {
         {
             return None;
         }
-        // Readonly properties carry extra write semantics. Leave those on the
-        // full path so their exact behavior is authoritative. Optional plain
-        // properties are safe here because property access returns the read
-        // annotation type; optionality itself is tracked by full object shapes.
-        if self.has_readonly_modifier(&sig.modifiers) {
-            return None;
-        }
+        // `readonly` is a *write*-only modifier: a property read returns the
+        // declared annotation type regardless of readonly-ness, and the
+        // `PropertyAccessResult` this fast path produces carries no readonly flag
+        // (readonly is never encoded in the read result — see
+        // `tsz_solver::operations::property::PropertyAccessResult::Success`). The
+        // readonly *write* diagnostic (TS2540) is decided independently in
+        // `check_readonly_assignment`, which re-materializes the receiver and
+        // queries `property_is_readonly` (which resolves the bare `Lazy` itself),
+        // so it never depends on this read path. Resolving a readonly own plain
+        // property here is therefore byte-identical to full materialization for
+        // the read, while extending the lazy single-member fast path to the large
+        // class of `readonly` lib-interface members (e.g. `Node.nodeName`,
+        // `Element.tagName`, `HTMLElement.offsetWidth`) that previously forced the
+        // receiver's full structural materialization. Optional plain properties
+        // are likewise safe — optionality is tracked by full object shapes, not
+        // the read annotation type returned here.
 
         // Build the same hybrid-resolver TypeLowering the full lib path uses, so
         // the member annotation lowers to a byte-identical type.
