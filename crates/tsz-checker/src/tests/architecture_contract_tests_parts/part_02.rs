@@ -310,19 +310,27 @@ fn test_assignability_checker_has_execute_relation_request() {
 /// Note: per `test_assignability_diagnostics_route_through_relation_outcome_helpers`
 /// (`part_03.rs`), diagnostic files must NOT build `RelationRequest::*` directly;
 /// they must go through the named `*_relation_outcome` helpers in
-/// `assignability_relation.rs`. The named helpers internally build the
-/// `RelationRequest::assign(`/etc. and call `execute_relation_request(`, so
-/// the assertions here verify those helper invocations rather than the raw
-/// request builder.
+/// `assignability_relation.rs` or `relation_outcome_helpers.rs`. The named helpers
+/// internally build the `RelationRequest::assign(`/etc. and call
+/// `execute_relation_request(`, so the assertions here verify those helper
+/// invocations rather than the raw request builder.
+///
+/// `assignability_reason_relation_outcome` (in `relation_outcome_helpers.rs`) is the
+/// current canonical helper for the `check_assignable_or_report_at` family; it
+/// supersedes the older `assign_relation_outcome` entry-point by adding pre-evaluation
+/// guards (variance fast-path, deferred keyof accepts). Both satisfy the arch contract.
 #[test]
 fn test_diagnostic_paths_use_relation_outcome_hint() {
     let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
         .expect("failed to read assignability_diagnostics.rs");
 
     assert!(
-        source.contains("assign_relation_outcome("),
-        "check_assignable_or_report_at must obtain a RelationOutcome via the named \
-         assign_relation_outcome helper instead of re-calling the solver separately"
+        source.contains("assign_relation_outcome(")
+            || source.contains("assignability_reason_relation_outcome("),
+        "check_assignable_or_report_at must obtain a RelationOutcome via a named \
+         relation-outcome helper (assign_relation_outcome or \
+         assignability_reason_relation_outcome) instead of re-calling the solver \
+         separately"
     );
     assert!(
         source.contains("should_skip_weak_union_error_with_hint(")

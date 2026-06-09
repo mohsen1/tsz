@@ -1031,6 +1031,19 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         &fs::read_to_string("src/state/state_checking/class.rs")
             .expect("failed to read src/state/state_checking/class.rs for architecture guard"),
     );
+    // for_loop.rs and initializer_policy.rs were extracted from core.rs/state_checking as
+    // separate modules; include them so the gateway assertions below cover all
+    // variable-checking assignability call sites.
+    state_checking_src.push_str(
+        &fs::read_to_string("src/state/variable_checking/for_loop.rs").expect(
+            "failed to read src/state/variable_checking/for_loop.rs for architecture guard",
+        ),
+    );
+    state_checking_src.push_str(
+        &fs::read_to_string("src/state/variable_checking/initializer_policy.rs").expect(
+            "failed to read src/state/variable_checking/initializer_policy.rs for architecture guard",
+        ),
+    );
     assert!(
         state_checking_src.contains("check_assignable_or_report(")
             || state_checking_src.contains("check_assignable_or_report_at(")
