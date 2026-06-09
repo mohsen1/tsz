@@ -928,7 +928,7 @@ pub(crate) fn is_assignable_strict_null(
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
-        relation_policy::from_checker_flags_u16(RelationFlags::STRICT_NULL_CHECKS),
+        tsz_solver::relations::relation_queries::RelationPolicy::default(),
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
