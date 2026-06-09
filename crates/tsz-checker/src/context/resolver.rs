@@ -2,6 +2,33 @@
 //!
 //! Implements `TypeResolver` which enables the solver to resolve
 //! `TypeData::Lazy(DefId)` references back to cached types during evaluation.
+//!
+//! # Boundary contract
+//!
+//! This module is the **canonical `TypeResolver` adapter**: the one sanctioned
+//! place where the checker fulfils the solver-defined `TypeResolver` callback
+//! trait. Because the trait method signatures are owned by the solver, this
+//! module unavoidably names the solver's *canonical identity handles*
+//! (`TypeId`, `DefId`, `SymbolRef`, `IntrinsicKind`, `TypeParamInfo`,
+//! `DefKind`) and the read-only `TypeDatabase` interface. Per CLAUDE.md
+//! ("Data And Organization") those handles are O(1) identity values, not raw
+//! solver internals — naming them here is expected for an adapter and is the
+//! single, intentional point of solver-API contact for the resolver context.
+//!
+//! What this module must **not** do (enforced by the architecture guard in
+//! `tests::architecture_contract`):
+//!
+//! - pattern-match raw `TypeData`/`TypeKey` shapes — every shape decision is
+//!   delegated to `query_boundaries::common` (`lazy_def_id`, `object_symbol`,
+//!   `callable_shape_id`, `enum_components`, `union_list_id`) or
+//!   `query_boundaries::definition_identity`;
+//! - construct types via raw `.intern(...)` — type construction stays in the
+//!   solver / type-environment;
+//! - reach into solver submodule internals (`tsz_solver::types::...`).
+//!
+//! Keeping the solver imports consolidated in the single `use` region below
+//! means API-ownership churn is a one-line edit rather than scattered
+//! fully-qualified path updates throughout the file.
 
 use crate::context::{
     CheckerContext, ResolutionError, ResolutionModeOverride, ResolutionRequestKind,
@@ -11,6 +38,9 @@ use crate::query_boundaries::variance::Variance;
 use std::sync::Arc;
 use tsz_parser::parser::base::{NodeIndex, NodeList};
 use tsz_solver::computation::TypeResolver;
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::def::{DefId, DefKind};
+use tsz_solver::{IntrinsicKind, SymbolRef, TypeId, TypeParamInfo};
 
 impl<'a> CheckerContext<'a> {
     /// Get the resolution error for a specifier under an explicit resolution-mode override.
@@ -78,7 +108,7 @@ impl<'a> CheckerContext<'a> {
         &self,
         name: &str,
         declaring_file_idx: usize,
-    ) -> Option<tsz_solver::def::DefId> {
+    ) -> Option<DefId> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let declaring_binder = self.get_binder_for_file(declaring_file_idx)?;
@@ -306,8 +336,8 @@ impl<'a> CheckerContext<'a> {
     fn lib_heritage_cache_override(
         &self,
         sym_id: Option<tsz_binder::SymbolId>,
-        current_ty: tsz_solver::TypeId,
-    ) -> Option<tsz_solver::TypeId> {
+        current_ty: TypeId,
+    ) -> Option<TypeId> {
         let sym_id = sym_id?;
 
         // Use the DefinitionStore (O(1)) for both the interface check and name
@@ -321,7 +351,7 @@ impl<'a> CheckerContext<'a> {
         //   DefinitionStore after lib pre-population.
         if let Some(def_id) = self.get_existing_def_id(sym_id) {
             let kind = self.definition_store.get_kind(def_id)?;
-            if kind != tsz_solver::def::DefKind::Interface {
+            if kind != DefKind::Interface {
                 return None;
             }
             // The heritage cache is keyed purely by interface name, so it must
@@ -525,16 +555,12 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ///
     /// `TypeData::Ref` is removed, but we keep this for compatibility.
     /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
-    fn resolve_ref(
-        &self,
-        symbol: tsz_solver::SymbolRef,
-        _interner: &dyn tsz_solver::construction::TypeDatabase,
-    ) -> Option<tsz_solver::TypeId> {
+    fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
         self.symbol_types.get(&sym_id).copied()
     }
 
-    fn get_type_param_variance(&self, def_id: tsz_solver::DefId) -> Option<Arc<[Variance]>> {
+    fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
         let sym_id = self.def_to_symbol_id(def_id)?;
         let symbol = self.binder.get_symbol(sym_id)?;
         self.merged_interface_declared_type_param_variances(symbol)
@@ -548,11 +574,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ///
     /// **Callers should ensure `get_type_of_symbol()` is called first** to populate
     /// the cache before calling `resolve_lazy()`.
-    fn resolve_lazy(
-        &self,
-        def_id: tsz_solver::DefId,
-        _interner: &dyn tsz_solver::construction::TypeDatabase,
-    ) -> Option<tsz_solver::TypeId> {
+    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         use tsz_binder::symbol_flags;
 
         // A type alias flagged as unconditionally-infinite (TS2589 at its
@@ -561,7 +583,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         // evaluator and the relation resolution paths, so use sites do not
         // cascade into spurious assignability diagnostics.
         if self.definition_store.is_depth_poisoned(def_id) {
-            return Some(tsz_solver::TypeId::ERROR);
+            return Some(TypeId::ERROR);
         }
 
         // Convert DefId to SymbolId using the reverse mapping.
@@ -652,11 +674,9 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 if let Some(kind) = def_kind {
                     if matches!(
                         kind,
-                        tsz_solver::def::DefKind::Class
-                            | tsz_solver::def::DefKind::Interface
-                            | tsz_solver::def::DefKind::TypeAlias
+                        DefKind::Class | DefKind::Interface | DefKind::TypeAlias
                     ) {
-                        let type_alias_self_wrapper = kind == tsz_solver::def::DefKind::TypeAlias
+                        let type_alias_self_wrapper = kind == DefKind::TypeAlias
                             && crate::query_boundaries::definition_identity::is_lazy_def_identity(
                                 self.types,
                                 *instance_type,
@@ -715,12 +735,12 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 && !has_local_symbol_collision
                 && let Some(&ty) = self.symbol_types.get(&sym_id)
             {
-                if ty == tsz_solver::TypeId::ERROR {
+                if ty == TypeId::ERROR {
                     // Skip poisoned ERROR entries (e.g., from stack overflow protection
                     // tripping during deep recursive type resolution). Fall through to
                     // the type environment, which may have the correct resolved type from
                     // an earlier successful resolution.
-                } else if ty == tsz_solver::TypeId::UNKNOWN {
+                } else if ty == TypeId::UNKNOWN {
                     // Skip placeholder UNKNOWN entries written by recursion guards
                     // / stub registrations during cross-file alias body lowering.
                     // Returning UNKNOWN here would let the evaluator collapse a
@@ -764,8 +784,8 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         if !is_atomics
             && let Ok(env) = self.type_env.try_borrow()
             && let Some(body) = TypeResolver::resolve_lazy(&*env, def_id, self.types)
-            && body != tsz_solver::TypeId::UNKNOWN
-            && body != tsz_solver::TypeId::ERROR
+            && body != TypeId::UNKNOWN
+            && body != TypeId::ERROR
         {
             // For lib interfaces, check if the heritage-merged version is available.
             if let Some(override_ty) = self.lib_heritage_cache_override(sym_id, body) {
@@ -836,7 +856,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 0,
                 0,
             )
-            && resolved != tsz_solver::TypeId::ERROR
+            && resolved != TypeId::ERROR
         {
             tracing::trace!(
                 def_id = def_id.0,
@@ -868,10 +888,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         None
     }
 
-    fn resolve_this_type(
-        &self,
-        _interner: &dyn tsz_solver::construction::TypeDatabase,
-    ) -> Option<tsz_solver::TypeId> {
+    fn resolve_this_type(&self, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         // Prefer the active `this` binding from the checker stack. Class-member
         // checking pushes the concrete receiver type here, which is more precise
         // than the enclosing-class fallback for static members and partially
@@ -898,10 +915,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// Get type parameters for a symbol reference (deprecated).
     ///
     /// Type parameters are embedded in the type itself rather than stored separately.
-    fn get_type_params(
-        &self,
-        _symbol: tsz_solver::SymbolRef,
-    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+    fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
         None
     }
 
@@ -912,14 +926,11 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ///
     /// For classes/interfaces, type parameters are embedded in the resolved type's shape
     /// (`Callable.type_params`, `Interface.type_params`, etc.) rather than stored separately.
-    fn get_lazy_type_params(
-        &self,
-        def_id: tsz_solver::DefId,
-    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
         self.get_def_type_params(def_id)
     }
 
-    fn is_boxed_def_id(&self, def_id: tsz_solver::DefId, kind: tsz_solver::IntrinsicKind) -> bool {
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
         if let Ok(env) = self.type_env.try_borrow() {
             env.is_boxed_def_id(def_id, kind)
         } else {
@@ -927,11 +938,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         }
     }
 
-    fn is_boxed_type_id(
-        &self,
-        type_id: tsz_solver::TypeId,
-        kind: tsz_solver::IntrinsicKind,
-    ) -> bool {
+    fn is_boxed_type_id(&self, type_id: TypeId, kind: IntrinsicKind) -> bool {
         if let Ok(env) = self.type_env.try_borrow() {
             env.is_boxed_type_id(type_id, kind)
         } else {
@@ -941,7 +948,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
     /// Get the boxed interface type for a primitive intrinsic.
     /// Delegates to the type environment which stores boxed types registered from lib.d.ts.
-    fn get_boxed_type(&self, kind: tsz_solver::IntrinsicKind) -> Option<tsz_solver::TypeId> {
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         if let Ok(env) = self.type_env.try_borrow() {
             env.get_boxed_type(kind)
         } else {
@@ -953,19 +960,19 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// Uses the interner (`QueryDatabase`) which stores the same value as the
     /// type environment, avoiding `RefCell` borrow conflicts when the subtype
     /// checker is called from within a mutable borrow of the type environment.
-    fn get_array_base_type(&self) -> Option<tsz_solver::TypeId> {
+    fn get_array_base_type(&self) -> Option<TypeId> {
         TypeResolver::get_array_base_type(&self.types)
     }
 
     /// Get the type parameters for the Array<T> interface.
     /// Delegates to the type environment.
-    fn get_array_base_type_params(&self) -> &[tsz_solver::TypeParamInfo] {
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         // We can't borrow type_env and return a reference from it (lifetime issue),
         // so we fall back to the interner which stores the same data.
         TypeResolver::get_array_base_type_params(&self.types)
     }
 
-    fn get_readonly_array_base_type(&self) -> Option<tsz_solver::TypeId> {
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
         TypeResolver::get_readonly_array_base_type(&self.types)
     }
 
@@ -984,11 +991,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// - The type is not a Lazy type (not a class/interface)
     /// - The `DefId` has no corresponding `SymbolId`
     /// - The class has no base class (no parents in `InheritanceGraph`)
-    fn get_base_type(
-        &self,
-        type_id: tsz_solver::TypeId,
-        interner: &dyn tsz_solver::construction::TypeDatabase,
-    ) -> Option<tsz_solver::TypeId> {
+    fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
         use crate::query_boundaries::common::callable_shape_id;
         use crate::query_boundaries::common::{lazy_def_id, object_symbol};
 
@@ -1058,7 +1061,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// This determines whether an enum allows bidirectional number assignability (Rule #7).
     /// Numeric enums like `enum E { A = 0 }` allow `number <-> E` assignments.
     /// String enums like `enum F { A = "a" }` do NOT allow `string <-> F` assignments.
-    fn is_numeric_enum(&self, def_id: tsz_solver::DefId) -> bool {
+    fn is_numeric_enum(&self, def_id: DefId) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
 
@@ -1137,15 +1140,15 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ///   should canonicalize to the same type with Recursive(0)
     /// - **Interface/Class**: Nominal - Different interfaces are incompatible even
     ///   if structurally identical, so they must keep their Lazy(DefId) reference
-    fn get_def_kind(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::def::DefKind> {
+    fn get_def_kind(&self, def_id: DefId) -> Option<DefKind> {
         self.definition_store.get_kind(def_id)
     }
 
-    fn get_def_name(&self, def_id: tsz_solver::DefId) -> Option<tsz_common::interner::Atom> {
+    fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
         self.definition_store.get_name(def_id)
     }
 
-    fn is_builtin_readonly_array_def(&self, def_id: tsz_solver::DefId) -> bool {
+    fn is_builtin_readonly_array_def(&self, def_id: DefId) -> bool {
         let has_readonly_array_name = self
             .definition_store
             .get_name(def_id)
@@ -1156,7 +1159,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
     }
 
-    fn is_actual_or_cloned_lib_def(&self, def_id: tsz_solver::DefId) -> bool {
+    fn is_actual_or_cloned_lib_def(&self, def_id: DefId) -> bool {
         self.def_to_symbol_id(def_id)
             .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
     }
@@ -1165,7 +1168,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ///
     /// Uses the `DefinitionStore` to look up the `symbol_id` stored in `DefinitionInfo`.
     /// This works across checker contexts because `DefinitionStore` is shared.
-    fn def_to_symbol_id(&self, def_id: tsz_solver::DefId) -> Option<tsz_binder::SymbolId> {
+    fn def_to_symbol_id(&self, def_id: DefId) -> Option<tsz_binder::SymbolId> {
         self.definition_store
             .get_symbol_id(def_id)
             .map(tsz_binder::SymbolId)
@@ -1177,7 +1180,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// This is the reverse of `def_to_symbol_id`.
     ///
     /// Returns None if the `SymbolRef` doesn't have a corresponding `DefId`.
-    fn symbol_to_def_id(&self, symbol: tsz_solver::SymbolRef) -> Option<tsz_solver::DefId> {
+    fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
         use tsz_binder::SymbolId;
 
         // Convert SymbolRef to SymbolId
@@ -1187,7 +1190,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         self.get_existing_def_id(sym_id)
     }
 
-    fn get_class_extends(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::DefId> {
+    fn get_class_extends(&self, def_id: DefId) -> Option<DefId> {
         self.type_env
             .try_borrow()
             .ok()
@@ -1200,10 +1203,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             })
     }
 
-    fn class_def_for_instance_type(
-        &self,
-        type_id: tsz_solver::TypeId,
-    ) -> Option<tsz_solver::DefId> {
+    fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
         self.type_env
             .try_borrow()
             .ok()
@@ -1216,15 +1216,12 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             })
             .or_else(|| {
                 let def_id = self.definition_store.find_def_for_type(type_id)?;
-                matches!(
-                    self.definition_store.get_kind(def_id),
-                    Some(tsz_solver::def::DefKind::Class)
-                )
-                .then_some(def_id)
+                matches!(self.definition_store.get_kind(def_id), Some(DefKind::Class))
+                    .then_some(def_id)
             })
     }
 
-    fn def_for_type(&self, type_id: tsz_solver::TypeId) -> Option<tsz_solver::DefId> {
+    fn def_for_type(&self, type_id: TypeId) -> Option<DefId> {
         self.definition_store.find_def_for_type(type_id)
     }
 
@@ -1235,7 +1232,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// available. Mirrors `resolve_entity_name_text_to_def_id_for_lowering`
     /// from `CheckerState` but lives on `CheckerContext` so the solver-side
     /// type evaluator can call it via the `TypeResolver` trait.
-    fn resolve_unresolved_type_name(&self, name: &str) -> Option<tsz_solver::def::DefId> {
+    fn resolve_unresolved_type_name(&self, name: &str) -> Option<DefId> {
         if let Ok(env) = self.type_env.try_borrow()
             && let Some(def_id) = TypeResolver::resolve_unresolved_type_name(&*env, name)
         {
@@ -1353,11 +1350,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// Returns false for:
     /// - Enum members (symbols with `ENUM_MEMBER` flag)
     /// - Non-enum types
-    fn is_enum_type(
-        &self,
-        type_id: tsz_solver::TypeId,
-        _interner: &dyn tsz_solver::construction::TypeDatabase,
-    ) -> bool {
+    fn is_enum_type(&self, type_id: TypeId, _interner: &dyn TypeDatabase) -> bool {
         use tsz_binder::symbol_flags;
 
         // Case 1: Direct Enum type key
@@ -1436,10 +1429,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ///
     /// This enables the Solver to check nominal relationships between enum members
     /// and their parent types (e.g., E.A -> E) without directly accessing Binder symbols.
-    fn get_enum_parent_def_id(
-        &self,
-        member_def_id: tsz_solver::DefId,
-    ) -> Option<tsz_solver::DefId> {
+    fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
         use tsz_binder::symbol_flags;
 
         // Convert member DefId to SymbolId
@@ -1514,7 +1504,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         None
     }
 
-    fn is_user_enum_def(&self, def_id: tsz_solver::DefId) -> bool {
+    fn is_user_enum_def(&self, def_id: DefId) -> bool {
         use tsz_binder::symbol_flags;
 
         // Convert DefId to SymbolId
@@ -1548,7 +1538,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         false
     }
 
-    fn get_enum_namespace_type(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::TypeId> {
+    fn get_enum_namespace_type(&self, def_id: DefId) -> Option<TypeId> {
         let sym_id = self.def_to_symbol_id(def_id)?;
         self.enum_namespace_types.get(&sym_id).copied()
     }

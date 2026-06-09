@@ -164,6 +164,54 @@ fn def_id_fallback_prefers_symbol_stable_declaration_span() {
     assert_eq!(ctx.def_fallback_count.get(), 1);
 }
 
+/// Resolver adapter boundary contract (issue #12965).
+///
+/// `src/context/resolver.rs` is the canonical `impl TypeResolver for
+/// CheckerContext` adapter — the one sanctioned place where the checker fulfils
+/// the solver-defined `TypeResolver` callback trait. It is *allowed* to name
+/// the solver's canonical identity handles (`TypeId`, `DefId`, ...) because the
+/// trait signatures require them, but it must never inspect raw solver type
+/// *shapes* or construct types directly: every shape decision is delegated to
+/// the `query_boundaries` facades. This guard locks that contract in so the
+/// adapter cannot regress into raw `TypeData`/`TypeKey` pattern-matching or
+/// direct interning.
+#[test]
+fn resolver_adapter_avoids_raw_solver_internals() {
+    let resolver_src = fs::read_to_string("src/context/resolver.rs")
+        .expect("failed to read src/context/resolver.rs for architecture guard");
+
+    // Scan only executable lines: the module doc legitimately references
+    // `TypeData::Lazy` and `.intern(...)` when describing the contract, so the
+    // shape/construction checks must ignore `//`-prefixed comment and doc
+    // lines. Each guarded pattern is a single token that always sits on one
+    // line, so per-line scanning is sufficient (and avoids buffering the file).
+    let code_contains = |needle: &str| {
+        resolver_src
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .any(|line| line.contains(needle))
+    };
+
+    assert!(
+        !code_contains("TypeData::") && !code_contains("TypeKey::"),
+        "resolver adapter must not pattern-match raw TypeData/TypeKey shapes; \
+         route shape decisions through query_boundaries::common"
+    );
+    assert!(
+        !code_contains(".intern("),
+        "resolver adapter must not construct types via raw .intern(); \
+         type construction belongs to the solver / type-environment"
+    );
+    assert!(
+        !code_contains("tsz_solver::types::"),
+        "resolver adapter must not reach into tsz_solver::types internals"
+    );
+    assert!(
+        code_contains("crate::query_boundaries::common"),
+        "resolver adapter must delegate type-shape decisions to query_boundaries::common"
+    );
+}
+
 #[test]
 fn test_array_helpers_avoid_direct_typekey_interning() {
     let mut checker_rs_files = Vec::new();
