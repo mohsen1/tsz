@@ -8,7 +8,6 @@ use tsz_solver::{
 };
 
 use crate::state::CheckerState;
-
 use tsz_solver::relations::relation_queries::{
     RelationContext, RelationKind as SolverRelationKind, RelationPolicy, RelationQueryInputs,
     query_assignability_with_failure_analysis,
