@@ -11,6 +11,7 @@
 #![allow(clippy::needless_borrow)]
 
 pub mod context;
+pub(crate) mod core;
 #[cfg(feature = "dts")]
 pub mod declaration_emitter;
 pub mod emitter;
