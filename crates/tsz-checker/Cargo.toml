@@ -81,6 +81,9 @@ path = "tests/closure_boundary_property_narrowing_tests.rs"
 name = "flow_property_reference_cache_tests"
 path = "tests/flow_property_reference_cache_tests.rs"
 [[test]]
+name = "lazy_def_id_cache_tests"
+path = "tests/lazy_def_id_cache_tests.rs"
+[[test]]
 name = "assignment_branch_merge_narrowing_tests"
 path = "tests/assignment_branch_merge_narrowing_tests.rs"
 [[test]]

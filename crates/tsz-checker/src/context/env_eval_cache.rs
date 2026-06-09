@@ -52,17 +52,36 @@ impl<'a> CheckerContext<'a> {
         self.env_eval_cache.borrow().len() <= ENV_EVAL_SEED_PERSIST_SOFT_CAP
     }
 
+    /// Memoized `collect_lazy_def_ids`: the walk is pure over the immutable
+    /// interned type structure, so the reachable lazy-`DefId` set is cached per
+    /// `type_id` and reused across the many hot callers that re-query the same
+    /// (lib-heavy) types. Returns an `Rc` slice for cheap clone-on-hit.
+    pub(crate) fn collect_lazy_def_ids_cached(
+        &self,
+        type_id: TypeId,
+    ) -> std::rc::Rc<[tsz_solver::DefId]> {
+        if let Some(cached) = self.lazy_def_ids_cache.borrow().get(&type_id) {
+            return std::rc::Rc::clone(cached);
+        }
+        let collected: std::rc::Rc<[tsz_solver::DefId]> =
+            crate::query_boundaries::common::collect_lazy_def_ids(self.types, type_id).into();
+        self.lazy_def_ids_cache
+            .borrow_mut()
+            .insert(type_id, std::rc::Rc::clone(&collected));
+        collected
+    }
+
     fn type_mentions_def(&self, type_id: TypeId, def_id: tsz_solver::DefId) -> bool {
-        crate::query_boundaries::common::contains_lazy_def_id(self.types, type_id, def_id)
+        self.collect_lazy_def_ids_cached(type_id).contains(&def_id)
     }
 
     /// Whether `type_id` references any type-alias `DefId` flagged as
     /// unconditionally-infinite (TS2589). Such aliases are error types in tsc,
     /// so assignments involving them must not produce structural mismatches.
     pub(crate) fn type_involves_depth_poisoned_def(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::collect_lazy_def_ids(self.types, type_id)
-            .into_iter()
-            .any(|def_id| self.definition_store.is_depth_poisoned(def_id))
+        self.collect_lazy_def_ids_cached(type_id)
+            .iter()
+            .any(|&def_id| self.definition_store.is_depth_poisoned(def_id))
     }
 
     pub(crate) fn lookup_env_eval_cache(&self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {

@@ -722,6 +722,15 @@ pub struct CheckerContext<'a> {
     /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
     pub(crate) env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
 
+    /// Memoizes the set of lazy `DefId`s reachable from a type (the structural
+    /// `collect_lazy_def_ids` walk). The walk is pure over the immutable interned
+    /// type structure, but it is re-run for the same (large, lib-heavy) types
+    /// from many hot callers (alias checking, assignability, type analysis,
+    /// `lib_augmentations`, the env-eval seed/persist scan), where it dominates
+    /// `walk_referenced_types` on real lib-heavy projects. Caching the result is
+    /// a pure speed memo: identical to recomputing on demand.
+    pub(crate) lazy_def_ids_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[DefId]>>>,
+
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
     pub class_symbol_to_decl_cache: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,

@@ -6,7 +6,7 @@ use crate::query_boundaries::assignability::{
     get_keyof_type, get_string_literal_value, get_union_members, is_type_parameter_like,
     keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
+use crate::query_boundaries::common::collect_type_queries;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -1495,7 +1495,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+            for &def_id in self.ctx.collect_lazy_def_ids_cached(current).iter() {
                 if refs_resolution_fuel_exhausted() {
                     break;
                 }

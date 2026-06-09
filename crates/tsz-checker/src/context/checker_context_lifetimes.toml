@@ -83,6 +83,7 @@ class_instance_type_cache = { lifetime = "FileLocalReset", capability = "FileTyp
 class_constructor_type_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 class_chain_summary_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 env_eval_cache = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+lazy_def_ids_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "pure speed memo of the lazy-DefId set reachable from a type; recomputable on demand, reset at file-session boundary" }
 class_symbol_to_decl_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 heritage_symbol_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 base_constructor_expr_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
