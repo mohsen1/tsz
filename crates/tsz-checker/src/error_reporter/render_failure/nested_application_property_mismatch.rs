@@ -1252,6 +1252,7 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         constituent_type: TypeId,
         nested_reason: &tsz_solver::SubtypeFailureReason,
+        original_reason: &tsz_solver::SubtypeFailureReason,
     ) -> Diagnostic {
         let idx = ctx.idx;
         let depth = ctx.depth;
@@ -1260,22 +1261,36 @@ impl<'a> CheckerState<'a> {
         let file_name = ctx.file_name.clone();
 
         // Top-level intersection headline (`Type 'S' is not assignable to type
-        // 'C1 & C2 & …'.`). At depth 0 the anchored renderer owns the source
-        // display; nested, fall back to the structural pair.
+        // 'C1 & C2 & …'.`). This line is the only one the conformance harness
+        // fingerprints, so it must stay byte-identical to the pre-wrap output:
+        // render the merged-target `original_reason` and reuse exactly its
+        // headline (its primary `message_text`/`code`), then discard its
+        // elaboration — the constituent frame and drill below replace it. This
+        // preserves whichever source/target display the unwrapped reason used
+        // (e.g. the written intersection order for an `object & string` source,
+        // which neither the structural nor the merged formatter reproduces
+        // verbatim). Nested, fall back to a plain structural headline.
         let mut diag = if depth == 0 {
-            self.render_type_mismatch(ctx)
-        } else {
-            let source_str = self.format_type_diagnostic(source_type);
-            let target_str = self.format_type_diagnostic(target_type);
-            let base = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&source_str, &target_str],
-            );
+            let headline =
+                self.render_failure_reason(original_reason, source_type, target_type, idx, 0);
             Diagnostic::error(
                 file_name.clone(),
                 start,
                 length,
-                base,
+                headline.message_text,
+                headline.code,
+            )
+        } else {
+            let source_str = self.format_type_diagnostic(source_type);
+            let target_str = self.format_type_diagnostic(target_type);
+            Diagnostic::error(
+                file_name.clone(),
+                start,
+                length,
+                format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                ),
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             )
         };

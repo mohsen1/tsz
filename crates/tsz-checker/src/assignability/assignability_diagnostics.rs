@@ -1251,21 +1251,26 @@ impl<'a> CheckerState<'a> {
             None => return reason,
         };
         for constituent in members {
-            if self.is_assignable_to(source, constituent) {
-                continue;
-            }
-            let inner = self
+            // The first constituent the source fails is the one tsc elaborates.
+            // Route the per-constituent decision through the same gateway
+            // (`analyze_assignability_failure`) rather than a raw assignability
+            // predicate: a `None` reason means the source satisfies this
+            // constituent, and a `Some` reason is exactly the nested chain to
+            // frame.
+            let Some(inner) = self
                 .analyze_assignability_failure(source, constituent)
                 .failure_reason
-                .unwrap_or(R::TypeMismatch {
-                    source_type: source,
-                    target_type: constituent,
-                });
+            else {
+                continue;
+            };
             return R::IntersectionTargetMismatch {
                 source_type: source,
                 target_type: target,
                 constituent_type: constituent,
                 nested_reason: Box::new(inner),
+                // Preserve the merged-target reason so the headline stays
+                // byte-identical to the pre-wrap output (fingerprint-stable).
+                original_reason: Box::new(reason),
             };
         }
         reason

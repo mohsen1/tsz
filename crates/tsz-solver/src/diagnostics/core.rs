@@ -537,12 +537,18 @@ pub enum SubtypeFailureReason {
     /// `constituent_type` is the first failing constituent; `nested_reason`
     /// explains the `S <: constituent_type` relation and is rendered against
     /// `(source_type, constituent_type)`, so the nested reason's own top line
-    /// becomes the constituent frame.
+    /// becomes the constituent frame. `original_reason` is the merged-target
+    /// reason this wraps — only its **headline** is rendered, so the top
+    /// `Type 'S' is not assignable to type 'C1 & C2 & …'.` line stays
+    /// byte-identical to the pre-wrap output (which is the only line the
+    /// conformance harness fingerprints); the constituent frame and drill
+    /// replace its elaboration.
     IntersectionTargetMismatch {
         source_type: TypeId,
         target_type: TypeId,
         constituent_type: TypeId,
         nested_reason: Box<Self>,
+        original_reason: Box<Self>,
     },
 }
 
@@ -1397,6 +1403,7 @@ impl SubtypeFailureReason {
                 target_type,
                 constituent_type,
                 nested_reason,
+                original_reason: _,
             } => PendingDiagnostic::error(
                 codes::TYPE_NOT_ASSIGNABLE,
                 vec![(*source_type).into(), (*target_type).into()],

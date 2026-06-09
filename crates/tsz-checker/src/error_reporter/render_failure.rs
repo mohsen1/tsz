@@ -888,12 +888,14 @@ impl<'a> CheckerState<'a> {
                 target_type,
                 constituent_type,
                 nested_reason,
+                original_reason,
             } => self.render_intersection_target_mismatch(
                 &rctx,
                 *source_type,
                 *target_type,
                 *constituent_type,
                 nested_reason,
+                original_reason,
             ),
             SubtypeFailureReason::TypeParameterConstraintMismatch {
                 source_type,
