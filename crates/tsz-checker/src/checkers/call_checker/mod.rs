@@ -122,7 +122,25 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         use crate::query_boundaries::state::type_environment::application_info;
 
         let (base, args) = application_info(self.state.ctx.types, type_id)?;
-        let sym_id = self.state.ctx.resolve_type_to_symbol_id(base)?;
+        let sym_id = self.state.ctx.resolve_type_to_symbol_id(base).or_else(|| {
+            // A type-alias body imported from another module can reference a
+            // sibling type that the lowering pass left as `UnresolvedTypeName`
+            // because that name was not in scope at the alias's *use* site
+            // (it is private to the alias's defining module). Recover it
+            // through the merged binder graph so alias expansion — and the
+            // generic-call inference that depends on it — sees the real
+            // declaration instead of aborting. Without this, inference of a
+            // type argument through a cross-module alias chain
+            // (`type Opts<T> = Inner<T>`) silently fails and the argument
+            // collapses to `unknown`.
+            let atom = crate::query_boundaries::spread::unresolved_type_name_atom(
+                self.state.ctx.types,
+                base,
+            )?;
+            let name = self.state.ctx.types.resolve_atom(atom);
+            let def_id = TypeResolver::resolve_unresolved_type_name(&self.state.ctx, &name)?;
+            self.state.ctx.def_to_symbol_id_with_fallback(def_id)
+        })?;
         let (body, type_params) = self.state.type_reference_symbol_type_with_params(sym_id);
         if body == TypeId::ANY || body == TypeId::ERROR || type_params.is_empty() {
             return None;
