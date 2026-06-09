@@ -109,9 +109,11 @@ impl<'a> CheckerState<'a> {
         // normalized JSX spread path below so we can classify TS2322 vs TS2741 from
         // the apparent/object shape first.
         if !spread_has_type_params
-            && self
-                .jsx_props_relation_outcome(spread_type, props_type)
-                .related
+            && crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                spread_type,
+                props_type,
+            )
         {
             return false;
         }
@@ -197,10 +199,11 @@ impl<'a> CheckerState<'a> {
                 // so the spread's type issues are masked.
                 return false;
             }
-            if self
-                .jsx_props_relation_outcome(spread_type, props_type)
-                .related
-            {
+            if crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                spread_type,
+                props_type,
+            ) {
                 return false;
             }
             let spread_name = self.format_type(spread_source_type);
@@ -370,10 +373,11 @@ impl<'a> CheckerState<'a> {
                 prop.type_id
             };
 
-            if !self
-                .jsx_props_relation_outcome(source_type, expected_type)
-                .related
-            {
+            if !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                source_type,
+                expected_type,
+            ) {
                 // This property has a type mismatch.
                 // Check if it will be overwritten by a later explicit attribute.
                 if overridden_names.contains(prop_name.as_str()) {
@@ -414,9 +418,11 @@ impl<'a> CheckerState<'a> {
         let mut has_type_mismatch = has_unfixable_mismatch;
         if !has_type_mismatch
             && spread_has_type_params
-            && !self
-                .jsx_props_relation_outcome(resolved_spread, props_type)
-                .related
+            && !crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                resolved_spread,
+                props_type,
+            )
         {
             has_type_mismatch = true;
         }
@@ -425,9 +431,11 @@ impl<'a> CheckerState<'a> {
         // resolved spread type is assignable to the props type.
         if has_type_mismatch
             && spread_has_type_params
-            && self
-                .jsx_props_relation_outcome(resolved_spread, props_type)
-                .related
+            && crate::query_boundaries::checkers::jsx::props_are_assignable(
+                self,
+                resolved_spread,
+                props_type,
+            )
         {
             has_type_mismatch = false;
         }

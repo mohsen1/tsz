@@ -190,8 +190,9 @@ impl<'a> CheckerState<'a> {
                         if *attr_type == TypeId::ANY || *attr_type == TypeId::ERROR {
                             return true;
                         }
-                        self.jsx_props_relation_outcome(*attr_type, expected)
-                            .related
+                        crate::query_boundaries::checkers::jsx::props_are_assignable(
+                            self, *attr_type, expected,
+                        )
                     }
                     _ => true,
                 }
@@ -263,10 +264,9 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         let attrs_type = self.ctx.types.factory().object(properties);
-        if self
-            .jsx_props_relation_outcome(attrs_type, props_type)
-            .related
-        {
+        if crate::query_boundaries::checkers::jsx::props_are_assignable(
+            self, attrs_type, props_type,
+        ) {
             return;
         }
         self.report_jsx_synthesized_props_assignability_error(
