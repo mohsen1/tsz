@@ -4,13 +4,123 @@
 //! references, type parameter registration, and resolved-type registration
 //! in the `TypeEnvironment`.
 
+use std::sync::Arc;
+
 use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
-use tsz_solver::def::DefId;
+use tsz_solver::def::{DefId, DefinitionStore};
 
 use crate::context::CheckerContext;
+use crate::query_boundaries::common::TypeEnvironment;
+
+/// A dual-environment registration that must be applied to the flow-analyzer
+/// environment (`type_environment`) but lost the `RefCell` borrow race when it
+/// was first attempted.
+///
+/// Each variant carries fully-owned data so the operation can be replayed later
+/// without holding any borrow of the originating `CheckerContext`. Replaying a
+/// deferred write reproduces exactly the same `TypeEnvironment` mutation the
+/// direct dual-write would have performed, which is why the previous full
+/// per-file `clone()` repair is no longer required.
+#[derive(Clone, Debug)]
+pub enum DeferredFlowEnvWrite {
+    /// `set_definition_store` — wire the shared `DefinitionStore` fallback.
+    SetDefinitionStore(Arc<DefinitionStore>),
+    /// `insert_def` — register a non-generic definition body.
+    InsertDef { def_id: DefId, body: TypeId },
+    /// `insert_def_with_params` (+ optional declared variances) — register a
+    /// generic definition body.
+    InsertDefWithParams {
+        def_id: DefId,
+        body: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+        variances: Option<Arc<[tsz_solver::type_handles::Variance]>>,
+    },
+    /// `insert_class_instance_type` — register a class instance type.
+    InsertClassInstance {
+        def_id: DefId,
+        instance_type: TypeId,
+    },
+    /// `register_class_extends` — register a class `extends` parent.
+    RegisterClassExtends { def_id: DefId, parent_def_id: DefId },
+    /// `register_def_symbol_mapping` — register the `DefId` <-> `SymbolId` bridge.
+    RegisterDefSymbolMapping { def_id: DefId, sym_id: SymbolId },
+    /// `register_augmented_def` — re-apply an augmentation merge.
+    RegisterAugmentedDef {
+        def_id: DefId,
+        augmented: TypeId,
+        is_class: bool,
+    },
+    /// `insert_def_kind` — register a `DefKind`.
+    InsertDefKind {
+        def_id: DefId,
+        kind: tsz_solver::def::DefKind,
+    },
+}
+
+impl DeferredFlowEnvWrite {
+    /// Apply this deferred registration to a flow-analyzer `TypeEnvironment`.
+    fn apply(&self, env: &mut TypeEnvironment) {
+        match self {
+            Self::SetDefinitionStore(store) => env.set_definition_store(Arc::clone(store)),
+            Self::InsertDef { def_id, body } => env.insert_def(*def_id, *body),
+            Self::InsertDefWithParams {
+                def_id,
+                body,
+                params,
+                variances,
+            } => {
+                env.insert_def_with_params(*def_id, *body, params.clone());
+                if let Some(variances) = variances {
+                    env.insert_declared_variances(*def_id, Arc::clone(variances));
+                }
+            }
+            Self::InsertClassInstance {
+                def_id,
+                instance_type,
+            } => env.insert_class_instance_type(*def_id, *instance_type),
+            Self::RegisterClassExtends {
+                def_id,
+                parent_def_id,
+            } => env.register_class_extends(*def_id, *parent_def_id),
+            Self::RegisterDefSymbolMapping { def_id, sym_id } => {
+                env.register_def_symbol_mapping(*def_id, *sym_id);
+            }
+            Self::RegisterAugmentedDef {
+                def_id,
+                augmented,
+                is_class,
+            } => apply_augmented_def(env, *def_id, *augmented, *is_class),
+            Self::InsertDefKind { def_id, kind } => env.insert_def_kind(*def_id, *kind),
+        }
+    }
+}
+
+/// Apply an augmentation merge to a single environment.
+///
+/// Shared by the live dual-write path and deferred replay so both produce
+/// identical results: class-like defs update the instance-type slot, other defs
+/// re-insert the body while preserving any existing type parameters.
+fn apply_augmented_def(
+    env: &mut TypeEnvironment,
+    def_id: DefId,
+    augmented: TypeId,
+    is_class: bool,
+) {
+    if is_class || env.get_class_instance_type(def_id).is_some() {
+        env.insert_class_instance_type(def_id, augmented);
+    } else {
+        let params: Option<Vec<tsz_solver::TypeParamInfo>> =
+            env.get_def_params(def_id).map(<[_]>::to_vec);
+        if let Some(params) = params {
+            env.insert_def_with_params(def_id, augmented, params);
+        } else {
+            env.insert_def(def_id, augmented);
+        }
+    }
+}
 
 impl<'a> CheckerContext<'a> {
     /// Get or create a `DefId` for a symbol.
@@ -663,9 +773,9 @@ impl<'a> CheckerContext<'a> {
     /// reinstalled (checked via `Arc::ptr_eq`), so calling this function
     /// multiple times across registration sites is safe.
     pub fn ensure_both_envs_have_definition_store(&self) {
-        self.with_envs_for_register("set_definition_store", |env| {
-            env.set_definition_store(std::sync::Arc::clone(&self.definition_store));
-        });
+        self.register_in_envs(DeferredFlowEnvWrite::SetDefinitionStore(Arc::clone(
+            &self.definition_store,
+        )));
     }
 
     // ---- Dual-environment registration helpers ----
@@ -679,40 +789,75 @@ impl<'a> CheckerContext<'a> {
     // scattered across lib resolution, symbol-type resolution, and augmentation
     // merge paths.
     //
-    // **Visibility on borrow failure.** The two environments are owned through
-    // `RefCell`s, so registration can race with another mutable borrow elsewhere
-    // in the checker. The helper unifies the try_borrow_mut pattern across
-    // registration sites and traces every failed borrow with the registration
-    // `name`, so missed per-environment registrations become observable in
-    // logs / structured-error output.
+    // **Borrow-conflict handling.** The two environments are owned through
+    // `RefCell`s, so a registration can race with another live borrow elsewhere
+    // in the checker (the flow-analyzer holds `type_environment` borrowed during
+    // narrowing; recursive resolution can hold either). The evaluator env
+    // (`type_env`) is authoritative and is written directly. The mirror-write
+    // into the flow-analyzer env (`type_environment`) is *deferred* into
+    // `deferred_flow_env_writes` when its borrow is unavailable and replayed the
+    // next time the env is borrowable, so no mirror-write is ever dropped. This
+    // replaces the previous "warn and silently skip + repair via per-file
+    // `clone()`" strategy (TODO #8269).
     // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
-    fn with_envs_for_register(
-        &self,
-        name: &'static str,
-        mut f: impl FnMut(&mut crate::query_boundaries::common::TypeEnvironment),
-    ) {
+    fn register_in_envs(&self, op: DeferredFlowEnvWrite) {
+        // Evaluator env: authoritative, written directly.
         match self.type_env.try_borrow_mut() {
-            Ok(mut env) => f(&mut env),
+            Ok(mut env) => op.apply(&mut env),
             Err(e) => {
                 tracing::warn!(
-                    register = name,
                     target_env = "type_env",
                     error = ?e,
-                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
+                    "register-in-envs: type_env try_borrow_mut failed; registration skipped"
                 );
             }
         }
+        self.mirror_to_flow_env(op);
+    }
+
+    /// Apply (or defer) a single registration to the flow-analyzer env.
+    ///
+    /// On a successful borrow, first replays any previously-deferred writes (in
+    /// order) so the env catches up, then applies `op`. On a borrow conflict,
+    /// `op` is queued for later replay.
+    fn mirror_to_flow_env(&self, op: DeferredFlowEnvWrite) {
         match self.type_environment.try_borrow_mut() {
-            Ok(mut env) => f(&mut env),
-            Err(e) => {
-                tracing::warn!(
-                    register = name,
-                    target_env = "type_environment",
-                    error = ?e,
-                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
-                );
+            Ok(mut env) => {
+                self.drain_deferred_flow_env_writes_into(&mut env);
+                op.apply(&mut env);
+            }
+            Err(_) => {
+                self.deferred_flow_env_writes.borrow_mut().push(op);
             }
         }
+    }
+
+    /// Replay every queued deferred write into an already-borrowed flow-analyzer
+    /// env, clearing the queue. A single borrow: `take` leaves an empty queue,
+    /// so the loop is a no-op when nothing was deferred.
+    fn drain_deferred_flow_env_writes_into(&self, env: &mut TypeEnvironment) {
+        let pending = std::mem::take(&mut *self.deferred_flow_env_writes.borrow_mut());
+        for op in pending {
+            op.apply(env);
+        }
+    }
+
+    /// Replay any deferred flow-analyzer-env writes that lost the borrow race.
+    ///
+    /// Called at the file-preparation boundary (and reusable elsewhere) so the
+    /// flow-analyzer env is a complete mirror of the evaluator env before flow
+    /// analysis reads it. A no-op when nothing was deferred and when the env is
+    /// momentarily unborrowable (the next successful mirror-write drains it).
+    pub fn flush_deferred_flow_env_writes(&self) {
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
+            self.drain_deferred_flow_env_writes_into(&mut env);
+        }
+    }
+
+    /// Number of registrations still waiting to be mirrored into the
+    /// flow-analyzer env. Used by reconciliation assertions and tests.
+    pub fn deferred_flow_env_write_count(&self) -> usize {
+        self.deferred_flow_env_writes.borrow().len()
     }
 
     /// Register a non-generic definition body in **both** type environments.
@@ -722,9 +867,7 @@ impl<'a> CheckerContext<'a> {
         if body_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
-        self.with_envs_for_register("insert_def", |env| {
-            env.insert_def(def_id, body);
-        });
+        self.register_in_envs(DeferredFlowEnvWrite::InsertDef { def_id, body });
     }
 
     /// Register a generic definition body (with type parameters) in **both**
@@ -747,11 +890,11 @@ impl<'a> CheckerContext<'a> {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
         let declared_variances = TypeResolver::get_type_param_variance(self, def_id);
-        self.with_envs_for_register("insert_def_with_params", |env| {
-            env.insert_def_with_params(def_id, body, params.clone());
-            if let Some(variances) = declared_variances.clone() {
-                env.insert_declared_variances(def_id, variances);
-            }
+        self.register_in_envs(DeferredFlowEnvWrite::InsertDefWithParams {
+            def_id,
+            body,
+            params,
+            variances: declared_variances,
         });
     }
 
@@ -773,8 +916,9 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a class instance type in **both** type environments.
     pub fn register_class_instance_in_envs(&self, def_id: DefId, instance_type: TypeId) {
-        self.with_envs_for_register("insert_class_instance_type", |env| {
-            env.insert_class_instance_type(def_id, instance_type);
+        self.register_in_envs(DeferredFlowEnvWrite::InsertClassInstance {
+            def_id,
+            instance_type,
         });
     }
 
@@ -786,8 +930,9 @@ impl<'a> CheckerContext<'a> {
     /// returns `false` for user-defined class hierarchies during narrowing, causing
     /// `D1 & C1` intersections instead of the correct `D1` narrowed type.
     pub fn register_class_extends_in_envs(&self, def_id: DefId, parent_def_id: DefId) {
-        self.with_envs_for_register("register_class_extends", |env| {
-            env.register_class_extends(def_id, parent_def_id);
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterClassExtends {
+            def_id,
+            parent_def_id,
         });
     }
 
@@ -796,30 +941,17 @@ impl<'a> CheckerContext<'a> {
     /// This keeps evaluator and flow-analyzer resolution paths aligned for
     /// `TypeQuery`, inheritance, and solver-side DefId identity lookups.
     pub fn register_def_symbol_mapping_in_envs(&self, def_id: DefId, sym_id: SymbolId) {
-        self.with_envs_for_register("register_def_symbol_mapping", |env| {
-            env.register_def_symbol_mapping(def_id, sym_id);
-        });
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterDefSymbolMapping { def_id, sym_id });
     }
 
     /// Register a `DefId` ↔ `SymbolId` bridge in the flow-analyzer environment.
     ///
     /// `register_resolved_type` historically populated this bridge only in
     /// `type_environment`. Keep that path scoped so resolving a symbol's body
-    /// does not also change evaluator-side TypeQuery/Lazy resolution order.
+    /// does not also change evaluator-side TypeQuery/Lazy resolution order. On a
+    /// borrow conflict the write is deferred and replayed rather than dropped.
     pub fn register_def_symbol_mapping_in_type_environment(&self, def_id: DefId, sym_id: SymbolId) {
-        match self.type_environment.try_borrow_mut() {
-            Ok(mut env) => env.register_def_symbol_mapping(def_id, sym_id),
-            Err(e) => {
-                tracing::warn!(
-                    def_id = def_id.0,
-                    sym_id = sym_id.0,
-                    register = "register_def_symbol_mapping",
-                    target_env = "type_environment",
-                    error = ?e,
-                    "register-in-env: try_borrow_mut failed; skipped registration for this environment"
-                );
-            }
-        }
+        self.mirror_to_flow_env(DeferredFlowEnvWrite::RegisterDefSymbolMapping { def_id, sym_id });
     }
 
     /// Register an augmented definition body in **both** type environments.
@@ -828,25 +960,10 @@ impl<'a> CheckerContext<'a> {
     /// updates the class-instance type. Otherwise, preserves existing type
     /// parameters (if any) when re-inserting the definition body.
     pub fn register_augmented_def_in_envs(&self, def_id: DefId, augmented: TypeId, is_class: bool) {
-        use crate::query_boundaries::common::TypeEnvironment;
-
-        // Helper that applies the augmentation logic to a single env.
-        fn apply(env: &mut TypeEnvironment, def_id: DefId, augmented: TypeId, is_class: bool) {
-            if is_class || env.get_class_instance_type(def_id).is_some() {
-                env.insert_class_instance_type(def_id, augmented);
-            } else {
-                let params: Option<Vec<tsz_solver::TypeParamInfo>> =
-                    env.get_def_params(def_id).map(|s| s.to_vec());
-                if let Some(params) = params {
-                    env.insert_def_with_params(def_id, augmented, params);
-                } else {
-                    env.insert_def(def_id, augmented);
-                }
-            }
-        }
-
-        self.with_envs_for_register("register_augmented_def", |env| {
-            apply(env, def_id, augmented, is_class);
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterAugmentedDef {
+            def_id,
+            augmented,
+            is_class,
         });
     }
 
@@ -860,9 +977,7 @@ impl<'a> CheckerContext<'a> {
     /// `DefKind` to `type_env`, leaving `type_environment` without the mapping
     /// until the full checker walk populated it incidentally.
     fn register_def_kind_in_envs(&self, def_id: DefId, kind: tsz_solver::def::DefKind) {
-        self.with_envs_for_register("insert_def_kind", |env| {
-            env.insert_def_kind(def_id, kind);
-        });
+        self.register_in_envs(DeferredFlowEnvWrite::InsertDefKind { def_id, kind });
     }
 
     /// Create a Lazy type reference from a symbol.
@@ -1851,6 +1966,131 @@ mod tests {
             ctx.type_environment.borrow().generation(),
             gen_flow,
             "type_environment generation must not change on idempotent reinstall"
+        );
+    }
+
+    /// Regression for #8269: a dual-env registration whose flow-analyzer-env
+    /// mirror loses the `RefCell` borrow race must be *deferred and replayed*,
+    /// never silently dropped. Uses `register_class_extends` because the
+    /// `class_extends` map is flow-analyzer-env-local with no `DefinitionStore`
+    /// fallback, so the assertion isolates the local mirror write.
+    #[test]
+    fn flow_env_mirror_is_deferred_under_borrow_then_replayed() {
+        use tsz_common::interner::Atom;
+        use tsz_solver::TypeId;
+        use tsz_solver::def::DefinitionInfo;
+
+        let (arena, binder, types) = minimal_checker_ctx();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        let child = ctx.definition_store.register(DefinitionInfo::type_alias(
+            Atom::default(),
+            vec![],
+            TypeId::UNKNOWN,
+        ));
+        let parent = ctx.definition_store.register(DefinitionInfo::type_alias(
+            Atom::default(),
+            vec![],
+            TypeId::UNKNOWN,
+        ));
+
+        // Simulate the flow-analyzer holding `type_environment` borrowed during
+        // recursive resolution: the mirror-write cannot acquire the cell.
+        {
+            let held = ctx.type_environment.borrow();
+            ctx.register_class_extends_in_envs(child, parent);
+
+            // Evaluator env got the write directly.
+            assert_eq!(
+                ctx.type_env.borrow().get_class_extends_def(child),
+                Some(parent),
+                "evaluator env must receive the registration directly"
+            );
+            // Flow-analyzer env write was deferred, not dropped or applied.
+            assert_eq!(
+                held.get_class_extends_def(child),
+                None,
+                "flow-analyzer env must not yet have the deferred write"
+            );
+            assert_eq!(
+                ctx.deferred_flow_env_write_count(),
+                1,
+                "the lost mirror-write must be queued for replay"
+            );
+        }
+
+        // Once the borrow is released the deferred write replays.
+        ctx.flush_deferred_flow_env_writes();
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            0,
+            "deferred queue must drain on flush"
+        );
+        assert_eq!(
+            ctx.type_environment.borrow().get_class_extends_def(child),
+            Some(parent),
+            "flow-analyzer env must receive the replayed mirror-write"
+        );
+    }
+
+    /// A subsequent successful mirror-write must drain the backlog before
+    /// applying itself, so deferred writes never require an explicit flush to
+    /// become visible during ongoing registration.
+    #[test]
+    fn flow_env_backlog_drains_on_next_successful_mirror() {
+        use tsz_common::interner::Atom;
+        use tsz_solver::TypeId;
+        use tsz_solver::def::DefinitionInfo;
+
+        let (arena, binder, types) = minimal_checker_ctx();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        let a = ctx.definition_store.register(DefinitionInfo::type_alias(
+            Atom::default(),
+            vec![],
+            TypeId::UNKNOWN,
+        ));
+        let b = ctx.definition_store.register(DefinitionInfo::type_alias(
+            Atom::default(),
+            vec![],
+            TypeId::UNKNOWN,
+        ));
+
+        {
+            let _held = ctx.type_environment.borrow();
+            ctx.register_class_extends_in_envs(a, a);
+            assert_eq!(ctx.deferred_flow_env_write_count(), 1);
+        }
+
+        // Next registration (no borrow held) drains the backlog, then applies.
+        ctx.register_class_extends_in_envs(b, b);
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            0,
+            "successful mirror-write must drain the backlog first"
+        );
+        let flow = ctx.type_environment.borrow();
+        assert_eq!(
+            flow.get_class_extends_def(a),
+            Some(a),
+            "previously-deferred write must be visible"
+        );
+        assert_eq!(
+            flow.get_class_extends_def(b),
+            Some(b),
+            "the draining write itself must be visible"
         );
     }
 }

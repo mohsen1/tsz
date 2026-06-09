@@ -86,32 +86,31 @@ impl<'a> CheckerState<'a> {
         // back to it when the local def_kinds map is incomplete.
         self.ctx.ensure_both_envs_have_definition_store();
 
-        // Safety-net: repair missed writes to type_environment.
+        // Reconcile the flow-analyzer environment (`type_environment`) with the
+        // evaluator environment (`type_env`) before flow analysis reads it.
         //
-        // `build_type_environment` calls `with_envs_for_register` which tries to
-        // borrow both environments mutably.  During recursive type resolution the
-        // `type_environment` borrow can fail (another mutable borrow is live at
-        // the same call depth), leaving `type_environment` behind `type_env`.
-        // `with_envs_for_register` already emits a `tracing::warn!` for every
-        // such miss; this clone recovers the divergence so the flow-analyzer
-        // sees a complete snapshot.
-        //
-        // TODO(#8269): eliminate borrow-conflict misses at their source so this
-        // clone can be removed or reduced to a debug_assert.
+        // Dual-env registration helpers (`register_*_in_envs`) write the
+        // evaluator env directly and mirror into the flow-analyzer env; a mirror
+        // that loses the `RefCell` borrow race during recursive resolution is
+        // deferred rather than dropped (issue #8269), so first replay the
+        // deferred queue. A few registrations are evaluator-env-only by design
+        // (e.g. symbol-keyed bodies, enum-parent / numeric-enum metadata); fill
+        // those into the flow-analyzer env with a vacancy-only overlay. Unlike
+        // the previous unconditional full `clone()`, this neither reallocates
+        // already-mirrored maps nor discards flow-analyzer-env-only entries.
+        self.ctx.flush_deferred_flow_env_writes();
         {
-            let type_env_snapshot = self.ctx.type_env.borrow().clone();
-            {
-                let flow_env = self.ctx.type_environment.borrow();
-                if flow_env.generation() != type_env_snapshot.generation() {
-                    tracing::debug!(
-                        type_env_gen = type_env_snapshot.generation(),
-                        flow_env_gen = flow_env.generation(),
-                        "source_file: type_environment diverged from type_env; repairing via clone"
-                    );
-                }
-            }
-            *self.ctx.type_environment.borrow_mut() = type_env_snapshot;
+            let type_env_snapshot = self.ctx.type_env.borrow();
+            self.ctx
+                .type_environment
+                .borrow_mut()
+                .overlay_missing_from(&type_env_snapshot);
         }
+        debug_assert_eq!(
+            self.ctx.deferred_flow_env_write_count(),
+            0,
+            "flow-analyzer env writes must be fully reconciled at file preparation"
+        );
 
         // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
         // This enables primitive property access to use lib definitions instead of hardcoded lists

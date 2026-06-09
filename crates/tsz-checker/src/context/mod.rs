@@ -32,6 +32,7 @@ mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
+pub use def_mapping::DeferredFlowEnvWrite;
 mod file_format_lookup;
 pub(crate) use file_format_lookup::{lookup_file_is_esm_in_map, lookup_is_external_module_in_map};
 mod import_conflicts;
@@ -536,6 +537,14 @@ pub struct CheckerContext<'a> {
     /// Cached type environment for resolving Ref types during assignability checks.
     /// Used by `FlowAnalyzer` (via borrowed reference) for type narrowing during control flow analysis.
     pub type_environment: RefCell<TypeEnvironment>,
+
+    /// Dual-env registrations whose mirror-write into `type_environment` lost
+    /// the `RefCell` borrow race (the flow-analyzer env was already borrowed
+    /// during recursive resolution). Rather than silently dropping the write
+    /// and repairing the divergence with a full per-file `clone()`, the missed
+    /// operation is reified here and replayed the next time `type_environment`
+    /// is borrowable. This eliminates borrow-conflict misses at their source.
+    pub deferred_flow_env_writes: RefCell<Vec<DeferredFlowEnvWrite>>,
 
     /// Recursion guard for application evaluation.
     pub application_eval_set: FxHashSet<TypeId>,
