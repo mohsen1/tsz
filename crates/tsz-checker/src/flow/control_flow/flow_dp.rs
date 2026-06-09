@@ -96,11 +96,10 @@ where
             continue;
         }
 
-        match memo.get(&node) {
-            // Already resolved, or already scheduled (its post-entry is still
-            // below us on the stack). Either way, do not re-expand.
-            Some(_) => continue,
-            None => {}
+        // Already resolved, or already scheduled (its post-entry is still
+        // below us on the stack). Either way, do not re-expand.
+        if memo.get(&node).is_some() {
+            continue;
         }
         memo.insert(node, DpState::InProgress);
         stack.push((node, true));
@@ -108,7 +107,7 @@ where
             // Only descend into antecedents we have not seen. An `InProgress`
             // antecedent is a back-edge ancestor; leaving it unpushed makes the
             // post-visit read it as `in_progress_value`.
-            if matches!(memo.get(&antecedent), None) {
+            if memo.get(&antecedent).is_none() {
                 stack.push((antecedent, false));
             }
         }
