@@ -115,8 +115,7 @@ impl<'a> CheckerContext<'a> {
             .map(|source_file| source_file.file_name.as_str())?;
         let package_root =
             Self::node_modules_package_root_for_name(target_file_name, &package_name)?;
-        let package_json_text = std::fs::read_to_string(package_root.join("package.json")).ok()?;
-        let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
+        let package_json = self.cached_package_json(&package_root)?;
         let types_versions = package_json.get("typesVersions")?;
         let public_subpath = package_subpath.as_deref().unwrap_or("index");
 
@@ -141,6 +140,25 @@ impl<'a> CheckerContext<'a> {
         }
 
         None
+    }
+
+    /// Read and parse `<package_root>/package.json`, memoized per path. The file
+    /// is stable within a compile, so this collapses the repeated per-import
+    /// disk read + JSON parse to one per package root. The `None` slot caches an
+    /// unreadable/unparseable `package.json` so misses are not retried.
+    fn cached_package_json(&self, package_root: &Path) -> Option<std::rc::Rc<serde_json::Value>> {
+        let package_json_path = package_root.join("package.json");
+        if let Some(cached) = self.package_json_cache.borrow().get(&package_json_path) {
+            return cached.clone();
+        }
+        let parsed = std::fs::read_to_string(&package_json_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .map(std::rc::Rc::new);
+        self.package_json_cache
+            .borrow_mut()
+            .insert(package_json_path, parsed.clone());
+        parsed
     }
 
     fn file_index_for_package_relative_path(

@@ -137,6 +137,7 @@ impl<'a> CheckerContext<'a> {
             class_chain_summary_cache: RefCell::new(FxHashMap::default()),
             env_eval_cache: RefCell::new(FxHashMap::default()),
             lazy_def_ids_cache: RefCell::new(FxHashMap::default()),
+            package_json_cache: RefCell::new(FxHashMap::default()),
             class_symbol_to_decl_cache: RefCell::new(FxHashMap::default()),
             heritage_symbol_cache: RefCell::new(FxHashMap::default()),
             base_constructor_expr_cache: RefCell::new(FxHashMap::default()),

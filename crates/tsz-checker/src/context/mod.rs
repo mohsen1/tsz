@@ -731,6 +731,17 @@ pub struct CheckerContext<'a> {
     /// a pure speed memo: identical to recomputing on demand.
     pub(crate) lazy_def_ids_cache: RefCell<FxHashMap<TypeId, std::rc::Rc<[DefId]>>>,
 
+    /// Memoizes parsed `package.json` payloads (keyed by package-root path) for
+    /// the `typesVersions` import-redirect fallback. Without it,
+    /// `types_versions_redirected_target_index` re-reads and re-parses the same
+    /// `package.json` from disk on every import resolution — a dominant cost on
+    /// package-heavy real apps (e.g. nextjs re-resolving `react`/`next`). The
+    /// `None` slot caches "no readable/parseable package.json" so misses are not
+    /// retried. `package.json` is stable within a compile; reset at the
+    /// file-session boundary keeps the LSP picking up edits between compiles.
+    pub(crate) package_json_cache:
+        RefCell<FxHashMap<std::path::PathBuf, Option<std::rc::Rc<serde_json::Value>>>>,
+
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
     pub class_symbol_to_decl_cache: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
