@@ -832,17 +832,13 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(member_idx.0, return_type);
             }
 
-            // TS2697: Check if async method has access to Promise type
-            // DISABLED: Causes too many false positives
-            // TODO: Investigate lib loading for Promise detection
-            // if is_async && !is_generator && !self.is_promise_global_available() {
-            //     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            //     self.error_at_node(
-            //         method.name,
-            //         diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-            //         diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-            //     );
-            // }
+            // Missing-Promise diagnostics for async methods are owned by
+            // `get_type_of_function`, which runs for every method body and calls
+            // `check_async_promise_constructor_availability` (TS2468/TS2705) and
+            // `check_async_return_type_is_promise` (TS1064/TS1055). Those helpers
+            // already model `tsc`'s position/target rules for async methods, so
+            // there is intentionally no additional Promise-availability check
+            // anchored here.
 
             // TS7011 (implicit any return) is only emitted for ambient methods,
             // matching TypeScript's behavior
