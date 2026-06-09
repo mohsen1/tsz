@@ -932,3 +932,94 @@ export const viaFn = make("x");
         "conditional alias body must not be expanded inline, got: {output}"
     );
 }
+
+// `tsc`'s declaration printer never parenthesizes the outermost synthesized
+// type, so a reused call-return annotation written as `(Alias<T>)`, `((Alias))`,
+// or `(  Alias  )` must surface as `Alias<args>` without the redundant outer
+// parentheses or interior whitespace. This covers the conditional-alias
+// preservation path and the plain alias-reuse path alike.
+#[test]
+fn fix_inferred_call_return_strips_redundant_outer_parentheses() {
+    // Conditional-alias preservation path: redundant outer parens dropped.
+    let single = emit_dts_with_usage_analysis(
+        r#"
+export type Cond<T> = T extends string ? { s: T } : { n: T };
+declare function make<T>(t: T): (Cond<T>);
+export const a = make("x");
+"#,
+    );
+    assert!(
+        single.contains("export declare const a: Cond<string>;"),
+        "single redundant paren must be stripped, got: {single}"
+    );
+
+    // Nested redundant parens are stripped fully.
+    let double = emit_dts_with_usage_analysis(
+        r#"
+export type Cond<T> = T extends string ? { s: T } : { n: T };
+declare function make<T>(t: T): ((Cond<T>));
+export const b = make("x");
+"#,
+    );
+    assert!(
+        double.contains("export declare const b: Cond<string>;"),
+        "nested redundant parens must be stripped, got: {double}"
+    );
+
+    // Interior whitespace inside the redundant parens is normalized away.
+    let spaced = emit_dts_with_usage_analysis(
+        r#"
+export type Cond<T> = T extends string ? { s: T } : { n: T };
+declare function make<T>(t: T): (  Cond<T>  );
+export const c = make("x");
+"#,
+    );
+    assert!(
+        spaced.contains("export declare const c: Cond<string>;"),
+        "redundant parens with interior whitespace must be stripped, got: {spaced}"
+    );
+
+    // Plain (non-conditional) alias reuse path: same normalization.
+    let plain = emit_dts_with_usage_analysis(
+        r#"
+export type Plain<T> = { value: T };
+declare function make<T>(t: T): (Plain<T>);
+export const d = make("x");
+"#,
+    );
+    assert!(
+        plain.contains("export declare const d: Plain<string>;"),
+        "plain alias reuse must strip redundant parens, got: {plain}"
+    );
+}
+
+// Parentheses that wrap only an *operand* of a larger reused type carry
+// precedence and must be preserved, while a fully-enclosing wrap around the
+// whole inferred type is still removed.
+#[test]
+fn fix_inferred_call_return_keeps_semantically_required_parentheses() {
+    // A whole-type function reference loses its redundant outer wrap...
+    let whole_fn = emit_dts_with_usage_analysis(
+        r#"
+declare function make(): (() => void);
+export const e = make();
+"#,
+    );
+    assert!(
+        whole_fn.contains("export declare const e: () => void;"),
+        "outer wrap around a whole function type must be stripped, got: {whole_fn}"
+    );
+
+    // ...but a parenthesized union/function operand inside an array keeps its
+    // parentheses because they are not the outermost wrap.
+    let arr = emit_dts_with_usage_analysis(
+        r#"
+declare function make(): (() => void)[];
+export const f = make();
+"#,
+    );
+    assert!(
+        arr.contains("export declare const f: (() => void)[];"),
+        "operand parentheses inside an array must be preserved, got: {arr}"
+    );
+}
