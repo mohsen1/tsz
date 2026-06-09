@@ -731,6 +731,11 @@ pub(crate) use tsz_solver::type_queries::{
     keyof_object_properties, map_compound_members,
 };
 
+/// Indexed-access normalization shape probes; submodule keeps this file under
+/// its LOC ceiling while the assignability boundary still owns the helpers.
+mod shape;
+pub(crate) use shape::{is_index_access_for_assignability, union_members_for_assignability};
+
 pub(crate) fn classify_for_assignability_eval(
     db: &dyn TypeDatabase,
     type_id: TypeId,

@@ -16,14 +16,22 @@ impl<'a> CheckerState<'a> {
             return self.normalize_index_access_for_assignability(reduced, depth + 1);
         }
 
-        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
+        if crate::query_boundaries::assignability::is_index_access_for_assignability(
+            self.ctx.types,
+            ty,
+        ) {
             let evaluated = self.evaluate_type_for_assignability(ty);
             if evaluated != ty && evaluated != TypeId::ERROR {
                 return self.normalize_index_access_for_assignability(evaluated, depth + 1);
             }
         }
 
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+        if let Some(members) =
+            crate::query_boundaries::assignability::union_members_for_assignability(
+                self.ctx.types,
+                ty,
+            )
+        {
             let mut changed = false;
             let normalized_members: Vec<_> = members
                 .into_iter()
