@@ -672,7 +672,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "flow"
         / "control_flow"
         / "core.rs",
-        1823,
+        1824,
     ),
     (
         "Solver boundary: type_queries/flow.rs size ratchet",
@@ -992,7 +992,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        241,
+        242,
     ),
 ]
 

@@ -57,6 +57,7 @@ flow_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", 
 flow_in_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
 flow_visited = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
 flow_results = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
+flow_reference_keys = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "per-run structural reference-path interner shared across file sessions within one worker; run-local ids are dropped on cross-run snapshot so persisted paths cannot alias" }
 narrowing_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 narrowable_identifier_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 flow_switch_reference_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
