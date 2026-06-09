@@ -1688,20 +1688,8 @@ impl<'a> TypeInstantiator<'a> {
                 // contained-in (reached via the iteration var, e.g. `Conc[K]`); bare `Lazy`
                 // stays top-only (keeps `undefined extends T[P]` eager).
                 let mapped_type = self.interner.mapped(instantiated);
-                let has_lazy_conditional_boundary = if let Some(cond) =
-                    crate::type_queries::get_conditional_type(self.interner, new_template)
-                {
-                    matches!(
-                        self.interner.lookup(cond.extends_type),
-                        Some(crate::types::TypeData::Lazy(_))
-                    ) || matches!(
-                        self.interner.lookup(cond.check_type),
-                        Some(crate::types::TypeData::Lazy(_))
-                    ) || type_contains_lazy_application(self.interner, cond.extends_type)
-                        || type_contains_lazy_application(self.interner, cond.check_type)
-                } else {
-                    false
-                };
+                let has_lazy_conditional_boundary =
+                    conditional_condition_needs_resolver(self.interner, new_template);
                 // Also skip eager evaluation when the template contains Application
                 // types whose base is a Lazy(DefId) reference (e.g. recursive type
                 // aliases like `Spec<T[P]>`).  The instantiator's NoopResolver cannot
@@ -1987,8 +1975,9 @@ mod substitution;
 
 pub use self::api::*;
 use self::api::{
-    index_access_operand_needs_resolver, mapped_constraint_needs_resolver,
-    template_has_lazy_application_in_composite, type_contains_lazy_application,
+    conditional_condition_needs_resolver, index_access_operand_needs_resolver,
+    mapped_constraint_needs_resolver, template_has_lazy_application_in_composite,
+    type_contains_lazy_application,
 };
 pub use self::substitution::TypeSubstitution;
 #[cfg(test)]

@@ -692,6 +692,49 @@ pub(super) fn type_contains_lazy_application(interner: &dyn TypeDatabase, type_i
     })
 }
 
+/// Whether `type_id` contains an `infer` placeholder (`TypeData::Infer`).
+///
+/// A conditional whose `extends` clause introduces `infer` types is an
+/// extraction (`P[K] extends V<infer X> ? … : …`), not a resolver-less
+/// collapse-to-`never` filter. The instantiator already evaluates such
+/// conditionals correctly; deferring them only leaves the surrounding mapped
+/// un-reduced, so callers use this to keep infer-bearing conditions eager.
+pub(super) fn type_contains_infer(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
+        matches!(key, TypeData::Infer(_))
+    })
+}
+
+/// Whether a mapped template's conditional condition references a body the
+/// instantiator's `NoopResolver` cannot expand, so eager evaluation would
+/// collapse or garble it and the mapped must be deferred to the resolver-backed
+/// outer evaluator.
+///
+/// A **direct** `Lazy(DefId)` on either side (`T[K] extends Function ? …`) is
+/// always a boundary. A **lazy application** anywhere in the condition
+/// (`T[K] extends V<any> ? K : never`, cross-file generic interface) only
+/// collapses to `never` for a plain subtype-test filter; when the `extends`
+/// clause introduces `infer` types (`P[K] extends V<infer X> ? V<…> : …`) the
+/// conditional is an extraction the instantiator already evaluates correctly,
+/// and deferring it would leave the surrounding mapped un-reduced — drifting the
+/// materialized shape and its diagnostics (see `tsxLibraryManagedAttributes`).
+/// So a lazy application is treated as a boundary only when the condition
+/// carries no `infer`.
+pub(super) fn conditional_condition_needs_resolver(
+    interner: &dyn TypeDatabase,
+    template: TypeId,
+) -> bool {
+    let Some(cond) = crate::type_queries::get_conditional_type(interner, template) else {
+        return false;
+    };
+    let bare_lazy = matches!(interner.lookup(cond.extends_type), Some(TypeData::Lazy(_)))
+        || matches!(interner.lookup(cond.check_type), Some(TypeData::Lazy(_)));
+    let lazy_application = !type_contains_infer(interner, cond.extends_type)
+        && (type_contains_lazy_application(interner, cond.extends_type)
+            || type_contains_lazy_application(interner, cond.check_type));
+    bare_lazy || lazy_application
+}
+
 /// Check whether a mapped constraint needs a real resolver before it can be
 /// evaluated without losing key information.
 ///

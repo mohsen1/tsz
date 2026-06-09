@@ -198,3 +198,13 @@ fn namespace_import_distributive_filter_known_limitation() {
         "namespace-import",
     );
 }
+
+// Note: the *infer-bearing* value-map regression (an `extends V<infer X>`
+// per-key conditional that must keep evaluating eagerly rather than deferring)
+// is guarded by the conformance fixture
+// `TypeScript/tests/cases/conformance/jsx/tsxLibraryManagedAttributes.tsx`,
+// which exercises the full intersection/assignability render path where the
+// drift surfaces. A minimal indexed-access unit case reduces correctly even
+// when deferred (the outer evaluator handles a direct `R["k"]`), so it would
+// not catch the regression — the conformance baseline is the authoritative
+// guard here.
