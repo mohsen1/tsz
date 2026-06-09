@@ -75,6 +75,9 @@ path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
 name = "closure_boundary_property_narrowing_tests"
 path = "tests/closure_boundary_property_narrowing_tests.rs"
 [[test]]
+name = "flow_property_reference_cache_tests"
+path = "tests/flow_property_reference_cache_tests.rs"
+[[test]]
 name = "assignment_branch_merge_narrowing_tests"
 path = "tests/assignment_branch_merge_narrowing_tests.rs"
 [[test]]

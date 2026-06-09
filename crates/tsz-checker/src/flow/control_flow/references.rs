@@ -267,6 +267,59 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    /// Map a property/element reference *path* to a session-stable synthetic
+    /// cache [`SymbolId`], so every syntactic occurrence of the same path shares
+    /// flow-cache entries instead of re-walking the flow graph per occurrence.
+    ///
+    /// Returns `None` when the reference is not a stable narrowable path (e.g.
+    /// `f().x`, or a base that does not resolve to a symbol); callers then fall
+    /// back to the per-node synthetic key, preserving prior behavior.
+    ///
+    /// The structural key is `[base_symbol_id, prop_atom_0, prop_atom_1, ...]`:
+    /// position 0 is always a base `SymbolId` and the rest are always property
+    /// `Atom`s, so two distinct paths can never collide. The id is folded into a
+    /// synthetic symbol via [`super::structural_flow_cache_symbol`], keyed
+    /// disjointly from real and per-node symbols (see the symbol-space partition
+    /// in `core.rs`).
+    pub(crate) fn flow_reference_path_symbol(&self, reference: NodeIndex) -> Option<SymbolId> {
+        let interner = self.shared_flow_reference_keys?;
+        // Require at least one property hop (a bare identifier already carries a
+        // resolved `SymbolId`); walk the rest of the path base-first.
+        let (base, prop) = self.property_reference(reference)?;
+        let mut key = Vec::new();
+        self.collect_flow_reference_path(base, &mut key)?;
+        key.push(prop.0);
+        let mut map = interner.borrow_mut();
+        let next = map.len() as u32;
+        let id = *map.entry(key).or_insert(next);
+        if id >= super::FLOW_CACHE_STRUCTURAL_ID_LIMIT {
+            // Structural-key space exhausted (pathologically many distinct paths);
+            // fall back to the per-node key rather than risk aliasing.
+            return None;
+        }
+        Some(super::structural_flow_cache_symbol(id))
+    }
+
+    /// Append the base-first structural key of `reference` to `out`.
+    ///
+    /// Recurses through property/element hops, then resolves the leaf base to
+    /// its real binder `SymbolId` at position 0.
+    fn collect_flow_reference_path(&self, reference: NodeIndex, out: &mut Vec<u32>) -> Option<()> {
+        if let Some((base, prop)) = self.property_reference(reference) {
+            self.collect_flow_reference_path(base, out)?;
+            out.push(prop.0);
+            return Some(());
+        }
+        let sym = self.reference_symbol(reference)?;
+        // The leaf must be a real binder symbol; refuse if a synthetic value ever
+        // leaked in, rather than risk crossing key spaces.
+        if !super::is_real_binder_symbol(sym) {
+            return None;
+        }
+        out.push(sym.0);
+        Some(())
+    }
+
     pub(crate) fn property_reference(&self, idx: NodeIndex) -> Option<(NodeIndex, Atom)> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;

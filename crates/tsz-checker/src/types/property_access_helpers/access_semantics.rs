@@ -209,6 +209,7 @@ impl<'a> CheckerState<'a> {
             &self.ctx.node_types,
         )
         .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_flow_reference_keys(&self.ctx.flow_reference_keys)
         .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
         .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)

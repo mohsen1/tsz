@@ -19,6 +19,55 @@ use tsz_solver::{ParamInfo, TupleElement, TypeId, TypePredicate};
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
+/// Session-scoped interner mapping a structural reference *path*
+/// (`[base_symbol_id, prop_atom, ...]`) to a sequential id. See
+/// [`FlowAnalyzer::flow_reference_path_symbol`].
+pub(crate) type FlowReferenceKeyInterner = RefCell<FxHashMap<Vec<u32>, u32>>;
+
+// Flow-cache symbol space partition. The `SymbolId` slot of a `FlowCache` key
+// must distinguish three disjoint kinds of reference so distinct references can
+// never alias:
+// - real binder symbols keep bit 31 clear;
+// - structural reference *paths* (`a.b`) set bit 31, clear bit 30, and carry an
+//   interned id in the low 30 bits (occurrence-independent, interned per run);
+// - the per-syntactic-node fallback (`f().x`) sets bits 31 and 30 and carries
+//   the node index in the low 30 bits (program-stable across runs).
+/// Bit 31: any synthetic (non-binder) flow-cache symbol.
+const FLOW_CACHE_SYNTHETIC_BIT: u32 = 0x8000_0000;
+/// Bit 30: per-node fallback (vs. structural path) within the synthetic space.
+const FLOW_CACHE_PER_NODE_BIT: u32 = 0x4000_0000;
+/// Low 30 bits carrying the interned id or node index.
+const FLOW_CACHE_PAYLOAD_MASK: u32 = 0x3FFF_FFFF;
+
+/// Synthetic cache symbol for an interned structural reference-path `id`.
+/// `id` must be `< FLOW_CACHE_PER_NODE_BIT` (enforced by the caller).
+pub(crate) const fn structural_flow_cache_symbol(id: u32) -> SymbolId {
+    SymbolId(FLOW_CACHE_SYNTHETIC_BIT | id)
+}
+
+/// Largest exclusive bound for a structural-path id before its bit would
+/// collide with the per-node fallback space.
+pub(crate) const FLOW_CACHE_STRUCTURAL_ID_LIMIT: u32 = FLOW_CACHE_PER_NODE_BIT;
+
+/// Per-syntactic-node fallback cache symbol for a reference `node`.
+pub(crate) const fn per_node_flow_cache_symbol(node: NodeIndex) -> SymbolId {
+    SymbolId(
+        FLOW_CACHE_SYNTHETIC_BIT | FLOW_CACHE_PER_NODE_BIT | (node.0 & FLOW_CACHE_PAYLOAD_MASK),
+    )
+}
+
+/// True when `symbol` is a real binder symbol (bit 31 clear), i.e. not in the
+/// synthetic flow-cache space.
+pub(crate) const fn is_real_binder_symbol(symbol: SymbolId) -> bool {
+    symbol.0 & FLOW_CACHE_SYNTHETIC_BIT == 0
+}
+
+/// True when a flow-cache entry keyed by `symbol` is stable across runs and so
+/// safe to persist on incremental save. Real binder symbols and per-node keys
+/// qualify; structural-path keys are interned per run and must be dropped.
+pub(crate) const fn is_session_stable_flow_cache_symbol(symbol: SymbolId) -> bool {
+    symbol.0 & (FLOW_CACHE_SYNTHETIC_BIT | FLOW_CACHE_PER_NODE_BIT) != FLOW_CACHE_SYNTHETIC_BIT
+}
 
 mod flow_traversal;
 
@@ -375,6 +424,10 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) destructured_bindings:
         Option<&'a FxHashMap<SymbolId, crate::context::DestructuredBindingInfo>>,
     pub(crate) concrete_this_type: Option<TypeId>,
+    /// Optional shared interner that gives property/element reference paths a
+    /// session-stable synthetic cache symbol, so the flow cache is shared across
+    /// occurrences of the same path instead of being keyed per syntactic node.
+    pub(crate) shared_flow_reference_keys: Option<&'a FlowReferenceKeyInterner>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -585,6 +638,7 @@ impl<'a> FlowAnalyzer<'a> {
             shared_symbol_first_identifier_ref: None,
             destructured_bindings: None,
             concrete_this_type: None,
+            shared_flow_reference_keys: None,
         }
     }
 
@@ -622,7 +676,22 @@ impl<'a> FlowAnalyzer<'a> {
             shared_symbol_first_identifier_ref: None,
             destructured_bindings: None,
             concrete_this_type: None,
+            shared_flow_reference_keys: None,
         }
+    }
+
+    /// Set a shared interner for property/element reference-path cache keys.
+    ///
+    /// Without it, references that do not resolve to a single symbol (e.g.
+    /// `a.b`) fall back to a per-syntactic-node synthetic cache symbol, so each
+    /// occurrence re-walks the whole flow graph (O(N²) over N occurrences). With
+    /// it, every occurrence of the same path shares cache entries (O(N)).
+    pub const fn with_flow_reference_keys(
+        mut self,
+        interner: &'a FlowReferenceKeyInterner,
+    ) -> Self {
+        self.shared_flow_reference_keys = Some(interner);
+        self
     }
 
     /// Set the flow analysis cache to avoid redundant graph traversals.

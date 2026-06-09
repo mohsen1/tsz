@@ -1563,7 +1563,18 @@ impl<'a> CheckerContext<'a> {
             boxed_types,
             boxed_def_ids,
             well_known_symbol_names: type_env.snapshot_well_known_symbol_names(),
-            flow_analysis_cache: self.flow_analysis_cache.into_inner(),
+            // Drop structural reference-path entries: their ids are assigned by
+            // the per-run `flow_reference_keys` interner, so persisting them
+            // across runs could alias a different path to the same id. They are
+            // pure memo entries and are cheaply recomputed; real-symbol and
+            // per-node keys are program-stable and kept.
+            flow_analysis_cache: {
+                let mut cache = self.flow_analysis_cache.into_inner();
+                cache.retain(|(_, symbol, _), _| {
+                    crate::control_flow::is_session_stable_flow_cache_symbol(*symbol)
+                });
+                cache
+            },
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,
             class_constructor_type_cache: self.class_constructor_type_cache,

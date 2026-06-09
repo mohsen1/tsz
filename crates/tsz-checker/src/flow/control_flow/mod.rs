@@ -38,6 +38,8 @@ pub(crate) mod var_utils;
 mod zod_literal_helpers;
 
 pub(crate) use self::core::{
-    CallPredicateMap, PredicateSignature, PropertyKey, symbol_first_identifier_ref,
+    CallPredicateMap, FLOW_CACHE_STRUCTURAL_ID_LIMIT, PredicateSignature, PropertyKey,
+    is_real_binder_symbol, is_session_stable_flow_cache_symbol, structural_flow_cache_symbol,
+    symbol_first_identifier_ref,
 };
 pub use self::core::{FlowAnalyzer, FlowGraph};

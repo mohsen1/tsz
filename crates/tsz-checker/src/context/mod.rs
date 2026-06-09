@@ -575,6 +575,13 @@ pub struct CheckerContext<'a> {
     pub flow_analysis_cache:
         RefCell<FxHashMap<(tsz_binder::FlowNodeId, tsz_binder::SymbolId, TypeId), TypeId>>,
 
+    /// Interner that gives property/element reference *paths* (`a.b`) a
+    /// session-stable synthetic cache symbol, so `flow_analysis_cache` is shared
+    /// across occurrences of the same path instead of keyed per syntactic node
+    /// (avoids O(N²) re-walks of the flow graph). Append-only and rebuildable;
+    /// its structural-keyed cache entries are dropped on incremental save.
+    pub flow_reference_keys: RefCell<FxHashMap<Vec<u32>, u32>>,
+
     /// Reusable buffers for flow analysis to avoid frequent heap allocations in `check_flow`.
     pub flow_worklist: RefCell<VecDeque<(tsz_binder::FlowNodeId, TypeId)>>,
     pub flow_in_worklist: RefCell<FxHashSet<tsz_binder::FlowNodeId>>,
