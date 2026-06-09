@@ -560,6 +560,13 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts2322() {
         !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "real react16 fixture should not emit TS2322, got: {diags:?}"
     );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        ),
+        "real react16 fixture should not emit TS2740 missing-props noise, got: {diags:?}"
+    );
 }
 
 #[test]

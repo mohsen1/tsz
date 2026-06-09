@@ -1236,6 +1236,132 @@ impl<'a> CheckerState<'a> {
         diag
     }
 
+    /// Render a target-intersection failure: the intersection headline, then the
+    /// first failing constituent's relation one level deeper.
+    ///
+    /// `tsc` (`typeRelatedToEachType`) relates the source to each constituent of
+    /// a target intersection `C1 & C2 & …` and elaborates the first failing one.
+    /// A structural failure self-heads with the constituent frame `Type 'S' is
+    /// not assignable to type 'Ci'.` followed by its own drill; a
+    /// missing-property leaf is folded (the missing line already names `Ci`); a
+    /// plain leaf collapses to the constituent frame itself.
+    pub(super) fn render_intersection_target_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        source_type: TypeId,
+        target_type: TypeId,
+        constituent_type: TypeId,
+        nested_reason: &tsz_solver::SubtypeFailureReason,
+        original_reason: &tsz_solver::SubtypeFailureReason,
+    ) -> Diagnostic {
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
+
+        // Top-level intersection headline (`Type 'S' is not assignable to type
+        // 'C1 & C2 & …'.`). This line is the only one the conformance harness
+        // fingerprints, so it must stay byte-identical to the pre-wrap output:
+        // render the merged-target `original_reason` and reuse exactly its
+        // headline (its primary `message_text`/`code`), then discard its
+        // elaboration — the constituent frame and drill below replace it. This
+        // preserves whichever source/target display the unwrapped reason used
+        // (e.g. the written intersection order for an `object & string` source,
+        // which neither the structural nor the merged formatter reproduces
+        // verbatim). Nested, fall back to a plain structural headline.
+        let mut diag = if depth == 0 {
+            let headline =
+                self.render_failure_reason(original_reason, source_type, target_type, idx, 0);
+            Diagnostic::error(
+                file_name.clone(),
+                start,
+                length,
+                headline.message_text,
+                headline.code,
+            )
+        } else {
+            let source_str = self.format_type_diagnostic(source_type);
+            let target_str = self.format_type_diagnostic(target_type);
+            Diagnostic::error(
+                file_name.clone(),
+                start,
+                length,
+                format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                ),
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            )
+        };
+
+        if depth >= 5 {
+            return diag;
+        }
+        // The failing constituent's relation sits one indent level beneath the
+        // headline. At depth 0 the headline is the (un-indented) primary, so its
+        // first child is related-depth 0; when nested, the headline is at
+        // related-depth `depth`, so the child is at `depth + 1`.
+        let child_depth = if depth == 0 { 0 } else { depth + 1 };
+
+        // A reason that self-heads with a non-frame primary (a missing-property
+        // leaf renders `Property 'p' is missing in type 'S' but required in type
+        // 'Ci'.`) folds: render it directly beneath the headline with no
+        // constituent frame, since its own line already names `Ci`.
+        if matches!(
+            nested_reason,
+            tsz_solver::SubtypeFailureReason::MissingProperty { .. }
+                | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
+        ) {
+            let sub = self.render_failure_reason(
+                nested_reason,
+                source_type,
+                constituent_type,
+                idx,
+                child_depth,
+            );
+            Self::push_rebased_subdiagnostic(&mut diag, sub, child_depth, child_depth);
+            return diag;
+        }
+
+        // Otherwise emit the constituent frame `Type 'S' is not assignable to
+        // type 'Ci'.` (structural display, so the constituent — not the merged
+        // intersection — is named) one level beneath the headline.
+        let frame_source = self.format_type_diagnostic(source_type);
+        let frame_target = self.format_type_diagnostic(constituent_type);
+        let frame_message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&frame_source, &frame_target],
+        );
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: file_name,
+            start,
+            length,
+            message_text: frame_message,
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            depth: child_depth.min(u8::MAX as u32) as u8,
+        });
+
+        // Render the `S <: Ci` relation as a standalone diagnostic (depth 0) so
+        // its drill keeps `tsc`'s path-compressed shape (`The types of 'x.p' are
+        // incompatible …`, which the property renderer only produces at depth 0),
+        // then drop its anchor-derived headline (already expressed by the frame
+        // above) and slot the remaining drill one level beneath the frame. A
+        // plain leaf carries no drill, so the frame stands alone.
+        let sub = self.render_failure_reason(nested_reason, source_type, constituent_type, idx, 0);
+        let drill_base = child_depth + 1;
+        for related in sub.related_information {
+            let rebased = (u32::from(related.depth) + drill_base).min(u8::MAX as u32) as u8;
+            diag.related_information.push(DiagnosticRelatedInformation {
+                depth: rebased,
+                ..related
+            });
+        }
+
+        diag
+    }
+
     /// Append the inner element failure line beneath a tuple element mismatch.
     ///
     /// Uses the structured `nested_reason` when present so deeply nested element

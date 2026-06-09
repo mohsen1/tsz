@@ -276,6 +276,101 @@ pub enum ModuleKind {
     Preserve = 200,
 }
 
+/// Explicit module-resolution mode requested for an individual import.
+///
+/// This mirrors the `resolution-mode` value of an import attribute
+/// (`import ... with { "resolution-mode": "import" | "require" }`) or a JSDoc
+/// `@import`/`import(...)` type reference. It selects which `package.json`
+/// `exports`/`imports` condition (`import` vs `require`) a specifier resolves
+/// through, independent of the importing file's own module format.
+///
+/// Lives in `tsz-common` so both the binder (which records the mode on JSDoc
+/// `@import` alias symbols) and the checker (which resolves through it) can
+/// share one representation without depending on each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ImportResolutionMode {
+    /// Resolve through the ESM (`import`) condition.
+    Import,
+    /// Resolve through the CommonJS (`require`) condition.
+    Require,
+}
+
+impl ImportResolutionMode {
+    /// Parse a `resolution-mode` attribute value (`"import"`/`"require"`).
+    ///
+    /// The argument should already have surrounding quotes stripped. Returns
+    /// `None` for any value other than the two valid spellings, matching the
+    /// grammar tsc enforces with TS1453.
+    #[must_use]
+    pub fn from_attribute_value(value: &str) -> Option<Self> {
+        match value {
+            "import" => Some(Self::Import),
+            "require" => Some(Self::Require),
+            _ => None,
+        }
+    }
+}
+
+/// Parse a `with { "resolution-mode": "import" | "require" }` (or legacy
+/// `assert { ... }`) import-attribute clause out of `text`.
+///
+/// `text` should be the portion of an import / JSDoc `@import` tag *after* the
+/// module specifier — e.g. the text following `from "pkg"`. The attribute
+/// keyword (`with`/`assert`) must appear at a word boundary so an identifier
+/// such as a binding named `within` is not matched. The key and value may be
+/// quoted (single or double) or bare. Returns `None` when no valid
+/// `resolution-mode` attribute is present.
+///
+/// Shared by the binder (which records the mode on JSDoc `@import` alias
+/// symbols) and the CLI driver (which emits a per-mode module request) so the
+/// JSDoc attribute grammar has a single source of truth.
+#[must_use]
+pub fn parse_jsdoc_resolution_mode_attribute_clause(text: &str) -> Option<ImportResolutionMode> {
+    const fn is_word_byte(b: u8) -> bool {
+        b == b'_' || b == b'$' || b.is_ascii_alphanumeric()
+    }
+    let bytes = text.as_bytes();
+
+    // Locate the attribute keyword (`with`/`assert`) at a word boundary.
+    let mut search = 0usize;
+    let body_start = loop {
+        let rel = [text[search..].find("with"), text[search..].find("assert")]
+            .into_iter()
+            .flatten()
+            .min()?;
+        let abs = search + rel;
+        let keyword_len = if text[abs..].starts_with("with") {
+            4
+        } else {
+            6
+        };
+        let prev_is_word = abs.checked_sub(1).is_some_and(|i| is_word_byte(bytes[i]));
+        let next_is_word = bytes
+            .get(abs + keyword_len)
+            .is_some_and(|&b| is_word_byte(b));
+        if !prev_is_word && !next_is_word {
+            break abs + keyword_len;
+        }
+        search = abs + keyword_len;
+    };
+
+    let brace_open = text[body_start..].find('{')? + body_start;
+    let brace_close = text[brace_open..].find('}')? + brace_open;
+    let body = &text[brace_open + 1..brace_close];
+
+    let colon = body.find(':')?;
+    let key = body[..colon].trim().trim_matches(|c| c == '"' || c == '\'');
+    if key != "resolution-mode" {
+        return None;
+    }
+    let value = body[colon + 1..]
+        .trim()
+        .trim_end_matches(',')
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'');
+    ImportResolutionMode::from_attribute_value(value)
+}
+
 impl ModuleKind {
     /// Parse a TypeScript compiler option module value.
     ///

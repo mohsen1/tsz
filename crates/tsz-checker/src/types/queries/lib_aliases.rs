@@ -132,6 +132,12 @@ impl<'a> CheckerState<'a> {
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
+            // An explicit `resolution-mode` (from a JSDoc `@import ... with
+            // { "resolution-mode": ... }` attribute) routes the specifier
+            // through the requested package condition so members resolve from
+            // the matching ESM/CJS declaration file, mirroring tsc.
+            let resolution_mode_override: Option<crate::context::ResolutionModeOverride> =
+                symbol.import_resolution_mode.map(Into::into);
             if export_name == "default"
                 && self.ctx.compiler_options.module.is_node_module()
                 && self.ctx.file_is_esm == Some(true)
@@ -159,10 +165,11 @@ impl<'a> CheckerState<'a> {
                     export_name,
                     visited_aliases,
                 );
-                if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                if let Some(target_sym_id) = self.resolve_cross_file_export_from_file_with_mode(
                     module_name,
                     export_name,
                     Some(source_file_idx),
+                    resolution_mode_override,
                 ) {
                     let resolved_target =
                         if self.symbol_is_namespace_only_tracked(target_sym_id, visited_aliases) {
@@ -286,10 +293,11 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .resolve_symbol_file_index_stable(sym_id)
                 .unwrap_or(self.ctx.current_file_idx);
-            if let Some(target_idx) = self
-                .ctx
-                .resolve_import_target_from_file(source_file_idx, module_name)
-                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+            if let Some(target_idx) = self.ctx.resolve_import_target_from_file_with_mode(
+                source_file_idx,
+                module_name,
+                resolution_mode_override,
+            ) && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
             {
                 let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                 if let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name) {
