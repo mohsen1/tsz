@@ -200,6 +200,26 @@ fn recursive_alias_type_args_are_not_validated_before_cycle_guard() {
 }
 
 #[test]
+fn single_active_alias_reachability_uses_file_local_cache() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    let caches_source =
+        std::fs::read_to_string("src/context/caches.rs").expect("read checker caches");
+    let reset_source =
+        std::fs::read_to_string("src/context/file_session_reset.rs").expect("read file reset");
+
+    assert!(
+        caches_source.contains("alias_reaches_single_resolving_alias")
+            && checker_source.contains("alias_reaches_single_resolving_alias")
+            && checker_source.contains("symbol_resolution_set.len() == 1")
+            && reset_source.contains("alias_reaches_single_resolving_alias")
+            && reset_source.contains(".clear()"),
+        "single-active alias reachability should be memoized per checker file \
+         session and reset with other type-reference validation caches"
+    );
+}
+
+#[test]
 fn recursive_alias_type_arg_skip_preserves_missing_name_diagnostics() {
     let diags = check_source_diagnostics(
         r#"
