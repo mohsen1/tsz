@@ -1673,7 +1673,6 @@ impl<'a> CheckerState<'a> {
             self.check_async_promise_constructor_availability(
                 is_async,
                 is_generator,
-                is_function_declaration,
                 has_type_annotation,
                 async_node_idx,
                 idx,

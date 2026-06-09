@@ -15,6 +15,14 @@ fn load_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
 }
 
 fn check_with_libs(source: &str, lib_names: &[&str]) -> Vec<Diagnostic> {
+    check_with_libs_target(source, lib_names, ScriptTarget::ES2015)
+}
+
+fn check_with_libs_target(
+    source: &str,
+    lib_names: &[&str],
+    target: ScriptTarget,
+) -> Vec<Diagnostic> {
     let lib_files = load_lib_files(lib_names);
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -45,7 +53,7 @@ fn check_with_libs(source: &str, lib_names: &[&str]) -> Vec<Diagnostic> {
         &types,
         "test.ts".to_string(),
         CheckerOptions {
-            target: ScriptTarget::ES2015,
+            target,
             module: ModuleKind::CommonJS,
             ..CheckerOptions::default()
         },
@@ -86,6 +94,116 @@ const loadAsync = async () => {
         codes.contains(&2712),
         "Expected TS2712 for dynamic import with ES5-only libs, got: {diagnostics:#?}"
     );
+}
+
+// At a target that does NOT downlevel async (ES2015+), `tsc` never flags an
+// async **class method** for a missing Promise constructor — instance, static,
+// annotated, or with a body. Verified against tsc 6.0 with
+// `--target ES2015 --lib es5` (all CLEAN). Pre-fix, tsz over-reported
+// TS2468/TS2705 on every async class method because methods were treated like
+// expression-position async functions.
+#[test]
+fn async_class_methods_clean_at_es2015_when_promise_constructor_missing() {
+    let source = r#"
+class C {
+    async instance() {}
+    static async stat() {}
+    async annotated(): Promise<void> {}
+    async withBody() { await 0; }
+}
+"#;
+    let diagnostics = check_with_libs(source, &["lib.es5.d.ts"]);
+    let offending: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2705 || d.code == 2468)
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "Async class methods must not report TS2468/TS2705 at ES2015, got: {offending:#?}"
+    );
+}
+
+// Same for async **function declarations** at ES2015+ — even with an explicit
+// `Promise<…>` annotation. Verified CLEAN against tsc 6.0 with
+// `--target ES2015 --lib es5`. Pre-fix, the annotated form over-reported TS2705.
+#[test]
+fn async_function_declarations_clean_at_es2015_when_promise_constructor_missing() {
+    let source = r#"
+async function bare() {}
+async function annotated(): Promise<void> {}
+"#;
+    let diagnostics = check_with_libs(source, &["lib.es5.d.ts"]);
+    let offending: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2705 || d.code == 2468)
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "Async function declarations must not report TS2468/TS2705 at ES2015, got: {offending:#?}"
+    );
+}
+
+// When the target downlevels async (ES3/ES5), `tsc` flags annotated
+// declaration-position async functions (function declarations AND class methods)
+// with TS2705 — but NOT the program-level TS2468, and NOT the bare (unannotated)
+// forms. Verified against tsc 6.0 with `--target es5 --lib es5`.
+#[test]
+fn async_declarations_report_ts2705_only_when_annotated_at_es5() {
+    let annotated = check_with_libs_target(
+        r#"
+async function f(): Promise<string> { return "x"; }
+class C { async m(): Promise<void> {} }
+"#,
+        &["lib.es5.d.ts"],
+        ScriptTarget::ES5,
+    );
+    let ts2705 = annotated.iter().filter(|d| d.code == 2705).count();
+    assert_eq!(
+        ts2705, 2,
+        "Expected TS2705 for each annotated async declaration at ES5, got: {annotated:#?}"
+    );
+    assert!(
+        !annotated.iter().any(|d| d.code == 2468),
+        "Declaration-position async must not emit program-level TS2468, got: {annotated:#?}"
+    );
+
+    let bare = check_with_libs_target(
+        r#"
+async function f() {}
+class C { async m() {} }
+"#,
+        &["lib.es5.d.ts"],
+        ScriptTarget::ES5,
+    );
+    assert!(
+        !bare.iter().any(|d| d.code == 2705 || d.code == 2468),
+        "Bare async declarations must not be flagged even at ES5, got: {bare:#?}"
+    );
+}
+
+// Expression-position async functions report the missing Promise constructor at
+// every target. Object-literal async methods and async function expressions both
+// fire TS2468 + TS2705 under tsc 6.0 with a Promise-constructor-less lib; this
+// pins that the expression-position path survives the declaration-position fix.
+#[test]
+fn expression_position_async_functions_still_report_missing_promise_constructor() {
+    for target in [ScriptTarget::ES2015, ScriptTarget::ES5] {
+        for source in [
+            "const o = { async g() {} };",
+            "const f = async function () {};",
+        ] {
+            let diagnostics = check_with_libs_target(source, &["lib.es5.d.ts"], target);
+            let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+            assert!(
+                codes.contains(&2468),
+                "Expected program-level TS2468 for `{source}` at {target:?}, got: {diagnostics:#?}"
+            );
+            assert!(
+                codes.contains(&2705),
+                "Expected TS2705 for `{source}` at {target:?}, got: {diagnostics:#?}"
+            );
+        }
+    }
 }
 
 #[test]

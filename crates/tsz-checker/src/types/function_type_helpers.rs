@@ -1374,12 +1374,25 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS2705/TS2468: Check that the Promise constructor is available for async functions.
-    /// Emits TS2468 (program-level) and TS2705 when Promise is missing from loaded libs.
+    ///
+    /// Reports the "downleveled async needs the global `Promise` constructor"
+    /// diagnostics only where `tsc` does, when the Promise constructor *value* is
+    /// missing from the loaded libs. Verified against `tsc` 6.0 with a lib that
+    /// lacks the Promise constructor (`--lib es5`):
+    ///
+    /// * Expression-position async functions — function expressions, arrow
+    ///   functions, object-literal methods — report **TS2468 + TS2705** at every
+    ///   target.
+    /// * Declaration-position async functions — function declarations and class
+    ///   methods — report **TS2705** only when they carry an explicit return-type
+    ///   annotation *and* the target downlevels async (`< ES2015`, i.e. ES3/ES5).
+    ///   They never emit the program-level TS2468.
+    /// * Everything else (bare declaration-position async, or any async at
+    ///   `ES2015`+ in declaration position) reports nothing.
     pub(crate) fn check_async_promise_constructor_availability(
         &mut self,
         is_async: bool,
         is_generator: bool,
-        is_function_declaration: bool,
         has_type_annotation: bool,
         async_node_idx: NodeIndex,
         func_idx: NodeIndex,
@@ -1387,9 +1400,21 @@ impl<'a> CheckerState<'a> {
         if !is_async || is_generator {
             return;
         }
-        let should_check_promise_constructor = !is_function_declaration || has_type_annotation;
-        let missing_promise = self.ctx.promise_constructor_diagnostics_required();
-        if !(should_check_promise_constructor && missing_promise) {
+
+        // Run the cheap position/target gate before the lib scan: this helper is
+        // called for every function-like node, and the common case (declaration
+        // position, no annotation, or a modern target) bails out without the
+        // `promise_constructor_diagnostics_required` lib walk.
+        let is_expression_position = self.async_function_is_expression_position(func_idx);
+        if !is_expression_position {
+            // Declaration-position async (function declaration or class method):
+            // only flagged when annotated and the target downlevels async.
+            if !(has_type_annotation && self.ctx.compiler_options.target.is_es5()) {
+                return;
+            }
+        }
+
+        if !self.ctx.promise_constructor_diagnostics_required() {
             return;
         }
 
@@ -1420,8 +1445,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS2468: Cannot find global value 'Promise'.
-        // tsc emits this as a program-level diagnostic (no file location).
-        if !is_function_declaration {
+        // tsc emits this program-level diagnostic (no file location) only for
+        // expression-position async functions; declaration-position async
+        // functions get TS2705 alone.
+        if is_expression_position {
             let message =
                 format_message(diagnostic_messages::CANNOT_FIND_GLOBAL_VALUE, &["Promise"]);
             self.error_program_level(message, diagnostic_codes::CANNOT_FIND_GLOBAL_VALUE);
@@ -1446,6 +1473,31 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
                 diagnostic_codes::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
             );
+        }
+    }
+
+    /// Whether an async function-like node sits in *expression* position:
+    /// function expressions, arrow functions, and object-literal methods. `tsc`
+    /// flags these for a missing Promise constructor at every target.
+    ///
+    /// Function declarations and class methods are statically-positioned
+    /// declarations and return `false`; the caller flags them only in the
+    /// narrower annotated/downlevel case. The class-vs-object distinction for
+    /// method declarations is decided by the parent node kind (a method's parent
+    /// is the class or object-literal node directly).
+    fn async_function_is_expression_position(&self, func_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => true,
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_extended(func_idx)
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION),
+            _ => false,
         }
     }
 
