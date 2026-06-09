@@ -89,6 +89,17 @@ Hard rules:
 - Do not add `[codex]` to PR titles.
 - PR bodies must include: `AgentName`, `Track`, `Invariant`, `Scope`,
   `Project Corpus Impact`, `Verification`, and `Coordination Notes`.
+- The `project-corpus-pr-body` CI job greps the remote body for exact field
+  formats; match them or the job fails:
+  - Always include a plain signature line `AgentName: <stable agent name>`
+    (no Markdown heading, value must be non-empty).
+  - When the PR touches semantic, benchmark, or dashboard paths
+    (`crates/tsz-*`, `crates/tsz-website`, `scripts/{bench,ci,conformance,emit,fourslash}`,
+    `.github/workflows/{bench,ci}.yml`), the body must also contain the literal
+    heading `## Project Corpus Impact` followed by `- Row: <project row or n/a>`
+    and `- Bug family: <family or n/a>` lines, each with a non-empty value.
+  - Docs/skill/harness-only PRs still need `AgentName:`; use `Row: n/a` and
+    `Bug family: n/a` with a concrete evidence line when those paths change.
 - Verify remote PR bodies after create/material edit:
   `gh pr view <n> --json body`.
 - Drain owned PRs before starting unrelated work. Do not park stale draft PRs.
