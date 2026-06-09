@@ -324,3 +324,74 @@ fn test_statement_starting_with_question_does_not_seed_conditional_condition() {
         "statement-start `?` should not become a conditional expression with a missing condition"
     );
 }
+
+// =====================================================================
+// Empty element access (`x[]`) followed by a stray close token.
+//
+// `x[]` reports TS1011 ("An element access expression should take an
+// argument."). When the completed postfix expression is then followed by a
+// stray close token that cannot start a statement (for example `)`), tsc
+// reports TS1005 ("';' expected.") at that token — its `parseErrorAtPosition`
+// dedups missing-semicolon errors by exact start only, so the nearby TS1011
+// does not suppress it. tsz's distance-based suppression would otherwise drop
+// the `';' expected.`, leaving the close token to fall through to the
+// statement list as a spurious TS1128 ("Declaration or statement expected.").
+// =====================================================================
+
+fn expression_recovery_codes(source: &str) -> Vec<u32> {
+    let (parser, _root) = parse_source(source);
+    let mut codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+    codes
+}
+
+#[test]
+fn empty_element_access_then_stray_paren_reports_semicolon_not_ts1128() {
+    let codes = expression_recovery_codes("probe[] )\n");
+    assert!(
+        codes.contains(&diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT),
+        "empty subscript must still report TS1011; got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "the stray close token must report TS1005 ';' expected; got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "the stray close token must not fall through to a spurious TS1128; got {codes:?}"
+    );
+}
+
+#[test]
+fn empty_element_access_then_stray_bracket_close_reports_semicolon_not_ts1128() {
+    // `value[])` shape from the witness `...rest: string[]) {...}` reduced to
+    // statement level: empty subscript immediately followed by `)`.
+    let codes = expression_recovery_codes("value[]) \n");
+    assert!(
+        codes.contains(&diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT)
+    );
+    assert!(codes.contains(&diagnostic_codes::EXPECTED));
+    assert!(!codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED));
+}
+
+#[test]
+fn nonempty_element_access_then_stray_paren_unchanged() {
+    // Negative control: a non-empty subscript already completed correctly —
+    // TS1005 at the stray `)`, no TS1011, no TS1128. The fix must not perturb
+    // this path.
+    let codes = expression_recovery_codes("probe[0] )\n");
+    assert!(
+        !codes.contains(&diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT)
+    );
+    assert!(codes.contains(&diagnostic_codes::EXPECTED));
+    assert!(!codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED));
+}
+
+#[test]
+fn call_expression_then_stray_paren_unchanged() {
+    // Negative control: a completed call followed by a stray `)` already
+    // reports TS1005 ';' expected (no TS1011 involved).
+    let codes = expression_recovery_codes("invoke() )\n");
+    assert!(codes.contains(&diagnostic_codes::EXPECTED));
+    assert!(!codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED));
+}

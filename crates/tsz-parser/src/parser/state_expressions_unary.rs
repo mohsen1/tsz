@@ -377,10 +377,16 @@ impl ParserState {
         // Otherwise parse as an identifier (the checker will emit TS1212 in
         // strict mode for `yield` as a reserved word).
         if !self.in_generator_context() && next_is_ident_keyword_or_literal_on_same_line {
-            self.parse_error_at_current_token(
-                "A 'yield' expression is only allowed in a generator body.",
-                diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY,
-            );
+            // Still parse as a yield expression (so emit is unchanged), but
+            // skip the grammar diagnostic when this subtree belongs to a class
+            // member recovered after a misplaced `case`/`default` clause: tsc
+            // keeps that member yet does not run the yield grammar check on it.
+            if !self.suppress_recovered_clause_member_yield_grammar {
+                self.parse_error_at_current_token(
+                    "A 'yield' expression is only allowed in a generator body.",
+                    diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY,
+                );
+            }
             // Fall through to parse as yield expression
         } else if !self.in_generator_context() {
             // Outside a generator context and next token is not identifier/keyword/
