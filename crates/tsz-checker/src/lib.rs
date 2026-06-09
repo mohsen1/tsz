@@ -1248,6 +1248,9 @@ mod ts2590_array_literal_identity_skip_tests;
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
 #[cfg(test)]
+#[path = "tests/tuple_spread_flattening_tests.rs"]
+mod tuple_spread_flattening_tests;
+#[cfg(test)]
 #[path = "tests/type_alias_computed_display_tests.rs"]
 mod type_alias_computed_display_tests;
 #[cfg(test)]

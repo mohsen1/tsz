@@ -1150,12 +1150,95 @@ impl TypeInterner {
         self.readonly_type(self.array(element))
     }
 
+    /// Splice spread elements whose type is a *concrete tuple* inline, matching
+    /// tsc's `createNormalizedTupleType`.
+    ///
+    /// A rest element `...X` where `X` resolves (through `readonly`) to a
+    /// `Tuple` contributes a statically known run of elements, so `[A, ...[B, C]]`
+    /// is exactly `[A, B, C]`. tsc always flattens these — at construction and
+    /// after instantiation — so leaving the spread un-inlined makes the
+    /// represented length, element-by-index access, relations, and display all
+    /// disagree with the flattened form (the value position would index the
+    /// whole inner tuple instead of its member).
+    ///
+    /// A **fixed** inner tuple (no rest of its own) is always spliced. A
+    /// **variadic** inner tuple (carrying its own rest, e.g. `[B, ...C[]]`) is
+    /// spliced only when it is the parent's sole rest element and its last
+    /// element, so the result still carries at most one rest — this is the shape
+    /// recursive list utilities (`[H, ...Util<R>]`) build, and it can never
+    /// produce an illegal two-rest tuple. Rest *arrays* (`...X[]`) and generic
+    /// spreads (`...T`, `...Application`, `...Lazy`) are left as written; a
+    /// self-referential `type T = [x, ...T]` never resolves its spread to a
+    /// concrete tuple, so this cannot recurse. Optional outer spreads are left
+    /// untouched. Inner elements are already normalized because every tuple is
+    /// built through this same path, so a single pass is idempotent.
+    fn splice_concrete_tuple_spreads(&self, elements: Vec<TupleElement>) -> Vec<TupleElement> {
+        // A lone `[...X]` (sole element, a rest) is left compressed: it already
+        // denotes exactly `X`, and inlining it would eagerly expand a possibly
+        // huge instantiated spread (`[...T]` with `T` a large tuple) with no
+        // structural benefit — index/length/relation queries already descend
+        // through the single rest. Splicing targets `[head, ..., ...inner]`
+        // shapes (recursive list utilities), which always carry a fixed prefix.
+        if elements.len() == 1 && elements[0].rest {
+            return elements;
+        }
+        // Single pass over the elements: count rests (needed to keep the result
+        // single-rest) and learn whether any spread is a concrete tuple worth
+        // inlining. The common case (a plain fixed tuple with no rest) bails
+        // here without a second scan.
+        let mut parent_rest_count = 0usize;
+        let mut has_spliceable = false;
+        for elem in &elements {
+            if elem.rest {
+                parent_rest_count += 1;
+                if !elem.optional && self.concrete_tuple_list(elem.type_id).is_some() {
+                    has_spliceable = true;
+                }
+            }
+        }
+        if !has_spliceable {
+            return elements;
+        }
+        let last_index = elements.len().saturating_sub(1);
+        let mut out: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        for (index, elem) in elements.into_iter().enumerate() {
+            if elem.rest
+                && !elem.optional
+                && let Some(inner_list) = self.concrete_tuple_list(elem.type_id)
+            {
+                let inner = self.tuple_list(inner_list);
+                let inner_is_variadic = inner.iter().any(|inner_elem| inner_elem.rest);
+                if !inner_is_variadic || (parent_rest_count == 1 && index == last_index) {
+                    out.extend(inner.iter().copied());
+                    continue;
+                }
+            }
+            out.push(elem);
+        }
+        out
+    }
+
+    /// If `type_id` (after unwrapping `readonly`) is a `Tuple`, return its
+    /// element-list id; otherwise `None`. The list may itself be variadic — the
+    /// caller decides whether splicing it is safe.
+    fn concrete_tuple_list(&self, type_id: TypeId) -> Option<crate::types::TupleListId> {
+        let unwrapped = match self.lookup(type_id) {
+            Some(TypeData::ReadonlyType(inner)) => inner,
+            _ => type_id,
+        };
+        match self.lookup(unwrapped) {
+            Some(TypeData::Tuple(list_id)) => Some(list_id),
+            _ => None,
+        }
+    }
+
     /// Intern a tuple type.
     ///
     /// Normalizes optional element types: when exact optional properties are
     /// disabled, strips explicit `undefined` from `optional=true` union types
     /// since optionality already implies `| undefined`.
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
+        let elements = self.splice_concrete_tuple_spreads(elements);
         let elements = self.normalize_optional_tuple_elements(elements);
         // A single anonymous rest element wrapping an Array collapses to a plain array type.
         if elements.len() == 1

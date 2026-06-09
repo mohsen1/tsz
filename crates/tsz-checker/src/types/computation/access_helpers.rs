@@ -179,6 +179,10 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         literal_index: Option<usize>,
     ) -> TypeId {
+        // Flatten any tuple spread element whose type is an alias / pending
+        // application before the resolver-less solver query (see
+        // `flatten_tuple_spread_rests`).
+        let object_type = self.flatten_tuple_spread_rests(object_type);
         // Normalize index type for enum values
         let solver_index_type = if let Some(index) = literal_index {
             self.ctx.types.literal_number(index as f64)
@@ -209,6 +213,87 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .resolve_element_access_type(object_type, solver_index_type, literal_index)
+    }
+
+    /// Resolve a tuple's spread (`rest`) element types and rebuild it so the
+    /// solver's resolver-less element-access evaluator sees a flat tuple.
+    ///
+    /// `[A, ...Alias]` / `[A, ...Util<T>]` stores the spread operand as a bare
+    /// `Lazy(DefId)` alias reference or a pending `Application`. The solver's
+    /// numeric element-access path (`tuple_fixed_slot`) only descends into a
+    /// rest element that is already a concrete `Tuple`, so an unresolved spread
+    /// made an in-bounds read fall back to the whole-tuple element union
+    /// (`head | tail`) — surfacing as false `TS2339`/`TS2493`. Type-position
+    /// indexed access (`T[1]`) already resolves these because it runs the
+    /// resolver-backed evaluator; this brings the value position to parity.
+    ///
+    /// Only tuples carrying a spread element do any work — purely fixed tuples
+    /// (the common case) and non-tuples return unchanged. Each rest element is
+    /// resolved through the same alias/application path used for the index, then
+    /// the tuple is rebuilt via `factory.tuple()`, which inlines a now-concrete
+    /// fixed-tuple spread (`createNormalizedTupleType`). `readonly` is preserved.
+    fn flatten_tuple_spread_rests(&mut self, object_type: TypeId) -> TypeId {
+        // A recursive list utility `[H, ...Util<R>]` resolves one nesting level
+        // per pass: resolving the spread exposes the next `[H, ...Util<R')]`,
+        // which `factory.tuple()` inlines, leaving a fresh spread to resolve.
+        // Iterate to a fixpoint under a bound so deep recursion fully flattens
+        // while a non-terminating alias cannot spin.
+        const MAX_FLATTEN_PASSES: usize = 64;
+        let mut current = object_type;
+        for _ in 0..MAX_FLATTEN_PASSES {
+            let next = self.flatten_tuple_spread_rests_once(current);
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        current
+    }
+
+    fn flatten_tuple_spread_rests_once(&mut self, object_type: TypeId) -> TypeId {
+        let inner = crate::query_boundaries::common::unwrap_readonly(self.ctx.types, object_type);
+        let is_readonly = inner != object_type;
+        let Some(elements) = crate::query_boundaries::common::tuple_elements(self.ctx.types, inner)
+        else {
+            return object_type;
+        };
+        if !elements.iter().any(|elem| elem.rest) {
+            return object_type;
+        }
+        let mut changed = false;
+        let mut rebuilt = Vec::with_capacity(elements.len());
+        for elem in elements {
+            if elem.rest {
+                // Resolve a bare `Lazy(DefId)` alias and reduce a pending
+                // application through the resolver-backed environment — the
+                // solver's own element-access evaluator is resolver-less and
+                // would leave the spread opaque.
+                let resolved = self.resolve_lazy_type(elem.type_id);
+                let resolved = self.evaluate_application_type(resolved);
+                if resolved != elem.type_id {
+                    changed = true;
+                }
+                rebuilt.push(tsz_solver::TupleElement {
+                    type_id: resolved,
+                    ..elem
+                });
+            } else {
+                rebuilt.push(elem);
+            }
+        }
+        if !changed {
+            return object_type;
+        }
+        // Rebuild via `factory.tuple()`, which inlines a now-concrete tuple
+        // spread (`createNormalizedTupleType`). `readonly` is re-applied so the
+        // receiver shape is unchanged apart from the splice.
+        let factory = self.ctx.types.factory();
+        let tuple = factory.tuple(rebuilt);
+        if is_readonly {
+            factory.readonly_type(tuple)
+        } else {
+            tuple
+        }
     }
 
     pub(crate) fn recover_assignment_target_type_for_errored_element_index(

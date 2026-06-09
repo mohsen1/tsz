@@ -187,15 +187,19 @@ fn evaluate_application_variadic_prepend_flattens_tail_application() {
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(prepend_app);
+    // `Tail<[number, boolean]> = [number, boolean] extends [infer _, ...infer R]
+    // ? R : never` drops the head, yielding `[boolean]`, so
+    // `Prepend<string, Tail<...>> = [string, ...[boolean]] = [string, boolean]`.
+    // The flattened spread inlines the resolved tail application exactly,
+    // matching `tsc`'s `createNormalizedTupleType`.
     let expected = interner.tuple(vec![
         tuple_elem(TypeId::STRING),
-        tuple_elem(TypeId::NUMBER),
         tuple_elem(TypeId::BOOLEAN),
     ]);
 
     assert_eq!(
         result, expected,
-        "Prepend<Head, Tail<Source>> must preserve exact tail arity through a rest Application"
+        "Prepend<Head, Tail<Source>> must inline the resolved tail application's exact arity"
     );
 }
 
