@@ -11,6 +11,7 @@
 #![allow(clippy::needless_borrow)]
 
 pub mod context;
+pub(crate) mod core;
 #[cfg(feature = "dts")]
 pub mod declaration_emitter;
 pub mod emitter;
@@ -26,7 +27,6 @@ pub(crate) const MAX_RECURSIVE_EXPANSION: u32 = 10;
 /// layer per recursive frame, so five frames reach tsc's ten visible levels.
 pub(crate) const MAX_RECURSIVE_INTERSECTION_EXPANSION: u32 = 5;
 pub mod lowering;
-pub(crate) mod module_facts;
 pub mod output;
 pub mod safe_slice;
 pub mod transforms;

@@ -322,7 +322,7 @@ impl<'a> Printer<'a> {
     }
 
     fn jsx_automatic_runtime_makes_module(&self) -> bool {
-        crate::module_facts::jsx_automatic_runtime_makes_module(self.arena, &self.ctx.options)
+        crate::core::module_facts::jsx_automatic_runtime_makes_module(self.arena, &self.ctx.options)
     }
 
     pub(in crate::emitter) fn collect_module_dependencies(
@@ -716,10 +716,10 @@ impl<'a> Printer<'a> {
 
     /// Check if any statement contains an `import.meta` expression.
     fn contains_import_meta(&self, statements: &NodeList) -> bool {
-        crate::module_facts::contains_import_meta(self.arena, statements)
+        crate::core::module_facts::contains_import_meta(self.arena, statements)
     }
 
     pub(in crate::emitter) fn source_has_dynamic_import_call(&self, statements: &NodeList) -> bool {
-        crate::module_facts::source_has_dynamic_import_call(self.arena, statements)
+        crate::core::module_facts::source_has_dynamic_import_call(self.arena, statements)
     }
 }

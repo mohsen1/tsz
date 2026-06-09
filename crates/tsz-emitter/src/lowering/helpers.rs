@@ -1324,7 +1324,10 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.options.module_detection_force {
             return true;
         }
-        if crate::module_facts::jsx_automatic_runtime_makes_module(self.arena, &self.ctx.options) {
+        if crate::core::module_facts::jsx_automatic_runtime_makes_module(
+            self.arena,
+            &self.ctx.options,
+        ) {
             return true;
         }
         // Node16/NodeNext resolved to ESM: file is definitively a module
@@ -1410,11 +1413,11 @@ impl<'a> LoweringPass<'a> {
         if matches!(
             self.ctx.options.module,
             ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
-        ) && crate::module_facts::source_has_dynamic_import_call(self.arena, statements)
+        ) && crate::core::module_facts::source_has_dynamic_import_call(self.arena, statements)
         {
             return true;
         }
-        if crate::module_facts::contains_import_meta(self.arena, statements) {
+        if crate::core::module_facts::contains_import_meta(self.arena, statements) {
             return true;
         }
         false
@@ -1470,7 +1473,10 @@ impl<'a> LoweringPass<'a> {
             }
         }
 
-        if crate::module_facts::jsx_automatic_runtime_makes_module(self.arena, &self.ctx.options) {
+        if crate::core::module_facts::jsx_automatic_runtime_makes_module(
+            self.arena,
+            &self.ctx.options,
+        ) {
             let source = self
                 .ctx
                 .options

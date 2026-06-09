@@ -108,5 +108,5 @@ pub(crate) fn jsx_automatic_runtime_makes_module(
 }
 
 #[cfg(test)]
-#[path = "../tests/module_facts.rs"]
+#[path = "../../tests/module_facts.rs"]
 mod tests;
