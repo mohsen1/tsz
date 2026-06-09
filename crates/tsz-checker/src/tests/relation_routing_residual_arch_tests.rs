@@ -12,6 +12,15 @@ const RAW_RELATION_PATTERNS: &[&str] = &[
     ".is_subtype_of(",
     ".assign_relation_outcome(",
     ".assign_relation_outcome_with_env(",
+    // Boolean relation guards are the assignability boundary's own primitives;
+    // diagnostic-bearing checker paths must wrap them in a named
+    // `*_relation_outcome` helper rather than probe them directly.
+    ".diagnostic_relation_boolean_guard(",
+    ".diagnostic_relation_boolean_guard_with_env(",
+    ".diagnostic_relation_boolean_guard_bivariant(",
+    ".diagnostic_relation_boolean_guard_strict(",
+    ".diagnostic_relation_boolean_guard_no_erase_generics(",
+    ".diagnostic_relation_boolean_guard_no_weak_checks(",
 ];
 
 fn rust_sources_under(dir: &Path) -> Vec<PathBuf> {
@@ -109,6 +118,29 @@ fn relation_outcome_with_env_fast_path_uses_named_diagnostic_guard() {
     assert!(
         !compact.contains("self.is_assignable_to_with_env(source,target)"),
         "relation_outcome_with_env should not embed a raw env-aware assignability fast path"
+    );
+}
+
+#[test]
+fn type_parameter_constraint_elaboration_uses_named_outcome_helper() {
+    let source = fs::read_to_string("src/error_reporter/assignability.rs")
+        .expect("failed to read error reporter assignability source");
+    let body = function_body_between(
+        &source,
+        "fn unrelated_type_parameter_target_related_info(",
+        "fn type_or_evaluated_has_display_properties(",
+    );
+    let compact: String = body.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    assert!(
+        compact
+            .contains(".type_parameter_constraint_elaboration_relation_outcome(source,constraint)"),
+        "the arbitrary-type related-info should gate on the named constraint-elaboration \
+         outcome helper"
+    );
+    assert!(
+        !compact.contains(".diagnostic_relation_boolean_guard("),
+        "the arbitrary-type related-info should not probe a raw diagnostic boolean guard"
     );
 }
 
