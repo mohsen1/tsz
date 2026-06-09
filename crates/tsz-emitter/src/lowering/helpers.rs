@@ -7,7 +7,6 @@ use super::*;
 use crate::emitter::JsxEmit;
 use crate::transforms::emit_utils;
 use tsz_common::ScriptTarget;
-use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> LoweringPass<'a> {
     // =========================================================================
@@ -1325,7 +1324,7 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.options.module_detection_force {
             return true;
         }
-        if self.jsx_automatic_runtime_makes_module() {
+        if crate::module_facts::jsx_automatic_runtime_makes_module(self.arena, &self.ctx.options) {
             return true;
         }
         // Node16/NodeNext resolved to ESM: file is definitively a module
@@ -1411,84 +1410,14 @@ impl<'a> LoweringPass<'a> {
         if matches!(
             self.ctx.options.module,
             ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
-        ) && self.source_has_dynamic_import_call(statements)
+        ) && crate::module_facts::source_has_dynamic_import_call(self.arena, statements)
         {
             return true;
         }
-        if self.contains_import_meta(statements) {
+        if crate::module_facts::contains_import_meta(self.arena, statements) {
             return true;
         }
         false
-    }
-
-    fn source_has_dynamic_import_call(&self, statements: &NodeList) -> bool {
-        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
-        while let Some(idx) = stack.pop() {
-            if idx.is_none() {
-                continue;
-            }
-            let Some(node) = self.arena.get(idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::CALL_EXPRESSION
-                && let Some(call) = self.arena.get_call_expr(node)
-                && let Some(expr_node) = self.arena.get(call.expression)
-                && expr_node.kind == SyntaxKind::ImportKeyword as u16
-            {
-                return true;
-            }
-            for child in self.arena.get_children(idx) {
-                stack.push(child);
-            }
-        }
-        false
-    }
-
-    fn contains_import_meta(&self, statements: &NodeList) -> bool {
-        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
-        while let Some(idx) = stack.pop() {
-            if idx.is_none() {
-                continue;
-            }
-            let Some(node) = self.arena.get(idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = self.arena.get_access_expr(node)
-                && let Some(expr_node) = self.arena.get(access.expression)
-                && expr_node.kind == SyntaxKind::ImportKeyword as u16
-                && self
-                    .arena
-                    .get(access.name_or_argument)
-                    .and_then(|name_node| self.arena.get_identifier(name_node))
-                    .is_some_and(|ident| ident.escaped_text.as_str() == "meta")
-            {
-                return true;
-            }
-            for child in self.arena.get_children(idx) {
-                stack.push(child);
-            }
-        }
-        false
-    }
-
-    fn jsx_automatic_runtime_makes_module(&self) -> bool {
-        if self.ctx.options.module_detection_legacy {
-            return false;
-        }
-        if !matches!(
-            self.ctx.options.jsx,
-            JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
-        ) {
-            return false;
-        }
-        (0..self.arena.len()).any(|idx| {
-            self.arena.get(NodeIndex(idx as u32)).is_some_and(|node| {
-                node.kind == syntax_kind_ext::JSX_ELEMENT
-                    || node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
-                    || node.kind == syntax_kind_ext::JSX_FRAGMENT
-            })
-        })
     }
 
     pub(super) fn contains_export_assignment(&self, statements: &NodeList) -> bool {
@@ -1541,7 +1470,7 @@ impl<'a> LoweringPass<'a> {
             }
         }
 
-        if self.jsx_automatic_runtime_makes_module() {
+        if crate::module_facts::jsx_automatic_runtime_makes_module(self.arena, &self.ctx.options) {
             let source = self
                 .ctx
                 .options
