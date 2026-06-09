@@ -23,6 +23,15 @@ pub enum ResolutionModeOverride {
     Require,
 }
 
+impl From<tsz_common::ImportResolutionMode> for ResolutionModeOverride {
+    fn from(mode: tsz_common::ImportResolutionMode) -> Self {
+        match mode {
+            tsz_common::ImportResolutionMode::Import => Self::Import,
+            tsz_common::ImportResolutionMode::Require => Self::Require,
+        }
+    }
+}
+
 /// Syntactic request kind used by the driver when resolving a module specifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ResolutionRequestKind {

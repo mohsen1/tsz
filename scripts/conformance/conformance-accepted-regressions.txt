@@ -51,9 +51,25 @@ TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts
-TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
-TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
+# importTag17.ts: RESOLVED. A JSDoc `@import { X } from "pkg" with
+# { "resolution-mode": "import" | "require" }` dropped its attribute clause: the
+# binder skipped creating the alias whenever a `with` clause was present, and the
+# driver collected the JSDoc import without the resolution-mode override, so the
+# specifier only resolved through the importing file's default condition. The
+# import-only member then never resolved (only the default-condition member did),
+# losing one of the two expected TS2322s. The binder now records the
+# `resolution-mode` on the alias (`Symbol::import_resolution_mode`), the driver
+# emits a per-mode module request so both package `exports` conditions are
+# resolved, and alias resolution routes the member through
+# `resolve_import_target_from_file_with_mode`, matching tsc. Covered by
+# `jsdoc_import_tag_records_resolution_mode_attribute` (binder) and
+# `test_collect_jsdoc_import_tag_parses_resolution_mode` (driver).
+# destructuringParameterDeclaration2.ts and conditionalTypes1.ts: RESOLVED
+# (ledger drift). Both now match tsc on exact-head against the pinned TypeScript
+# 6.0.3 corpus and the checked-in tsc cache (FINAL RESULTS: 1/1 passed, Known
+# failures: 0), so their entries were retired. Verify either with:
+#   scripts/conformance/conformance.sh run --test-dir <ts-6.0.3>/tests/cases \
+#     --filter <testName> --workers 1
 # objectLiteralMemberWithoutBlock1.ts: RESOLVED. `var v = { foo(); }` parsed the
 # body-less object method but suppressed the missing-body `'{' expected` whenever
 # the next token was `;`, so the outer object-literal member loop emitted a

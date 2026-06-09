@@ -5,6 +5,7 @@ pub(crate) mod constructors;
 mod constructors_tests;
 pub mod core;
 pub(crate) mod cross_file_constructors;
+pub(crate) mod cross_file_export;
 pub(crate) mod import_type;
 pub(crate) mod judge;
 pub(crate) mod mixin_constraints;

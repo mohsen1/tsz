@@ -1153,6 +1153,41 @@ const value = "x";
 }
 
 #[test]
+fn test_collect_jsdoc_import_tag_parses_resolution_mode() {
+    use tsz::module_resolver::ImportingModuleKind;
+    let text = r#"
+// @ts-check
+/** @import { Esm } from "pkg" with { "resolution-mode": "import" } */
+/** @import { Cjs } from "pkg" with { 'resolution-mode': 'require' } */
+/** @import { Plain } from "pkg" */
+/** @type {Esm} */
+const value = "x";
+"#;
+    let path = Path::new("test.js");
+    let requests = collect_module_requests_from_text(path, text);
+
+    // All three target "pkg"; the attribute clause drives the per-request mode.
+    let modes: Vec<Option<ImportingModuleKind>> = requests
+        .iter()
+        .filter(|(specifier, _, _, _)| specifier == "pkg")
+        .map(|(_, _, mode, _)| *mode)
+        .collect();
+
+    assert!(
+        modes.contains(&Some(ImportingModuleKind::Esm)),
+        "expected an ESM-mode request for the `resolution-mode: import` tag, got: {modes:?}"
+    );
+    assert!(
+        modes.contains(&Some(ImportingModuleKind::CommonJs)),
+        "expected a CommonJS-mode request for the `resolution-mode: require` tag, got: {modes:?}"
+    );
+    assert!(
+        modes.contains(&None),
+        "expected a mode-less request for the plain `@import` tag, got: {modes:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_require_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"const data = require("./data.json");"#;

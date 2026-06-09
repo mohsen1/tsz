@@ -805,6 +805,18 @@ impl<'a> CheckerState<'a> {
                 }
                 related
             }
+            SubtypeFailureReason::IntersectionTargetMismatch { .. } => {
+                // A source assigned to an intersection target fails through one of
+                // its constituents. The nested chain is the constituent frame
+                // `Type 'S' is not assignable to type 'Ci'.` (alone for a plain
+                // leaf, or followed by the constituent's structural drill / a
+                // folded missing-property line) — a multi-line shape the
+                // hand-rolled arms cannot represent. Reuse the TS2322 elaboration
+                // (`render_failure_reason`) as the single source of truth and
+                // re-anchor its child lines onto the call's TS2345 surface
+                // (category + start/length), exactly like the union-target arm.
+                self.reanchored_container_related(reason, source, target, anchor_idx, start, length)
+            }
             _ => return None,
         };
 
@@ -822,7 +834,7 @@ impl<'a> CheckerState<'a> {
     /// category reset to `Message` and its anchor rewritten to the call site
     /// (`start`/`length`). Reason variants whose `TS2322` elaboration is reused
     /// verbatim (array element, type-argument, tuple element/arity, union-target,
-    /// function parameter) share this transform.
+    /// intersection-target, function parameter) share this transform.
     fn reanchored_container_related(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
