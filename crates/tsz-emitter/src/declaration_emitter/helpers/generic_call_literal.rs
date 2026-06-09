@@ -49,6 +49,7 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|type_text| {
                 Self::unwrap_return_type_zero_arg_import_type(&type_text).unwrap_or(type_text)
             })
+            .map(|type_text| Self::strip_redundant_outer_type_parentheses(&type_text))
     }
 
     pub(in crate::declaration_emitter) fn unwrap_return_type_zero_arg_import_type(

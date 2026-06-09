@@ -1,6 +1,28 @@
 use super::*;
 
 impl<'a> DeclarationEmitter<'a> {
+    /// Removes redundant parentheses that wrap an *entire* reused
+    /// type-annotation text. `tsc`'s declaration printer never parenthesizes
+    /// the outermost type, so a callee return annotation written as `(T)`,
+    /// `((T))`, or `(  T  )` must surface as `T` when reused as an inferred
+    /// declaration type.
+    ///
+    /// Only fully-enclosing outer parentheses are removed (via the shared,
+    /// quote-/escape-aware [`Self::strip_balanced_outer_parens`] scanner).
+    /// Parentheses that are merely an operand of a larger type (`(A | B)[]`,
+    /// `Array<(A | B)>`) do not wrap the whole text and are left untouched, and
+    /// disjoint groups such as `(A) | (B)` are preserved because the leading `(`
+    /// does not pair with the trailing `)`.
+    pub(in crate::declaration_emitter) fn strip_redundant_outer_type_parentheses(
+        type_text: &str,
+    ) -> String {
+        let mut current = type_text.trim();
+        while let Some(inner) = Self::strip_balanced_outer_parens(current) {
+            current = inner.trim();
+        }
+        current.to_string()
+    }
+
     pub(in crate::declaration_emitter) fn format_reused_call_structural_return_type_text(
         &self,
         type_text: &str,
@@ -147,5 +169,50 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             format!("{{ {inner}; }}")
         }
+    }
+}
+
+#[cfg(test)]
+mod strip_outer_parentheses_tests {
+    use crate::declaration_emitter::DeclarationEmitter;
+
+    fn strip(text: &str) -> String {
+        DeclarationEmitter::strip_redundant_outer_type_parentheses(text)
+    }
+
+    #[test]
+    fn removes_fully_enclosing_outer_parentheses() {
+        assert_eq!(strip("(Cond<string>)"), "Cond<string>");
+        assert_eq!(strip("((Cond<string>))"), "Cond<string>");
+        assert_eq!(strip("(  Cond<string>  )"), "Cond<string>");
+        assert_eq!(strip("(() => void)"), "() => void");
+        assert_eq!(strip("(A | B)"), "A | B");
+    }
+
+    #[test]
+    fn leaves_unparenthesized_text_unchanged() {
+        assert_eq!(strip("Cond<string>"), "Cond<string>");
+        assert_eq!(strip("() => void"), "() => void");
+        assert_eq!(strip("A | B"), "A | B");
+    }
+
+    #[test]
+    fn preserves_parentheses_that_do_not_wrap_the_whole_type() {
+        // Operand parentheses inside a larger type are not the outermost wrap.
+        assert_eq!(strip("(() => void)[]"), "(() => void)[]");
+        assert_eq!(strip("(A | B)[]"), "(A | B)[]");
+        assert_eq!(strip("Array<(A | B)>"), "Array<(A | B)>");
+        assert_eq!(strip("(A & B) & C"), "(A & B) & C");
+        // Disjoint groups: the leading `(` does not pair with the trailing `)`.
+        assert_eq!(strip("(A) | (B)"), "(A) | (B)");
+    }
+
+    #[test]
+    fn ignores_parentheses_inside_string_and_import_segments() {
+        // Literal-type strings and import specifiers may contain parens that must
+        // not skew the enclosing-pair detection.
+        assert_eq!(strip("(import(\"./m\").Foo)"), "import(\"./m\").Foo");
+        assert_eq!(strip("\"(\" | \")\""), "\"(\" | \")\"");
+        assert_eq!(strip("(\"(\" | \")\")"), "\"(\" | \")\"");
     }
 }
