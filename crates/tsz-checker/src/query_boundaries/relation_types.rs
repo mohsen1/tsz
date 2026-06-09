@@ -299,6 +299,15 @@ impl RelationFailure {
                 source_type,
                 target_type,
                 ..
+            }
+            // An intersection-target failure: the checker-facing classification
+            // keeps the source/intersection pair; the failing constituent and its
+            // nested reason are rendered from the solver reason's structured chain
+            // via `render_failure_reason`.
+            | SubtypeFailureReason::IntersectionTargetMismatch {
+                source_type,
+                target_type,
+                ..
             } => Self::TypeMismatch {
                 source_type,
                 target_type,

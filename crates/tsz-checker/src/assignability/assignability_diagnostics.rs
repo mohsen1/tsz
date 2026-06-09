@@ -1196,10 +1196,112 @@ impl<'a> CheckerState<'a> {
             result.failure_reason
         };
 
+        let failure_reason = failure_reason
+            .map(|reason| self.wrap_intersection_target_failure(source, target, reason));
+
         crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
             weak_union_violation: result.weak_union_violation,
             failure_reason,
         }
+    }
+
+    /// Elaborate a target-**intersection** assignment failure with the failing
+    /// constituent frame that `tsc` emits.
+    ///
+    /// `tsc` (`typeRelatedToEachType`) relates a source to each constituent of a
+    /// target intersection `C1 & C2 & …` in written order and elaborates the
+    /// first constituent the source fails. tsz evaluates the intersection into a
+    /// single merged object via `evaluate_type_for_assignability` before the
+    /// reason is built, so the merged reason drills straight into the failing
+    /// property and drops the constituent context (`Type 'S' is not assignable
+    /// to type 'Ci'.`) that explains which member of the intersection requires
+    /// the failing shape. Recover it here from the original (pre-evaluation)
+    /// target by re-relating against each constituent and nesting the first
+    /// failure under an [`IntersectionTargetMismatch`] frame.
+    ///
+    /// Display-only: the relation decision is unchanged; this restructures the
+    /// failure reason chain to match `tsc`. Excess-property / weak-type failures
+    /// (which `tsc` does not elaborate per constituent) are left untouched.
+    ///
+    /// [`IntersectionTargetMismatch`]: tsz_solver::SubtypeFailureReason::IntersectionTargetMismatch
+    fn wrap_intersection_target_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        reason: tsz_solver::SubtypeFailureReason,
+    ) -> tsz_solver::SubtypeFailureReason {
+        use tsz_solver::SubtypeFailureReason as R;
+        // Excess-property and weak-type failures are not per-constituent
+        // elaborations in `tsc`. Missing-property failures against an
+        // intersection target are owned by a separate caller-side emission path
+        // (which anchors and words `TS2741`/`TS2739` itself), so leave them to
+        // that path rather than restructuring their reason here.
+        if matches!(
+            reason,
+            R::ExcessProperty { .. }
+                | R::NoCommonProperties { .. }
+                | R::MissingProperty { .. }
+                | R::MissingProperties { .. }
+                | R::IntersectionTargetMismatch { .. }
+        ) {
+            return reason;
+        }
+        let members = match self.target_intersection_constituents(target) {
+            Some(members) => members,
+            None => return reason,
+        };
+        for constituent in members {
+            // The first constituent the source fails is the one tsc elaborates.
+            // Route the per-constituent decision through the same gateway
+            // (`analyze_assignability_failure`) rather than a raw assignability
+            // predicate: a `None` reason means the source satisfies this
+            // constituent, and a `Some` reason is exactly the nested chain to
+            // frame.
+            let Some(inner) = self
+                .analyze_assignability_failure(source, constituent)
+                .failure_reason
+            else {
+                continue;
+            };
+            return R::IntersectionTargetMismatch {
+                source_type: source,
+                target_type: target,
+                constituent_type: constituent,
+                nested_reason: Box::new(inner),
+                // Preserve the merged-target reason so the headline stays
+                // byte-identical to the pre-wrap output (fingerprint-stable).
+                original_reason: Box::new(reason),
+            };
+        }
+        reason
+    }
+
+    /// The written constituents of an intersection `target`, or `None` if it is
+    /// not an intersection.
+    ///
+    /// Resolves lazy aliases (`type T = A & B`) without evaluating/merging so the
+    /// constituents survive. Anonymous object intersections (`{ x } & { y }`) are
+    /// eagerly merged into a single object at construction but retain the written
+    /// intersection as a display alias — a structural `TypeId` back-reference, not
+    /// rendered text — so fall back to that to recover the constituents.
+    fn target_intersection_constituents(&mut self, target: TypeId) -> Option<Vec<TypeId>> {
+        let resolved = self.resolve_lazy_type(target);
+        crate::query_boundaries::common::intersection_members(self.ctx.types, resolved)
+            .map(|list| list.iter().copied().collect())
+            .or_else(|| self.display_alias_intersection_constituents(resolved))
+            .or_else(|| self.display_alias_intersection_constituents(target))
+    }
+
+    /// The intersection constituents of `ty`'s display alias, if it has one whose
+    /// alias is an intersection (the anonymous-object-intersection recovery path).
+    fn display_alias_intersection_constituents(&self, ty: TypeId) -> Option<Vec<TypeId>> {
+        let alias = self.ctx.types.get_display_alias(ty)?;
+        Some(
+            crate::query_boundaries::common::intersection_members(self.ctx.types, alias)?
+                .iter()
+                .copied()
+                .collect(),
+        )
     }
 
     /// Check if a target type extends an array or tuple by looking through lazy
