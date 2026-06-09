@@ -63,6 +63,59 @@ fn indexed_access_key_space_helpers_use_relation_outcome_boundary() {
 }
 
 #[test]
+fn generic_index_policy_helpers_use_key_constraints_boundary() {
+    let source_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/types/computation/access_helpers.rs");
+    let source = fs::read_to_string(&source_path).expect("read access helper source");
+
+    let helper_names = [
+        "is_generic_index_type",
+        "intersection_has_generic_index",
+        "index_resolves_to_keyof_of_receiver",
+        "is_valid_index_for_type_param",
+        "same_type_param_identity",
+        "type_contains_same_type_param_identity",
+        "generic_index_mentions_transformed_current_type_param",
+        "keyof_source_type_param",
+        "is_generic_key_space",
+    ];
+
+    for helper_name in helper_names {
+        let signature = if helper_name == "index_resolves_to_keyof_of_receiver"
+            || helper_name == "same_type_param_identity"
+            || helper_name == "type_contains_same_type_param_identity"
+        {
+            format!("fn {helper_name}")
+        } else {
+            format!("pub(crate) fn {helper_name}")
+        };
+        let helper_start = source
+            .find(&signature)
+            .unwrap_or_else(|| panic!("find generic index policy helper signature: {signature}"));
+        let helper = &source[helper_start..];
+        let helper_end = [
+            helper.find("\n    fn "),
+            helper.find("\n    pub(crate) fn "),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|&idx| idx > 0)
+        .min()
+        .unwrap_or(helper.len());
+        let helper_body = &helper[..helper_end];
+
+        assert!(
+            !helper_body.contains("query_boundaries::common::"),
+            "{helper_name} should route key/index shape policy through query_boundaries::key_constraints"
+        );
+        assert!(
+            helper_body.contains("query_boundaries::key_constraints::"),
+            "{helper_name} should call the key_constraints query boundary"
+        );
+    }
+}
+
+#[test]
 fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
     let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/types/type_checking/indexed_access/indexed_access_helpers.rs");
