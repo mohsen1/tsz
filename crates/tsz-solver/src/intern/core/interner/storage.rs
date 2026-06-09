@@ -1,0 +1,288 @@
+//! Sharded storage primitives for the type interner.
+//!
+//! These data structures own the concurrent, lazily initialized layout that
+//! backs `TypeInterner`: per-shard `TypeData` storage and the slice/value
+//! interners for type components. They are pure data layout - the interning,
+//! lookup, and construction logic lives in the sibling modules.
+//!
+//! Fields are visible to the `intern::core` module tree (not fully private)
+//! because the intern/lookup hot paths in the parent `interner` module own the
+//! write protocol (allocation order, perf counters, shard id) and manipulate
+//! these locks directly rather than through accessor methods.
+
+use crate::types::{TypeData, TypeId};
+use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
+use rustc_hash::FxBuildHasher;
+use std::hash::Hash;
+use std::sync::{
+    Arc, OnceLock, RwLock,
+    atomic::{AtomicU32, Ordering},
+};
+
+/// Cached data for a union member, pre-fetched to avoid redundant DashMap/arena
+/// lookups during sort comparisons. Each field corresponds to a lookup that
+/// `compare_union_members` would otherwise perform per comparison.
+pub(in crate::intern::core) struct CachedUnionMember {
+    /// The original TypeId
+    pub(in crate::intern::core) id: TypeId,
+    /// Result of `builtin_sort_key(id)` - `Some` for intrinsic/builtin types
+    pub(in crate::intern::core) builtin_key: Option<u32>,
+    /// Result of `self.lookup(id)` - the TypeData for non-builtin types
+    pub(in crate::intern::core) data: Option<TypeData>,
+    /// For Object/ObjectWithIndex: the symbol's raw u32 (if the shape has a symbol)
+    pub(in crate::intern::core) obj_symbol: Option<u32>,
+    /// For anonymous Object/ObjectWithIndex: the `ShapeId`'s raw u32
+    pub(in crate::intern::core) obj_anon_shape: Option<u32>,
+    /// For Callable: the symbol's raw u32 (if the shape has a symbol)
+    pub(in crate::intern::core) callable_symbol: Option<u32>,
+    /// Monotonic allocation counter for source-order sorting
+    pub(in crate::intern::core) alloc_order: Option<u32>,
+}
+
+/// Inner data for a `TypeShard`, lazily initialized.
+pub(in crate::intern::core) struct TypeShardInner {
+    /// Map from `TypeData` to local index within this shard
+    pub(in crate::intern::core) key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
+    /// Flat array from local index to `TypeData`.
+    /// Sequential indices make a Vec far faster than `DashMap` for reverse lookup.
+    /// Protected by `RwLock`: reads are uncontended in single-threaded use (~1 cycle),
+    /// writes only happen during intern (append-only).
+    pub(in crate::intern::core) index_to_key: RwLock<Vec<TypeData>>,
+    /// Per-shard allocation order (parallel to `index_to_key`).
+    /// Stores the global monotonic order counter at time of interning.
+    pub(in crate::intern::core) alloc_order: RwLock<Vec<u32>>,
+}
+
+/// A single shard of the type interned storage.
+///
+/// Uses `OnceLock` for lazy initialization - `DashMaps` are only allocated
+/// when the shard is first accessed, reducing startup overhead.
+pub(in crate::intern::core) struct TypeShard {
+    /// Lazily initialized inner maps
+    pub(in crate::intern::core) inner: OnceLock<TypeShardInner>,
+    /// Atomic counter for allocating new indices in this shard
+    /// Kept outside `OnceLock` for fast checks without initialization
+    pub(in crate::intern::core) next_index: AtomicU32,
+}
+
+impl TypeShard {
+    pub(in crate::intern::core) const fn new() -> Self {
+        Self {
+            inner: OnceLock::new(),
+            next_index: AtomicU32::new(0),
+        }
+    }
+
+    /// Get the inner maps, initializing on first access
+    #[inline]
+    pub(in crate::intern::core) fn get_inner(&self) -> &TypeShardInner {
+        self.inner.get_or_init(|| TypeShardInner {
+            key_to_index: DashMap::with_hasher(FxBuildHasher),
+            index_to_key: RwLock::new(Vec::with_capacity(256)),
+            alloc_order: RwLock::new(Vec::with_capacity(256)),
+        })
+    }
+
+    /// Check if a key exists without initializing the shard
+    #[inline]
+    pub(in crate::intern::core) fn is_empty(&self) -> bool {
+        self.next_index.load(Ordering::Relaxed) == 0
+    }
+}
+
+/// Inner data for `ConcurrentSliceInterner`, lazily initialized.
+pub(in crate::intern::core) struct SliceInternerInner<T> {
+    /// Flat array from ID to slice value. Sequential IDs make Vec optimal for reverse lookup.
+    items: RwLock<Vec<Arc<[T]>>>,
+    map: DashMap<Arc<[T]>, u32, FxBuildHasher>,
+}
+
+/// Slice interner using flat Vec for reverse lookup.
+/// Uses lazy initialization to defer allocation until first use.
+pub(in crate::intern::core) struct ConcurrentSliceInterner<T> {
+    pub(in crate::intern::core) inner: OnceLock<SliceInternerInner<T>>,
+    pub(in crate::intern::core) next_id: AtomicU32,
+}
+
+impl<T> ConcurrentSliceInterner<T>
+where
+    T: Eq + Hash + Clone + Send + Sync + 'static,
+{
+    pub(in crate::intern::core) const fn new() -> Self {
+        Self {
+            inner: OnceLock::new(),
+            next_id: AtomicU32::new(1), // Reserve 0 for empty
+        }
+    }
+
+    #[inline]
+    fn get_inner(&self) -> &SliceInternerInner<T> {
+        self.inner.get_or_init(|| {
+            let empty: Arc<[T]> = Arc::from(Vec::new());
+            let mut items_vec = Vec::with_capacity(256);
+            items_vec.push(Arc::clone(&empty)); // id 0 = empty
+            let map = DashMap::with_hasher(FxBuildHasher);
+            map.insert(empty, 0);
+            SliceInternerInner {
+                items: RwLock::new(items_vec),
+                map,
+            }
+        })
+    }
+
+    #[inline]
+    pub(in crate::intern::core) fn intern(&self, items_slice: &[T]) -> u32 {
+        if items_slice.is_empty() {
+            return 0;
+        }
+
+        let inner = self.get_inner();
+
+        // PERF: Try lookup with borrowed slice first to avoid Vec+Arc allocation on cache hits.
+        // Arc<[T]>: Borrow<[T]> enables DashMap lookup with &[T] key.
+        if let Some(ref_entry) = inner.map.get(items_slice) {
+            return *ref_entry.value();
+        }
+
+        // Cache miss -- allocate for insertion
+        let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
+
+        // Allocate new ID
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        // Double-check: another thread might have inserted while we allocated
+        match inner.map.entry(std::sync::Arc::clone(&temp_arc)) {
+            Entry::Vacant(e) => {
+                e.insert(id);
+                {
+                    // T2.4 instrumentation: wrap the write-lock acquisition
+                    // so contention on the slice-interner's `items` vec lands
+                    // in the lock-wait histogram alongside the per-shard
+                    // TypeData writes. With `perf-counters-timing` OFF this
+                    // wrapper compiles to a direct closure call.
+                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
+                        inner.items.write().expect("interner items lock poisoned")
+                    });
+                    while vec.len() < id as usize {
+                        vec.push(Arc::clone(&temp_arc));
+                    }
+                    vec.push(temp_arc);
+                }
+                id
+            }
+            Entry::Occupied(e) => *e.get(),
+        }
+    }
+
+    #[inline]
+    pub(in crate::intern::core) fn get(&self, id: u32) -> Option<Arc<[T]>> {
+        // For id 0, return from the initialized inner (which has the pre-allocated
+        // empty Arc) instead of creating a new Arc::from(Vec::new()) on every call.
+        let inner = if id == 0 {
+            self.get_inner()
+        } else {
+            self.inner.get()?
+        };
+        let vec = inner.items.read().ok()?;
+        vec.get(id as usize).cloned()
+    }
+
+    #[inline]
+    pub(in crate::intern::core) fn empty(&self) -> Arc<[T]> {
+        let inner = self.get_inner();
+        let vec = inner.items.read().expect("interner items lock poisoned");
+        vec.first()
+            .cloned()
+            .unwrap_or_else(|| Arc::from(Vec::new()))
+    }
+}
+
+/// Inner data for `ConcurrentValueInterner`, lazily initialized.
+pub(in crate::intern::core) struct ValueInternerInner<T> {
+    /// Flat array from ID to value. Sequential IDs make Vec optimal for reverse lookup.
+    items: RwLock<Vec<Arc<T>>>,
+    map: DashMap<Arc<T>, u32, FxBuildHasher>,
+}
+
+/// Value interner using flat Vec for reverse lookup.
+/// Uses lazy initialization to defer allocation until first use.
+pub(in crate::intern::core) struct ConcurrentValueInterner<T> {
+    pub(in crate::intern::core) inner: OnceLock<ValueInternerInner<T>>,
+    pub(in crate::intern::core) next_id: AtomicU32,
+}
+
+impl<T> ConcurrentValueInterner<T>
+where
+    T: Eq + Hash + Clone + Send + Sync + 'static,
+{
+    pub(in crate::intern::core) const fn new() -> Self {
+        Self {
+            inner: OnceLock::new(),
+            next_id: AtomicU32::new(0),
+        }
+    }
+
+    #[inline]
+    fn get_inner(&self) -> &ValueInternerInner<T> {
+        self.inner.get_or_init(|| ValueInternerInner {
+            items: RwLock::new(Vec::with_capacity(128)),
+            map: DashMap::with_hasher(FxBuildHasher),
+        })
+    }
+
+    #[inline]
+    pub(in crate::intern::core) fn intern(&self, value: T) -> u32 {
+        let inner = self.get_inner();
+
+        // PERF: Try lookup with borrowed value first to avoid Arc allocation on cache hits.
+        // Most intern calls are for already-interned values, so this saves an Arc::new()
+        // (heap allocation + atomic ref count) on the hot path.
+        if let Some(ref_entry) = inner.map.get(&value) {
+            return *ref_entry.value();
+        }
+
+        // Cache miss -- allocate Arc for insertion
+        let value_arc = Arc::new(value);
+
+        // Allocate new ID
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        // Double-check: another thread might have inserted while we allocated
+        match inner.map.entry(std::sync::Arc::clone(&value_arc)) {
+            Entry::Vacant(e) => {
+                e.insert(id);
+                {
+                    // T2.4 instrumentation: see the matching wrapper in
+                    // `ConcurrentSliceInterner::intern`. Same rationale,
+                    // same zero-cost-when-feature-off contract.
+                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
+                        inner.items.write().expect("interner items lock poisoned")
+                    });
+                    while vec.len() < id as usize {
+                        vec.push(Arc::clone(&value_arc));
+                    }
+                    vec.push(value_arc);
+                }
+                id
+            }
+            Entry::Occupied(e) => *e.get(),
+        }
+    }
+
+    #[inline]
+    pub(in crate::intern::core) fn get(&self, id: u32) -> Option<Arc<T>> {
+        let vec = self.inner.get()?.items.read().ok()?;
+        vec.get(id as usize).cloned()
+    }
+
+    /// Get value by copy for Copy types, avoiding Arc clone overhead.
+    #[inline]
+    pub(in crate::intern::core) fn get_copy(&self, id: u32) -> Option<T>
+    where
+        T: Copy,
+    {
+        let vec = self.inner.get()?.items.read().ok()?;
+        vec.get(id as usize).map(|arc| **arc)
+    }
+}
