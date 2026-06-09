@@ -3,6 +3,7 @@
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::diagnostics;
 use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -286,11 +287,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
+        let display_arg_type =
+            diagnostics::widen_argument_type_for_display(self.ctx.types, arg_type);
         // Widen a fresh boolean-literal array element to `boolean` structurally
         // (`true[]`/`false[]` -> `boolean[]`) instead of patching the rendered text.
         let display_arg_type =
-            common::boolean_literal_array_display_type(self.ctx.types, display_arg_type)
+            diagnostics::boolean_literal_array_display_type(self.ctx.types, display_arg_type)
                 .unwrap_or(display_arg_type);
         let mut actual_display = self.format_type_diagnostic(display_arg_type);
         let mut target_display = self
@@ -703,7 +705,8 @@ impl<'a> CheckerState<'a> {
                 return expected;
             }
         }
-        let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
+        let actual_display_type =
+            diagnostics::widen_argument_type_for_display(self.ctx.types, actual);
         if !common::is_primitive_type(self.ctx.types, actual_display_type) {
             return expected;
         }

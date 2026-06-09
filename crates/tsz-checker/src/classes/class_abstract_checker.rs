@@ -551,14 +551,14 @@ impl<'a> CheckerState<'a> {
     /// evaluated — concrete sub-structures are preserved verbatim so this
     /// cannot widen or re-order object properties.
     ///
-    /// Delegates to the solver via `query_boundaries::common::deep_reduce_for_display`
+    /// Delegates to the solver via `query_boundaries::diagnostics::deep_reduce_for_display`
     /// so the walker stays on the correct side of the checker/solver contract.
     pub(crate) fn simplify_heritage_instance_type_for_display(
         &mut self,
         instance_type: TypeId,
     ) -> TypeId {
         match self.ctx.type_env.try_borrow() {
-            Ok(env) => crate::query_boundaries::common::deep_reduce_for_display(
+            Ok(env) => crate::query_boundaries::diagnostics::deep_reduce_for_display(
                 self.ctx.types,
                 &*env,
                 instance_type,

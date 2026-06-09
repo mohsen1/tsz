@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
         if !has_constrained_type_param {
             return None;
         }
-        let reduced = crate::query_boundaries::common::get_base_constraint_for_display(
+        let reduced = crate::query_boundaries::diagnostics::get_base_constraint_for_display(
             self.ctx.types.as_type_database(),
             source,
         );

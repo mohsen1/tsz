@@ -304,7 +304,7 @@ impl<'a> CheckerState<'a> {
 
         let mut parts = Vec::new();
         let mut properties = shape.properties.clone();
-        crate::query_boundaries::common::normalize_display_property_order(&mut properties);
+        crate::query_boundaries::diagnostics::normalize_display_property_order(&mut properties);
         for prop in properties {
             let name = self.ctx.types.resolve_atom(prop.name);
             let readonly = if prop.readonly { "readonly " } else { "" };

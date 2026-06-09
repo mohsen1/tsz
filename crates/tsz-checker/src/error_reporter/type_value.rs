@@ -37,11 +37,11 @@ impl<'a> CheckerState<'a> {
         // so the widened shape is actually rendered — `format_type_diagnostic`
         // would fall back to display aliases stored on shared TypeIds and
         // re-introduce the original literal form inside fn return types.
-        let prev_display = crate::query_boundaries::common::display_widen_for_redeclaration(
+        let prev_display = crate::query_boundaries::diagnostics::display_widen_for_redeclaration(
             self.ctx.types,
             prev_type,
         );
-        let current_display = crate::query_boundaries::common::display_widen_for_redeclaration(
+        let current_display = crate::query_boundaries::diagnostics::display_widen_for_redeclaration(
             self.ctx.types,
             current_type,
         );

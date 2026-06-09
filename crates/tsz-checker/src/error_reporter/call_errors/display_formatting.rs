@@ -1682,7 +1682,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let display_type = crate::query_boundaries::common::widen_argument_type_for_display(
+        let display_type = crate::query_boundaries::diagnostics::widen_argument_type_for_display(
             self.ctx.types,
             arg_type,
         );
@@ -1952,7 +1952,7 @@ impl<'a> CheckerState<'a> {
                 direct_arg_type
             }
         } else {
-            crate::query_boundaries::common::widen_argument_type_for_display(
+            crate::query_boundaries::diagnostics::widen_argument_type_for_display(
                 self.ctx.types,
                 arg_type,
             )
