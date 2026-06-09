@@ -104,6 +104,7 @@ name = "Checker boundary: direct solver internal imports"
 base = "crates/tsz-checker"
 pattern = '\btsz_solver::types::'
 exclude_dirs = ["tests"]
+ignore_comment_lines = true
 exclude_files = [
   # Pre-existing baseline debt
   "crates/tsz-checker/src/query_boundaries/class.rs",
@@ -193,6 +194,7 @@ name = "Checker boundary: raw interner access"
 base = "crates/tsz-checker"
 pattern = '\.intern\s*\('
 exclude_dirs = ["tests"]
+ignore_comment_lines = true
 
 [[pattern_checks]]
 name = "Code quality: no bare .unwrap() in checker production code (use .expect())"
