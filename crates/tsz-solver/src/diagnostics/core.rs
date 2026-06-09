@@ -516,6 +516,40 @@ pub enum SubtypeFailureReason {
         /// Why the constraint-level relation failed.
         nested_reason: Box<Self>,
     },
+    /// A source is not assignable to a target **intersection** because it fails
+    /// one of the intersection's constituents.
+    ///
+    /// `tsc` relates a source to each constituent of a target intersection
+    /// `C1 & C2 & …` in written order (`typeRelatedToEachType`) and elaborates
+    /// the **first** failing constituent: the top-level `Type 'S' is not
+    /// assignable to type 'C1 & C2 & …'.` line is followed by the full relation
+    /// of `S <: Ci` one level deeper — `Type 'S' is not assignable to type
+    /// 'Ci'.` plus its own drill for a structural failure, or directly
+    /// `Property 'p' is missing in type 'S' but required in type 'Ci'.` for a
+    /// missing-property leaf (which already names `Ci`).
+    ///
+    /// Without this variant the intersection target is structurally merged into
+    /// a single object before the reason is built (`evaluate_type_for_assignability`),
+    /// so the chain skips straight to the merged property mismatch and drops the
+    /// constituent context that explains *which* member of the intersection
+    /// requires the failing shape.
+    ///
+    /// `constituent_type` is the first failing constituent; `nested_reason`
+    /// explains the `S <: constituent_type` relation and is rendered against
+    /// `(source_type, constituent_type)`, so the nested reason's own top line
+    /// becomes the constituent frame. `original_reason` is the merged-target
+    /// reason this wraps — only its **headline** is rendered, so the top
+    /// `Type 'S' is not assignable to type 'C1 & C2 & …'.` line stays
+    /// byte-identical to the pre-wrap output (which is the only line the
+    /// conformance harness fingerprints); the constituent frame and drill
+    /// replace its elaboration.
+    IntersectionTargetMismatch {
+        source_type: TypeId,
+        target_type: TypeId,
+        constituent_type: TypeId,
+        nested_reason: Box<Self>,
+        original_reason: Box<Self>,
+    },
 }
 
 /// Diagnostic severity level.
@@ -868,6 +902,7 @@ impl SubtypeFailureReason {
             | Self::UnionTargetMismatch { .. }
             | Self::ConditionalBranchMismatch { .. }
             | Self::TypeParameterConstraintMismatch { .. }
+            | Self::IntersectionTargetMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::TupleArityMismatch(arity) => arity.diagnostic_code(),
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
@@ -1357,6 +1392,23 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             )
             .with_related(nested_reason.to_diagnostic(*constraint_type, *target_type)),
+            // Render the intersection headline against the full intersection,
+            // then the failing constituent's relation one level deeper. Passing
+            // `(source_type, constituent_type)` to the nested reason makes its own
+            // top line the constituent frame (`Type 'S' is not assignable to type
+            // 'Ci'.`) for structural failures, while a missing-property leaf
+            // renders directly with `Ci` named (its own `target_type` field).
+            Self::IntersectionTargetMismatch {
+                source_type,
+                target_type,
+                constituent_type,
+                nested_reason,
+                original_reason: _,
+            } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![(*source_type).into(), (*target_type).into()],
+            )
+            .with_related(nested_reason.to_diagnostic(*source_type, *constituent_type)),
         }
     }
 }
