@@ -409,6 +409,60 @@ class C {}
 }
 
 #[test]
+fn jsdoc_import_tag_records_resolution_mode_attribute() {
+    // A JSDoc `@import` carrying a `with { "resolution-mode": ... }` attribute
+    // must still bind the alias (it was previously dropped entirely) and record
+    // the override so the checker resolves the member through the requested
+    // package condition. Vary the binder name so the behavior is structural,
+    // not keyed to a specific identifier.
+    let source = r#"
+/**
+ * @import { Esm as ImpAlias } from "pkg" with { "resolution-mode": "import" }
+ * @import { Cjs as ReqAlias } from "pkg" with { 'resolution-mode': 'require' }
+ * @import { Plain } from "pkg"
+ */
+class C {}
+"#;
+    let mut parser = ParserState::new("b.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let lookup = |name: &str| {
+        let sym_id = binder
+            .file_locals
+            .get(name)
+            .unwrap_or_else(|| panic!("expected JSDoc import alias {name}"));
+        binder
+            .symbols
+            .get(sym_id)
+            .unwrap_or_else(|| panic!("expected symbol data for {name}"))
+    };
+
+    let imp = lookup("ImpAlias");
+    assert_ne!(imp.flags & symbol_flags::ALIAS, 0);
+    assert!(imp.is_type_only);
+    assert_eq!(imp.import_module.as_deref(), Some("pkg"));
+    assert_eq!(imp.import_name.as_deref(), Some("Esm"));
+    assert_eq!(
+        imp.import_resolution_mode,
+        Some(tsz_common::ImportResolutionMode::Import)
+    );
+
+    let req = lookup("ReqAlias");
+    assert_eq!(req.import_name.as_deref(), Some("Cjs"));
+    assert_eq!(
+        req.import_resolution_mode,
+        Some(tsz_common::ImportResolutionMode::Require)
+    );
+
+    // No attribute clause → no override.
+    let plain = lookup("Plain");
+    assert_eq!(plain.import_resolution_mode, None);
+}
+
+#[test]
 fn export_as_namespace_records_current_file_namespace_metadata() {
     let source = r"
 export var x: number;

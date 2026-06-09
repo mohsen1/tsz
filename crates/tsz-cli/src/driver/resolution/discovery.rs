@@ -381,7 +381,8 @@ pub(crate) fn collect_jsdoc_module_requests(
                     continue;
                 };
                 if let Some(specifier) = parse_jsdoc_import_module_specifier(rest) {
-                    requests.push((specifier, ImportKind::EsmImport, None));
+                    let resolution_mode = parse_jsdoc_import_tag_resolution_mode(rest);
+                    requests.push((specifier, ImportKind::EsmImport, resolution_mode));
                 }
             }
         }
@@ -492,6 +493,25 @@ pub(crate) fn parse_jsdoc_import_module_specifier(rest: &str) -> Option<String> 
     }
 
     None
+}
+
+/// Parse the `resolution-mode` override from a JSDoc `@import` tag body.
+///
+/// `rest` is everything after `@import`, e.g.
+/// `{ Foo } from "pkg" with { "resolution-mode": "import" }`. The attribute
+/// clause can only appear after the (last, unquoted) `from` keyword, so the
+/// scan starts there to avoid matching a `with`/`assert` inside a binding name.
+/// Shares the clause grammar with the binder via `tsz_common`.
+pub(crate) fn parse_jsdoc_import_tag_resolution_mode(
+    rest: &str,
+) -> Option<tsz::module_resolver::ImportingModuleKind> {
+    // Cheap reject: an attribute clause requires a `with`/`assert` keyword.
+    if !rest.contains("with") && !rest.contains("assert") {
+        return None;
+    }
+    let from_idx = find_jsdoc_import_from_keyword(rest)?;
+    tsz_common::parse_jsdoc_resolution_mode_attribute_clause(&rest[from_idx + 4..])
+        .map(tsz::module_resolver::ImportingModuleKind::from)
 }
 
 pub(crate) fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
