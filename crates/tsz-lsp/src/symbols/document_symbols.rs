@@ -22,6 +22,7 @@ use tsz_scanner::SyntaxKind;
 
 mod expando;
 mod imports;
+mod jsdoc;
 mod model;
 mod support;
 
@@ -249,10 +250,11 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // declarations merge into a single nested nav
                     // entry (matches tsc's `mergeChildren`).
                     merge_same_name_modules(&mut symbols);
-                    // JS files can declare types via JSDoc
-                    // `@typedef` tags on any top-level statement.
-                    // Scan them so they surface as `type` nav entries.
-                    Self::apply_jsdoc_typedefs(&sf.statements.nodes, &mut symbols);
+                    // Files can declare types via JSDoc `@typedef` /
+                    // `@callback` tags. Scan the file's JSDoc comments and
+                    // surface each alias as a `type` nav entry, matching
+                    // tsserver's navigation tree.
+                    self.apply_jsdoc_typedefs(&sf.comments, &mut symbols);
                 }
                 symbols
             }
@@ -1563,12 +1565,24 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
     }
 
-    /// Walk top-level statements for `@typedef` / `@callback` JSDoc tags and surface
-    /// their names as `type` nav entries. Stub until JSDoc AST nodes flow through the parser.
-    const fn apply_jsdoc_typedefs(_statements: &[NodeIndex], _symbols: &mut [DocumentSymbolEntry]) {
-        // TODO: when the parser exposes JSDoc nodes, walk them for
-        // `@typedef T` and append `DocumentSymbolEntry { name: T, kind:
-        // SymbolKind::Struct }` entries. Until then this is a no-op.
+    /// Scan the file's JSDoc comments for `@typedef` / `@callback` tags and
+    /// surface their names as `type` nav entries, inserting each in source
+    /// order relative to the syntactic top-level symbols.
+    ///
+    /// tsz does not lower JSDoc into AST nodes — the binder and checker both
+    /// read tags directly from the cached comment ranges — so this mirrors that
+    /// model rather than waiting on a JSDoc parser (see [`jsdoc`]).
+    fn apply_jsdoc_typedefs(
+        &self,
+        comments: &[tsz_common::comments::CommentRange],
+        symbols: &mut Vec<DocumentSymbolEntry>,
+    ) {
+        for entry in jsdoc::collect_jsdoc_type_aliases(comments, self.source_text, self.line_map) {
+            let target = entry.selection_range.start;
+            let insert_at = symbols
+                .partition_point(|existing| jsdoc::position_le(existing.range.start, target));
+            symbols.insert(insert_at, entry);
+        }
     }
 
     /// Post-process: scan top-level expression statements for
@@ -1954,3 +1968,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 #[cfg(test)]
 #[path = "../../tests/document_symbols_tests.rs"]
 mod document_symbols_tests;
+
+#[cfg(test)]
+#[path = "../../tests/document_symbols_jsdoc_tests.rs"]
+mod document_symbols_jsdoc_tests;
