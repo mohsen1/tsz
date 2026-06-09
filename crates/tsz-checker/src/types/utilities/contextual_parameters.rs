@@ -220,10 +220,24 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         member_name: &str,
     ) -> Option<SymbolId> {
-        self.resolve_cross_file_export_from_file(
+        self.resolve_jsdoc_import_member_with_mode(module_specifier, member_name, None)
+    }
+
+    /// Like [`Self::resolve_jsdoc_import_member`] but honors an explicit
+    /// `resolution-mode` override carried by a JSDoc `@import ... with { ... }`
+    /// tag, so the member is looked up against the ESM/CJS conditional export
+    /// `tsc` would resolve for that mode.
+    pub(crate) fn resolve_jsdoc_import_member_with_mode(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<SymbolId> {
+        self.resolve_cross_file_export_from_file_with_mode(
             module_specifier,
             member_name,
             Some(self.ctx.current_file_idx),
+            resolution_mode,
         )
         // Avoid raw binder fallback here: it returns unscoped SymbolIds without
         // file-target registration, which can alias-collide across binders.

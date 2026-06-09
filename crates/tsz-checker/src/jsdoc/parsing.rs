@@ -451,6 +451,8 @@ impl<'a> CheckerState<'a> {
         let close_quote = rest.find(quote)?;
         let module_specifier = rest[..close_quote].trim().to_string();
         let after_quote = rest[close_quote + quote.len_utf8()..].trim_start();
+        // Skip an inline import-attributes argument (`, { ... }`) before `)`.
+        let after_quote = Self::skip_jsdoc_import_attributes_argument(after_quote);
         let after_quote = after_quote.strip_prefix(')')?.trim_start();
         if after_quote.is_empty() {
             return Some((module_specifier, None));

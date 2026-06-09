@@ -1910,7 +1910,9 @@ mod jsdoc_import_type_specifier_collection_tests {
     fn jsdoc_import_specifiers(text: &str) -> Vec<String> {
         let mut out = Vec::new();
         push_jsdoc_import_call_specifiers(text, &mut out);
-        out
+        out.into_iter()
+            .map(|(specifier, _mode)| specifier)
+            .collect()
     }
 
     #[test]
@@ -1944,6 +1946,26 @@ mod jsdoc_import_type_specifier_collection_tests {
     fn push_ignores_unquoted_and_unterminated() {
         assert!(jsdoc_import_specifiers("import(foo)").is_empty());
         assert!(jsdoc_import_specifiers("import('unterminated").is_empty());
+    }
+
+    #[test]
+    fn push_parses_inline_import_resolution_mode_attribute() {
+        use tsz::module_resolver::ImportingModuleKind;
+        let collect = |text: &str| {
+            let mut out = Vec::new();
+            push_jsdoc_import_call_specifiers(text, &mut out);
+            out
+        };
+        assert_eq!(
+            collect(r#"import("pkg", { with: { "resolution-mode": "import" } }).Foo"#),
+            [("pkg".to_string(), Some(ImportingModuleKind::Esm))]
+        );
+        assert_eq!(
+            collect(r#"import('pkg', { with: { 'resolution-mode': 'require' } }).Foo"#),
+            [("pkg".to_string(), Some(ImportingModuleKind::CommonJs))]
+        );
+        // A bare inline import type query carries no override.
+        assert_eq!(collect(r#"import("pkg").Foo"#), [("pkg".to_string(), None)]);
     }
 
     #[test]

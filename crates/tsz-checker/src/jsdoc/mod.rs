@@ -46,5 +46,6 @@ pub(crate) mod params_comment_retrieval;
 pub(crate) mod params_generic_instantiation;
 pub(crate) mod params_type_strings;
 pub(crate) mod parsing;
+pub(crate) mod parsing_import_attributes;
 pub(crate) mod resolution;
 pub(crate) mod types;
