@@ -6,10 +6,10 @@ use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     ExtendedNodeInfo, JsxAttributeData, JsxAttributesData, JsxClosingData, JsxElementData,
     JsxExpressionData, JsxFragmentData, JsxNamespacedNameData, JsxOpeningData,
-    JsxSpreadAttributeData, JsxTextData, Node, NodeArena,
+    JsxSpreadAttributeData, JsxTextData, Node, NodeArenaInner,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add a JSX element node
     pub fn add_jsx_element(
         &mut self,

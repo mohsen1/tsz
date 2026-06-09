@@ -150,7 +150,7 @@ impl ParserState {
                     name,
                     type_parameters: None,
                     heritage_clauses: None,
-                    members: self.make_node_list(vec![]),
+                    members: Self::make_node_list(vec![]),
                 },
             );
         }
@@ -187,10 +187,10 @@ impl ParserState {
                     clause_end,
                     crate::parser::node::HeritageData {
                         token: SyntaxKind::ExtendsKeyword as u16,
-                        types: self.make_node_list(vec![]),
+                        types: Self::make_node_list(vec![]),
                     },
                 );
-                return self.make_node_list(vec![clause]);
+                return Self::make_node_list(vec![clause]);
             }
 
             let mut types = Vec::new();
@@ -209,10 +209,10 @@ impl ParserState {
                 clause_end,
                 crate::parser::node::HeritageData {
                     token: SyntaxKind::ExtendsKeyword as u16,
-                    types: self.make_node_list(types),
+                    types: Self::make_node_list(types),
                 },
             );
-            self.make_node_list(vec![clause])
+            Self::make_node_list(vec![clause])
         });
 
         // TS1176: Interface declaration cannot have 'implements' clause.
@@ -355,7 +355,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(members)
+        Self::make_node_list(members)
     }
 
     /// Parse a single type member (property signature, method signature, call signature, construct signature)
@@ -602,7 +602,7 @@ impl ParserState {
             let mod_idx = self
                 .arena
                 .create_modifier(SyntaxKind::ReadonlyKeyword, start_pos);
-            self.make_node_list(vec![mod_idx])
+            Self::make_node_list(vec![mod_idx])
         })
     }
 
@@ -719,7 +719,7 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseParenToken);
             parameters
         } else {
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         };
 
         // TS1005: call signatures cannot be optional — emit "';' expected." at '?'
@@ -777,7 +777,7 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseParenToken);
             parameters
         } else {
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         };
 
         // TS1005: construct signatures cannot be optional — emit "';' expected." at '?'
@@ -862,7 +862,7 @@ impl ParserState {
                 end_pos,
                 crate::parser::node::IndexSignatureData {
                     modifiers,
-                    parameters: self.make_node_list(vec![]),
+                    parameters: Self::make_node_list(vec![]),
                     type_annotation,
                 },
             );
@@ -1079,7 +1079,7 @@ impl ParserState {
                 modifiers: if param_modifiers.is_empty() {
                     None
                 } else {
-                    Some(self.make_node_list(param_modifiers))
+                    Some(Self::make_node_list(param_modifiers))
                 },
                 dot_dot_dot_token,
                 name: param_name,
@@ -1096,7 +1096,7 @@ impl ParserState {
             end_pos,
             crate::parser::node::IndexSignatureData {
                 modifiers,
-                parameters: self.make_node_list(vec![param_node]),
+                parameters: Self::make_node_list(vec![param_node]),
                 type_annotation,
             },
         )
@@ -1135,7 +1135,7 @@ impl ParserState {
                 modifiers: None,
                 name,
                 type_parameters: None,
-                parameters: self.make_node_list(vec![]),
+                parameters: Self::make_node_list(vec![]),
                 type_annotation,
                 body,
             },
@@ -1350,7 +1350,7 @@ impl ParserState {
         let members = if has_open_brace {
             self.parse_enum_members()
         } else {
-            self.make_node_list(Vec::new())
+            Self::make_node_list(Vec::new())
         };
 
         if has_open_brace {
@@ -1534,7 +1534,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(members)
+        Self::make_node_list(members)
     }
 
     // =========================================================================
@@ -1572,7 +1572,7 @@ impl ParserState {
 
         let node = match self.token() {
             SyntaxKind::FunctionKeyword => {
-                let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                let modifiers = Some(Self::make_node_list(vec![declare_modifier]));
                 self.parse_function_declaration_with_async(false, modifiers)
             }
             SyntaxKind::ClassKeyword => self.parse_declare_class(start_pos, declare_modifier),
@@ -1581,15 +1581,15 @@ impl ParserState {
                 self.parse_declare_abstract_class(start_pos, declare_modifier)
             }
             SyntaxKind::InterfaceKeyword => {
-                let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                let modifiers = Some(Self::make_node_list(vec![declare_modifier]));
                 self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
             }
             SyntaxKind::TypeKeyword => {
-                let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                let modifiers = Some(Self::make_node_list(vec![declare_modifier]));
                 self.parse_type_alias_declaration_with_modifiers(start_pos, modifiers)
             }
             SyntaxKind::EnumKeyword => {
-                let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                let modifiers = Some(Self::make_node_list(vec![declare_modifier]));
                 self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
             }
             SyntaxKind::NamespaceKeyword
@@ -1598,7 +1598,7 @@ impl ParserState {
                 self.parse_declare_module_with_modifiers(start_pos, all_modifiers)
             }
             SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => {
-                let modifiers = self.make_node_list(vec![declare_modifier]);
+                let modifiers = Self::make_node_list(vec![declare_modifier]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
             SyntaxKind::ConstKeyword => {
@@ -1606,13 +1606,13 @@ impl ParserState {
                 if self.look_ahead_is_const_enum() {
                     self.parse_const_enum_declaration(start_pos, vec![declare_modifier])
                 } else {
-                    let modifiers = self.make_node_list(vec![declare_modifier]);
+                    let modifiers = Self::make_node_list(vec![declare_modifier]);
                     self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
                 }
             }
             SyntaxKind::UsingKeyword => {
                 // declare using
-                let modifiers = self.make_node_list(vec![declare_modifier]);
+                let modifiers = Self::make_node_list(vec![declare_modifier]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
             SyntaxKind::ImportKeyword => {
@@ -1625,7 +1625,7 @@ impl ParserState {
                     diagnostic_codes::A_MODIFIER_CANNOT_BE_USED_WITH_AN_IMPORT_DECLARATION,
                 );
 
-                let modifiers = Some(self.make_node_list(all_modifiers));
+                let modifiers = Some(Self::make_node_list(all_modifiers));
                 if self.look_ahead_is_import_equals() {
                     self.parse_import_equals_declaration_with_modifiers(start_pos, modifiers)
                 } else {
@@ -1634,7 +1634,7 @@ impl ParserState {
             }
             SyntaxKind::AwaitKeyword => {
                 // declare await using
-                let modifiers = self.make_node_list(vec![declare_modifier]);
+                let modifiers = Self::make_node_list(vec![declare_modifier]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
             SyntaxKind::ExportKeyword => {
@@ -1648,7 +1648,7 @@ impl ParserState {
                     export_start,
                     export_end,
                 );
-                let modifiers = self.make_node_list(vec![declare_modifier, export_modifier]);
+                let modifiers = Self::make_node_list(vec![declare_modifier, export_modifier]);
                 // TS1029: 'export' modifier must precede 'declare' modifier.
                 // Skip for `declare export as namespace` (valid UMD pattern) and
                 // `declare export = expr` (export assignment — TS1120 handles it).
@@ -1757,7 +1757,7 @@ impl ParserState {
                 }
                 // Pass the declare modifier to the function
                 self.parse_expected(SyntaxKind::AsyncKeyword);
-                let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                let modifiers = Some(Self::make_node_list(vec![declare_modifier]));
                 self.parse_function_declaration_with_async(true, modifiers)
             }
             _ => {

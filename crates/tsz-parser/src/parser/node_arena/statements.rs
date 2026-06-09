@@ -4,11 +4,11 @@
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     BlockData, CaseClauseData, CatchClauseData, ExprStatementData, ExtendedNodeInfo, ForInOfData,
-    IfStatementData, JumpData, LabeledData, LoopData, Node, NodeArena, ReturnData, SwitchData,
+    IfStatementData, JumpData, LabeledData, LoopData, Node, NodeArenaInner, ReturnData, SwitchData,
     TryData, WithData,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add a block node
     pub fn add_block(&mut self, kind: u16, pos: u32, end: u32, data: BlockData) -> NodeIndex {
         let statements = data.statements.clone();

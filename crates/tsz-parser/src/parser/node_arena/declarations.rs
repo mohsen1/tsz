@@ -5,11 +5,11 @@
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     ClassData, EnumData, EnumMemberData, ExtendedNodeInfo, FunctionData, InterfaceData,
-    ModuleBlockData, ModuleData, Node, NodeArena, TypeAliasData, VariableData,
+    ModuleBlockData, ModuleData, Node, NodeArenaInner, TypeAliasData, VariableData,
     VariableDeclarationData,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add a function node
     pub fn add_function(&mut self, kind: u16, pos: u32, end: u32, data: FunctionData) -> NodeIndex {
         let modifiers = data.modifiers.clone();

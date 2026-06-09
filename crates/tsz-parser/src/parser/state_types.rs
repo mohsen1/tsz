@@ -399,7 +399,7 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::CompositeTypeData {
-                types: self.make_node_list(types),
+                types: Self::make_node_list(types),
             },
         )
     }
@@ -443,7 +443,7 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::CompositeTypeData {
-                types: self.make_node_list(types),
+                types: Self::make_node_list(types),
             },
         )
     }
@@ -651,7 +651,7 @@ impl ParserState {
         let mut is_constructor = false;
         let mut constructor_return_type = NodeIndex::NONE;
         let mut starting_param_index: u32 = 0;
-        let mut parameters = self.make_node_list(Vec::new());
+        let mut parameters = Self::make_node_list(Vec::new());
 
         if self.is_token(SyntaxKind::OpenParenToken) {
             self.parse_expected(SyntaxKind::OpenParenToken);
@@ -752,7 +752,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(params)
+        Self::make_node_list(params)
     }
 
     fn parse_jsdoc_legacy_function_parameter(&mut self, index: u32) -> NodeIndex {
@@ -1070,7 +1070,7 @@ impl ParserState {
                     start_pos,
                     q_end,
                     crate::parser::node::CompositeTypeData {
-                        types: self.make_node_list(vec![base_type, null_token]),
+                        types: Self::make_node_list(vec![base_type, null_token]),
                     },
                 );
                 // Recurse to handle `T?[]` (postfix ? followed by array suffix)

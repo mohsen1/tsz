@@ -5,11 +5,11 @@
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     ExportAssignmentData, ExportDeclData, ExtendedNodeInfo, ImportAttributeData,
-    ImportAttributesData, ImportClauseData, ImportDeclData, NamedImportsData, Node, NodeArena,
+    ImportAttributesData, ImportClauseData, ImportDeclData, NamedImportsData, Node, NodeArenaInner,
     SpecifierData,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add an import declaration node
     pub fn add_import_decl(
         &mut self,

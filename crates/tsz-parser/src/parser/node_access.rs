@@ -18,11 +18,11 @@ use super::node::{
     JsxClosingData, JsxElementData, JsxExpressionData, JsxFragmentData, JsxNamespacedNameData,
     JsxOpeningData, JsxSpreadAttributeData, JsxTextData, JumpData, LabeledData, LiteralData,
     LiteralExprData, LiteralTypeData, LoopData, MappedTypeData, MethodDeclData, ModuleBlockData,
-    ModuleData, NamedImportsData, NamedTupleMemberData, Node, NodeArena, ParameterData,
-    ParenthesizedData, PropertyAssignmentData, PropertyDeclData, QualifiedNameData, ReturnData,
-    ShorthandPropertyData, SignatureData, SourceFileData, SpecifierData, SpreadData, SwitchData,
-    TaggedTemplateData, TemplateExprData, TemplateLiteralTypeData, TemplateSpanData, TryData,
-    TupleTypeData, TypeAliasData, TypeAssertionData, TypeLiteralData, TypeOperatorData,
+    ModuleData, NamedImportsData, NamedTupleMemberData, Node, NodeArena, NodeArenaInner,
+    ParameterData, ParenthesizedData, PropertyAssignmentData, PropertyDeclData, QualifiedNameData,
+    ReturnData, ShorthandPropertyData, SignatureData, SourceFileData, SpecifierData, SpreadData,
+    SwitchData, TaggedTemplateData, TemplateExprData, TemplateLiteralTypeData, TemplateSpanData,
+    TryData, TupleTypeData, TypeAliasData, TypeAssertionData, TypeLiteralData, TypeOperatorData,
     TypeParameterData, TypePredicateData, TypeQueryData, TypeRefData, UnaryExprData,
     UnaryExprDataEx, VariableData, VariableDeclarationData, WrappedTypeData,
 };
@@ -38,7 +38,7 @@ use super::syntax_kind_ext::{
     TYPE_PREDICATE, VARIABLE_DECLARATION, VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Get a thin node by index
     #[inline]
     #[must_use]

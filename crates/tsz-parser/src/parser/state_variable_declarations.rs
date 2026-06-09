@@ -408,7 +408,7 @@ impl ParserState {
         {
             self.next_token();
             let end_pos = self.token_full_start();
-            let empty_statements = self.make_node_list(Vec::new());
+            let empty_statements = Self::make_node_list(Vec::new());
             let body = self.arena.add_block(
                 syntax_kind_ext::BLOCK,
                 end_pos,
@@ -429,7 +429,7 @@ impl ParserState {
                     asterisk_token,
                     name,
                     type_parameters: None,
-                    parameters: self.make_node_list(Vec::new()),
+                    parameters: Self::make_node_list(Vec::new()),
                     type_annotation: NodeIndex::NONE,
                     body,
                     equals_greater_than_token: false,
@@ -493,7 +493,7 @@ impl ParserState {
         if reserved_parameter_yielded_to_statement {
             self.context_flags = saved_flags;
             let end_pos = self.token_full_start();
-            let empty_statements = self.make_node_list(Vec::new());
+            let empty_statements = Self::make_node_list(Vec::new());
             let body = self.arena.add_block(
                 syntax_kind_ext::BLOCK,
                 end_pos,

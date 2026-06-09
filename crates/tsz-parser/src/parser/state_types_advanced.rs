@@ -394,7 +394,7 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::TupleTypeData {
-                elements: self.make_node_list(elements),
+                elements: Self::make_node_list(elements),
             },
         );
 
@@ -803,7 +803,7 @@ impl ParserState {
                 end_pos,
                 crate::parser::node::TemplateLiteralTypeData {
                     head,
-                    template_spans: self.make_node_list(vec![]),
+                    template_spans: Self::make_node_list(vec![]),
                 },
             );
         }
@@ -890,7 +890,7 @@ impl ParserState {
             end_pos,
             crate::parser::node::TemplateLiteralTypeData {
                 head,
-                template_spans: self.make_node_list(spans),
+                template_spans: Self::make_node_list(spans),
             },
         )
     }
@@ -1138,7 +1138,7 @@ impl ParserState {
         let members = if extra_members.is_empty() {
             None
         } else {
-            Some(self.make_node_list(extra_members))
+            Some(Self::make_node_list(extra_members))
         };
 
         self.arena.add_mapped_type(
@@ -1320,7 +1320,7 @@ impl ParserState {
         let members = if prior_members.is_empty() {
             None
         } else {
-            Some(self.make_node_list(prior_members))
+            Some(Self::make_node_list(prior_members))
         };
 
         self.arena.add_mapped_type(
@@ -1397,7 +1397,7 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::TypeLiteralData {
-                members: self.make_node_list(members),
+                members: Self::make_node_list(members),
             },
         )
     }
@@ -1451,7 +1451,7 @@ impl ParserState {
         }
 
         self.parse_expected_greater_than();
-        let mut list = self.make_node_list(args);
+        let mut list = Self::make_node_list(args);
         list.has_trailing_comma = has_trailing_comma;
         list
     }
@@ -1591,7 +1591,7 @@ impl ParserState {
                 self.restore_speculation_checkpoint(checkpoint);
                 return None;
             }
-            return Some(self.make_node_list(Vec::new()));
+            return Some(Self::make_node_list(Vec::new()));
         }
 
         let mut args = Vec::new();
@@ -1645,7 +1645,7 @@ impl ParserState {
             // Check if the following token indicates these were type arguments
             // (call, tagged template, or instantiation expression)
             if self.can_follow_type_arguments_in_expression() {
-                let mut list = self.make_node_list(args);
+                let mut list = Self::make_node_list(args);
                 list.has_trailing_comma = has_trailing_comma;
                 return Some(list);
             }

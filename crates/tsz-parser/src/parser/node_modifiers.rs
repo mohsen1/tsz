@@ -6,11 +6,11 @@
 //! and lowering crates.
 
 use super::base::{NodeIndex, NodeList};
-use super::node::NodeArena;
+use super::node::NodeArenaInner;
 use tsz_common::Visibility;
 use tsz_scanner::SyntaxKind;
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Check whether a modifier list contains a modifier of the given kind.
     ///
     /// This is the single source of truth for the "scan modifiers for a kind"

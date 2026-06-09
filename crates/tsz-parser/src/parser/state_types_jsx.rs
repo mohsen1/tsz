@@ -372,7 +372,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(params)
+        Self::make_node_list(params)
     }
 
     /// Parse a keyword as an identifier (for type keywords like string, number, etc.)
@@ -555,7 +555,7 @@ impl ParserState {
 
     /// Get node count
     #[must_use]
-    pub const fn get_node_count(&self) -> usize {
+    pub fn get_node_count(&self) -> usize {
         self.arena.len()
     }
 

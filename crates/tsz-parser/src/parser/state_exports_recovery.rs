@@ -83,7 +83,7 @@ impl ParserState {
                     start_pos,
                     start_pos + 6,
                 );
-                let modifiers = self.make_node_list(vec![export_node]);
+                let modifiers = Self::make_node_list(vec![export_node]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
             SyntaxKind::ConstKeyword => self.parse_export_const_or_variable(),
@@ -102,7 +102,7 @@ impl ParserState {
                         start_pos,
                         start_pos + keyword_text_len(SyntaxKind::ExportKeyword),
                     );
-                    let modifiers = Some(self.make_node_list(vec![export_modifier]));
+                    let modifiers = Some(Self::make_node_list(vec![export_modifier]));
                     self.parse_import_declaration_with_modifiers(start_pos, modifiers)
                 }
             }
@@ -157,7 +157,7 @@ impl ParserState {
                             second_export_pos,
                             second_export_end,
                         );
-                        let modifiers = Some(self.make_node_list(vec![export_modifier]));
+                        let modifiers = Some(Self::make_node_list(vec![export_modifier]));
                         self.parse_class_declaration_with_modifiers(second_export_pos, modifiers)
                     } else {
                         self.parse_exported_declaration(start_pos)
@@ -335,7 +335,7 @@ impl ParserState {
             let async_modifier =
                 self.arena
                     .add_token(SyntaxKind::AsyncKeyword as u16, async_start, async_end);
-            let modifiers = Some(self.make_node_list(vec![async_modifier]));
+            let modifiers = Some(Self::make_node_list(vec![async_modifier]));
             match self.token() {
                 SyntaxKind::ClassKeyword => {
                     self.parse_class_declaration_with_modifiers(async_start_pos, modifiers)
@@ -387,7 +387,7 @@ impl ParserState {
                 export_start,
                 export_end,
             );
-            let modifiers = self.make_node_list(vec![export_node]);
+            let modifiers = Self::make_node_list(vec![export_node]);
             self.parse_variable_statement_with_modifiers(Some(export_start), Some(modifiers))
         }
     }

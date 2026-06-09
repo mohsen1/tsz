@@ -3,11 +3,11 @@
 
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
-    BindingElementData, BindingPatternData, ExtendedNodeInfo, Node, NodeArena,
+    BindingElementData, BindingPatternData, ExtendedNodeInfo, Node, NodeArenaInner,
     PropertyAssignmentData, ShorthandPropertyData,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add a binding pattern node
     pub fn add_binding_pattern(
         &mut self,

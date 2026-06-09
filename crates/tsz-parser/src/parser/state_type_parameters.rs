@@ -66,7 +66,7 @@ impl ParserState {
 
         self.parse_expected_greater_than();
 
-        let mut list = self.make_node_list(params);
+        let mut list = Self::make_node_list(params);
         list.has_trailing_comma = has_trailing_comma;
         list
     }
@@ -258,7 +258,7 @@ impl ParserState {
         if modifiers.is_empty() {
             None
         } else {
-            Some(self.make_node_list(modifiers))
+            Some(Self::make_node_list(modifiers))
         }
     }
 

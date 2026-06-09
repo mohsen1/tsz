@@ -6,11 +6,11 @@
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     AccessorData, ConstructorData, DecoratorData, ExtendedNodeInfo, HeritageData,
-    IndexSignatureData, MethodDeclData, Node, NodeArena, ParameterData, PropertyDeclData,
+    IndexSignatureData, MethodDeclData, Node, NodeArenaInner, ParameterData, PropertyDeclData,
     SignatureData, TypeParameterData,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add a signature node (property/method signature)
     pub fn add_signature(
         &mut self,

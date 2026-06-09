@@ -32,11 +32,13 @@ mod statements;
 mod types;
 
 use super::base::{NodeIndex, NodeList};
-use super::node::{ExtendedNodeInfo, IdentifierData, LiteralData, Node, NodeArena, SourceFileData};
+use super::node::{
+    ExtendedNodeInfo, IdentifierData, LiteralData, Node, NodeArenaInner, SourceFileData,
+};
 
 use tsz_common::interner::{Atom, Interner};
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Maximum pre-allocation to avoid capacity overflow in huge files.
     const MAX_NODE_PREALLOC: usize = 5_000_000;
 
@@ -326,6 +328,7 @@ impl NodeArena {
 
 #[cfg(test)]
 mod tests {
+    use super::super::node::NodeArena;
     use super::*;
 
     #[test]

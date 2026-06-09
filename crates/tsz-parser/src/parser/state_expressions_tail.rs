@@ -237,7 +237,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(args)
+        Self::make_node_list(args)
     }
 
     // Returns true for statement-only keywords that should stop argument parsing

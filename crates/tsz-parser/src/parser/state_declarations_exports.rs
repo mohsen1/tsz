@@ -82,7 +82,7 @@ impl ParserState {
                 start_pos,
                 start_pos + keyword_text_len(SyntaxKind::ExportKeyword),
             );
-            let modifiers = Some(self.make_node_list(vec![export_modifier]));
+            let modifiers = Some(Self::make_node_list(vec![export_modifier]));
             return self.parse_import_declaration_with_modifiers(start_pos, modifiers);
         }
 
@@ -630,7 +630,7 @@ impl ParserState {
             end_pos,
             NamedImportsData {
                 name: NodeIndex::NONE, // Not a namespace export
-                elements: self.make_node_list(elements),
+                elements: Self::make_node_list(elements),
             },
         )
     }
@@ -1170,7 +1170,7 @@ impl ParserState {
             start_pos,
             end_pos,
             BlockData {
-                statements: self.make_node_list(Vec::new()),
+                statements: Self::make_node_list(Vec::new()),
                 multi_line: true,
             },
         )
@@ -1181,7 +1181,7 @@ impl ParserState {
         let (declaration_keyword, flags) =
             self.parse_for_variable_declaration_declaration_keyword();
         let declarations = self.parse_for_variable_declarations(declaration_keyword);
-        let declarations_list = self.make_node_list(declarations);
+        let declarations_list = Self::make_node_list(declarations);
         let end_pos = self.token_end();
 
         self.arena.add_variable_with_flags(
@@ -1776,7 +1776,7 @@ impl ParserState {
             start_pos,
             case_block_end,
             BlockData {
-                statements: self.make_node_list(clauses),
+                statements: Self::make_node_list(clauses),
                 multi_line: true,
             },
         );
