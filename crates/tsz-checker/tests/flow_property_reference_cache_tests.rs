@@ -126,3 +126,226 @@ function f(obj: { a?: { b: number } }) {
         "obj[\"a\"] and obj.a are the same reference and must share narrowing, got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `this` / `super` bases and non-narrowable member accesses.
+//
+// `this` and `super` carry no binder symbol, so before they were given a
+// reserved structural base component their flow narrowing fell back to a
+// per-node cache key and re-walked the flow graph per read (O(n^2) for
+// `this`-heavy method bodies). Non-reference member accesses (call results,
+// fresh object literals, dynamic element indices) are not references at all:
+// tsc never narrows them, so the flow walk is skipped entirely. These tests
+// pin both the narrowing that must be preserved and the narrowing that must
+// not appear.
+// ---------------------------------------------------------------------------
+
+/// `this.foo` narrows like any other reference, and a `this` base must not
+/// alias a same-named property on an unrelated receiver.
+#[test]
+fn this_member_narrows_and_is_receiver_disjoint() {
+    let codes = check_source_strict_codes(
+        r#"
+type Shape = { kind: "a"; av: number } | { kind: "b"; bv: string };
+class Holder {
+  shape: Shape = { kind: "a", av: 1 };
+  inspect(other: Shape) {
+    if (this.shape.kind === "a") {
+      const n: number = this.shape.av;
+    }
+    if (other.kind === "b") {
+      const s: string = other.bv;
+    }
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "this.shape and a same-named param property must narrow independently, got: {codes:?}"
+    );
+}
+
+/// Repeated reads of `this.value` must keep the narrowed type — the O(n^2) fix
+/// must not corrupt the shared narrowing across occurrences.
+#[test]
+fn repeated_this_reads_keep_narrowing() {
+    let codes = check_source_strict_codes(
+        r#"
+class Box {
+  value: string | number = 0;
+  use() {
+    if (typeof this.value === "string") {
+      const a: string = this.value;
+      const b: string = this.value;
+      const c: string = this.value;
+    }
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "repeated this.value reads must stay narrowed to string, got: {codes:?}"
+    );
+}
+
+/// Assigning to `this.field` narrows subsequent reads (assignment flow).
+#[test]
+fn this_member_assignment_narrows() {
+    let codes = check_source_strict_codes(
+        r#"
+class Box {
+  field: string | number = 0;
+  set() {
+    this.field = "hi";
+    const s: string = this.field;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "this.field must narrow to string after assignment, got: {codes:?}"
+    );
+}
+
+/// Call results are not references: tsc does not narrow `f().v` across the
+/// guard (each call is a fresh value), so the inner read keeps `number |
+/// undefined` and trips TS2322. Skipping the flow walk must preserve this.
+#[test]
+fn call_result_member_is_not_narrowed() {
+    let codes = check_source_strict_codes(
+        r#"
+declare function make(): { v: number | undefined };
+function use() {
+  if (make().v !== undefined) {
+    const x: number = make().v;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "call-result member access must not narrow (tsc parity), expected TS2322, got: {codes:?}"
+    );
+}
+
+/// A fresh object literal receiver is not a reference and must not narrow.
+#[test]
+fn fresh_object_literal_member_is_not_narrowed() {
+    let codes = check_source_strict_codes(
+        r#"
+function use(seed: number | undefined) {
+  if (({ v: seed }).v !== undefined) {
+    const x: number = ({ v: seed }).v;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "fresh-object-literal member access must not narrow, expected TS2322, got: {codes:?}"
+    );
+}
+
+/// `tsc`'s `isNarrowableReference` allows element-access indices that are
+/// string/number literals OR entity-name expressions, but not computed
+/// expressions. Mirror all three: `arr[i % 3]` (computed) does not narrow and
+/// trips TS2322, while `arr[0]` (literal) and `arr[i]` (entity-name index) do
+/// narrow. The entity-name case guards against over-skipping: `obj[key]` is
+/// narrowable even though it has no stable structural cache key.
+#[test]
+fn element_index_narrowability_matches_tsc() {
+    let computed = check_source_strict_codes(
+        r#"
+declare const arr: (number | undefined)[];
+declare const i: number;
+function use() {
+  if (arr[i % 3] !== undefined) {
+    const x: number = arr[i % 3];
+  }
+}
+"#,
+    );
+    assert!(
+        computed.contains(&2322),
+        "arr[i % 3] with a computed index must not narrow, expected TS2322, got: {computed:?}"
+    );
+
+    let literal = check_source_strict_codes(
+        r#"
+declare const arr: (number | undefined)[];
+function use() {
+  if (arr[0] !== undefined) {
+    const x: number = arr[0];
+  }
+}
+"#,
+    );
+    assert!(
+        literal.is_empty(),
+        "arr[0] with a literal index must narrow, got: {literal:?}"
+    );
+
+    let entity = check_source_strict_codes(
+        r#"
+declare const arr: (number | undefined)[];
+declare const i: number;
+function use() {
+  if (arr[i] !== undefined) {
+    const x: number = arr[i];
+  }
+}
+"#,
+    );
+    assert!(
+        entity.is_empty(),
+        "arr[i] with an entity-name index must narrow (it is narrowable in tsc), got: {entity:?}"
+    );
+}
+
+/// Optional-chain references (`o?.inner?.kind`) are narrowable and their cache
+/// key folds the `?.` flag, so repeated reads of the same optional path share
+/// (O(n)) while staying correctly narrowed. The structural key must keep the
+/// optionality so a mixed `o.a` / `o?.a` program never cross-contaminates.
+#[test]
+fn optional_chain_member_narrows_and_repeats() {
+    let codes = check_source_strict_codes(
+        r#"
+type Shape = { kind: "a"; av: number } | { kind: "b"; bv: string };
+function inspect(o: { inner?: Shape }) {
+  if (o.inner?.kind === "a") {
+    const a1: number = o.inner.av;
+    const a2: number = o.inner.av;
+    const a3: number = o.inner.av;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "optional-chain narrowing of o.inner must survive repeated reads, got: {codes:?}"
+    );
+}
+
+/// Member accesses over the `import.meta` meta-property root are narrowable:
+/// `is_matching_reference` treats `import.meta` as a stable reference, so the
+/// skip predicate must not classify `import.meta.x` as non-narrowable.
+#[test]
+fn import_meta_member_is_narrowable() {
+    let codes = check_source_strict_codes(
+        r#"
+interface ImportMeta { value?: { n: number } }
+export function read() {
+  if (import.meta.value) {
+    const n: number = import.meta.value.n;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "import.meta.value member access must narrow, got: {codes:?}"
+    );
+}

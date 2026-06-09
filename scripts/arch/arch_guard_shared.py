@@ -672,7 +672,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "flow"
         / "control_flow"
         / "core.rs",
-        1824,
+        1848,
     ),
     (
         "Solver boundary: type_queries/flow.rs size ratchet",
