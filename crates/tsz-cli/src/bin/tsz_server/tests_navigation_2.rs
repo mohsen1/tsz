@@ -853,3 +853,55 @@ fn test_document_highlights_depth_guard_prevents_stacker_runaway() {
         "documentHighlights must not crash on deeply-nested AST; response: {resp:?}"
     );
 }
+
+/// Regression for documentHighlightAtInheritedProperties6: the fourslash test
+/// calls getDocumentHighlights at each marked position (declarations + usage).
+/// Previously only the `d.prop1` usage position was tested; declaration
+/// positions (inside class bodies) could also trigger a crash.
+#[test]
+fn test_document_highlights_at_all_positions_in_circular_heritage() {
+    let source = concat!(
+        "class C extends D {\n",
+        "    prop0: string;\n",
+        "    prop1: string;\n",
+        "}\n",
+        "\n",
+        "class D extends C {\n",
+        "    prop0: string;\n",
+        "    prop1: string;\n",
+        "}\n",
+        "\n",
+        "var d: D;\n",
+        "d.prop1;\n",
+    );
+    let file_path = "/tests/cases/fourslash/file1.ts";
+    let mut server = make_server();
+    server
+        .open_files
+        .insert(file_path.to_string(), source.to_string());
+
+    // All marker positions as in the fourslash test (1-based line/offset).
+    let positions: &[(&str, u32, u32)] = &[
+        ("prop0 in class C decl", 2, 5),
+        ("prop1 in class C decl", 3, 5),
+        ("prop0 in class D decl", 7, 5),
+        ("prop1 in class D decl", 8, 5),
+        ("prop1 in d.prop1 usage", 12, 3),
+    ];
+    for &(desc, line, offset) in positions {
+        let req = make_request(
+            "documentHighlights",
+            serde_json::json!({
+                "file": file_path,
+                "line": line,
+                "offset": offset,
+                "filesToSearch": [file_path],
+            }),
+        );
+        let resp = server.handle_tsserver_request(req);
+        assert!(
+            resp.success,
+            "documentHighlights must not crash at {desc} (line {line}, offset {offset}); response: {resp:?}"
+        );
+    }
+}
