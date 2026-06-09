@@ -590,7 +590,7 @@ pub fn token_is_trivia(token: SyntaxKind) -> bool {
 // =============================================================================
 
 /// Returns `true` if `ch` is valid as the **first** character of an ECMAScript
-/// identifier (ID_Start per Unicode + `_` and `$`).
+/// identifier (`ID_Start` per Unicode + `_` and `$`).
 ///
 /// Uses the same Unicode tables as the scanner so that checker/emitter decisions
 /// about whether a property name needs quoting stay in sync with what the
@@ -601,7 +601,7 @@ pub fn is_ecmascript_identifier_start(ch: char) -> bool {
 }
 
 /// Returns `true` if `ch` is valid as a **continuation** character of an ECMAScript
-/// identifier (ID_Continue per Unicode + `_`, `$`, ZWNJ U+200C, ZWJ U+200D).
+/// identifier (`ID_Continue` per Unicode + `_`, `$`, ZWNJ U+200C, ZWJ U+200D).
 ///
 /// Uses the same Unicode tables as the scanner so that checker/emitter decisions
 /// about whether a property name needs quoting stay in sync with what the
