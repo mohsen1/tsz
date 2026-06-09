@@ -44,6 +44,31 @@ pub(crate) fn index_access_components(
     tsz_solver::type_queries::get_index_access_types(db, type_id)
 }
 
+/// Returns true when an indexed object-map branch value is structurally known
+/// to satisfy `constraint` without evaluating the branch.
+///
+/// This covers branch maps like `{ 1: Source & Constraint, 0: never }[Key]`:
+/// every selected value is either `never` or an intersection that includes the
+/// required constraint as one constituent, so the indexed result is a subtype
+/// of the constraint regardless of `Key`.
+pub(crate) fn indexed_object_map_value_structurally_satisfies_constraint(
+    db: &dyn TypeDatabase,
+    value: TypeId,
+    constraint: TypeId,
+) -> bool {
+    if value == TypeId::NEVER || value == constraint {
+        return true;
+    }
+    crate::query_boundaries::common::intersection_members(db, value).is_some_and(|members| {
+        members.iter().copied().any(|member| {
+            member == constraint
+                || indexed_object_map_value_structurally_satisfies_constraint(
+                    db, member, constraint,
+                )
+        })
+    })
+}
+
 pub(crate) fn contains_index_access_with_type_parameter_object(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -926,6 +951,36 @@ mod tests {
         db.store_display_alias(evaluated, keyof);
 
         assert!(!constraint_has_keyof_surface(&db, evaluated));
+    }
+
+    #[test]
+    fn indexed_object_map_value_accepts_intersection_containing_constraint() {
+        let db = TypeInterner::new();
+        let value = db.intersection(vec![TypeId::OBJECT, TypeId::STRING]);
+
+        assert!(indexed_object_map_value_structurally_satisfies_constraint(
+            &db,
+            value,
+            TypeId::STRING,
+        ));
+    }
+
+    #[test]
+    fn indexed_object_map_value_rejects_intersection_without_constraint() {
+        let db = TypeInterner::new();
+        let param = db.type_param(tsz_solver::TypeParamInfo {
+            name: db.intern_string("Item"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let value = db.intersection(vec![param, TypeId::NUMBER]);
+
+        assert!(!indexed_object_map_value_structurally_satisfies_constraint(
+            &db,
+            value,
+            TypeId::STRING,
+        ));
     }
 
     #[test]

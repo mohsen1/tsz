@@ -242,6 +242,29 @@ type C<T> = {0: C<Missing>}[0];
 }
 
 #[test]
+fn indexed_object_map_intersection_branch_satisfies_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type Switch<Value, Narrow> = Value extends Narrow ? "hit" : "miss";
+type Project<Payload, Narrow> = {
+    hit: Payload & Narrow,
+    miss: never,
+}[Switch<Payload, Narrow>];
+type NeedText<Result extends string> = Result;
+type Output<Thing, Parts, Separator> =
+    NeedText<Project<{ thing: Thing, parts: Parts, separator: Separator }, string>>;
+"#,
+    );
+
+    assert_eq!(
+        diagnostic_count(&diags, 2344),
+        0,
+        "Indexed object-map values of the form never or X & string should satisfy \
+         a string constraint without eager branch evaluation; got: {diags:#?}"
+    );
+}
+
+#[test]
 fn boolean_dispatch_index_alias_uses_declared_key_subset() {
     let diags = check_source_diagnostics(
         r#"

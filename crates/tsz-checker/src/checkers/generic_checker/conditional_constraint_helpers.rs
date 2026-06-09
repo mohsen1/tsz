@@ -169,6 +169,17 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             let value = self.resolve_lazy_type(value);
+            if query::indexed_object_map_value_structurally_satisfies_constraint(
+                self.ctx.types.as_type_database(),
+                value,
+                constraint,
+            ) || query::indexed_object_map_value_structurally_satisfies_constraint(
+                self.ctx.types.as_type_database(),
+                value,
+                constraint_evaluated,
+            ) {
+                return true;
+            }
             let value_evaluated = self.evaluate_type_for_assignability(value);
             self.conditional_constraint_component_relation_outcome(value, constraint)
                 .related
