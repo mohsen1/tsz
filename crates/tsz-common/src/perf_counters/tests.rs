@@ -1940,6 +1940,52 @@ mod json_tests {
     }
 
     #[test]
+    fn cross_file_type_params_cache_counters_appear_in_dump_string() {
+        // `dump_string` is empty when counters are disabled. Force them on so
+        // the text output can be inspected. The sentinel values are read back
+        // via a delta check so concurrent test runs don't interfere.
+        force_enable_perf_counters_for_tests();
+        let c = counters();
+        let before_hits = c
+            .cross_file_type_params_cache_hits
+            .load(Ordering::Relaxed);
+        let before_misses = c
+            .cross_file_type_params_cache_misses
+            .load(Ordering::Relaxed);
+        c.cross_file_type_params_cache_hits
+            .fetch_add(99, Ordering::Relaxed);
+        c.cross_file_type_params_cache_misses
+            .fetch_add(77, Ordering::Relaxed);
+        let dump = PerfCounters::dump_string();
+        assert!(
+            !dump.is_empty(),
+            "dump_string must be non-empty when counters are enabled"
+        );
+        assert!(
+            dump.contains("type-params cache hits"),
+            "dump_string must include 'type-params cache hits' label, got:\n{dump}"
+        );
+        assert!(
+            dump.contains("type-params cache misses"),
+            "dump_string must include 'type-params cache misses' label, got:\n{dump}"
+        );
+        let hits_after = c
+            .cross_file_type_params_cache_hits
+            .load(Ordering::Relaxed);
+        let misses_after = c
+            .cross_file_type_params_cache_misses
+            .load(Ordering::Relaxed);
+        assert!(
+            hits_after >= before_hits + 99,
+            "hits counter not bumped (before={before_hits}, after={hits_after})"
+        );
+        assert!(
+            misses_after >= before_misses + 77,
+            "misses counter not bumped (before={before_misses}, after={misses_after})"
+        );
+    }
+
+    #[test]
     fn write_json_to_writes_valid_json_with_atomic_rename() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("tsz-perf-counter-snap-{}.json", std::process::id()));

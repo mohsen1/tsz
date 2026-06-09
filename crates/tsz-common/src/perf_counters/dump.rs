@@ -29,7 +29,9 @@ impl PerfCounters {
              cache hits (lib)           {:>12}\n  \
              cache hits (cross-file)    {:>12}\n  \
              misses (full work)         {:>12}\n  \
-             max recursion depth        {:>12}\n\
+             max recursion depth        {:>12}\n  \
+             type-params cache hits     {:>12}\n  \
+             type-params cache misses   {:>12}\n\
              Checker construction:\n  \
              CheckerState::new          {:>12}\n  \
              ::with_parent_cache        {:>12}\n  \
@@ -76,6 +78,8 @@ impl PerfCounters {
             snap.delegate.cache_hits_cross_file,
             snap.delegate.misses,
             snap.delegate.max_recursion_depth,
+            snap.delegate.cross_file_type_params_cache_hits,
+            snap.delegate.cross_file_type_params_cache_misses,
             snap.checker.state_constructed,
             snap.checker.with_parent_cache_constructed,
             snap.checker.file_session_resets,
