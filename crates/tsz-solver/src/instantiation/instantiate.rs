@@ -1122,21 +1122,29 @@ impl<'a> TypeInstantiator<'a> {
                         self.interner.lookup(distribution_source)
                     {
                         let members = self.interner.type_list(members);
-                        // Limit distribution to prevent OOM with large unions
-                        // (e.g., string literal unions with thousands of members)
-                        const MAX_DISTRIBUTION_SIZE: usize = 100;
-                        if members.len() > MAX_DISTRIBUTION_SIZE {
+                        // Limit distribution to prevent OOM with pathologically
+                        // large unions (e.g. string-literal unions with thousands
+                        // of members). Shares the evaluation-path cap so both
+                        // lowering routes agree on what is representable.
+                        if members.len()
+                            > crate::evaluation::evaluate_rules::conditional::MAX_CONDITIONAL_DISTRIBUTION_SIZE
+                        {
                             self.depth_exceeded = true;
                             return TypeId::ERROR;
                         }
                         let cond_type = self.interner.conditional(cond);
                         let mut results = Vec::with_capacity(members.len());
+                        // Reuse one substitution map across members: only the
+                        // distributed parameter (`info.name`) changes per step, so
+                        // overwrite that single key instead of cloning the whole
+                        // map for every member (matters now the cap allows up to
+                        // `MAX_CONDITIONAL_DISTRIBUTION_SIZE` members).
+                        let mut member_subst = self.substitution.clone();
                         for &member in members.iter() {
                             // Check depth before each distribution step
                             if self.depth_exceeded {
                                 return TypeId::ERROR;
                             }
-                            let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
                             let instantiated = if self.preserve_unsubstituted_type_params {
                                 instantiate_type_preserving(self.interner, cond_type, &member_subst)
