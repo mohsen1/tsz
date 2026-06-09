@@ -1,8 +1,7 @@
-use crate::query_boundaries::common as common_query;
+use crate::query_boundaries::common::{self as common_query, TypeSubstitution};
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeList;
-use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::def::DefKind;
 use tsz_solver::{CallSignature, CallableShape, TypeId};
 

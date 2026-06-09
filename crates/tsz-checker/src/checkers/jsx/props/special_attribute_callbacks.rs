@@ -1,10 +1,10 @@
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn check_jsx_special_attribute_function_body(

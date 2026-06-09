@@ -1,5 +1,6 @@
 //! Structural attribution helpers for source-file alias direct-lowering misses.
 
+use crate::query_boundaries::common::TypeDatabase;
 #[cfg(test)]
 use crate::state::CheckerState;
 use std::collections::HashSet;
@@ -17,7 +18,6 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
 
 pub(crate) fn record_source_alias_rejection_kinds(
     arena: &NodeArena,

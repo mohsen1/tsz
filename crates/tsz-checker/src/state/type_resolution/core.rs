@@ -150,7 +150,7 @@ impl<'a> CheckerState<'a> {
         let db = self.ctx.types.as_type_database();
         crate::query_boundaries::common::contains_conditional_type(db, body)
             || crate::query_boundaries::common::contains_keyof_type(db, body)
-            || tsz_solver::type_queries::contains_index_access_type(db, body)
+            || crate::query_boundaries::common::contains_index_access_type(db, body)
             || crate::query_boundaries::common::is_mapped_type(db, body)
     }
 

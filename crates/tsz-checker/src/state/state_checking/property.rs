@@ -544,7 +544,9 @@ impl<'a> CheckerState<'a> {
                 // property checking when it appears in a union.  Detect it by
                 // checking whether ALL property names are standard Object.prototype
                 // methods.  Similarly, skip for `Function` (has bind, call, apply, etc.).
-                if self.is_global_object_or_function_shape(&shape) {
+                use crate::query_boundaries::assignability as assign_query;
+                if assign_query::is_global_object_or_function_shape_boundary(self.ctx.types, &shape)
+                {
                     return;
                 }
 

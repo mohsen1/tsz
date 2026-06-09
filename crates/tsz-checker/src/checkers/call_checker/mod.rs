@@ -12,10 +12,10 @@ mod diagnostics;
 mod overload_resolution;
 mod spread_arity;
 
+use crate::query_boundaries::common::TypeResolver;
 use crate::query_boundaries::common::{AssignabilityChecker, CallResult};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 /// Call-local context carrying the callable type during argument collection.
 ///

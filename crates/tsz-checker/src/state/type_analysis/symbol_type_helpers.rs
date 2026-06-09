@@ -1,13 +1,12 @@
 //! Helper methods for symbol type resolution: circular constraint detection,
 //! type parameter identity checks, provisional function types, and numeric enum registration.
 
-use crate::query_boundaries::common::type_param_info;
+use crate::query_boundaries::common::{TypeEnvironment, type_param_info};
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeEnvironment;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_indirect_circular_constraints(

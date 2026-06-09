@@ -7,11 +7,11 @@
 //!
 //! Duplicate identifier checking lives in `type_checking/duplicate_identifiers`.
 
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     /// Check for missing global types (TS2318).

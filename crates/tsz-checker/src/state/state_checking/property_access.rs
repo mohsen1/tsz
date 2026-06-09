@@ -4,12 +4,12 @@
 //! and computed property display names. Split from the excess-property module
 //! (`property`) for LOC hygiene.
 
+use crate::query_boundaries::common::TypeResolver;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {

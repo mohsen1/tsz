@@ -1,9 +1,9 @@
 use super::FlowAnalyzer;
 use super::flow_dp::{DpMemo, resolve_backward_dp};
+use crate::query_boundaries::common::TypeofKind;
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::TypeofKind;
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) const ALL_TYPEOF_EXCLUSIONS: u8 = 0b1111_1111;

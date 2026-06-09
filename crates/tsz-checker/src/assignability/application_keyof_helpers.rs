@@ -1,7 +1,7 @@
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 use crate::query_boundaries::application_keyof as query;
 

@@ -5,10 +5,10 @@
 //! JSDoc integration, and overload compatibility.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 struct FunctionBodyCtx<'a> {

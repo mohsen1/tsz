@@ -15,12 +15,11 @@
 //! - `sanitize_contextual_property_type` — contextual type sanitization
 
 use crate::query_boundaries::checkers::call as call_checker;
-use crate::query_boundaries::common;
+use crate::query_boundaries::common::{self, ContextualTypeContext, TypeSubstitution};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ContextualPropertyPresence {
@@ -1257,7 +1256,8 @@ impl<'a> CheckerState<'a> {
         };
         let body = self.resolve_lazy_type(base);
         common::mapped_type_id(self.ctx.types, body).is_some_and(|mapped_id| {
-            tsz_solver::type_queries::classify_identity_mapped(self.ctx.types, mapped_id).is_none()
+            crate::query_boundaries::common::classify_identity_mapped(self.ctx.types, mapped_id)
+                .is_none()
         })
     }
 

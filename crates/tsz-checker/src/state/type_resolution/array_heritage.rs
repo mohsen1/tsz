@@ -1,8 +1,8 @@
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeList;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn normalize_base_instance_type_for_merge(

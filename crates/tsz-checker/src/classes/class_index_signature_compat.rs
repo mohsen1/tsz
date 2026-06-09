@@ -2,10 +2,10 @@
 //! (`TS2415`): a derived class index signature must stay assignable to the base
 //! class index signature it overrides.
 
+use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_class_index_signature_compatibility(

@@ -372,7 +372,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     body_type,
                 )
-                && !tsz_solver::type_queries::is_distributive_conditional_with_deferred_check(
+                && !crate::query_boundaries::common::is_distributive_conditional_with_deferred_check(
                     self.ctx.types,
                     body_type,
                 );

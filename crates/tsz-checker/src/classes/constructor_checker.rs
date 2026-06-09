@@ -5,6 +5,7 @@
 //! This module extends `CheckerState` with utilities for constructor-related
 //! type checking operations.
 
+use crate::query_boundaries::common::TypeEnvironment;
 use crate::query_boundaries::{
     checkers::constructor::{
         AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind,
@@ -21,7 +22,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeEnvironment;
 
 // =============================================================================
 // Constructor Type Checking Utilities

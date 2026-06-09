@@ -1,9 +1,8 @@
-use crate::query_boundaries::common::call_signatures_for_type;
+use crate::query_boundaries::common::{TypeSubstitution, call_signatures_for_type};
 use crate::state::CheckerState;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn heritage_call_return_type_for_base_constructor(

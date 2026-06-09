@@ -1,6 +1,7 @@
 //! Promise/async type checking (detection, type argument extraction, return types).
 
 use crate::query_boundaries::checkers::promise as query;
+use crate::query_boundaries::common::is_definitely_nullish;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -9,7 +10,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::narrowing as solver_narrowing;
 
 #[derive(Default)]
 struct ThenableAwaitInfo {
@@ -1359,7 +1359,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true for the null type, undefined type, or unions that only
     /// contain null and/or undefined.
     pub fn is_null_or_undefined_only(&self, return_type: TypeId) -> bool {
-        solver_narrowing::is_definitely_nullish(self.ctx.types.as_type_database(), return_type)
+        is_definitely_nullish(self.ctx.types.as_type_database(), return_type)
     }
 
     // Note: The `lower_type_with_bindings` helper method remains in state.rs

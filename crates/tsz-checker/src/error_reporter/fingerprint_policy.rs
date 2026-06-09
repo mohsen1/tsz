@@ -873,7 +873,7 @@ impl<'a> CheckerState<'a> {
     const fn property_nested_reason_needs_full_drill(
         reason: &tsz_solver::SubtypeFailureReason,
     ) -> bool {
-        use tsz_solver::SubtypeFailureReason as R;
+        use crate::query_boundaries::common::SubtypeFailureReason as R;
         matches!(
             reason,
             R::PropertyTypeMismatch { .. }

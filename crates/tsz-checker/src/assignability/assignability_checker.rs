@@ -13,9 +13,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::narrowing::NarrowingContext;
 
 impl<'a> CheckerState<'a> {
     /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
@@ -565,121 +563,6 @@ impl<'a> CheckerState<'a> {
         FxHashSet::default()
     }
 
-    fn typeof_this_comparison_literal(
-        &self,
-        left: NodeIndex,
-        right: NodeIndex,
-        this_ref: NodeIndex,
-    ) -> Option<&str> {
-        if self.is_typeof_this_target(left, this_ref) {
-            return self.string_literal_text(right);
-        }
-        if self.is_typeof_this_target(right, this_ref) {
-            return self.string_literal_text(left);
-        }
-        None
-    }
-
-    fn is_typeof_this_target(&self, expr: NodeIndex, this_ref: NodeIndex) -> bool {
-        let expr = self.ctx.arena.skip_parenthesized(expr);
-        let Some(node) = self.ctx.arena.get(expr) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
-            return false;
-        }
-        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
-            return false;
-        };
-        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
-            return false;
-        }
-        let operand = self.ctx.arena.skip_parenthesized(unary.operand);
-        if operand == this_ref {
-            return true;
-        }
-        self.ctx
-            .arena
-            .get(operand)
-            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
-    }
-
-    fn string_literal_text(&self, idx: NodeIndex) -> Option<&str> {
-        let idx = self.ctx.arena.skip_parenthesized(idx);
-        let node = self.ctx.arena.get(idx)?;
-        if node.kind == SyntaxKind::StringLiteral as u16
-            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        {
-            return self
-                .ctx
-                .arena
-                .get_literal(node)
-                .map(|lit| lit.text.as_str());
-        }
-        None
-    }
-
-    pub(crate) fn narrow_this_from_enclosing_typeof_guard(
-        &self,
-        source_idx: NodeIndex,
-        source: TypeId,
-    ) -> TypeId {
-        let is_this_source = self
-            .ctx
-            .arena
-            .get(source_idx)
-            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
-        if !is_this_source {
-            return source;
-        }
-
-        let mut current = source_idx;
-        let mut depth = 0usize;
-        while depth < 256 {
-            depth += 1;
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
-            let Some(parent_node) = self.ctx.arena.get(current) else {
-                break;
-            };
-            if parent_node.kind != syntax_kind_ext::IF_STATEMENT {
-                continue;
-            }
-            let Some(if_stmt) = self.ctx.arena.get_if_statement(parent_node) else {
-                continue;
-            };
-            if !self.is_node_within(source_idx, if_stmt.then_statement) {
-                continue;
-            }
-            let Some(cond_node) = self.ctx.arena.get(if_stmt.expression) else {
-                continue;
-            };
-            if cond_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
-            }
-            let Some(bin) = self.ctx.arena.get_binary_expr(cond_node) else {
-                continue;
-            };
-            let is_equality = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16
-                || bin.operator_token == SyntaxKind::EqualsEqualsToken as u16;
-            if !is_equality {
-                continue;
-            }
-            if let Some(type_name) =
-                self.typeof_this_comparison_literal(bin.left, bin.right, source_idx)
-            {
-                return NarrowingContext::new(self.ctx.types).narrow_by_typeof(source, type_name);
-            }
-        }
-
-        source
-    }
-
     /// Ensure relation preconditions (lazy refs + application symbols) for one type.
     pub(crate) fn ensure_relation_input_ready(&mut self, type_id: TypeId) {
         if type_id.is_intrinsic() {
@@ -701,6 +584,36 @@ impl<'a> CheckerState<'a> {
         for &type_id in type_ids {
             self.ensure_relation_input_ready(type_id);
         }
+    }
+
+    /// Prepare both relation inputs, skipping expensive lazy-ref resolution
+    /// when a cached result is already available.
+    ///
+    /// Gates on `is_relation_cacheable` first: only cacheable type pairs
+    /// benefit from a cache lookup short-circuit. Non-cacheable pairs (those
+    /// containing infer placeholders or `this` types) always go through the
+    /// full `ensure_relation_input_ready` path.
+    pub(crate) fn ensure_relation_pair_ready(&mut self, source: TypeId, target: TypeId) {
+        if crate::query_boundaries::assignability::is_relation_cacheable(
+            self.ctx.types,
+            source,
+            target,
+        ) {
+            let flags = self.ctx.pack_relation_flags();
+            let cache_key = crate::query_boundaries::assignability::assignability_cache_key(
+                source, target, flags,
+            );
+            if self
+                .ctx
+                .types
+                .lookup_assignability_cache(cache_key)
+                .is_some()
+            {
+                return;
+            }
+        }
+        self.ensure_relation_input_ready(source);
+        self.ensure_relation_input_ready(target);
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.

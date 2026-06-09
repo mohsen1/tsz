@@ -1,11 +1,11 @@
 //! Type guard extraction for flow-based narrowing (typeof, instanceof,
 //! discriminants, type predicates, Array.isArray, array.every).
 
+use crate::query_boundaries::common::{TypeGuard, TypeofKind};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::{TypeGuard, TypeofKind};
 use tsz_solver::{ParamInfo, SymbolRef, TypeId, TypePredicate, TypePredicateTarget};
 
 use crate::state::MAX_TREE_WALK_ITERATIONS;

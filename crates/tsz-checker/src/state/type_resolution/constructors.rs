@@ -1,3 +1,4 @@
+use crate::query_boundaries::common::TypeSubstitution;
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -6,7 +7,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeSubstitution;
 
 mod callable_type_arguments;
 mod heritage_call_returns;

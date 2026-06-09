@@ -1,6 +1,8 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
-use crate::query_boundaries::common::{callable_shape_for_type, object_shape_for_type};
+use crate::query_boundaries::common::{
+    TypeSubstitution, callable_shape_for_type, object_shape_for_type,
+};
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -8,7 +10,6 @@ use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{TypeId, Visibility};
 
 #[derive(Clone)]

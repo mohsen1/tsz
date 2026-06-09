@@ -1,11 +1,10 @@
 //! Optional-chain property access fast paths.
 
+use crate::query_boundaries::common::{CachedPropertyType, TypeResolver};
 use crate::query_boundaries::common::{OptionalPropertyChainKey, PropertyAccessResult};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
-use tsz_solver::narrowing::CachedPropertyType;
 
 pub(super) struct OptionalPropertyChainFastPathRequest<'a> {
     pub(super) object_type: TypeId,

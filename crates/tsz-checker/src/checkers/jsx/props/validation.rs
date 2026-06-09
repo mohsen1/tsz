@@ -11,10 +11,10 @@ use crate::error_reporter::{
     ResolvedDiagnosticAnchor,
 };
 use crate::query_boundaries::checkers::jsx as jsx_queries;
+use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{ObjectShape, TypeId};
 
 impl<'a> CheckerState<'a> {

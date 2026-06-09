@@ -1,8 +1,8 @@
 //! Lazy type resolution and type environment population.
 
 use crate::query_boundaries::common::{
-    collect_type_queries, contains_lazy_or_recursive, enum_def_id, get_type_query_symbol_ref,
-    lazy_def_id,
+    TypeResolver, collect_type_queries, contains_lazy_or_recursive, enum_def_id,
+    get_type_query_symbol_ref, lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::query_boundaries::type_defaults::fill_application_defaults;
@@ -10,7 +10,6 @@ use crate::query_boundaries::type_predicates::contains_conditional_with_applicat
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 

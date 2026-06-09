@@ -1,7 +1,7 @@
+use crate::query_boundaries::common::TypeSubstitution;
 use crate::query_boundaries::type_computation::complex as type_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn seed_new_literal_constraint_type_args(

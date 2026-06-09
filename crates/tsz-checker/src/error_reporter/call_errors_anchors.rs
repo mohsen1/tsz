@@ -2,11 +2,11 @@
 //!
 //! These helpers locate the precise AST node to anchor a diagnostic on
 //! when reporting overload and literal argument mismatch errors.
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use smallvec::SmallVec;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     /// Logical argument list for a call-shaped expression.

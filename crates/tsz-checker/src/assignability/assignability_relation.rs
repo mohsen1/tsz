@@ -8,16 +8,15 @@ use crate::query_boundaries::assignability::{
     object_shape_for_type,
 };
 use crate::query_boundaries::common::{
-    has_call_signatures, has_construct_signatures, intersection_members, is_empty_object_type,
-    is_type_parameter_like, object_shape_id, object_with_index_shape_id, type_param_info,
-    union_members,
+    TypeResolver, has_call_signatures, has_construct_signatures, intersection_members,
+    is_empty_object_type, is_type_parameter_like, object_shape_id, object_with_index_shape_id,
+    type_param_info, union_members,
 };
 use crate::query_boundaries::state::type_resolution::{get_application_info, get_lazy_def_id};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     /// Shared assignability core: cache lookup → compute → cache insert → trace.

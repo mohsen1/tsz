@@ -2,13 +2,13 @@
 
 use super::type_node::TypeNodeChecker;
 use crate::context::CheckerContext;
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(crate) fn value_property_type_query(&self, expr_name: NodeIndex) -> Option<TypeId> {

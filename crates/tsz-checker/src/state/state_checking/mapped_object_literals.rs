@@ -34,7 +34,10 @@ impl<'a> CheckerState<'a> {
         // the evaluated concrete object so TS2353 matches tsc's expanded target.
         if evaluated_target == target
             || crate::query_boundaries::common::mapped_type_id(self.ctx.types, target).is_none()
-            || tsz_solver::type_queries::mapped_type_is_deferred_generic(self.ctx.types, target)
+            || crate::query_boundaries::common::mapped_type_is_deferred_generic(
+                self.ctx.types,
+                target,
+            )
             || query::union_members(self.ctx.types, evaluated_target).is_some()
             || query::intersection_members(self.ctx.types, evaluated_target).is_some()
         {
@@ -588,7 +591,7 @@ impl<'a> CheckerState<'a> {
         let resolved_for_access = self.resolve_type_for_property_access(resolved_target);
         let has_excess_candidate = source_prop_names.iter().any(|&name| {
             let prop_name = self.ctx.types.resolve_atom(name);
-            use tsz_solver::operations::property::PropertyAccessResult;
+            use crate::query_boundaries::common::PropertyAccessResult;
             !matches!(
                 self.resolve_property_access_with_env(resolved_for_access, prop_name.as_ref()),
                 PropertyAccessResult::Success { .. }

@@ -294,16 +294,6 @@ pub(crate) fn strip_noinfer_wrappers(db: &dyn QueryDatabase, type_id: TypeId) ->
                     db.factory().readonly_type(inner)
                 }
             }
-            TypeData::Array(element) => {
-                let element = rewrite(db, element, active);
-                if let Some(TypeData::Array(before)) = db.lookup(type_id)
-                    && element == before
-                {
-                    type_id
-                } else {
-                    db.factory().array(element)
-                }
-            }
             TypeData::Tuple(tuple_list_id) => {
                 let elements = db.tuple_list(tuple_list_id);
                 let rewritten: Vec<_> = elements
@@ -359,7 +349,20 @@ pub(crate) fn strip_noinfer_wrappers(db: &dyn QueryDatabase, type_id: TypeId) ->
                     type_id
                 }
             }
-            _ => type_id,
+            _ => {
+                if let Some(element) =
+                    tsz_solver::visitor::array_element_type(db.as_type_database(), type_id)
+                {
+                    let new_element = rewrite(db, element, active);
+                    if new_element == element {
+                        type_id
+                    } else {
+                        db.factory().array(new_element)
+                    }
+                } else {
+                    type_id
+                }
+            }
         };
         active.remove(&type_id);
         rewritten
