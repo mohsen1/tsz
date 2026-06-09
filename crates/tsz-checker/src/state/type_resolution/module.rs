@@ -601,17 +601,41 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<tsz_binder::SymbolId> {
+        self.resolve_cross_file_export_from_file_with_mode(
+            module_specifier,
+            export_name,
+            source_file_idx,
+            None,
+        )
+    }
+
+    /// Like [`resolve_cross_file_export_from_file`] but honors an explicit
+    /// `resolution-mode` override when picking the target file. This routes a
+    /// specifier through the requested package `exports`/`imports` condition
+    /// (ESM `import` vs CommonJS `require`) so, e.g., a JSDoc
+    /// `@import { X } from "pkg" with { "resolution-mode": "import" }` resolves
+    /// `X` from the package's ESM-condition declaration file even when the
+    /// importing file is CommonJS. With `None` the behavior is identical to the
+    /// default-mode entry point.
+    pub(crate) fn resolve_cross_file_export_from_file_with_mode(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<tsz_binder::SymbolId> {
         // First, try to resolve the module specifier to a target file index.
         // When source_file_idx is provided, resolve from that file's perspective
         // (for following re-export chains where specifiers are relative to the
-        // declaring file, not the current file).
+        // declaring file, not the current file). `resolve_import_target_from_file_with_mode`
+        // falls back to the default-mode resolution when the override is `None`,
+        // so this single call covers both the default and mode-overridden paths.
         let from_file = source_file_idx.unwrap_or(self.ctx.current_file_idx);
-        let target_file_idx = if let Some(from_file) = source_file_idx {
-            self.ctx
-                .resolve_import_target_from_file(from_file, module_specifier)
-        } else {
-            self.ctx.resolve_import_target(module_specifier)
-        };
+        let target_file_idx = self.ctx.resolve_import_target_from_file_with_mode(
+            from_file,
+            module_specifier,
+            resolution_mode_override,
+        );
 
         let Some(target_file_idx) = target_file_idx else {
             if let Some((sym_id, binder_idx)) =

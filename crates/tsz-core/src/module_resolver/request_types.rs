@@ -335,6 +335,15 @@ pub enum ImportingModuleKind {
     CommonJs,
 }
 
+impl From<tsz_common::ImportResolutionMode> for ImportingModuleKind {
+    fn from(mode: tsz_common::ImportResolutionMode) -> Self {
+        match mode {
+            tsz_common::ImportResolutionMode::Import => Self::Esm,
+            tsz_common::ImportResolutionMode::Require => Self::CommonJs,
+        }
+    }
+}
+
 impl ImportingModuleKind {
     /// Return the package.json exports/imports condition string for this module kind.
     ///

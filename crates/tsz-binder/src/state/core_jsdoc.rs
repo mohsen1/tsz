@@ -66,6 +66,26 @@ impl BinderState {
         results
     }
 
+    /// Extract the `resolution-mode` override from a JSDoc `@import` tag body.
+    ///
+    /// The tag body is everything after `@import`, e.g.
+    /// `{ Foo } from "pkg" with { "resolution-mode": "import" }`. Only the
+    /// portion after the (last, unquoted) `from` keyword can carry an import
+    /// attribute clause, so the scan starts there to avoid matching a `with`
+    /// that appears inside an imported binding name. Returns `None` when no
+    /// valid `resolution-mode` attribute is present.
+    pub(super) fn parse_jsdoc_import_resolution_mode(
+        rest: &str,
+    ) -> Option<tsz_common::ImportResolutionMode> {
+        // Cheap reject: an attribute clause requires a `with`/`assert` keyword,
+        // so skip the quote-aware `from` scan for the common no-attribute tag.
+        if !rest.contains("with") && !rest.contains("assert") {
+            return None;
+        }
+        let from_idx = Self::find_jsdoc_import_from_keyword(rest)?;
+        tsz_common::parse_jsdoc_resolution_mode_attribute_clause(&rest[from_idx + 4..])
+    }
+
     pub(super) fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
         let mut quote = None;
         let mut escaped = false;
@@ -358,15 +378,17 @@ impl BinderState {
                 {
                     continue;
                 }
-                let has_attributes = rest.contains(" with ");
+                // A `with { "resolution-mode": ... }` attribute selects which
+                // package `exports`/`imports` condition the specifier resolves
+                // through. Record it on the alias so the checker resolves the
+                // member from the correct target file (e.g. an ESM `.d.mts` vs a
+                // CommonJS `.d.cts`), matching tsc.
+                let resolution_mode = Self::parse_jsdoc_import_resolution_mode(rest);
                 for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
                     if local_name.is_empty() || specifier.is_empty() {
                         continue;
                     }
                     self.file_import_sources.push(specifier.clone());
-                    if has_attributes {
-                        continue;
-                    }
                     // Do not redeclare a name that already has an alias in this
                     // scope (runtime ES import or earlier JSDoc `@import`). The
                     // type-only JSDoc binding must not override the existing
@@ -390,6 +412,7 @@ impl BinderState {
                         sym.is_type_only = true;
                         sym.import_module = Some(specifier.clone());
                         sym.import_name = Some(import_name);
+                        sym.import_resolution_mode = resolution_mode;
                     }
                 }
             }

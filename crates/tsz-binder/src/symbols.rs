@@ -292,6 +292,14 @@ pub struct Symbol {
     /// Original export name for imports with renamed imports (e.g., 'foo' for `import { foo as bar }`)
     /// If None, the import name matches the `escaped_name`.
     pub import_name: Option<String>,
+    /// Explicit `resolution-mode` override for this import alias, when one was
+    /// declared via an import attribute (`with { "resolution-mode": ... }`).
+    ///
+    /// Currently set for JSDoc `@import` aliases that carry an attribute clause.
+    /// `None` means the specifier resolves through the importing file's own
+    /// inferred module mode. The checker maps this onto the resolution request
+    /// so package `exports`/`imports` conditions pick the right target file.
+    pub import_resolution_mode: Option<tsz_common::ImportResolutionMode>,
     /// Whether this symbol is a UMD namespace export (`export as namespace Foo`).
     /// UMD exports are ALIAS symbols that should be globally visible across files,
     /// unlike regular import aliases which are file-local.
@@ -320,6 +328,7 @@ impl Symbol {
             decl_file_idx: u32::MAX,
             import_module: None,
             import_name: None,
+            import_resolution_mode: None,
             is_umd_export: false,
         }
     }
