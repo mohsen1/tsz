@@ -9,7 +9,24 @@
 //! diverging.
 
 use crate::construction::TypeDatabase;
-use crate::types::{TupleElement, TypeData, TypeId};
+use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
+
+/// Resolve a type to a tuple element-list id, transparently unwrapping a
+/// `readonly` wrapper.
+///
+/// A spread element `...X` where `X` is a `readonly` tuple (`...readonly [a, b]`)
+/// contributes the same statically known run of elements as a mutable tuple
+/// spread, so the index walk and fixed-length count must descend through it.
+/// Without unwrapping, `tuple_fixed_slot_inner` bailed to `None` on a
+/// `ReadonlyType(Tuple)` rest element and the caller fell back to a bogus
+/// element-union (`head | readonly [tail]`) for an in-bounds numeric read.
+fn tuple_list_id_through_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TupleListId> {
+    let unwrapped = crate::type_queries::data::unwrap_readonly(db, type_id);
+    match db.lookup(unwrapped) {
+        Some(TypeData::Tuple(id)) => Some(id),
+        _ => None,
+    }
+}
 
 /// Upper bound on rest-spread recursion while walking nested variadic tuples.
 const MAX_TUPLE_SPREAD_DEPTH: usize = 64;
@@ -88,10 +105,7 @@ fn tuple_fixed_slot_inner(
             if rest_id.is_intrinsic() {
                 return None;
             }
-            let inner_list_id = match db.lookup(rest_id) {
-                Some(TypeData::Tuple(id)) => id,
-                _ => return None,
-            };
+            let inner_list_id = tuple_list_id_through_readonly(db, rest_id)?;
             let inner = db.tuple_list(inner_list_id);
             let rest_index = index.checked_sub(position)?;
             if let Some(slot) = tuple_fixed_slot_inner(db, &inner, rest_index, depth + 1) {
@@ -120,10 +134,7 @@ pub(crate) fn compute_tuple_fixed_length(db: &dyn TypeDatabase, type_id: TypeId)
     if type_id.is_intrinsic() {
         return None;
     }
-    let list_id = match db.lookup(type_id) {
-        Some(TypeData::Tuple(id)) => id,
-        _ => return None,
-    };
+    let list_id = tuple_list_id_through_readonly(db, type_id)?;
 
     let elements = db.tuple_list(list_id);
     let mut total = 0usize;
@@ -150,10 +161,8 @@ pub(crate) fn compute_tuple_fixed_length(db: &dyn TypeDatabase, type_id: TypeId)
         if rest_id.is_intrinsic() {
             return None;
         }
-        let inner_list_id = match db.lookup(rest_id) {
-            Some(TypeData::Tuple(id)) => id,
-            _ => return None, // Rest spreads a non-tuple → variable length
-        };
+        // A rest that spreads a non-tuple → variable length.
+        let inner_list_id = tuple_list_id_through_readonly(db, rest_id)?;
         let inner_elements = db.tuple_list(inner_list_id);
         let mut inner_rest_count = 0;
         for elem in inner_elements.iter() {

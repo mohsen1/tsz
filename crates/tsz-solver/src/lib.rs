@@ -485,6 +485,9 @@ mod tuple_cardinality_tests;
 #[path = "../tests/tuple_comprehensive_tests.rs"]
 mod tuple_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/tuple_spread_splice_tests.rs"]
+mod tuple_spread_splice_tests;
+#[cfg(test)]
 #[path = "../tests/type_parameter_comprehensive_tests.rs"]
 mod type_parameter_comprehensive_tests;
 #[cfg(test)]
