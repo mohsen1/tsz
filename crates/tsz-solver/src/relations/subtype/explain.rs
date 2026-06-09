@@ -195,6 +195,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
+        // Route the public entry through the guarded path so the recursion
+        // guard brackets every elaboration, including the nested branch /
+        // member / constraint explanations that call `explain_failure_guarded`
+        // directly. Bracketing only here would leave those nested paths
+        // unguarded (see `explain_failure_guarded`).
+        self.explain_failure_guarded(source, target)
+    }
+
+    /// Guarded elaboration funnel. Every recursive elaboration path (object
+    /// members, mapped constraints, conditional branches, tuple/function
+    /// elements) routes back through this method, so applying the recursion
+    /// guard at this single point bounds the depth of mutually-recursive
+    /// conditional/mapped types. Without it, types like zod's
+    /// `ZodFormattedError<any>` -- whose conditional branches reintern to
+    /// fresh `(source, target)` pairs at every level -- recurse the explain
+    /// path until the stack overflows, even though the main relation check is
+    /// already depth-bounded.
+    fn explain_failure_guarded(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
         let pair = (source, target);
         match self.guard.enter(pair) {
             crate::recursion::RecursionResult::Entered => {}
@@ -207,12 +229,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 });
             }
         }
-        let result = self.explain_failure_guarded(source, target);
+        let result = self.explain_failure_body(source, target);
         self.guard.leave(pair);
         result
     }
 
-    fn explain_failure_guarded(
+    fn explain_failure_body(
         &mut self,
         source: TypeId,
         target: TypeId,
