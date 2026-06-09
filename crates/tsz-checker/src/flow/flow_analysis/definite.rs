@@ -244,6 +244,21 @@ impl<'a> CheckerState<'a> {
         .with_symbol_first_identifier_ref(&self.ctx.symbol_flow_memo.first_identifier_ref)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
+        // Non-narrowable member accesses cannot match any control-flow
+        // antecedent, so the flow walk can only return the declared type. tsc
+        // runs `getFlowTypeOfReference` only for narrowable references; skipping
+        // them here avoids an O(n^2) re-walk per access (fresh/call-result
+        // receivers, dynamic element indices). Narrowable accesses (`d.a.b`,
+        // `this.x`, `arr[0]`) fall through to the walk, where the structural
+        // reference-path cache keeps repeated occurrences O(1).
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && !analyzer.is_narrowable_member_reference(idx)
+        {
+            return declared_type;
+        }
+
         // Strip `undefined` from the initial type for parameters with default values.
         // Matches tsc's getInitialType: a parameter like `x: string | undefined = "val"`
         // starts as `string` (not `string | undefined`) because the default guarantees it.

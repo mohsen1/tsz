@@ -49,6 +49,18 @@ pub(crate) const fn structural_flow_cache_symbol(id: u32) -> SymbolId {
 /// collide with the per-node fallback space.
 pub(crate) const FLOW_CACHE_STRUCTURAL_ID_LIMIT: u32 = FLOW_CACHE_PER_NODE_BIT;
 
+// Reserved *base* components for `this` / `super` reference paths, which carry
+// no binder symbol. These occupy position 0 of a structural key
+// (`[base, prop_atom_0, ...]`). Real bases push a binder `SymbolId` whose bit 31
+// is clear (`is_real_binder_symbol`), so reserving values with bit 31 set keeps
+// `this.x` / `super.x` paths disjoint from every `symbol#k.x` path at position 0
+// and from each other. They are key payload, not cache symbols, and never reach
+// `structural_flow_cache_symbol`.
+/// Structural-key base component for a `this` receiver.
+pub(crate) const FLOW_CACHE_THIS_BASE_KEY: u32 = FLOW_CACHE_SYNTHETIC_BIT;
+/// Structural-key base component for a `super` receiver.
+pub(crate) const FLOW_CACHE_SUPER_BASE_KEY: u32 = FLOW_CACHE_SYNTHETIC_BIT | 1;
+
 /// Per-syntactic-node fallback cache symbol for a reference `node`.
 pub(crate) const fn per_node_flow_cache_symbol(node: NodeIndex) -> SymbolId {
     SymbolId(
@@ -967,13 +979,25 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Resolve symbol for caching purposes.
-        // Fallback to reference_symbol for non-identifier references (e.g. some
-        // qualified/member references) so repeated flow queries can share cache
-        // entries instead of using per-node synthetic symbols.
+        //
+        // Member-like references (`a.b`, `a[b]`, `this.x`) must NOT key by a bare
+        // member `SymbolId`: the binder links some member accesses (notably
+        // `this.x` on a class field) to the field symbol, which both aliases
+        // distinct receivers (`x.foo` vs `this.foo` share the field symbol) and
+        // defeats occurrence sharing for everything else. `check_flow` keys such
+        // references by their structural path instead (`flow_reference_path_symbol`),
+        // which is occurrence-stable and receiver-disjoint. Only resolve a symbol
+        // for plain identifier / `this` / `super` roots.
         let symbol_id = self
             .binder
             .resolve_identifier(self.arena, reference)
-            .or_else(|| self.reference_symbol(reference));
+            .or_else(|| {
+                if self.is_member_like_reference(reference) {
+                    None
+                } else {
+                    self.reference_symbol(reference)
+                }
+            });
 
         self.check_flow(
             reference,

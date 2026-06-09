@@ -281,14 +281,74 @@ impl<'a> FlowAnalyzer<'a> {
     /// synthetic symbol via [`super::structural_flow_cache_symbol`], keyed
     /// disjointly from real and per-node symbols (see the symbol-space partition
     /// in `core.rs`).
+    /// Decompose one member-access hop for the structural cache key, tolerating
+    /// optional-chain `?.` (which `property_reference` rejects). Reports the
+    /// receiver, the property/literal-index atom, and whether the hop was
+    /// optional. Optionality is folded into the key so a mixed `o?.a` / `o.a`
+    /// program keys them distinctly (they could narrow differently and must not
+    /// share), while repeated reads of the *same* optional path still share and
+    /// stay O(n). Entity-name element indices (`obj[key]`) return `None` here, as
+    /// in `property_reference`, and fall back to the per-node walk.
+    fn member_access_key_parts(&self, idx: NodeIndex) -> Option<(NodeIndex, Atom, bool)> {
+        let idx = self.skip_parenthesized(idx);
+        let node = self.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+            let unary = self.arena.get_unary_expr_ex(node)?;
+            return self.member_access_key_parts(unary.expression);
+        }
+        if node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            let assertion = self.arena.get_type_assertion(node)?;
+            return self.member_access_key_parts(assertion.expression);
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            let ident = self.arena.get_identifier_at(access.name_or_argument)?;
+            let name = self.interner.intern_string(&ident.escaped_text);
+            return Some((access.expression, name, access.question_dot_token));
+        }
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            let name = self.literal_atom_from_node_or_type(access.name_or_argument)?;
+            return Some((access.expression, name, access.question_dot_token));
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.arena.get_qualified_name(node)?;
+            let ident = self.arena.get_identifier_at(qn.right)?;
+            let name = self.interner.intern_string(&ident.escaped_text);
+            return Some((qn.left, name, false));
+        }
+        None
+    }
+
     pub(crate) fn flow_reference_path_symbol(&self, reference: NodeIndex) -> Option<SymbolId> {
         let interner = self.shared_flow_reference_keys?;
-        // Require at least one property hop (a bare identifier already carries a
-        // resolved `SymbolId`); walk the rest of the path base-first.
-        let (base, prop) = self.property_reference(reference)?;
         let mut key = Vec::new();
-        self.collect_flow_reference_path(base, &mut key)?;
-        key.push(prop.0);
+        if let Some((base, prop, optional)) = self.member_access_key_parts(reference) {
+            // Property/element path (`a.b`, `this.x`, `o?.a`): walk base-first.
+            self.collect_flow_reference_path(base, &mut key)?;
+            key.push(prop.0);
+            key.push(u32::from(optional));
+        } else {
+            // Bare `this` / `super`: no binder symbol and no property hop, but a
+            // stable receiver within its flow scope. Without an occurrence-stable
+            // key they fall back to a per-node symbol and re-walk the flow graph
+            // per read (O(n^2) for `this`-heavy method bodies). Intern a base-only
+            // key so repeated bare reads share flow-cache entries. Bare
+            // identifiers already carry a resolved `SymbolId` and never reach here.
+            let leaf = self.skip_parenthesized(reference);
+            let node = self.arena.get(leaf)?;
+            if node.kind == SyntaxKind::ThisKeyword as u16 {
+                key.push(super::FLOW_CACHE_THIS_BASE_KEY);
+            } else if node.kind == SyntaxKind::SuperKeyword as u16 {
+                key.push(super::FLOW_CACHE_SUPER_BASE_KEY);
+            } else {
+                return None;
+            }
+        }
         let mut map = interner.borrow_mut();
         let next = map.len() as u32;
         let id = *map.entry(key).or_insert(next);
@@ -302,13 +362,29 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Append the base-first structural key of `reference` to `out`.
     ///
-    /// Recurses through property/element hops, then resolves the leaf base to
-    /// its real binder `SymbolId` at position 0.
+    /// Recurses through property/element hops (each contributing a property atom
+    /// plus an optional-chain flag), then resolves the leaf base to its real
+    /// binder `SymbolId` (or `this`/`super` sentinel) at position 0.
     fn collect_flow_reference_path(&self, reference: NodeIndex, out: &mut Vec<u32>) -> Option<()> {
-        if let Some((base, prop)) = self.property_reference(reference) {
+        if let Some((base, prop, optional)) = self.member_access_key_parts(reference) {
             self.collect_flow_reference_path(base, out)?;
             out.push(prop.0);
+            out.push(u32::from(optional));
             return Some(());
+        }
+        // `this` / `super` carry no binder symbol but are valid narrowable bases
+        // (`this.x`, `super.x`). Reserve disjoint base components so their paths
+        // share flow-cache entries across occurrences within one container.
+        let leaf = self.skip_parenthesized(reference);
+        if let Some(node) = self.arena.get(leaf) {
+            if node.kind == SyntaxKind::ThisKeyword as u16 {
+                out.push(super::FLOW_CACHE_THIS_BASE_KEY);
+                return Some(());
+            }
+            if node.kind == SyntaxKind::SuperKeyword as u16 {
+                out.push(super::FLOW_CACHE_SUPER_BASE_KEY);
+                return Some(());
+            }
         }
         let sym = self.reference_symbol(reference)?;
         // The leaf must be a real binder symbol; refuse if a synthetic value ever
@@ -318,6 +394,104 @@ impl<'a> FlowAnalyzer<'a> {
         }
         out.push(sym.0);
         Some(())
+    }
+
+    /// True when `idx` is a narrowable member-access reference: a property or
+    /// element access whose receiver chain bottoms out in an identifier, `this`,
+    /// or `super`, where every element-access index is a string/number literal
+    /// or an entity-name expression.
+    ///
+    /// Faithful mirror of tsc's `isNarrowableReference` (over `isDottedName`).
+    /// Non-reference receivers (fresh object literals, call results) and
+    /// non-narrowable element indices (`arr[i % 3]`, `arr[f()]`) return `false`:
+    /// such accesses cannot match any control-flow antecedent, so a flow walk
+    /// over them only ever returns the declared type and can be skipped. Note
+    /// this is broader than the *structural-cache* path (`property_reference`,
+    /// which keys only literal indices): an entity-name-indexed access like
+    /// `obj[key]` is narrowable (tsc narrows it) even though it has no stable
+    /// structural key, so it must not be skipped — it falls back to the per-node
+    /// walk.
+    pub(crate) fn is_narrowable_member_reference(&self, idx: NodeIndex) -> bool {
+        let leaf = self.skip_parenthesized(idx);
+        let Some(node) = self.arena.get(leaf) else {
+            return false;
+        };
+        // Only property/element accesses reach the member-access skip; bare
+        // identifiers, `this`, and `super` are handled by the identifier path.
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        self.reference_is_narrowable(leaf)
+    }
+
+    fn reference_is_narrowable(&self, idx: NodeIndex) -> bool {
+        let idx = self.skip_parenthesized(idx);
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16
+            || node.kind == SyntaxKind::ThisKeyword as u16
+            || node.kind == SyntaxKind::SuperKeyword as u16
+            || node.kind == syntax_kind_ext::QUALIFIED_NAME
+            // `import.meta` / `new.target`: symbol-less meta-property roots that
+            // `is_matching_reference` already treats as stable references, so
+            // member accesses over them (`import.meta.env.FOO`) are narrowable.
+            || node.kind == syntax_kind_ext::META_PROPERTY
+            || node.kind == SyntaxKind::ImportKeyword as u16
+        {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+            return self
+                .arena
+                .get_unary_expr_ex(node)
+                .is_some_and(|u| self.reference_is_narrowable(u.expression));
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let Some(access) = self.arena.get_access_expr(node) else {
+                return false;
+            };
+            return !access.question_dot_token && self.reference_is_narrowable(access.expression);
+        }
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let Some(access) = self.arena.get_access_expr(node) else {
+                return false;
+            };
+            return !access.question_dot_token
+                && self.element_index_is_narrowable(access.name_or_argument)
+                && self.reference_is_narrowable(access.expression);
+        }
+        false
+    }
+
+    /// An element-access index is narrowable when it is a string/number literal
+    /// or an entity-name expression (`obj[key]`, `obj[ns.key]`), matching tsc.
+    fn element_index_is_narrowable(&self, idx: NodeIndex) -> bool {
+        if self.literal_atom_from_node_or_type(idx).is_some() {
+            return true;
+        }
+        self.argument_is_entity_name(idx)
+    }
+
+    fn argument_is_entity_name(&self, idx: NodeIndex) -> bool {
+        let idx = self.skip_parenthesized(idx);
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16
+            || node.kind == SyntaxKind::ThisKeyword as u16
+            || node.kind == syntax_kind_ext::QUALIFIED_NAME
+        {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return self.arena.get_access_expr(node).is_some_and(|a| {
+                !a.question_dot_token && self.argument_is_entity_name(a.expression)
+            });
+        }
+        false
     }
 
     pub(crate) fn property_reference(&self, idx: NodeIndex) -> Option<(NodeIndex, Atom)> {
