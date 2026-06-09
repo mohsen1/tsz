@@ -1,5 +1,5 @@
 use super::FlowAnalyzer;
-use super::flow_dp::{DpMemo, DpState};
+use super::flow_dp::{DpMemo, resolve_backward_dp};
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
@@ -19,37 +19,47 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
     ) -> bool {
         let mut memo: DpMemo<bool> = DpMemo::default();
-        self.excludes_null_memoized(flow_id, target, &mut memo)
+        // Back-edge / no-information element is `false` (treat the loop as not
+        // contributing a null-exclusion) so loops do not over-narrow, matching
+        // the previous recursive `DpState::InProgress` arm. Folded iteratively
+        // (see `resolve_backward_dp`) so a long antecedent chain cannot exhaust
+        // the native stack.
+        resolve_backward_dp(
+            flow_id,
+            &mut memo,
+            false,
+            |node| self.null_exclusion_antecedents(node),
+            |node, antecedent_values| self.excludes_null_fold(node, target, antecedent_values),
+        )
     }
 
-    fn excludes_null_memoized(
+    /// The antecedents the null-exclusion traversal descends into: the
+    /// non-`none` predecessors. Unlike the typeof-exclusion mask, this analysis
+    /// historically did not filter unreachable antecedents, so that behavior is
+    /// preserved here.
+    fn null_exclusion_antecedents(
+        &self,
+        flow_id: FlowNodeId,
+    ) -> smallvec::SmallVec<[FlowNodeId; 2]> {
+        let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+            return smallvec::SmallVec::new();
+        };
+        flow.antecedent
+            .iter()
+            .copied()
+            .filter(|antecedent| !antecedent.is_none())
+            .collect()
+    }
+
+    /// `true` when `flow_id` itself is a `target`-null comparison, or every one
+    /// of its antecedents excludes null. Matches the previous recursive
+    /// `compute`: a node with no antecedents that is not itself a null
+    /// comparison does not exclude null.
+    fn excludes_null_fold(
         &self,
         flow_id: FlowNodeId,
         target: NodeIndex,
-        memo: &mut DpMemo<bool>,
-    ) -> bool {
-        if flow_id.is_none() {
-            return false;
-        }
-        match memo.get(&flow_id) {
-            // Back-edge: preserve the historical fail-safe (treat the loop as
-            // not contributing a null-exclusion) so loops do not over-narrow.
-            Some(DpState::InProgress) => return false,
-            Some(DpState::Done(value)) => return *value,
-            None => {}
-        }
-        memo.insert(flow_id, DpState::InProgress);
-
-        let value = self.compute_excludes_null(flow_id, target, memo);
-        memo.insert(flow_id, DpState::Done(value));
-        value
-    }
-
-    fn compute_excludes_null(
-        &self,
-        flow_id: FlowNodeId,
-        target: NodeIndex,
-        memo: &mut DpMemo<bool>,
+        antecedent_values: &[bool],
     ) -> bool {
         let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
             return false;
@@ -60,22 +70,7 @@ impl<'a> FlowAnalyzer<'a> {
             return true;
         }
 
-        let mut saw_antecedent = false;
-        // Snapshot so we can release the borrow on `flow_nodes` before
-        // recursing into siblings. Most flow nodes have one or two antecedents,
-        // so keep that snapshot stack-backed in the common case.
-        let antecedents: smallvec::SmallVec<[FlowNodeId; 2]> =
-            flow.antecedent.iter().copied().collect();
-        for antecedent in antecedents {
-            if antecedent.is_none() {
-                continue;
-            }
-            saw_antecedent = true;
-            if !self.excludes_null_memoized(antecedent, target, memo) {
-                return false;
-            }
-        }
-        saw_antecedent
+        !antecedent_values.is_empty() && antecedent_values.iter().all(|&excludes| excludes)
     }
 
     fn condition_branch_excludes_null_for_target(
