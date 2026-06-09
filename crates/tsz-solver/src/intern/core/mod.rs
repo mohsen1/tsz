@@ -1,7 +1,8 @@
 //! Core implementation of the type interning engine.
 //!
 //! Split into submodules:
-//! - `interner`: Data structures, sharded storage, and core `TypeInterner` methods
+//! - `interner`: `TypeInterner` struct, intern/lookup hot paths, and component
+//!   accessors (further split into `storage`, `display`, and `cache`)
 //! - `constructors`: Type construction convenience methods (literal, union, etc.)
 
 mod constructors;
