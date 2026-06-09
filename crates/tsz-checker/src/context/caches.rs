@@ -2,6 +2,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
 use std::sync::Arc;
 use tsz_binder::SymbolId;
+use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 /// File-local synthetic type-node surface caches.
@@ -38,6 +39,13 @@ pub struct TypeReferenceValidationCaches {
     /// Syntax-guided type-reference argument instantiations in the current
     /// lexical type-parameter scope, including misses.
     pub syntax_instantiation: FxHashMap<(usize, u32, TypeId, u64), Option<TypeId>>,
+    /// Alias-body validation reachability results for the common case where
+    /// exactly one alias is active in the resolution stack.
+    pub alias_reaches_single_resolving_alias: FxHashMap<(SymbolId, DefId), bool>,
+    /// Successful generic type-argument constraint relations for prepared
+    /// source/target types in the current file session. Failures are uncached
+    /// so diagnostic relation requests still produce structured failure data.
+    pub type_arg_constraint_relation_successes: FxHashSet<(TypeId, TypeId, u16, bool)>,
     /// Declared type-parameter lists keyed by reference symbol identity, valid
     /// for the lifetime of the current source file. `SymbolId` values are
     /// arena-local in project checks, so imported aliases from different files

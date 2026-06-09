@@ -277,6 +277,12 @@ impl<'a> CheckerContext<'a> {
             .syntax_instantiation
             .clear();
         self.type_reference_validation_caches
+            .alias_reaches_single_resolving_alias
+            .clear();
+        self.type_reference_validation_caches
+            .type_arg_constraint_relation_successes
+            .clear();
+        self.type_reference_validation_caches
             .ref_type_params
             .clear();
         self.type_reference_validation_caches

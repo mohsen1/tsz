@@ -376,10 +376,36 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         let (source, target) = self.prepare_assignability_inputs(source, target);
+        let flags = self.ctx.pack_relation_flags();
+        let sound_mode = self.ctx.sound_mode();
+        let cache_key = (source, target, flags, sound_mode);
+        if self
+            .ctx
+            .type_reference_validation_caches
+            .type_arg_constraint_relation_successes
+            .contains(&cache_key)
+        {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
+
         let request = crate::query_boundaries::assignability::RelationRequest::type_arg_constraint(
             source, target,
         );
-        self.execute_relation_request(&request)
+        let outcome = self.execute_relation_request(&request);
+        if outcome.related && !outcome.depth_exceeded && !outcome.iteration_exceeded {
+            self.ctx
+                .type_reference_validation_caches
+                .type_arg_constraint_relation_successes
+                .insert(cache_key);
+        }
+        outcome
     }
 
     /// Execute a generic type-argument constraint fallback relation while

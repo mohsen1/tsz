@@ -85,7 +85,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(crate) fn type_alias_reaches_resolving_alias(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(crate) fn type_alias_reaches_resolving_alias(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
@@ -101,7 +104,26 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        with_alias_defid_visited(|visited| {
+        let single_active_def_id = if self.ctx.symbol_resolution_set.len() == 1 {
+            self.ctx
+                .symbol_resolution_set
+                .iter()
+                .next()
+                .and_then(|sid| self.ctx.get_existing_def_id(*sid))
+        } else {
+            None
+        };
+        if let Some(active_def_id) = single_active_def_id
+            && let Some(&cached) = self
+                .ctx
+                .type_reference_validation_caches
+                .alias_reaches_single_resolving_alias
+                .get(&(sym_id, active_def_id))
+        {
+            return cached;
+        }
+
+        let reaches = with_alias_defid_visited(|visited| {
             let mut pending = vec![start_def_id];
             let mut steps = 0usize;
             while let Some(def_id) = pending.pop() {
@@ -129,7 +151,14 @@ impl<'a> CheckerState<'a> {
                 ));
             }
             false
-        })
+        });
+        if let Some(active_def_id) = single_active_def_id {
+            self.ctx
+                .type_reference_validation_caches
+                .alias_reaches_single_resolving_alias
+                .insert((sym_id, active_def_id), reaches);
+        }
+        reaches
     }
 
     /// Read-and-clear the solver's `tuple_too_large` flag, returning `true`
