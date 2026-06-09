@@ -178,9 +178,15 @@ fn call_elaboration_object_array_helpers_use_relation_outcome_boundary() {
         "object/array call elaboration helper probes should route through call_arg_relation_outcome"
     );
     assert_eq!(
-        helpers.matches("assign_relation_outcome(").count(),
+        helpers
+            .matches("variable_initializer_relation_outcome(")
+            .count(),
         1,
-        "tail helper region should keep only the variable-initializer assignability probe as a generic assignment request"
+        "tail helper region should route the variable-initializer assignability probe through the named variable-initializer relation outcome"
+    );
+    assert!(
+        !helpers.contains("assign_relation_outcome("),
+        "object/array call elaboration helpers should not regress to generic assign relation outcomes"
     );
     assert!(
         !helpers.contains("diagnostic_relation_boolean_guard("),

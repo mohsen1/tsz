@@ -56,11 +56,15 @@ fn union_excess_unresolved_member_matching_uses_relation_outcome() {
     let compact_block: String = block.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        compact_block.contains("assign_relation_outcome(")
+        compact_block.contains("union_excess_required_property_relation_outcome(")
             && compact_block.contains("source_prop.type_id")
             && compact_block.contains("target_prop.type_id")
             && compact_block.contains(".related"),
-        "union excess fallback member matching should route property compatibility through relation outcomes"
+        "union excess fallback member matching should route property compatibility through the union-excess relation outcome"
+    );
+    assert!(
+        !block.contains("assign_relation_outcome("),
+        "union excess fallback member matching should not regress to generic assignment request routing"
     );
     assert!(
         !block.contains("diagnostic_relation_boolean_guard"),

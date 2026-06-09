@@ -106,14 +106,17 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
         .map(|offset| numeric_enum_start + offset)
         .expect("missing next assignability diagnostics helper");
     let numeric_enum_helper = &root_source[numeric_enum_start..numeric_enum_end];
+    let numeric_enum_compact: String = numeric_enum_helper
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
     assert!(
-        numeric_enum_helper.contains(
-            "numeric_enum_assignment_relation_outcome(source_literal, structural_target)"
-        ),
+        numeric_enum_compact
+            .contains("numeric_enum_assignment_relation_outcome(source_literal,structural_target"),
         "numeric enum assignment override should use the numeric-enum assignment RelationOutcome"
     );
     assert!(
-        !numeric_enum_helper.contains("assign_relation_outcome(source_literal, structural_target)"),
+        !numeric_enum_compact.contains("assign_relation_outcome(source_literal,structural_target"),
         "numeric enum assignment override should not use the generic assign request"
     );
     let default_reporter_start = root_source
