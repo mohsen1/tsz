@@ -1,4 +1,5 @@
 use crate::query_boundaries::common::QueryDatabase;
+use crate::query_boundaries::common::{NarrowingCache, NarrowingContext, TypeEnvironment};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as query;
 use crate::query_boundaries::flow_analysis::union_members_for_type;
@@ -11,8 +12,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::computation::TypeEnvironment;
-use tsz_solver::narrowing::{NarrowingCache, NarrowingContext};
 use tsz_solver::{ParamInfo, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;

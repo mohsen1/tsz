@@ -1,11 +1,11 @@
 //! Enclosing scope and context traversal (functions, classes, static blocks).
 
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::ContextualTypeContext;
 
 #[derive(Clone, Copy, Debug)]
 struct SuperInitFlowState {

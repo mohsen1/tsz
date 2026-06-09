@@ -3,12 +3,12 @@
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     /// Elaborate object literal property type mismatches with TS2322.

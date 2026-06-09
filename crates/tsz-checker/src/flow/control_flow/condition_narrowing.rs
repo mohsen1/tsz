@@ -1,4 +1,5 @@
 use super::FlowAnalyzer;
+use crate::query_boundaries::common::{NarrowingContext, TypeGuard, TypeofKind};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::{
     self as flow_query, empty_object_type, is_union_type, is_unit_type,
@@ -10,7 +11,6 @@ use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::narrowing::{NarrowingContext, TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
     fn narrow_to_falsy_via_flow_boundary(&self, type_id: TypeId) -> TypeId {

@@ -3,11 +3,11 @@
 use crate::call_checker::CallableContext;
 use crate::class_inheritance::ClassInheritanceChecker;
 use crate::query_boundaries::common::{
-    self as common, ContextualLiteralAllowKind, TypeTraversalKind, are_same_base_literal_kind,
-    classify_for_contextual_literal, classify_for_traversal, contains_type_parameters,
-    index_access_types, is_conditional_type, is_evaluable_meta_type, is_index_access_type,
-    is_this_type, keyof_inner_type, lazy_def_id, type_application, type_parameter_constraint,
-    union_members,
+    self as common, ContextualLiteralAllowKind, ContextualTypeContext, TypeTraversalKind,
+    are_same_base_literal_kind, classify_for_contextual_literal, classify_for_traversal,
+    contains_type_parameters, index_access_types, is_conditional_type, is_evaluable_meta_type,
+    is_index_access_type, is_this_type, keyof_inner_type, lazy_def_id, type_application,
+    type_parameter_constraint, union_members,
 };
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -17,7 +17,6 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {

@@ -1,8 +1,8 @@
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn conditional_result_branches_satisfy_constraint(

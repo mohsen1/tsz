@@ -2,12 +2,12 @@
 //! `CheckerState`. Extracted from `utilities/core.rs` to keep that module
 //! under the 2000-LOC checker boundary; behavior is unchanged.
 
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
 use tsz_solver::TypeId;
-use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     fn contextual_rest_tuple_parameter_type(

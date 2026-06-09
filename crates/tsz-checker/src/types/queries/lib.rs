@@ -8,6 +8,7 @@ use super::lib_resolution::{
     lib_def_id_from_node_in_lib_contexts, no_value_resolver, resolve_lib_context_fallback_arena,
     resolve_lib_node_in_lib_contexts,
 };
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::{
@@ -20,7 +21,6 @@ use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::TypeParamInfo;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_actual_lib_name_to_def_id_for_lowering(

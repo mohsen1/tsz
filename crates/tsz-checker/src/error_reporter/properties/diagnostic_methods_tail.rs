@@ -279,7 +279,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let prop_display = tsz_solver::format_excess_property_name(prop_name);
+        let prop_display = crate::query_boundaries::common::format_excess_property_name(prop_name);
         let type_str = self.excess_property_target_display_for_site(target, idx);
         let message = format!(
             "Object literal may only specify known properties, and '{prop_display}' does not exist in type '{type_str}'."

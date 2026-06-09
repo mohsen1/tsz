@@ -1,9 +1,9 @@
 //! Array-like helpers for TS2344 constraint validation.
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common::TypeDatabase;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
 
 /// `true` when `type_id` is structurally a `readonly` array/tuple shape —
 /// either a `ReadonlyType(_)` wrapper or any union/intersection/type-parameter

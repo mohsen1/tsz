@@ -7,11 +7,11 @@ use super::super::object_literal_context::ContextualPropertyPresence;
 use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccessorState};
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{TypeId, Visibility};
 
 use super::computation_support::SPREAD_DISPLAY_ORDER_OFFSET;

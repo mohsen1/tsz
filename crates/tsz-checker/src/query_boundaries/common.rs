@@ -4,10 +4,14 @@ use tsz_solver::{
     TypePredicate, operations::widening,
 };
 
+pub(crate) use tsz_solver::computation::CompatChecker;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::construction::TypeInterner;
 pub(crate) use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-pub(crate) use tsz_solver::narrowing::OptionalPropertyChainKey;
+pub(crate) use tsz_solver::narrowing::{
+    CachedPropertyType, NarrowingCache, NarrowingContext, OptionalPropertyChainKey, TypeGuard,
+    TypeofKind,
+};
 pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
@@ -1768,3 +1772,33 @@ pub(crate) use super::operator_wrappers::{
     is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
+
+pub(crate) fn format_excess_property_name(name: &str) -> std::borrow::Cow<'_, str> {
+    tsz_solver::format_excess_property_name(name)
+}
+
+pub(crate) fn is_distributive_conditional_with_deferred_check(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_distributive_conditional_with_deferred_check(db, type_id)
+}
+
+pub(crate) fn classify_identity_mapped(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+) -> Option<tsz_solver::type_queries::mapped::IdentityMappedInfo> {
+    tsz_solver::type_queries::classify_identity_mapped(db, mapped_id)
+}
+
+pub(crate) fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_index_access_type(db, type_id)
+}
+
+pub(crate) fn mapped_type_is_deferred_generic(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::mapped_type_is_deferred_generic(db, type_id)
+}
+
+pub(crate) fn is_definitely_nullish(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::narrowing::is_definitely_nullish(db, type_id)
+}

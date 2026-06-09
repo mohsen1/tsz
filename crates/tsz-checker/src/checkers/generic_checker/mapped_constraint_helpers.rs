@@ -1,12 +1,12 @@
 //! Helpers for TS2344 cases involving utility mapped type constraints.
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn type_node_is_generic_ref_with_scoped_type_param_arg(

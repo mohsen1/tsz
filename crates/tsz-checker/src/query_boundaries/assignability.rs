@@ -1300,7 +1300,8 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
         };
     }
 
-    let (weak_union_violation, failure) = match solver_outcome.analysis {
+    let analysis = solver_outcome.analysis;
+    let (weak_union_violation, failure) = match analysis {
         Some(a) => (
             a.weak_union_violation,
             a.failure_reason

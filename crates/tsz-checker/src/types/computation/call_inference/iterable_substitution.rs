@@ -1,7 +1,6 @@
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
-use tsz_solver::TypeId;
-use tsz_solver::type_handles::PropertyInfo;
+use tsz_solver::{PropertyInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(super) fn source_is_iterable_like_for_substitution(&mut self, source: TypeId) -> bool {

@@ -15,6 +15,7 @@ use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::common::LiteralTypeKind;
+use crate::query_boundaries::common::{QueryDatabase, TypeDatabase};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -22,7 +23,6 @@ use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
-use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{FunctionShape, TypeId};
 
 /// Detect spread marker tuples `[...T]` created by the checker for generic

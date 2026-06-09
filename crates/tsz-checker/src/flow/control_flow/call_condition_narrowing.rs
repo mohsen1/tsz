@@ -1,10 +1,10 @@
 use super::FlowAnalyzer;
+use crate::query_boundaries::common::{NarrowingContext, TypeGuard};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as flow_query;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{AccessExprData, Node};
 use tsz_solver::TypeId;
-use tsz_solver::narrowing::{NarrowingContext, TypeGuard};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn narrow_call_expression_condition(

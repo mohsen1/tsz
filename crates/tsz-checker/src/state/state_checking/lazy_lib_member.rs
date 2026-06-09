@@ -43,7 +43,8 @@ use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
-use tsz_solver::{DefId, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::def::DefId;
 
 /// Kill-switch for the lazy single-member lib-interface property-access fast
 /// path. Set `TSZ_DISABLE_LAZY_MEMBER_ACCESS=1` to force the legacy

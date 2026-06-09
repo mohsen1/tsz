@@ -3,6 +3,7 @@
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::common::TypeResolver;
 use crate::query_boundaries::diagnostics;
 use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
@@ -12,7 +13,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::computation::TypeResolver;
 use tsz_solver::{ParamInfo, TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {

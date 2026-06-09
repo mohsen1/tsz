@@ -34,13 +34,12 @@ use crate::context::{
     CheckerContext, ResolutionError, ResolutionModeOverride, ResolutionRequestKind,
 };
 use crate::module_resolution::module_specifier_candidates;
+use crate::query_boundaries::common::{IntrinsicKind, TypeDatabase, TypeResolver};
 use crate::query_boundaries::variance::Variance;
 use std::sync::Arc;
 use tsz_parser::parser::base::{NodeIndex, NodeList};
-use tsz_solver::computation::TypeResolver;
-use tsz_solver::construction::TypeDatabase;
 use tsz_solver::def::{DefId, DefKind};
-use tsz_solver::{IntrinsicKind, SymbolRef, TypeId, TypeParamInfo};
+use tsz_solver::{SymbolRef, TypeId, TypeParamInfo};
 
 impl<'a> CheckerContext<'a> {
     /// Get the resolution error for a specifier under an explicit resolution-mode override.

@@ -1230,7 +1230,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         reason: tsz_solver::SubtypeFailureReason,
     ) -> tsz_solver::SubtypeFailureReason {
-        use tsz_solver::SubtypeFailureReason as R;
+        use crate::query_boundaries::common::SubtypeFailureReason as R;
         // Excess-property and weak-type failures are not per-constituent
         // elaborations in `tsc`. Missing-property failures against an
         // intersection target are owned by a separate caller-side emission path

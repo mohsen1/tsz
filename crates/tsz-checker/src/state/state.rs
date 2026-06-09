@@ -24,14 +24,13 @@
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, TypingRequest};
 use crate::control_flow::type_guards::reference_uses_outer_class_property_initializer_binding;
-use crate::query_boundaries::common::QueryDatabase;
+use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeEnvironment;
 
 thread_local! {
     /// Shared depth counter for all cross-arena delegation points.

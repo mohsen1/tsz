@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
+use crate::query_boundaries::common::TypeResolver;
 use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 use tsz_solver::def::{DefId, DefinitionStore};
 
 use crate::context::CheckerContext;

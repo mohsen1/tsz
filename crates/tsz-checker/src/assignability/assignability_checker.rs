@@ -6,7 +6,7 @@ use crate::query_boundaries::assignability::{
     get_keyof_type, get_string_literal_value, get_union_members, is_type_parameter_like,
     keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::collect_type_queries;
+use crate::query_boundaries::common::{NarrowingContext, collect_type_queries};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -15,7 +15,6 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::narrowing::NarrowingContext;
 
 impl<'a> CheckerState<'a> {
     /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
@@ -701,6 +700,36 @@ impl<'a> CheckerState<'a> {
         for &type_id in type_ids {
             self.ensure_relation_input_ready(type_id);
         }
+    }
+
+    /// Prepare both relation inputs, skipping expensive lazy-ref resolution
+    /// when a cached result is already available.
+    ///
+    /// Gates on [`is_relation_cacheable`] first: only cacheable type pairs
+    /// benefit from a cache lookup short-circuit. Non-cacheable pairs (those
+    /// containing infer placeholders or `this` types) always go through the
+    /// full `ensure_relation_input_ready` path.
+    pub(crate) fn ensure_relation_pair_ready(&mut self, source: TypeId, target: TypeId) {
+        if crate::query_boundaries::assignability::is_relation_cacheable(
+            self.ctx.types,
+            source,
+            target,
+        ) {
+            let flags = self.ctx.pack_relation_flags();
+            let cache_key = crate::query_boundaries::assignability::assignability_cache_key(
+                source, target, flags,
+            );
+            if self
+                .ctx
+                .types
+                .lookup_assignability_cache(cache_key)
+                .is_some()
+            {
+                return;
+            }
+        }
+        self.ensure_relation_input_ready(source);
+        self.ensure_relation_input_ready(target);
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.

@@ -205,7 +205,7 @@ impl<'a> CheckerState<'a> {
         TypeId,
         TypeId,
     ) {
-        use tsz_solver::SubtypeFailureReason as R;
+        use crate::query_boundaries::common::SubtypeFailureReason as R;
         let mut names = vec![self.ctx.types.resolve_atom_ref(first_name)];
         let mut cur_src = first_src;
         let mut cur_tgt = first_tgt;

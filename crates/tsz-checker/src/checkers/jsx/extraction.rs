@@ -6,10 +6,10 @@
 //! component detection.
 
 use crate::query_boundaries::checkers::jsx as jsx_boundary;
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn apply_jsx_library_managed_attributes(
