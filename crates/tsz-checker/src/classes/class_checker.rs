@@ -12,7 +12,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 use tsz_solver::TypeId;
 
 struct OverloadCompatCtx<'a> {
@@ -57,11 +57,11 @@ fn needs_property_name_quotes(name: &str) -> bool {
     if name.chars().all(|ch| ch.is_ascii_digit()) {
         return false;
     }
-    // Check if it's a valid identifier
+    // Check if it's a valid ECMAScript identifier (Unicode-aware, matching the scanner)
     let mut chars = name.chars();
     match chars.next() {
-        Some(first) if first.is_ascii_alphabetic() || first == '_' || first == '$' => {
-            !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        Some(first) if is_ecmascript_identifier_start(first) => {
+            !chars.all(is_ecmascript_identifier_part)
         }
         _ => true,
     }

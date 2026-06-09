@@ -172,6 +172,19 @@ fn needs_property_name_quotes_edge_cases() {
 }
 
 #[test]
+fn needs_property_name_quotes_unicode_identifiers() {
+    // Unicode identifier-start characters must NOT be quoted (ECMAScript parity)
+    assert!(!super::needs_property_name_quotes("café"));
+    assert!(!super::needs_property_name_quotes("naïve"));
+    assert!(!super::needs_property_name_quotes("α"));
+    assert!(!super::needs_property_name_quotes("αβγ"));
+    assert!(!super::needs_property_name_quotes("日本語"));
+    // Non-identifier Unicode still needs quotes
+    assert!(super::needs_property_name_quotes("data-id"));
+    assert!(super::needs_property_name_quotes("aria-label"));
+}
+
+#[test]
 fn needs_property_name_quotes_canonical_numeric_forms() {
     // Canonical JS-numeric forms (matching `Number.prototype.toString()`
     // round-trip) are displayed without quotes by tsc in object literal
