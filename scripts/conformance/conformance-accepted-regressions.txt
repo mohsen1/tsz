@@ -64,6 +64,12 @@ TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 # `resolve_import_target_from_file_with_mode`, matching tsc. Covered by
 # `jsdoc_import_tag_records_resolution_mode_attribute` (binder) and
 # `test_collect_jsdoc_import_tag_parses_resolution_mode` (driver).
+# destructuringParameterDeclaration2.ts and conditionalTypes1.ts: RESOLVED
+# (ledger drift). Both now match tsc on exact-head against the pinned TypeScript
+# 6.0.3 corpus and the checked-in tsc cache (FINAL RESULTS: 1/1 passed, Known
+# failures: 0), so their entries were retired. Verify either with:
+#   scripts/conformance/conformance.sh run --test-dir <ts-6.0.3>/tests/cases \
+#     --filter <testName> --workers 1
 # objectLiteralMemberWithoutBlock1.ts: RESOLVED. `var v = { foo(); }` parsed the
 # body-less object method but suppressed the missing-body `'{' expected` whenever
 # the next token was `;`, so the outer object-literal member loop emitted a
