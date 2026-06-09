@@ -196,7 +196,20 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         let temp_node_types = std::mem::take(&mut self.ctx.node_types);
 
-        self.ctx.node_types = std::mem::take(&mut original_node_types);
+        // Install a working copy of the caller's node types for the rest of
+        // overload resolution, but keep `original_node_types` as a pristine
+        // snapshot of the caller's cached expression types. Every restore site
+        // below rebuilds the post-resolution cache as
+        // `node_types = take(original_node_types)` followed by
+        // `merge_owned(sig_node_types)` — i.e. "restore the caller's entries,
+        // then layer the winning signature's entries on top". That invariant
+        // only holds if `original_node_types` still contains the caller's
+        // entries at the restore; previously it was moved out here, so the
+        // restores silently rebuilt on an empty map and dropped every cached
+        // expression type the caller (and its sibling statements) had already
+        // computed. The clone is `Arc`-cheap (copy-on-write), so the snapshot is
+        // only materialized if a restore actually mutates it.
+        self.ctx.node_types = original_node_types.clone();
 
         // Snapshot diagnostics AFTER union-contextual argument collection.
         // The union-contextual pass can produce speculative callback body errors
@@ -505,7 +518,14 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .implicit_any_checked_closures
                             .extend(contextual_closures);
-                        self.ctx.node_types = Default::default();
+                        // Rebuild on the caller's cached entries (see the snapshot
+                        // comment above) rather than an empty map. `refresh_all_args`
+                        // below clears this call's own argument nodes so they are
+                        // recomputed under the instantiated parameter context, but
+                        // the first-pass success return does not restore
+                        // `original_node_types`, so a `Default::default()` reset here
+                        // would permanently drop unrelated caller entries.
+                        self.ctx.node_types = original_node_types.clone();
                         refresh_all_args(self);
 
                         // Build an instantiated callable context so that the
