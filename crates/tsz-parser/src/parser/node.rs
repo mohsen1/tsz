@@ -220,7 +220,7 @@ pub struct LiteralData {
     pub value: Option<f64>,
     /// `serde(default)` keeps deserialise back-compat with older outputs
     /// that elided this field. We dropped `skip_serializing_if` because
-    /// the lib-snapshot pipeline serializes `NodeArena` via bincode, and
+    /// the lib-snapshot pipeline serializes `NodeArena, NodeArenaInner` via bincode, and
     /// bincode's positional format desyncs on conditionally-elided
     /// fields. Always emitting a 1-byte bool adds <0.1% to JSON IPC
     /// payloads and is invisible in binary. See
@@ -1120,7 +1120,7 @@ pub(crate) struct NodeArenaPoolLengths {
 /// Arena for thin nodes with typed data pools.
 /// Provides O(1) allocation and cache-efficient storage.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct NodeArena {
+pub struct NodeArenaInner {
     /// The thin node headers (16 bytes each)
     pub nodes: Vec<Node>,
 
@@ -1260,6 +1260,91 @@ pub struct NodeArena {
     pub extended_info: Vec<ExtendedNodeInfo>,
 }
 
+/// Cheap-to-clone wrapper around the parse-immutable node arena.
+///
+/// The parser builds the arena through `DerefMut` (`Arc::make_mut`, free at
+/// refcount 1 during construction). Once built and shared — e.g. deep-cloned
+/// per checker by `clone_lib_files_for_checker` — the heavy typed pools are
+/// `Arc`-shared read-only, so cloning a `NodeArena` is an `Arc` bump instead of
+/// a deep copy of every pool. The distinct outer `Arc<NodeArenaInner>` identity
+/// is preserved per clone, so arena-pointer comparisons (lib-origin / current-
+/// file discriminators) behave exactly as with the prior deep clone.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct NodeArena {
+    inner: std::sync::Arc<NodeArenaInner>,
+}
+
+impl std::ops::Deref for NodeArena {
+    type Target = NodeArenaInner;
+    #[inline]
+    fn deref(&self) -> &NodeArenaInner {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for NodeArena {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut NodeArenaInner {
+        std::sync::Arc::make_mut(&mut self.inner)
+    }
+}
+
+impl NodeArena {
+    /// Construct an empty arena.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Arc::new(NodeArenaInner::new()),
+        }
+    }
+
+    /// Construct an arena with pool capacity pre-reserved for `capacity` nodes.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            inner: std::sync::Arc::new(NodeArenaInner::with_capacity(capacity)),
+        }
+    }
+}
+
+/// Generate inherent `NodeArena` allocation wrappers that delegate to the inner
+/// arena via `Arc::make_mut`.
+///
+/// These shadow the `Deref`-reachable `NodeArenaInner` methods of the same name
+/// so that the parser's `self.arena.add_x(self.token_end())` calls resolve to a
+/// real inherent method (a two-phase-borrow receiver) rather than an explicit
+/// `DerefMut::deref_mut` call — preserving the two-phase borrow that lets an
+/// argument read `self` while the receiver is mutably borrowed. `make_mut` is
+/// free at refcount 1 (the parse-build case).
+macro_rules! delegate_arena_alloc {
+    ($($name:ident($($arg:ident: $ty:ty),* $(,)?));+ $(;)?) => {
+        impl NodeArena {
+            $(
+                #[inline]
+                pub fn $name(&mut self, $($arg: $ty),*) -> NodeIndex {
+                    std::sync::Arc::make_mut(&mut self.inner).$name($($arg),*)
+                }
+            )+
+        }
+    };
+}
+
+delegate_arena_alloc! {
+    add_token(kind: u16, pos: u32, end: u32);
+    add_block(kind: u16, pos: u32, end: u32, data: BlockData);
+    add_type_ref(kind: u16, pos: u32, end: u32, data: TypeRefData);
+    add_source_file(pos: u32, end: u32, data: SourceFileData);
+    add_binary_expr(kind: u16, pos: u32, end: u32, data: BinaryExprData);
+    add_jsx_opening(kind: u16, pos: u32, end: u32, data: JsxOpeningData);
+    add_expr_statement(kind: u16, pos: u32, end: u32, data: ExprStatementData);
+    add_variable_declaration(kind: u16, pos: u32, end: u32, data: VariableDeclarationData);
+    add_identifier(kind: u16, pos: u32, end: u32, data: IdentifierData);
+    add_expr_with_type_args(kind: u16, pos: u32, end: u32, data: ExprWithTypeArgsData);
+    add_computed_property(kind: u16, pos: u32, end: u32, data: ComputedPropertyData);
+    add_call_expr(kind: u16, pos: u32, end: u32, data: CallExprData);
+    create_modifier(kind: tsz_scanner::SyntaxKind, pos: u32);
+}
+
 /// Generate `pool_checkpoint` and `restore_pool_checkpoint` on `NodeArena`
 /// from a single canonical field list. Adding a new pool requires updating
 /// the field list here and in `NodeArenaPoolLengths`.
@@ -1286,7 +1371,7 @@ macro_rules! impl_pool_checkpoints {
     };
 }
 
-impl NodeArena {
+impl NodeArenaInner {
     impl_pool_checkpoints!(
         identifiers,
         qualified_names,

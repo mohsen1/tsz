@@ -523,7 +523,7 @@ impl ParserState {
                     // Don't continue parsing modifiers (e.g., don't process 'export' in 'var export foo')
                     let var_modifier = self.arena.create_modifier(var_token, start_pos);
                     modifiers.push(var_modifier);
-                    return Some(self.make_node_list(modifiers));
+                    return Some(Self::make_node_list(modifiers));
                 }
                 // `in` / `out` are variance modifiers that only apply to type
                 // parameters (of class/interface/type alias). When they appear on a
@@ -548,7 +548,7 @@ impl ParserState {
         if modifiers.is_empty() {
             None
         } else {
-            Some(self.make_node_list(modifiers))
+            Some(Self::make_node_list(modifiers))
         }
     }
 
@@ -778,7 +778,7 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else if self.is_token(SyntaxKind::CommaToken) {
             // `get x(,)` — comma can't start a parameter declaration.
             // tsc emits TS1138 "Parameter declaration expected" here,
@@ -790,7 +790,7 @@ impl ParserState {
             );
             // Skip the comma and continue parsing to recover
             self.next_token();
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
             // Report error at the accessor name, matching tsc behavior
@@ -1046,7 +1046,7 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         } else {
             self.parse_parameter_list()
         };
@@ -1252,7 +1252,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(members)
+        Self::make_node_list(members)
     }
 
     fn class_member_list_outer_declaration_recovery_close_pos(&mut self) -> Option<u32> {

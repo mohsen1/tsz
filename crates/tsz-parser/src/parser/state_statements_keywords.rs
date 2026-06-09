@@ -101,32 +101,34 @@ impl ParserState {
                 self.parse_expected(SyntaxKind::AsyncKeyword);
                 self.parse_function_declaration_with_async(
                     true,
-                    Some(self.make_node_list(modifiers)),
+                    Some(Self::make_node_list(modifiers)),
                 )
             }
-            SyntaxKind::FunctionKeyword => self
-                .parse_function_declaration_with_async(false, Some(self.make_node_list(modifiers))),
+            SyntaxKind::FunctionKeyword => self.parse_function_declaration_with_async(
+                false,
+                Some(Self::make_node_list(modifiers)),
+            ),
             SyntaxKind::ClassKeyword => self.parse_class_declaration_with_modifiers(
                 start_pos,
-                Some(self.make_node_list(modifiers)),
+                Some(Self::make_node_list(modifiers)),
             ),
             SyntaxKind::InterfaceKeyword => self.parse_interface_declaration_with_modifiers(
                 start_pos,
-                Some(self.make_node_list(modifiers)),
+                Some(Self::make_node_list(modifiers)),
             ),
             SyntaxKind::TypeKeyword => self.parse_type_alias_declaration_with_modifiers(
                 start_pos,
-                Some(self.make_node_list(modifiers)),
+                Some(Self::make_node_list(modifiers)),
             ),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration_with_modifiers(
                 start_pos,
-                Some(self.make_node_list(modifiers)),
+                Some(Self::make_node_list(modifiers)),
             ),
             SyntaxKind::NamespaceKeyword
             | SyntaxKind::ModuleKeyword
             | SyntaxKind::GlobalKeyword => self.parse_module_declaration_with_modifiers(
                 start_pos,
-                Some(self.make_node_list(modifiers)),
+                Some(Self::make_node_list(modifiers)),
             ),
             SyntaxKind::VarKeyword
             | SyntaxKind::LetKeyword
@@ -134,18 +136,18 @@ impl ParserState {
             | SyntaxKind::UsingKeyword
             | SyntaxKind::AwaitKeyword => self.parse_variable_statement_with_modifiers(
                 Some(start_pos),
-                Some(self.make_node_list(modifiers)),
+                Some(Self::make_node_list(modifiers)),
             ),
             SyntaxKind::ImportKeyword => {
                 if self.look_ahead_is_import_equals() {
                     self.parse_import_equals_declaration_with_modifiers(
                         start_pos,
-                        Some(self.make_node_list(modifiers)),
+                        Some(Self::make_node_list(modifiers)),
                     )
                 } else {
                     self.parse_import_declaration_with_modifiers(
                         start_pos,
-                        Some(self.make_node_list(modifiers)),
+                        Some(Self::make_node_list(modifiers)),
                     )
                 }
             }
@@ -788,7 +790,7 @@ impl ParserState {
                 .add_token(SyntaxKind::ConstKeyword as u16, const_start, const_end);
         modifiers.push(const_modifier);
 
-        let modifiers = Some(self.make_node_list(modifiers));
+        let modifiers = Some(Self::make_node_list(modifiers));
         self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
     }
 

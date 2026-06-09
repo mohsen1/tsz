@@ -137,6 +137,37 @@ impl Project {
         }
     }
 
+    /// Collect all references to a known symbol in a single file.
+    ///
+    /// Unlike [`collect_file_references`] (which resolves a node to a symbol
+    /// first), this variant starts from a `SymbolId` directly.  This is
+    /// necessary for heritage-member discovery: the declaration stored in
+    /// `sym.declarations` is a `PropertyDeclaration` node, but `node_symbols`
+    /// maps the property **name identifier** — not the declaration — to the
+    /// symbol.  Passing a `PropertyDeclaration` node to `collect_file_references`
+    /// therefore resolves to `None` and silently collects nothing.
+    fn collect_file_references_for_symbol(
+        file: &mut ProjectFile,
+        symbol_id: tsz_binder::SymbolId,
+        output: &mut Vec<Location>,
+    ) {
+        if symbol_id.is_none() {
+            return;
+        }
+
+        let find_refs = FindReferences::new(
+            file.parser.get_arena(),
+            &file.binder,
+            &file.line_map,
+            file.file_name.clone(),
+            file.parser.get_source_text(),
+        );
+
+        if let Some(mut refs) = find_refs.find_references_for_symbol(file.root(), symbol_id) {
+            output.append(&mut refs);
+        }
+    }
+
     fn collect_file_rename_edits(
         file: &mut ProjectFile,
         node_idx: NodeIndex,
@@ -919,22 +950,20 @@ impl Project {
                 let file = self.files.get(file_name)?;
                 let heritage_symbols = self.find_all_heritage_members(file, symbol_id, &local_name);
 
-                // Collect references for all related symbols in the heritage chain
+                // Collect references for all related symbols in the heritage chain.
+                // Use collect_file_references_for_symbol rather than
+                // collect_file_references: member declarations are stored as
+                // PropertyDeclaration/MethodDeclaration nodes, but node_symbols
+                // keys on the name *identifier*.  The node-based path therefore
+                // resolves to None and returns nothing; the symbol-based path
+                // finds all references correctly.
                 for (heritage_file_path, heritage_symbol_id) in heritage_symbols {
                     if let Some(heritage_file) = self.files.get_mut(&heritage_file_path) {
-                        // Find the declaration node for this symbol
-                        let symbol = heritage_file.binder().symbols.get(heritage_symbol_id);
-                        if let Some(sym) = symbol {
-                            // Use the first declaration of the symbol
-                            if let Some(&decl_node) = sym.declarations.first() {
-                                Self::collect_file_references(
-                                    heritage_file,
-                                    decl_node,
-                                    Some(&mut scope_stats),
-                                    &mut locations,
-                                );
-                            }
-                        }
+                        Self::collect_file_references_for_symbol(
+                            heritage_file,
+                            heritage_symbol_id,
+                            &mut locations,
+                        );
                     }
                 }
             } else {

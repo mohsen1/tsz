@@ -1,5 +1,5 @@
 use super::FlowAnalyzer;
-use super::flow_dp::{DpMemo, DpState};
+use super::flow_dp::{DpMemo, resolve_backward_dp};
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -22,47 +22,68 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Compute the bitmask of typeof-kinds excluded along every reachable path
-    /// to `flow_id`. The result is `own_mask | (intersection of antecedent
-    /// masks)`, memoized per flow node so the cost is `O(N)` rather than the
-    /// previous `O(N · 2^N)` clone-per-branch traversal.
+    /// to `flow_id`: `own_mask | (intersection of antecedent masks)`, folded
+    /// iteratively over the flow graph (see [`resolve_backward_dp`]). Each node
+    /// is computed once, so the cost is `O(N)` and the native-stack depth is
+    /// bounded regardless of how long the antecedent chain is.
     pub(crate) fn antecedent_typeof_exclusion_mask(
         &self,
         flow_id: FlowNodeId,
         target: NodeIndex,
     ) -> u8 {
         let mut memo: DpMemo<u8> = DpMemo::default();
-        self.typeof_exclusion_mask_memoized(flow_id, target, &mut memo)
+        // Back-edge / no-information element is `0` (no exclusions), so the
+        // surrounding intersection collapses and loops drive no narrowing,
+        // matching the previous recursive `DpState::InProgress` arm.
+        resolve_backward_dp(
+            flow_id,
+            &mut memo,
+            0,
+            |node| self.typeof_exclusion_antecedents(node),
+            |node, antecedent_masks| {
+                self.typeof_exclusion_mask_fold(node, target, antecedent_masks)
+            },
+        )
     }
 
-    fn typeof_exclusion_mask_memoized(
+    /// The antecedents the mask traversal descends into: non-`none`,
+    /// non-unreachable predecessors of a reachable node. An unreachable (or
+    /// missing) node contributes nothing and is not traversed past.
+    fn typeof_exclusion_antecedents(
+        &self,
+        flow_id: FlowNodeId,
+    ) -> smallvec::SmallVec<[FlowNodeId; 2]> {
+        let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+            return smallvec::SmallVec::new();
+        };
+        if flow.has_any_flags(flow_flags::UNREACHABLE) {
+            return smallvec::SmallVec::new();
+        }
+        flow.antecedent
+            .iter()
+            .copied()
+            .filter(|antecedent| {
+                !antecedent.is_none()
+                    && !self
+                        .binder
+                        .flow_nodes
+                        .get(*antecedent)
+                        .is_some_and(|antecedent_flow| {
+                            antecedent_flow.has_any_flags(flow_flags::UNREACHABLE)
+                        })
+            })
+            .collect()
+    }
+
+    /// Combine a node's own typeof-exclusion bit with the intersection of its
+    /// antecedents' masks. Matches the previous recursive `compute`: an
+    /// unreachable/missing node yields `0`, a node with no reachable
+    /// antecedents yields just its own bit, otherwise `own | intersection`.
+    fn typeof_exclusion_mask_fold(
         &self,
         flow_id: FlowNodeId,
         target: NodeIndex,
-        memo: &mut DpMemo<u8>,
-    ) -> u8 {
-        if flow_id.is_none() {
-            return 0;
-        }
-        match memo.get(&flow_id) {
-            // Back-edge: return the historical fail-safe value (no exclusions)
-            // so the surrounding intersection collapses, matching the previous
-            // `visited.contains` behavior and avoiding loop-driven narrowing.
-            Some(DpState::InProgress) => return 0,
-            Some(DpState::Done(value)) => return *value,
-            None => {}
-        }
-        memo.insert(flow_id, DpState::InProgress);
-
-        let value = self.compute_typeof_exclusion_mask(flow_id, target, memo);
-        memo.insert(flow_id, DpState::Done(value));
-        value
-    }
-
-    fn compute_typeof_exclusion_mask(
-        &self,
-        flow_id: FlowNodeId,
-        target: NodeIndex,
-        memo: &mut DpMemo<u8>,
+        antecedent_masks: &[u8],
     ) -> u8 {
         let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
             return 0;
@@ -82,36 +103,10 @@ impl<'a> FlowAnalyzer<'a> {
             0
         };
 
-        if flow.antecedent.is_empty() {
-            return own;
-        }
-
-        let mut common_antecedent_mask = None;
-        // Snapshot antecedents so we can release the borrow on `flow_nodes`
-        // before recursing. Most flow nodes have one or two antecedents, so
-        // keep that snapshot stack-backed in the common case.
-        let antecedents: smallvec::SmallVec<[FlowNodeId; 2]> =
-            flow.antecedent.iter().copied().collect();
-        for antecedent in antecedents {
-            if antecedent.is_none() {
-                continue;
-            }
-            if self
-                .binder
-                .flow_nodes
-                .get(antecedent)
-                .is_some_and(|antecedent_flow| {
-                    antecedent_flow.has_any_flags(flow_flags::UNREACHABLE)
-                })
-            {
-                continue;
-            }
-            let mask = self.typeof_exclusion_mask_memoized(antecedent, target, memo);
-            common_antecedent_mask = Some(match common_antecedent_mask {
-                Some(common) => common & mask,
-                None => mask,
-            });
-        }
+        let common_antecedent_mask = antecedent_masks
+            .iter()
+            .copied()
+            .reduce(|common, mask| common & mask);
 
         own | common_antecedent_mask.unwrap_or(0)
     }

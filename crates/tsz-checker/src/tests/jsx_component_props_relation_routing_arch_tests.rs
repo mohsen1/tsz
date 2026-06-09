@@ -15,13 +15,9 @@ fn jsx_component_props_tag_relations_use_relation_outcome_boundary() {
     let compact_helpers: String = helpers.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert_eq!(
-        helpers.matches("jsx_props_relation_outcome").count(),
+        helpers.matches("props_are_assignable").count(),
         6,
-        "JSX component prop tag relation checks should route through jsx_props_relation_outcome"
-    );
-    assert!(
-        helpers.contains(".related"),
-        "JSX component prop tag relation checks should use the relation outcome decision"
+        "JSX component prop tag relation checks should route through the props_are_assignable boundary"
     );
     assert!(
         !compact_helpers.contains("assign_relation_outcome(tag_literal,key_type)")

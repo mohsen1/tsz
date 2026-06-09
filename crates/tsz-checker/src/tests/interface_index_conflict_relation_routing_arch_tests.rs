@@ -8,10 +8,10 @@ fn interface_index_conflicts_use_relation_outcome_boundary() {
         .expect("read class checker compatibility source");
 
     let helper = source
-        .split("Different bases provide conflicting index signatures.")
+        .split("Conflicting index signatures from different bases")
         .nth(1)
         .expect("find inherited interface index-signature conflict block")
-        .split("The later base's index signature conflicts")
+        .split("incorrectly extends interface")
         .next()
         .expect("slice relation decision block");
     let compact: String = helper.chars().filter(|c| !c.is_whitespace()).collect();

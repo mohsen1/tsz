@@ -1017,7 +1017,7 @@ impl ParserState {
                 start_pos,
                 end_pos,
                 crate::parser::node::JsxAttributesData {
-                    properties: self.make_node_list(properties),
+                    properties: Self::make_node_list(properties),
                 },
             ),
             aborted_for_outer_recovery,
@@ -1383,7 +1383,7 @@ impl ParserState {
             }
         }
 
-        self.make_node_list(children)
+        Self::make_node_list(children)
     }
 
     /// Parse JSX text content.

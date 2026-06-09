@@ -468,6 +468,117 @@ fn type_parameter_identity_matches(
             .is_some_and(|(candidate_def, target_def)| candidate_def == target_def)
 }
 
+// ── Type-shape probe wrappers for children.rs ──
+// All type-shape queries from JSX checker code route through here rather than
+// calling query_boundaries::common directly.
+
+pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
+
+pub(crate) fn intersection_members(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::query_boundaries::common::TypeIdList> {
+    crate::query_boundaries::common::intersection_members(db, type_id)
+}
+
+pub(crate) fn object_shape_for_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
+    crate::query_boundaries::common::object_shape_for_type(db, type_id)
+}
+
+pub(crate) fn is_tuple_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::query_boundaries::common::is_tuple_type(db, type_id)
+}
+
+pub(crate) fn is_array_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::query_boundaries::common::is_array_type(db, type_id)
+}
+
+pub(crate) fn lazy_def_id(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::def::DefId> {
+    crate::query_boundaries::common::lazy_def_id(db, type_id)
+}
+
+pub(crate) fn function_shape_for_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::FunctionShape>> {
+    crate::query_boundaries::common::function_shape_for_type(db, type_id)
+}
+
+pub(crate) fn call_signatures_for_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<tsz_solver::CallSignature>> {
+    crate::query_boundaries::common::call_signatures_for_type(db, type_id)
+}
+
+pub(crate) fn type_application(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::TypeApplication>> {
+    crate::query_boundaries::common::type_application(db, type_id)
+}
+
+pub(crate) fn is_mapped_type_with_readonly_modifier(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::query_boundaries::common::is_mapped_type_with_readonly_modifier(db, type_id)
+}
+
+pub(crate) fn is_literal_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::query_boundaries::common::is_literal_type(db, type_id)
+}
+
+pub(crate) fn is_callable_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::query_boundaries::common::is_callable_type(db, type_id)
+}
+
+pub(crate) fn application_info(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, Vec<TypeId>)> {
+    crate::query_boundaries::common::application_info(db, type_id)
+}
+
+pub(crate) fn array_element_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    crate::query_boundaries::common::array_element_type(db, type_id)
+}
+
+pub(crate) fn tuple_elements(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<tsz_solver::TupleElement>> {
+    crate::query_boundaries::common::tuple_elements(db, type_id)
+}
+
+pub(crate) fn unwrap_readonly(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    crate::query_boundaries::common::unwrap_readonly(db, type_id)
+}
+
 fn contains_anonymous_object_surface_inner(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,

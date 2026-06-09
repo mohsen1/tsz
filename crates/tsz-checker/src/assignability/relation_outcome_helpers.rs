@@ -684,6 +684,23 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Whether a source satisfies a bare type parameter's constraint, shaped as a
+    /// `RelationOutcome` for the "could be instantiated with an arbitrary type
+    /// which could be unrelated to" related-information elaboration.
+    ///
+    /// Routes through `diagnostic_relation_outcome` (the compat-aware
+    /// `is_assignable_to` path), not the strict `execute_relation_request` path,
+    /// so the related-info is suppressed in exactly the cases where the source
+    /// would satisfy the constraint — preserving parity while keeping the call
+    /// site off a raw boolean guard.
+    pub(crate) fn type_parameter_constraint_elaboration_relation_outcome(
+        &mut self,
+        source: TypeId,
+        constraint: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        self.diagnostic_relation_outcome(source, constraint)
+    }
+
     pub(crate) fn broad_mapped_index_signature_display_relation_outcome(
         &mut self,
         source: TypeId,

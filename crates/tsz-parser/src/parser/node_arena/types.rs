@@ -7,11 +7,11 @@ use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     ArrayTypeData, CompositeTypeData, ConditionalTypeData, ExtendedNodeInfo, FunctionTypeData,
     IndexedAccessTypeData, InferTypeData, LiteralTypeData, MappedTypeData, NamedTupleMemberData,
-    Node, NodeArena, TemplateLiteralTypeData, TupleTypeData, TypeLiteralData, TypeOperatorData,
-    TypePredicateData, TypeQueryData, TypeRefData, WrappedTypeData,
+    Node, NodeArenaInner, TemplateLiteralTypeData, TupleTypeData, TypeLiteralData,
+    TypeOperatorData, TypePredicateData, TypeQueryData, TypeRefData, WrappedTypeData,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add a type reference node
     pub fn add_type_ref(&mut self, kind: u16, pos: u32, end: u32, data: TypeRefData) -> NodeIndex {
         let type_name = data.type_name;

@@ -1759,10 +1759,10 @@ fn test_no_push_diagnostic_outside_error_reporter() {
 
         // Skip the legitimate homes for push_diagnostic:
         // - error_reporter/ is where all diagnostics should be emitted
-        // - context/core.rs defines the push_diagnostic method itself
+        // - context/diagnostic_push.rs defines the push_diagnostic method itself
         // - tests/ are not production code
         if rel.contains("/error_reporter/")
-            || rel.ends_with("context/core.rs")
+            || rel.ends_with("context/diagnostic_push.rs")
             || rel.contains("/tests/")
         {
             continue;

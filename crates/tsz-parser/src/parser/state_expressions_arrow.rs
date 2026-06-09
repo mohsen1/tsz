@@ -754,7 +754,7 @@ impl ParserState {
                     initializer: NodeIndex::NONE,
                 },
             );
-            self.make_node_list(vec![param])
+            Self::make_node_list(vec![param])
         };
 
         // Parse optional return type annotation (supports type predicates: x is T)

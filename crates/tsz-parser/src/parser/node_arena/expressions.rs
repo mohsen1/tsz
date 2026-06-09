@@ -5,12 +5,12 @@
 use crate::parser::base::NodeIndex;
 use crate::parser::node::{
     AccessExprData, BinaryExprData, CallExprData, ComputedPropertyData, ConditionalExprData,
-    ExprWithTypeArgsData, ExtendedNodeInfo, LiteralExprData, Node, NodeArena, ParenthesizedData,
-    QualifiedNameData, SpreadData, TaggedTemplateData, TemplateExprData, TemplateSpanData,
-    TypeAssertionData, UnaryExprData, UnaryExprDataEx,
+    ExprWithTypeArgsData, ExtendedNodeInfo, LiteralExprData, Node, NodeArenaInner,
+    ParenthesizedData, QualifiedNameData, SpreadData, TaggedTemplateData, TemplateExprData,
+    TemplateSpanData, TypeAssertionData, UnaryExprData, UnaryExprDataEx,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Add a qualified name node
     pub fn add_qualified_name(
         &mut self,

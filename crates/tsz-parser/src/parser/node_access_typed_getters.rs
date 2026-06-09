@@ -7,13 +7,13 @@ use super::node::{
     ArrayTypeData, BindingElementData, BindingPatternData, CompositeTypeData, ComputedPropertyData,
     ConditionalTypeData, ExprWithTypeArgsData, FunctionTypeData, HeritageData, IndexSignatureData,
     IndexedAccessTypeData, InferTypeData, LiteralTypeData, MappedTypeData, NamedTupleMemberData,
-    Node, NodeArena, ParenthesizedData, ShorthandPropertyData, SignatureData, SpreadData,
+    Node, NodeArenaInner, ParenthesizedData, ShorthandPropertyData, SignatureData, SpreadData,
     TaggedTemplateData, TemplateExprData, TemplateLiteralTypeData, TemplateSpanData, TupleTypeData,
     TypeLiteralData, TypeOperatorData, TypeParameterData, TypePredicateData, TypeQueryData,
     WrappedTypeData,
 };
 
-impl NodeArena {
+impl NodeArenaInner {
     /// Get signature data (call, construct, method, property signatures).
     #[inline]
     #[must_use]

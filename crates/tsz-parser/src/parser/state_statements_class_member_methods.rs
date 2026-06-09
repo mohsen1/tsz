@@ -54,7 +54,7 @@ impl ParserState {
         } else {
             self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
             body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
-            self.make_node_list(vec![])
+            Self::make_node_list(vec![])
         };
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
@@ -74,7 +74,7 @@ impl ParserState {
                 self.token_pos(),
                 self.token_pos(),
                 node::BlockData {
-                    statements: self.make_node_list(Vec::new()),
+                    statements: Self::make_node_list(Vec::new()),
                     multi_line: false,
                 },
             )

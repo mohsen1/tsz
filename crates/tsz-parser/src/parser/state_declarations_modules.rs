@@ -203,7 +203,7 @@ impl ParserState {
         // Skip module/namespace/global keyword
         let is_global = self.is_token(SyntaxKind::GlobalKeyword);
         let is_namespace_keyword = self.is_token(SyntaxKind::NamespaceKeyword);
-        let modifiers = Some(self.make_node_list(modifiers_vec));
+        let modifiers = Some(Self::make_node_list(modifiers_vec));
         let name = if is_global {
             let name_start = self.token_pos();
             let name_end = self.token_end();
@@ -715,7 +715,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseBraceToken);
         let end_pos = self.token_end();
 
-        let node_list = self.make_node_list(elements);
+        let node_list = Self::make_node_list(elements);
         self.arena.add_import_attributes(
             syntax_kind_ext::IMPORT_ATTRIBUTES,
             start_pos,
@@ -950,7 +950,7 @@ impl ParserState {
             end_pos,
             NamedImportsData {
                 name,
-                elements: self.make_node_list(Vec::new()),
+                elements: Self::make_node_list(Vec::new()),
             },
         )
     }
@@ -1115,7 +1115,7 @@ impl ParserState {
             end_pos,
             NamedImportsData {
                 name: NodeIndex::NONE, // Not a namespace import
-                elements: self.make_node_list(elements),
+                elements: Self::make_node_list(elements),
             },
         )
     }

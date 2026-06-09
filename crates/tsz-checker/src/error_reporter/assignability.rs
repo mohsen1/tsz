@@ -1198,7 +1198,9 @@ impl<'a> CheckerState<'a> {
         )?;
         if constraint == TypeId::ANY
             || constraint == TypeId::UNKNOWN
-            || self.diagnostic_relation_boolean_guard(source, constraint)
+            || self
+                .type_parameter_constraint_elaboration_relation_outcome(source, constraint)
+                .related
         {
             return None;
         }

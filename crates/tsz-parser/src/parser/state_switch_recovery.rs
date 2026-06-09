@@ -118,7 +118,7 @@ impl ParserState {
             clause_end,
             CaseClauseData {
                 expression: clause_expr,
-                statements: self.make_node_list(statements),
+                statements: Self::make_node_list(statements),
             },
         )
     }
@@ -158,7 +158,7 @@ impl ParserState {
             clause_end,
             CaseClauseData {
                 expression: NodeIndex::NONE,
-                statements: self.make_node_list(statements),
+                statements: Self::make_node_list(statements),
             },
         )
     }

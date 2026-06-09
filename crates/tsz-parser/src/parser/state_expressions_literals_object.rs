@@ -112,7 +112,7 @@ impl ParserState {
             start_pos,
             end_pos,
             LiteralExprData {
-                elements: self.make_node_list(properties),
+                elements: Self::make_node_list(properties),
                 multi_line: false,
             },
         )

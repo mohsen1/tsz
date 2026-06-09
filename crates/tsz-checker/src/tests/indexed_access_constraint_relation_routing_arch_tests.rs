@@ -139,7 +139,7 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
         helpers
             .matches("indexed_access_key_space_relation_outcome(")
             .count(),
-        10,
+        11,
         "indexed-access helper key-space probes should route through the named RelationRequest"
     );
     assert!(

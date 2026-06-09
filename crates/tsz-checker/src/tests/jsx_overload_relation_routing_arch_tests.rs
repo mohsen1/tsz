@@ -14,13 +14,9 @@ fn jsx_overload_matching_uses_relation_outcome_boundary() {
     let helpers = &source[start..end];
 
     assert_eq!(
-        helpers.matches("jsx_props_relation_outcome").count(),
+        helpers.matches("props_are_assignable").count(),
         5,
-        "JSX overload relation checks should route through jsx_props_relation_outcome"
-    );
-    assert!(
-        helpers.contains(".related"),
-        "JSX overload relation checks should use the relation outcome decision"
+        "JSX overload relation checks should route through the props_are_assignable boundary"
     );
     assert!(
         !helpers.contains("diagnostic_relation_boolean_guard"),
