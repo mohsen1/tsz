@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "cross_file_delegation_lookup_consolidation_tests"
 path = "tests/cross_file_delegation_lookup_consolidation_tests.rs"
 [[test]]
+name = "cross_file_generic_alias_call_inference_tests"
+path = "tests/cross_file_generic_alias_call_inference_tests.rs"
+[[test]]
 name = "keyof_source_display_tests"
 path = "tests/keyof_source_display_tests.rs"
 [[test]]
