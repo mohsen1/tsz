@@ -2,9 +2,6 @@
 //! normalization, children prop type resolution, and multi-child assignability.
 
 use crate::query_boundaries::checkers::jsx as jsx_query;
-use crate::query_boundaries::common::{
-    PropertyAccessResult, array_element_type, tuple_elements, unwrap_readonly,
-};
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -20,7 +17,7 @@ impl<'a> CheckerState<'a> {
         spread_type: TypeId,
     ) -> TypeId {
         let spread_type = self.evaluate_type_with_env(spread_type);
-        let spread_type = unwrap_readonly(self.ctx.types, spread_type);
+        let spread_type = jsx_query::unwrap_readonly(self.ctx.types, spread_type);
 
         // Only short-circuit for genuine `any` (explicit annotation or
         // intentional widening). For error-propagated types — e.g. a JSX
@@ -32,11 +29,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        if let Some(element_type) = array_element_type(self.ctx.types, spread_type) {
+        if let Some(element_type) = jsx_query::array_element_type(self.ctx.types, spread_type) {
             return self.evaluate_type_with_env(element_type);
         }
 
-        if let Some(elements) = tuple_elements(self.ctx.types, spread_type) {
+        if let Some(elements) = jsx_query::tuple_elements(self.ctx.types, spread_type) {
             let element_types: Vec<TypeId> = elements.iter().map(|elem| elem.type_id).collect();
             return match element_types.as_slice() {
                 [] => TypeId::NEVER,
@@ -45,20 +42,19 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, spread_type)
-        {
+        if let Some(members) = jsx_query::union_members(self.ctx.types, spread_type) {
             let mut element_types = Vec::with_capacity(members.len());
             for &member in &members {
-                let member = unwrap_readonly(self.ctx.types, self.evaluate_type_with_env(member));
+                let member =
+                    jsx_query::unwrap_readonly(self.ctx.types, self.evaluate_type_with_env(member));
                 if member == TypeId::ANY {
                     return TypeId::ANY;
                 }
-                if let Some(element_type) = array_element_type(self.ctx.types, member) {
+                if let Some(element_type) = jsx_query::array_element_type(self.ctx.types, member) {
                     element_types.push(self.evaluate_type_with_env(element_type));
                     continue;
                 }
-                if let Some(elements) = tuple_elements(self.ctx.types, member) {
+                if let Some(elements) = jsx_query::tuple_elements(self.ctx.types, member) {
                     element_types.extend(elements.iter().map(|elem| elem.type_id));
                     continue;
                 }
@@ -106,12 +102,8 @@ impl<'a> CheckerState<'a> {
         let children_type_str = self.jsx_children_type_display(props_type, children_type);
         let multiple_children_type = self.select_jsx_multiple_children_target_type(children_type);
         let children_type_is_originally_compound =
-            crate::query_boundaries::common::union_members(self.ctx.types, children_type).is_some()
-                || crate::query_boundaries::common::intersection_members(
-                    self.ctx.types,
-                    children_type,
-                )
-                .is_some();
+            jsx_query::union_members(self.ctx.types, children_type).is_some()
+                || jsx_query::intersection_members(self.ctx.types, children_type).is_some();
 
         if child_count == 1
             && !matches!(synthesized_children_type, TypeId::ANY | TypeId::ERROR)
@@ -351,9 +343,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsx_children_declared_type_text_from_type(&mut self, props_type: TypeId) -> Option<String> {
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, props_type)
-        {
+        if let Some(members) = jsx_query::union_members(self.ctx.types, props_type) {
             let mut seen = FxHashSet::default();
             let texts: Vec<String> = members
                 .iter()
@@ -366,9 +356,7 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)
-        {
+        if let Some(members) = jsx_query::intersection_members(self.ctx.types, props_type) {
             let mut seen = FxHashSet::default();
             let texts: Vec<String> = members
                 .iter()
@@ -589,12 +577,10 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_type_for_property_access(children_type);
         let resolved = self.evaluate_type_with_env(resolved);
         let return_type = if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, resolved)
+            jsx_query::function_shape_for_type(self.ctx.types, resolved)
         {
             shape.return_type
-        } else if let Some(sigs) =
-            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, resolved)
-        {
+        } else if let Some(sigs) = jsx_query::call_signatures_for_type(self.ctx.types, resolved) {
             let Some(first) = sigs.first() else {
                 return false;
             };
@@ -603,7 +589,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let return_type = self.evaluate_type_with_env(return_type);
-        crate::query_boundaries::common::is_literal_type(self.ctx.types, return_type)
+        jsx_query::is_literal_type(self.ctx.types, return_type)
     }
 
     fn raw_single_jsx_zero_param_callback_type(
@@ -655,7 +641,7 @@ impl<'a> CheckerState<'a> {
         let children_prop_name = self.get_jsx_children_prop_name();
         let children_type =
             match self.resolve_property_access_with_env(resolved, &children_prop_name) {
-                PropertyAccessResult::Success { type_id, .. } => type_id,
+                jsx_query::PropertyAccessResult::Success { type_id, .. } => type_id,
                 _ => return None,
             };
         let children_type = self.evaluate_type_with_env(children_type);
@@ -671,8 +657,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let props_type = self.resolve_type_for_property_access(props_type);
         let props_type = self.evaluate_type_with_env(props_type);
-        let members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)?;
+        let members = jsx_query::intersection_members(self.ctx.types, props_type)?;
 
         let mut multiple_candidates = Vec::new();
         let mut seen = FxHashSet::default();
@@ -727,7 +712,7 @@ impl<'a> CheckerState<'a> {
         instance_type: TypeId,
     ) -> Option<TypeId> {
         let props_type = match self.resolve_property_access_with_env(instance_type, "props") {
-            PropertyAccessResult::Success { type_id, .. } => type_id,
+            jsx_query::PropertyAccessResult::Success { type_id, .. } => type_id,
             _ => return None,
         };
         self.get_jsx_intersection_multiple_children_prop_type(props_type)
@@ -807,8 +792,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         // For named Lazy type aliases, tsc preserves alias names in TS2322 messages.
         // "ReactChild" stays as "ReactChild" instead of expanding to its constituents.
-        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
-        {
+        if let Some(def_id) = jsx_query::lazy_def_id(self.ctx.types, type_id) {
             let eval = self.evaluate_type_with_env(type_id);
             let eval = self.resolve_type_for_property_access(eval);
             if matches!(eval, TypeId::NULL | TypeId::UNDEFINED) {
@@ -817,13 +801,11 @@ impl<'a> CheckerState<'a> {
             if self.is_jsx_empty_object_fragment_type(eval) {
                 return None;
             }
-            if array_element_type(self.ctx.types, eval).is_some() {
+            if jsx_query::array_element_type(self.ctx.types, eval).is_some() {
                 // Direct array alias (e.g. ReactNodeArray) — fall through to normal processing
-            } else if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, eval)
-            {
+            } else if let Some(members) = jsx_query::union_members(self.ctx.types, eval) {
                 let has_array_or_empty = members.iter().any(|&m| {
-                    array_element_type(self.ctx.types, m).is_some()
+                    jsx_query::array_element_type(self.ctx.types, m).is_some()
                         || self.is_jsx_empty_object_fragment_type(m)
                 });
                 if !has_array_or_empty {
@@ -848,11 +830,11 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_type_for_property_access(resolved);
         let resolved = self.evaluate_type_with_env(resolved);
 
-        if let Some(element_type) = array_element_type(self.ctx.types, resolved) {
+        if let Some(element_type) = jsx_query::array_element_type(self.ctx.types, resolved) {
             return Some(self.refine_jsx_callable_contextual_type(element_type));
         }
 
-        if let Some(elements) = tuple_elements(self.ctx.types, resolved) {
+        if let Some(elements) = jsx_query::tuple_elements(self.ctx.types, resolved) {
             let element_types: Vec<TypeId> = elements
                 .iter()
                 .map(|elem| self.refine_jsx_callable_contextual_type(elem.type_id))
@@ -864,9 +846,7 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
-        {
+        if let Some(members) = jsx_query::union_members(self.ctx.types, resolved) {
             let mut element_types = Vec::new();
             for member in members {
                 if let Some(element_type) =
@@ -886,9 +866,8 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if let Some(value_type) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
-                .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
+        if let Some(value_type) = jsx_query::object_shape_for_type(self.ctx.types, resolved)
+            .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
         {
             return Some(self.refine_jsx_callable_contextual_type(value_type));
         }
@@ -904,15 +883,13 @@ impl<'a> CheckerState<'a> {
     /// nested aliases like `ReactChild` are preserved in TS2322 messages.
     fn jsx_element_type_from_raw(&mut self, type_id: TypeId) -> Option<TypeId> {
         // Lazy: re-enter main function (leaf check + raw-body path)
-        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).is_some() {
+        if jsx_query::lazy_def_id(self.ctx.types, type_id).is_some() {
             return self.jsx_multiple_children_element_type_without_empty_object(type_id);
         }
 
         // Generic Array application Application<Array, [T]>: extract raw T.
         // type_allows_multiple_children evaluates internally to detect array-ness.
-        if let Some(app) =
-            crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-        {
+        if let Some(app) = jsx_query::type_application(self.ctx.types, type_id) {
             if self.type_allows_multiple_children(type_id) && !app.args.is_empty() {
                 let raw_elem = app.args[0];
                 return Some(self.refine_jsx_callable_contextual_type(raw_elem));
@@ -921,14 +898,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Direct Array(T)
-        if let Some(elem) = array_element_type(self.ctx.types, type_id) {
+        if let Some(elem) = jsx_query::array_element_type(self.ctx.types, type_id) {
             return Some(self.refine_jsx_callable_contextual_type(elem));
         }
 
         // Union: process each raw member using this function (avoids evaluating members)
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = jsx_query::union_members(self.ctx.types, type_id) {
             let mut element_types = Vec::new();
             for member in members {
                 if let Some(elem) = self.jsx_element_type_from_raw(member) {
@@ -999,13 +974,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_jsx_empty_object_fragment_type(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id).is_some_and(
-            |shape| {
-                shape.properties.is_empty()
-                    && shape.string_index.is_none()
-                    && shape.number_index.is_none()
-            },
-        )
+        jsx_query::object_shape_for_type(self.ctx.types, type_id).is_some_and(|shape| {
+            shape.properties.is_empty()
+                && shape.string_index.is_none()
+                && shape.number_index.is_none()
+        })
     }
 
     pub(super) fn normalize_jsx_props_member_for_children_resolution(
@@ -1015,9 +988,7 @@ impl<'a> CheckerState<'a> {
         let props_type = self.resolve_type_for_property_access(props_type);
         let props_type = self.evaluate_type_with_env(props_type);
 
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)
-        {
+        if let Some(members) = jsx_query::intersection_members(self.ctx.types, props_type) {
             let mut best_member = None;
             let mut best_score = 0;
             for member in members {
@@ -1047,7 +1018,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_specific_jsx_union_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, props_type)?;
+        let members = jsx_query::union_members(self.ctx.types, props_type)?;
         let mut callable_candidates = Vec::new();
         let mut other_candidates = Vec::new();
         let mut callable_seen = rustc_hash::FxHashSet::default();
@@ -1093,8 +1064,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         props_type: TypeId,
     ) -> Option<TypeId> {
-        let members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)?;
+        let members = jsx_query::intersection_members(self.ctx.types, props_type)?;
         let mut callable_candidates = Vec::new();
         let mut multiple_candidates = Vec::new();
         let mut seen = rustc_hash::FxHashSet::default();
@@ -1132,7 +1102,7 @@ impl<'a> CheckerState<'a> {
         let children_prop_name = self.get_jsx_children_prop_name();
         let children_type =
             match self.resolve_property_access_with_env(resolved, &children_prop_name) {
-                PropertyAccessResult::Success { type_id, .. } => type_id,
+                jsx_query::PropertyAccessResult::Success { type_id, .. } => type_id,
                 _ => return None,
             };
         let children_type = self.evaluate_type_with_env(children_type);
@@ -1143,9 +1113,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn type_has_jsx_children_callable_signature(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        jsx_query::function_shape_for_type(self.ctx.types, type_id)
             .is_some_and(|shape| !shape.is_constructor)
-            || crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+            || jsx_query::call_signatures_for_type(self.ctx.types, type_id)
                 .is_some_and(|sigs| !sigs.is_empty())
     }
 
@@ -1163,13 +1133,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn readonly_mapped_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
-        if let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        if let Some((base, args)) = jsx_query::application_info(self.ctx.types, type_id)
             && args.len() == 1
-            && crate::query_boundaries::common::is_mapped_type_with_readonly_modifier(
-                self.ctx.types,
-                base,
-            )
+            && jsx_query::is_mapped_type_with_readonly_modifier(self.ctx.types, base)
         {
             return Some(args[0]);
         }
@@ -1198,9 +1164,7 @@ impl<'a> CheckerState<'a> {
             let r = self.resolve_type_for_property_access(children_type);
             self.evaluate_type_with_env(r)
         };
-        let is_fixed_tuple =
-            crate::query_boundaries::common::tuple_elements(self.ctx.types, resolved_children)
-                .is_some();
+        let is_fixed_tuple = jsx_query::tuple_elements(self.ctx.types, resolved_children).is_some();
         if !is_fixed_tuple
             && let Some(expected_child_type) =
                 self.jsx_multiple_children_element_type(children_type)
@@ -1324,11 +1288,9 @@ impl<'a> CheckerState<'a> {
         // structural-mismatch displays stay intact.
         let diag_node_kind = self.ctx.arena.get(diag_node).map(|n| n.kind);
         let target_is_single_callable = !children_type_is_originally_compound
-            && crate::query_boundaries::common::union_members(self.ctx.types, children_type)
-                .is_none()
-            && crate::query_boundaries::common::intersection_members(self.ctx.types, children_type)
-                .is_none()
-            && crate::query_boundaries::common::is_callable_type(self.ctx.types, children_type);
+            && jsx_query::union_members(self.ctx.types, children_type).is_none()
+            && jsx_query::intersection_members(self.ctx.types, children_type).is_none()
+            && jsx_query::is_callable_type(self.ctx.types, children_type);
         let use_source_elaboration = matches!(
             diag_node_kind,
             Some(k) if k == syntax_kind_ext::ARROW_FUNCTION
@@ -1510,9 +1472,7 @@ impl<'a> CheckerState<'a> {
     fn jsx_multiple_children_expected_union_for_display(&mut self, type_id: TypeId) -> TypeId {
         let members = if let Some(origin) = self.ctx.types.get_union_origin(type_id) {
             origin.as_ref().clone()
-        } else if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        } else if let Some(members) = jsx_query::union_members(self.ctx.types, type_id) {
             members.to_vec()
         } else {
             return type_id;
@@ -1560,13 +1520,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let resolved_source = self.resolve_type_for_property_access(source_type);
-        let Some(target_shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_target)
+        let Some(target_shape) = jsx_query::object_shape_for_type(self.ctx.types, resolved_target)
         else {
             return false;
         };
         let source_props: rustc_hash::FxHashSet<_> =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_source)
+            jsx_query::object_shape_for_type(self.ctx.types, resolved_source)
                 .map(|shape| shape.properties.iter().map(|prop| prop.name).collect())
                 .unwrap_or_default();
         let missing_names: Vec<_> = target_shape
@@ -1690,13 +1649,11 @@ impl<'a> CheckerState<'a> {
     fn type_has_tuple_like_multiple_children(&mut self, type_id: TypeId) -> bool {
         let type_id = self.evaluate_type_with_env(type_id);
 
-        if crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id) {
+        if jsx_query::is_tuple_type(self.ctx.types, type_id) {
             return true;
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = jsx_query::union_members(self.ctx.types, type_id) {
             return members
                 .iter()
                 .any(|&member| self.type_has_tuple_like_multiple_children(member));
@@ -1715,23 +1672,21 @@ impl<'a> CheckerState<'a> {
         }
 
         // Direct array/tuple check
-        if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
-            || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
+        if jsx_query::is_array_type(self.ctx.types, type_id)
+            || jsx_query::is_tuple_type(self.ctx.types, type_id)
         {
             return true;
         }
 
         // Object with numeric index signature
-        if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+        if jsx_query::object_shape_for_type(self.ctx.types, type_id)
             .is_some_and(|shape| shape.number_index.is_some())
         {
             return true;
         }
 
         // Union: multiple JSX children are allowed if any branch accepts them.
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = jsx_query::union_members(self.ctx.types, type_id) {
             let members_vec: Vec<TypeId> = members.to_vec();
             if members_vec
                 .iter()
@@ -1764,14 +1719,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
-            || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
+        if jsx_query::is_array_type(self.ctx.types, type_id)
+            || jsx_query::is_tuple_type(self.ctx.types, type_id)
         {
             return true;
         }
 
         // Object with numeric index signature
-        if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+        if jsx_query::object_shape_for_type(self.ctx.types, type_id)
             .is_some_and(|shape| shape.number_index.is_some())
         {
             return true;
@@ -1779,9 +1734,7 @@ impl<'a> CheckerState<'a> {
 
         // Union: a single JSX child is only invalid when every branch requires
         // the body-children form (for example `A[] | [A, B]`).
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = jsx_query::union_members(self.ctx.types, type_id) {
             let members_vec: Vec<TypeId> = members.to_vec();
             return members_vec
                 .iter()

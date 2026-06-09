@@ -59,6 +59,31 @@ fn test_compiler_managed_name_predicate_has_domain_boundary() {
     );
 }
 
+/// JSX children type-shape queries must route through `query_boundaries::checkers::jsx`,
+/// not call `query_boundaries::common` directly from `checkers/jsx/children.rs`.
+///
+/// The `checkers/jsx/children.rs` module is the only JSX checker file that performs
+/// substantial type-shape probing (array-ness, tuple elements, union members, object shape,
+/// etc.). All such probes must go through the domain boundary module so that the boundary
+/// can evolve without touching call sites.
+#[test]
+fn test_jsx_children_type_shape_queries_use_domain_boundary() {
+    let children_source =
+        fs::read_to_string("src/checkers/jsx/children.rs").expect("failed to read children.rs");
+
+    assert!(
+        !children_source.contains("query_boundaries::common::"),
+        "checkers/jsx/children.rs must not call query_boundaries::common:: directly; \
+        route all type-shape probes through query_boundaries::checkers::jsx instead"
+    );
+
+    // Verify the domain boundary wrapper module is actually used
+    assert!(
+        children_source.contains("query_boundaries::checkers::jsx"),
+        "checkers/jsx/children.rs must import and use query_boundaries::checkers::jsx"
+    );
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]
