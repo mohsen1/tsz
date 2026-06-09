@@ -46,8 +46,6 @@
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
-TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
-TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
@@ -70,6 +68,22 @@ TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 # failures: 0), so their entries were retired. Verify either with:
 #   scripts/conformance/conformance.sh run --test-dir <ts-6.0.3>/tests/cases \
 #     --filter <testName> --workers 1
+# declarationEmitUsingAlternativeContainingModules1.ts and
+# declarationEmitUsingAlternativeContainingModules2.ts: RESOLVED. A generic
+# function imported from another module whose parameter type is a type alias
+# whose body is itself a generic application (`type Opts<A> = Inner<A>`, the
+# `UseQueryOptions`/`UndefinedInitialQueryOptions` chain in these fixtures)
+# inferred its type argument as `unknown`, emitting a spurious TS18046 on the
+# `select` callback parameter. The constraint walker expands such alias
+# applications during call inference via `expand_type_alias_application`, but
+# the alias body's reference to a sibling type that is private to the alias's
+# defining module is lowered as `UnresolvedTypeName` (it is not in scope at the
+# use site), and that expansion path only resolved `Lazy`/`TypeQuery`/object
+# bases — so it aborted and the type argument collapsed. `expand_type_alias_
+# application` now recovers an `UnresolvedTypeName` base through the merged
+# binder graph (`resolve_unresolved_type_name`), so the alias chain expands and
+# the argument infers like tsc. Verified via the conformance runner (2/2) and
+# the minimal cross-module alias-chain witnesses.
 # objectLiteralMemberWithoutBlock1.ts: RESOLVED. `var v = { foo(); }` parsed the
 # body-less object method but suppressed the missing-body `'{' expected` whenever
 # the next token was `;`, so the outer object-literal member loop emitted a
