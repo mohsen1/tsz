@@ -372,7 +372,7 @@ impl<'a> CheckerState<'a> {
                 let mut branch_props: Vec<PropertyInfo> = branch.into_values().collect();
                 branch_props.sort_by_key(|p| p.declaration_order);
                 let mut display_props = branch_props.clone();
-                crate::query_boundaries::common::normalize_display_property_order(
+                crate::query_boundaries::diagnostics::normalize_display_property_order(
                     &mut display_props,
                 );
                 let obj = self
@@ -394,7 +394,7 @@ impl<'a> CheckerState<'a> {
             {
                 if has_spread {
                     let mut display_props = properties.clone();
-                    crate::query_boundaries::common::normalize_display_property_order(
+                    crate::query_boundaries::diagnostics::normalize_display_property_order(
                         &mut display_props,
                     );
                     let type_id = self
@@ -430,7 +430,7 @@ impl<'a> CheckerState<'a> {
                                 display_prop
                             })
                             .collect();
-                        crate::query_boundaries::common::normalize_display_property_order(
+                        crate::query_boundaries::diagnostics::normalize_display_property_order(
                             &mut display_props,
                         );
                         self.ctx
@@ -535,7 +535,7 @@ impl<'a> CheckerState<'a> {
                 let display_props = if has_spread {
                     shape.mark_preserve_declaration_order();
                     let mut display_props = shape.properties.clone();
-                    crate::query_boundaries::common::normalize_display_property_order(
+                    crate::query_boundaries::diagnostics::normalize_display_property_order(
                         &mut display_props,
                     );
                     Some(display_props)

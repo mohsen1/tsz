@@ -205,7 +205,7 @@ impl<'a> CheckerState<'a> {
         // `boolean[]` against a `boolean` parameter. The decision is structural;
         // the output string is plain rendering (no rendered-text decision, §25).
         if param_type == TypeId::BOOLEAN
-            && crate::query_boundaries::common::boolean_literal_array_display_type(
+            && crate::query_boundaries::diagnostics::boolean_literal_array_display_type(
                 self.ctx.types,
                 arg_type,
             )

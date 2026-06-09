@@ -555,6 +555,73 @@ pub(crate) fn preserves_named_application_base(
         )
 }
 
+// ── Display widening / reduction ──
+//
+// These helpers encode diagnostic *display* policy: how a semantic type is
+// widened or reduced purely so the printer renders the form `tsc` shows in a
+// message. They are domain-owned here (not in `query_boundaries::common`) per
+// the boundary ratchet — display rendering is a `diagnostics` concern.
+
+/// Deeply reduce meta-type applications (e.g. `InstanceType<typeof Foo>`)
+/// that appear inside `type_id` so the solver's type printer renders the
+/// concrete form that `tsc` shows in heritage diagnostics. The generic
+/// `TypeEvaluator` only visits the top-level node; this boundary helper
+/// walks composite wrappers (`Intersection`, `Union`, `Object`) and
+/// evaluates the inner `Application` / `Conditional` leaves using the
+/// caller-supplied `TypeResolver`.
+pub(crate) fn deep_reduce_for_display<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::deep_reduce_for_display(db, resolver, type_id)
+}
+
+/// Normalize the property order of an object shape for diagnostic display so
+/// rendered members match `tsc`'s ordering.
+pub(crate) fn normalize_display_property_order(props: &mut [tsz_solver::PropertyInfo]) {
+    tsz_solver::normalize_display_property_order(props)
+}
+
+/// Widen a type for call-argument diagnostic display: widens boolean
+/// literals inside compound shapes (tuples/objects) so TS2345 source-type
+/// renders match tsc, e.g. `[number, number, boolean, boolean]` instead of
+/// `[number, number, false, true]`. Function param types are still skipped.
+pub(crate) fn widen_argument_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::widen_argument_type_for_display(db, type_id)
+}
+
+/// Display the boolean-literal-array element form (`boolean[]` rather than the
+/// `(true | false)[]` fresh form) for argument-mismatch diagnostics.
+pub(crate) fn boolean_literal_array_display_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::boolean_literal_array_display_type(db, type_id)
+}
+
+/// Recursively reduce a type to its base constraint for display purposes.
+///
+/// Handles type parameters, intersections, and unions: for an intersection
+/// like `T & U` where the members have constraints, returns the intersection
+/// of the constraints (further simplified via the interner). This matches
+/// tsc's `getBaseConstraintOfType` for instantiable intersections and is used
+/// in error messages to display the reduced form instead of the raw generic
+/// intersection.
+pub(crate) fn get_base_constraint_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::get_base_constraint_for_display(db, type_id)
+}
+
+/// Display-widen a type for TS2403 redeclaration messages.
+///
+/// Thin boundary wrapper over `tsz_solver::operations::widening::display_widen_for_redeclaration`.
+/// See the solver definition for semantics — preserves top-level literal /
+/// literal-union types while deep-widening fresh literals nested inside
+/// compound shapes.
+pub(crate) fn display_widen_for_redeclaration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::display_widen_for_redeclaration(db, type_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

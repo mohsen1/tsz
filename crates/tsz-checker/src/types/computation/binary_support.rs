@@ -1477,7 +1477,7 @@ impl<'a> CheckerState<'a> {
         // primitive (`boolean`, not `true`) against this non-literal target, matching
         // tsc. The target uses the constraint formatter, which renders the canonical
         // key union structurally (tsc strips its `PropertyKey` alias on this surface).
-        let display_source = crate::query_boundaries::common::widen_argument_type_for_display(
+        let display_source = crate::query_boundaries::diagnostics::widen_argument_type_for_display(
             self.ctx.types,
             key_type,
         );

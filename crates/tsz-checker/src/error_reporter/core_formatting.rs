@@ -1323,7 +1323,7 @@ impl<'a> CheckerState<'a> {
         // the source's base constraint is nullable.  Example:
         //   source `T & U` where constraints are `string | ... | undefined`
         //   target `string | null` must stay `string | null` (not `string`).
-        let other_base = crate::query_boundaries::common::get_base_constraint_for_display(
+        let other_base = crate::query_boundaries::diagnostics::get_base_constraint_for_display(
             self.ctx.types.as_type_database(),
             other,
         );

@@ -266,7 +266,9 @@ impl<'a> CheckerState<'a> {
                 // diagnostics.
                 let spread_name = {
                     let mut props: Vec<_> = spread_shape.properties.to_vec();
-                    crate::query_boundaries::common::normalize_display_property_order(&mut props);
+                    crate::query_boundaries::diagnostics::normalize_display_property_order(
+                        &mut props,
+                    );
                     let fields: Vec<String> = props
                         .iter()
                         .map(|p| {

@@ -28,23 +28,6 @@ pub(crate) use super::construct_signatures::construct_signatures_for_type;
 pub(crate) use super::generic_instantiation::{instantiate_generic, instantiate_type};
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 
-/// Thin wrapper around `tsz_solver::deep_reduce_for_display`.
-///
-/// Deeply reduce meta-type applications (e.g. `InstanceType<typeof Foo>`)
-/// that appear inside `type_id` so the solver's type printer renders the
-/// concrete form that `tsc` shows in heritage diagnostics. The generic
-/// `TypeEvaluator` only visits the top-level node; this boundary helper
-/// walks composite wrappers (`Intersection`, `Union`, `Object`) and
-/// evaluates the inner `Application` / `Conditional` leaves using the
-/// caller-supplied `TypeResolver`.
-pub(crate) fn deep_reduce_for_display<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
-    type_id: TypeId,
-) -> TypeId {
-    tsz_solver::deep_reduce_for_display(db, resolver, type_id)
-}
-
 pub(crate) fn callable_shape_for_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -282,10 +265,6 @@ pub(crate) fn object_shape_for_type(
     tsz_solver::type_queries::get_object_shape(db, type_id)
 }
 
-pub(crate) fn normalize_display_property_order(props: &mut [tsz_solver::PropertyInfo]) {
-    tsz_solver::normalize_display_property_order(props)
-}
-
 pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_array_element_type(db, type_id)
 }
@@ -489,14 +468,6 @@ pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 /// display correctly (e.g., `string | false` instead of `string | boolean`).
 pub(crate) fn widen_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     widening::widen_type_for_display(db, type_id)
-}
-
-/// Widen a type for call-argument diagnostic display: widens boolean
-/// literals inside compound shapes (tuples/objects) so TS2345 source-type
-/// renders match tsc, e.g. `[number, number, boolean, boolean]` instead of
-/// `[number, number, false, true]`. Function param types are still skipped.
-pub(crate) fn widen_argument_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    widening::widen_argument_type_for_display(db, type_id)
 }
 
 /// Extract the element type from a rest-argument array/tuple type.
@@ -1018,12 +989,6 @@ pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
 }
 
-pub(crate) fn boolean_literal_array_display_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<TypeId> {
-    tsz_solver::type_queries::boolean_literal_array_display_type(db, type_id)
-}
 pub(crate) use tsz_solver::type_queries::ContextualLiteralAllowKind;
 
 pub(crate) fn classify_for_contextual_literal(
@@ -1348,18 +1313,6 @@ pub(crate) fn get_application_lazy_def_id(
 
 pub(crate) fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::get_base_constraint_of_type(db, type_id)
-}
-
-/// Recursively reduce a type to its base constraint for display purposes.
-///
-/// Handles type parameters, intersections, and unions: for an intersection
-/// like `T & U` where the members have constraints, returns the intersection
-/// of the constraints (further simplified via the interner). This matches
-/// tsc's `getBaseConstraintOfType` for instantiable intersections and is used
-/// in error messages to display the reduced form instead of the raw generic
-/// intersection.
-pub(crate) fn get_base_constraint_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::type_queries::get_base_constraint_for_display(db, type_id)
 }
 
 pub(crate) fn get_call_signatures(
@@ -1716,16 +1669,6 @@ pub(crate) fn evaluate_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 
 pub(crate) fn widen_type_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     widening::widen_type_deep(db, type_id)
-}
-
-/// Display-widen a type for TS2403 redeclaration messages.
-///
-/// Thin boundary wrapper over `tsz_solver::operations::widening::display_widen_for_redeclaration`.
-/// See the solver definition for semantics — preserves top-level literal /
-/// literal-union types while deep-widening fresh literals nested inside
-/// compound shapes.
-pub(crate) fn display_widen_for_redeclaration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    widening::display_widen_for_redeclaration(db, type_id)
 }
 
 pub(crate) fn string_intrinsic_components(
