@@ -19,7 +19,27 @@ pub(crate) use super::common::{
     type_parameter_constraint, union_list_id, union_members, widen_literal_to_primitive,
     widen_type_deep,
 };
+// Display-only type-shape predicates routed off the catch-all `common` boundary
+// so `error_reporter/` presentation code depends on `diagnostics` exclusively
+// (issue #12947). These remain defined in `common` for non-display callers; the
+// re-export keeps a single import surface for diagnostic render policy.
+pub(crate) use super::common::{
+    IndexKind, IndexSignatureResolver, is_conditional_type, is_generic_application,
+    is_literal_type, is_mapped_type, is_type_parameter, is_type_parameter_like, is_type_query_type,
+    is_union_type, widen_type,
+};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
+
+/// Resolve the binder symbol backing an object type, for diagnostic
+/// elaboration (spelling suggestions, missing-property anchors). Used only by
+/// `error_reporter/` presentation code, so it is owned by the diagnostics
+/// boundary rather than the catch-all `common` boundary (issue #12947).
+pub(crate) fn get_object_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_binder::SymbolId> {
+    tsz_solver::type_queries::get_object_symbol(db, type_id)
+}
 
 pub(crate) fn assignment_numeric_display_children(
     db: &dyn tsz_solver::construction::TypeDatabase,

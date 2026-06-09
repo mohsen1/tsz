@@ -14,7 +14,7 @@ impl<'a> CheckerState<'a> {
     /// the `keyof { ... }` spelling. A named interface / class / alias fails this
     /// predicate and keeps its `keyof Name` form.
     pub(in crate::error_reporter) fn keyof_operand_is_anonymous(&self, operand: TypeId) -> bool {
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
+        crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, operand)
             .is_some_and(|shape| shape.symbol.is_none())
             && self.lookup_type_alias_name_for_display(operand).is_none()
     }
@@ -30,7 +30,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> bool {
-        let Some(operand) = crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty)
+        let Some(operand) =
+            crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, ty)
         else {
             return false;
         };
@@ -62,7 +63,7 @@ impl<'a> CheckerState<'a> {
         // `self.ctx.types` taken by `union_members` / `intersection_members` is
         // released before the `&mut self` recursive call below.
         if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, operand)
+            crate::query_boundaries::diagnostics::union_members(self.ctx.types, operand)
         {
             let members: Vec<TypeId> = members.iter().copied().collect();
             return members
@@ -70,7 +71,7 @@ impl<'a> CheckerState<'a> {
                 .any(|member| self.keyof_operand_yields_concrete_literal_keyset(member));
         }
         if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, operand)
+            crate::query_boundaries::diagnostics::intersection_members(self.ctx.types, operand)
         {
             let members: Vec<TypeId> = members.iter().copied().collect();
             return !members.is_empty()
@@ -80,16 +81,17 @@ impl<'a> CheckerState<'a> {
         }
         // A direct object operand exposes its shape; otherwise resolve a
         // non-generic alias to its body first so the shape becomes visible.
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
+        crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, operand)
             .or_else(|| {
-                let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, operand)?;
+                let def_id =
+                    crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, operand)?;
                 let body = self.ctx.type_env.borrow().get_def(def_id).or_else(|| {
                     self.ctx
                         .definition_store
                         .get(def_id)
                         .and_then(|def| def.body)
                 })?;
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, body)
+                crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, body)
             })
             .is_some_and(|shape| shape.string_index.is_none() && shape.number_index.is_none())
     }
@@ -118,7 +120,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let body = def.body?;
-                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, body)?;
+                crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, body)?;
                 let evaluated = self.evaluate_type_for_assignability(body);
                 (evaluated == ty || self.are_mutually_assignable(evaluated, ty)).then_some(def_id)
             })
@@ -134,12 +136,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let body = def.body?;
-        let inner = crate::query_boundaries::common::keyof_inner_type(self.ctx.types, body)?;
+        let inner = crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, body)?;
         if let Some(alias_name) = self.lookup_type_alias_name_for_display(inner) {
             return Some(format!("keyof {alias_name}"));
         }
         if let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, inner)
+            crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, inner)
             && let Some(sym_id) = shape.symbol
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
@@ -335,11 +337,12 @@ impl<'a> CheckerState<'a> {
     /// so an unrelated global `union -> keyof Name` display alias on a shared
     /// literal cannot repaint a reduced key. Returns `None` for any other shape.
     fn finite_literal_keyset_display(&mut self, ty: TypeId) -> Option<String> {
-        if let Some(value) = crate::query_boundaries::common::literal_value(self.ctx.types, ty) {
+        if let Some(value) = crate::query_boundaries::diagnostics::literal_value(self.ctx.types, ty)
+        {
             return self.literal_key_display(value);
         }
         let members: Vec<TypeId> =
-            crate::query_boundaries::common::union_members(self.ctx.types, ty)?
+            crate::query_boundaries::diagnostics::union_members(self.ctx.types, ty)?
                 .iter()
                 .copied()
                 .collect();
@@ -348,7 +351,8 @@ impl<'a> CheckerState<'a> {
         }
         let mut parts = Vec::with_capacity(members.len());
         for member in members {
-            let value = crate::query_boundaries::common::literal_value(self.ctx.types, member)?;
+            let value =
+                crate::query_boundaries::diagnostics::literal_value(self.ctx.types, member)?;
             parts.push(self.literal_key_display(value)?);
         }
         Some(parts.join(" | "))

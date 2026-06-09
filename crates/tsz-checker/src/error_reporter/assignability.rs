@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         name: tsz_common::interner::Atom,
     ) -> Option<tsz_solver::PropertyInfo> {
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, ty)
             .and_then(|shape| {
                 shape
                     .properties
@@ -54,7 +54,7 @@ impl<'a> CheckerState<'a> {
                     .cloned()
             })
             .or_else(|| {
-                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+                crate::query_boundaries::diagnostics::callable_shape_for_type(self.ctx.types, ty)
                     .and_then(|shape| {
                         shape
                             .properties
@@ -223,10 +223,10 @@ impl<'a> CheckerState<'a> {
             })
         };
 
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_type)
+        crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, target_type)
             .and_then(|shape| find_missing(&shape.properties))
             .or_else(|| {
-                crate::query_boundaries::common::callable_shape_for_type(
+                crate::query_boundaries::diagnostics::callable_shape_for_type(
                     self.ctx.types,
                     target_type,
                 )
@@ -446,17 +446,18 @@ impl<'a> CheckerState<'a> {
         }
 
         let has_callable_shape = |this: &mut Self, ty: TypeId| {
-            crate::query_boundaries::common::function_shape_for_type(this.ctx.types, ty).is_some()
-                || crate::query_boundaries::common::callable_shape_for_type(this.ctx.types, ty)
+            crate::query_boundaries::diagnostics::function_shape_for_type(this.ctx.types, ty)
+                .is_some()
+                || crate::query_boundaries::diagnostics::callable_shape_for_type(this.ctx.types, ty)
                     .is_some()
                 || {
                     let evaluated = this.evaluate_type_with_env(ty);
-                    crate::query_boundaries::common::function_shape_for_type(
+                    crate::query_boundaries::diagnostics::function_shape_for_type(
                         this.ctx.types,
                         evaluated,
                     )
                     .is_some()
-                        || crate::query_boundaries::common::callable_shape_for_type(
+                        || crate::query_boundaries::diagnostics::callable_shape_for_type(
                             this.ctx.types,
                             evaluated,
                         )
@@ -648,7 +649,7 @@ impl<'a> CheckerState<'a> {
                     if self.ctx.diagnostics.len() > diags_before {
                         return;
                     }
-                    if crate::query_boundaries::common::union_members(self.ctx.types, source)
+                    if crate::query_boundaries::diagnostics::union_members(self.ctx.types, source)
                         .is_none()
                     {
                         return;
@@ -819,7 +820,7 @@ impl<'a> CheckerState<'a> {
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);
         let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, source_eval)
+            crate::query_boundaries::diagnostics::union_members(self.ctx.types, source_eval)
         else {
             return source;
         };
@@ -915,7 +916,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // JSDoc typedef lazy aliases must not trigger this rewrite.
                 let alias = state.ctx.types.get_display_alias(ty)?;
-                crate::query_boundaries::common::application_info(state.ctx.types, alias)?;
+                crate::query_boundaries::diagnostics::application_info(state.ctx.types, alias)?;
                 let mut formatter = state
                     .ctx
                     .create_diagnostic_type_formatter()
@@ -982,8 +983,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        crate::query_boundaries::common::literal_value(self.ctx.types, source)?;
-        match crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source) {
+        crate::query_boundaries::diagnostics::literal_value(self.ctx.types, source)?;
+        match crate::query_boundaries::diagnostics::widen_literal_to_primitive(
+            self.ctx.types,
+            source,
+        ) {
             TypeId::BOOLEAN => Some("boolean".to_string()),
             TypeId::STRING => Some("string".to_string()),
             TypeId::NUMBER => Some("number".to_string()),
@@ -1002,12 +1006,12 @@ impl<'a> CheckerState<'a> {
 
     fn type_is_generic_keyof(&mut self, type_id: TypeId) -> bool {
         let Some(operand) =
-            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, type_id)
+            crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, type_id)
         else {
             return false;
         };
-        crate::query_boundaries::common::contains_type_parameters(self.ctx.types, operand)
-            || crate::query_boundaries::common::contains_type_parameters(
+        crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, operand)
+            || crate::query_boundaries::diagnostics::contains_type_parameters(
                 self.ctx.types,
                 self.evaluate_type_for_assignability(operand),
             )
@@ -1232,10 +1236,13 @@ impl<'a> CheckerState<'a> {
         source_display: String,
     ) -> String {
         let target_is_constructor_like =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, target)
+            crate::query_boundaries::diagnostics::function_shape_for_type(self.ctx.types, target)
                 .is_some_and(|shape| shape.is_constructor)
-                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
-                    .is_some_and(|shape| !shape.construct_signatures.is_empty());
+                || crate::query_boundaries::diagnostics::callable_shape_for_type(
+                    self.ctx.types,
+                    target,
+                )
+                .is_some_and(|shape| !shape.construct_signatures.is_empty());
         let evaluated_source = self.evaluate_type_for_assignability(source);
         let source_has_display_props =
             self.type_or_evaluated_has_display_properties(source, evaluated_source);
@@ -1277,8 +1284,9 @@ impl<'a> CheckerState<'a> {
         // properties contain fresh types — their outer canonical properties are object types
         // (not literals), so they correctly fall through to the widening path.
         let source_is_array =
-            crate::query_boundaries::common::array_element_type(self.ctx.types, source).is_some()
-                || crate::query_boundaries::common::array_element_type(
+            crate::query_boundaries::diagnostics::array_element_type(self.ctx.types, source)
+                .is_some()
+                || crate::query_boundaries::diagnostics::array_element_type(
                     self.ctx.types,
                     evaluated_source,
                 )
@@ -1305,15 +1313,17 @@ impl<'a> CheckerState<'a> {
         let is_intersection_source = [source, self.evaluate_type_for_assignability(source)]
             .into_iter()
             .any(|candidate| {
-                crate::query_boundaries::common::is_intersection_type(self.ctx.types, candidate)
-                    && self.ctx.types.get_display_properties(candidate).is_some()
+                crate::query_boundaries::diagnostics::is_intersection_type(
+                    self.ctx.types,
+                    candidate,
+                ) && self.ctx.types.get_display_properties(candidate).is_some()
             });
         if is_intersection_source && self.target_has_literal_typed_properties(target) {
             return source_display;
         }
 
         let evaluated = self.evaluate_type_for_assignability(source);
-        let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
+        let widened = crate::query_boundaries::diagnostics::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
         let widened_display = self
             .format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic);
@@ -1346,23 +1356,23 @@ impl<'a> CheckerState<'a> {
         }
         let db = self.ctx.types;
         let recurse = |child: TypeId, visiting: &mut rustc_hash::FxHashSet<TypeId>| -> bool {
-            crate::query_boundaries::common::is_literal_type(db, child)
+            crate::query_boundaries::diagnostics::is_literal_type(db, child)
                 || self.source_carries_canonical_literal_member_inner(child, visiting, depth + 1)
         };
 
-        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, ty) {
+        if let Some(shape) = crate::query_boundaries::diagnostics::object_shape_for_type(db, ty) {
             return shape
                 .properties
                 .iter()
                 .any(|p| recurse(p.type_id, visiting));
         }
-        if let Some(elem) = crate::query_boundaries::common::array_element_type(db, ty) {
+        if let Some(elem) = crate::query_boundaries::diagnostics::array_element_type(db, ty) {
             return recurse(elem, visiting);
         }
-        if let Some(elements) = crate::query_boundaries::common::tuple_elements(db, ty) {
+        if let Some(elements) = crate::query_boundaries::diagnostics::tuple_elements(db, ty) {
             return elements.iter().any(|e| recurse(e.type_id, visiting));
         }
-        if let Some(members) = crate::query_boundaries::common::union_members(db, ty) {
+        if let Some(members) = crate::query_boundaries::diagnostics::union_members(db, ty) {
             return members.iter().any(|&m| recurse(m, visiting));
         }
         false
@@ -1377,7 +1387,7 @@ impl<'a> CheckerState<'a> {
         // which the text-based member-literal widener mistakes for an object member and
         // widens (`... : 2` → `... : number`, `... : "no"` → `... : string`). tsc renders
         // deferred conditional branches verbatim, so never text-widen a conditional target.
-        if crate::query_boundaries::common::is_conditional_type(self.ctx.types, target) {
+        if crate::query_boundaries::diagnostics::is_conditional_type(self.ctx.types, target) {
             return target_display;
         }
         let evaluated = self.evaluate_type_for_assignability(target);
@@ -1413,7 +1423,7 @@ impl<'a> CheckerState<'a> {
             return target_display;
         }
 
-        let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
+        let widened = crate::query_boundaries::diagnostics::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
         let widened_display = self
             .format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic);
@@ -1434,12 +1444,12 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
     ) -> bool {
         // Direct Application: Application(Lazy(Foo), [args])
-        if crate::query_boundaries::common::is_generic_application(db, ty) {
+        if crate::query_boundaries::diagnostics::is_generic_application(db, ty) {
             return true;
         }
         // Evaluated Application: concrete Object that carries display_alias → Application
         if let Some(alias) = db.get_display_alias(ty)
-            && crate::query_boundaries::common::is_generic_application(db, alias)
+            && crate::query_boundaries::diagnostics::is_generic_application(db, alias)
         {
             return true;
         }
@@ -1452,19 +1462,23 @@ impl<'a> CheckerState<'a> {
     /// `"hello" | "world"`, but widens to `string` when the target expects `boolean`.
     fn target_has_literal_typed_properties(&mut self, target: TypeId) -> bool {
         let target = self.evaluate_type_for_assignability(target);
-        let shape = crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
-            .or_else(|| {
-                // For intersection/union targets, check members.
-                crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+        let shape =
+            crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, target)
+                .or_else(|| {
+                    // For intersection/union targets, check members.
+                    crate::query_boundaries::diagnostics::intersection_members(
+                        self.ctx.types,
+                        target,
+                    )
                     .and_then(|members| {
                         members.iter().find_map(|&m| {
-                            crate::query_boundaries::common::object_shape_for_type(
+                            crate::query_boundaries::diagnostics::object_shape_for_type(
                                 self.ctx.types,
                                 m,
                             )
                         })
                     })
-            });
+                });
         let Some(shape) = shape else {
             return false;
         };
@@ -1653,7 +1667,7 @@ impl<'a> CheckerState<'a> {
         let src_callable = is_callable_application_type(self.ctx.types, source);
         let tgt_callable = is_callable_application_type(self.ctx.types, target);
         let has_type_params =
-            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source);
+            crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, source);
         let both_have_own_sig_params = has_own_signature_type_params(self.ctx.types, source)
             && has_own_signature_type_params(self.ctx.types, target);
         if src_callable && tgt_callable && has_type_params && !both_have_own_sig_params {

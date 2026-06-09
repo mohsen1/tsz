@@ -1420,13 +1420,6 @@ pub(crate) fn get_noinfer_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
     tsz_solver::type_queries::get_noinfer_inner(db, type_id)
 }
 
-pub(crate) fn get_object_symbol(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_binder::SymbolId> {
-    tsz_solver::type_queries::get_object_symbol(db, type_id)
-}
-
 pub(crate) fn get_private_brand_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
     tsz_solver::type_queries::get_private_brand_name(db, type_id)
 }

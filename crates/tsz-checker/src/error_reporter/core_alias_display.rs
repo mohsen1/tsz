@@ -33,15 +33,17 @@ impl<'a> CheckerState<'a> {
         // Restricting to object/function/callable/union/intersection types avoids
         // regressions like `number` -> `TypeOfInfinity`.
         let is_object =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();
+            crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, ty)
+                .is_some();
         let is_union = if !is_object {
-            crate::query_boundaries::common::union_members(self.ctx.types, ty).is_some()
+            crate::query_boundaries::diagnostics::union_members(self.ctx.types, ty).is_some()
         } else {
             false
         };
         let is_function = if !is_object && !is_union {
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty).is_some()
-                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+            crate::query_boundaries::diagnostics::function_shape_for_type(self.ctx.types, ty)
+                .is_some()
+                || crate::query_boundaries::diagnostics::callable_shape_for_type(self.ctx.types, ty)
                     .is_some()
         } else {
             false
@@ -54,13 +56,13 @@ impl<'a> CheckerState<'a> {
         // Application like B<string>), let the formatter handle it - using the
         // raw alias name would lose the type arguments.
         if self.ctx.types.get_display_alias(ty).is_some_and(|alias| {
-            crate::query_boundaries::common::type_application(self.ctx.types, alias).is_some()
+            crate::query_boundaries::diagnostics::type_application(self.ctx.types, alias).is_some()
         }) {
             return None;
         }
         if let Some(alias) = self.ctx.types.get_display_alias(ty)
             && let Some(def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias)
+                crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, alias)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && def.type_params.is_empty()
@@ -74,7 +76,8 @@ impl<'a> CheckerState<'a> {
         // For intersection types (e.g., typeof X & Function), expand to the full
         // type representation rather than using the alias name. This matches tsc's
         // behavior in assignability messages for complex intersection types.
-        if crate::query_boundaries::common::intersection_members(self.ctx.types, ty).is_some() {
+        if crate::query_boundaries::diagnostics::intersection_members(self.ctx.types, ty).is_some()
+        {
             return None;
         }
 
@@ -94,7 +97,7 @@ impl<'a> CheckerState<'a> {
         // `type T = typeof value` aliases display as the resolved value type
         // in assignment diagnostics. Do not repaint that resolved body as `T`.
         if def.body.is_some_and(|body| {
-            crate::query_boundaries::common::is_type_query_type(self.ctx.types, body)
+            crate::query_boundaries::diagnostics::is_type_query_type(self.ctx.types, body)
         }) || self.type_alias_definition_body_is_type_query(&def)
         {
             return None;
@@ -129,10 +132,14 @@ impl<'a> CheckerState<'a> {
         if !cond.is_distributive {
             return None;
         }
-        let param_info = crate::query_boundaries::common::type_param_info(db, cond.check_type)?;
+        let param_info =
+            crate::query_boundaries::diagnostics::type_param_info(db, cond.check_type)?;
         let branches_are_concrete =
-            !crate::query_boundaries::common::contains_type_parameters(db, cond.true_type)
-                && !crate::query_boundaries::common::contains_type_parameters(db, cond.false_type);
+            !crate::query_boundaries::diagnostics::contains_type_parameters(db, cond.true_type)
+                && !crate::query_boundaries::diagnostics::contains_type_parameters(
+                    db,
+                    cond.false_type,
+                );
         if !branches_are_concrete {
             return None;
         }
@@ -147,8 +154,9 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
-        let extends_members = crate::query_boundaries::common::union_members(db, cond.extends_type)
-            .unwrap_or_else(|| vec![cond.extends_type].into());
+        let extends_members =
+            crate::query_boundaries::diagnostics::union_members(db, cond.extends_type)
+                .unwrap_or_else(|| vec![cond.extends_type].into());
         let has_overlap = extends_members.iter().any(|&m| {
             crate::query_boundaries::assignability::is_fresh_subtype_of(db, m, constraint)
         });

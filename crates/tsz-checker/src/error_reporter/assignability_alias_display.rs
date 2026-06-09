@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let declared_type = self.get_type_of_symbol(sym_id);
-        crate::query_boundaries::common::is_type_parameter(self.ctx.types, declared_type)
+        crate::query_boundaries::diagnostics::is_type_parameter(self.ctx.types, declared_type)
             .then(|| annotation.to_string())
     }
 
@@ -317,13 +317,14 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
+        let def_id = crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, base)?;
         let def = self.ctx.definition_store.get(def_id)?;
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
         let body = def.body?;
-        if let Some(param) = crate::query_boundaries::common::type_param_info(self.ctx.types, body)
+        if let Some(param) =
+            crate::query_boundaries::diagnostics::type_param_info(self.ctx.types, body)
         {
             let arg_idx = def
                 .type_params
@@ -333,7 +334,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let (next_base, body_args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, body)?;
+            crate::query_boundaries::diagnostics::application_info(self.ctx.types, body)?;
         if next_base == base {
             return None;
         }
@@ -364,7 +365,7 @@ impl<'a> CheckerState<'a> {
         if alias_args.len() < type_params.len() {
             return None;
         }
-        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+        let substitution = crate::query_boundaries::diagnostics::TypeSubstitution::from_args(
             self.ctx.types,
             type_params,
             &alias_args[..type_params.len()],
@@ -373,7 +374,7 @@ impl<'a> CheckerState<'a> {
             body_args
                 .iter()
                 .map(|&arg| {
-                    crate::query_boundaries::common::instantiate_type(
+                    crate::query_boundaries::diagnostics::instantiate_type(
                         self.ctx.types,
                         arg,
                         &substitution,
@@ -398,16 +399,16 @@ impl<'a> CheckerState<'a> {
         &self,
         ty: TypeId,
     ) -> bool {
-        use crate::query_boundaries::common;
+        use crate::query_boundaries::diagnostics;
         // Fast path: most formatted types carry no display alias, so this single
         // map lookup short-circuits before the type-kind classification below.
         let Some(alias) = self.ctx.types.get_display_alias(ty) else {
             return false;
         };
-        if common::is_conditional_type(self.ctx.types, ty)
-            || common::is_index_access_type(self.ctx.types, ty)
-            || common::is_mapped_type(self.ctx.types, ty)
-            || common::is_generic_application(self.ctx.types, ty)
+        if diagnostics::is_conditional_type(self.ctx.types, ty)
+            || diagnostics::is_index_access_type(self.ctx.types, ty)
+            || diagnostics::is_mapped_type(self.ctx.types, ty)
+            || diagnostics::is_generic_application(self.ctx.types, ty)
         {
             return false;
         }

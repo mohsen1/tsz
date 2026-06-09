@@ -726,6 +726,9 @@ mod enum_relation_routing_arch_tests;
 #[path = "tests/enum_residual_narrowing_tests.rs"]
 mod enum_residual_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/error_reporter_assignability_display_boundary_arch_tests.rs"]
+mod error_reporter_assignability_display_boundary_arch_tests;
+#[cfg(test)]
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
 #[cfg(test)]

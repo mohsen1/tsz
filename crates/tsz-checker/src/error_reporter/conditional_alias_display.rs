@@ -31,7 +31,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> Option<String> {
-        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
+        if let Some(def_id) = crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && def.type_params.is_empty()
@@ -56,7 +56,8 @@ impl<'a> CheckerState<'a> {
         // when the conditional reduces to a concrete type (e.g. `unknown` once the
         // constraint is applied) — tsc renders `ReturnType<T[M]>`, not `unknown`.
         // Decline before evaluating so the deferred application keeps its name.
-        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, candidate) {
+        if crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, candidate)
+        {
             return None;
         }
 
@@ -69,7 +70,7 @@ impl<'a> CheckerState<'a> {
         // alias name for unions and leave them to the separate union-ordering
         // work. Single object/tuple/array/primitive reductions have no such
         // ambiguity and match `tsc` exactly.
-        if crate::query_boundaries::common::is_union_type(self.ctx.types, evaluated) {
+        if crate::query_boundaries::diagnostics::is_union_type(self.ctx.types, evaluated) {
             return None;
         }
         // When the reduced shape is registered against a *non-generic* type alias
