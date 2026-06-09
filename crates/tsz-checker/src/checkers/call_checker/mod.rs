@@ -122,26 +122,32 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         use crate::query_boundaries::state::type_environment::application_info;
 
         let (base, args) = application_info(self.state.ctx.types, type_id)?;
-        let sym_id = self.state.ctx.resolve_type_to_symbol_id(base).or_else(|| {
-            // A type-alias body imported from another module can reference a
-            // sibling type that the lowering pass left as `UnresolvedTypeName`
-            // because that name was not in scope at the alias's *use* site
-            // (it is private to the alias's defining module). Recover it
-            // through the merged binder graph so alias expansion — and the
-            // generic-call inference that depends on it — sees the real
-            // declaration instead of aborting. Without this, inference of a
-            // type argument through a cross-module alias chain
-            // (`type Opts<T> = Inner<T>`) silently fails and the argument
-            // collapses to `unknown`.
-            let atom = crate::query_boundaries::spread::unresolved_type_name_atom(
-                self.state.ctx.types,
-                base,
-            )?;
-            let name = self.state.ctx.types.resolve_atom(atom);
-            let def_id = TypeResolver::resolve_unresolved_type_name(&self.state.ctx, &name)?;
-            self.state.ctx.def_to_symbol_id_with_fallback(def_id)
-        })?;
-        let (body, type_params) = self.state.type_reference_symbol_type_with_params(sym_id);
+
+        // Resolve the generic base to its open body and type parameters. The
+        // primary path maps the base to a `SymbolId` and resolves through the
+        // checker's symbol-type machinery (which also performs heritage merging
+        // for interfaces). That mapping is unavailable when the base is a bare
+        // reference produced while lowering a *cross-file* alias body — e.g.
+        // `type W<T> = Opts<T>` imported from another module: expanding `W<P>`
+        // yields `Opts<P>`, but the nested `Opts` reference survives as an
+        // `UnresolvedTypeName` (or a `DefId`/`TypeQuery`) with no symbol
+        // registered in the calling file's context. In that case resolve the
+        // base to a `DefId` directly and read the open body from the type
+        // resolver, mirroring the evaluator's application-base resolution.
+        // Without this, inference against a generic call signature whose
+        // parameter type is an imported alias-of-a-generic stalls (the type
+        // parameters never receive candidates), producing spurious `unknown`
+        // inferences and downstream `TS18046` diagnostics.
+        let (body, type_params) = match self.state.ctx.resolve_type_to_symbol_id(base) {
+            Some(sym_id) => self.state.type_reference_symbol_type_with_params(sym_id),
+            None => {
+                let def_id = self.resolve_application_base_def_id(base)?;
+                let body =
+                    TypeResolver::resolve_lazy(&self.state.ctx, def_id, self.state.ctx.types)?;
+                let type_params = TypeResolver::get_lazy_type_params(&self.state.ctx, def_id)?;
+                (body, type_params)
+            }
+        };
         if body == TypeId::ANY || body == TypeId::ERROR || type_params.is_empty() {
             return None;
         }
@@ -191,6 +197,22 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
 
     fn next_inference_placeholder_id(&mut self) -> u64 {
         self.state.ctx.next_inference_placeholder_id()
+    }
+}
+
+impl CheckerCallAssignabilityAdapter<'_, '_> {
+    /// Resolve the base of a generic type application to its defining `DefId`,
+    /// covering the bare reference forms that survive cross-file alias-body
+    /// lowering: `Lazy(DefId)`, `TypeQuery`, and `UnresolvedTypeName`. Mirrors
+    /// the evaluator's application-base resolution (`evaluation::evaluate`) so
+    /// placeholder-preserving alias expansion can proceed even when the base
+    /// has no `SymbolId` mapping in the calling file's checker context.
+    fn resolve_application_base_def_id(&self, base: TypeId) -> Option<tsz_solver::DefId> {
+        crate::query_boundaries::checkers::call::resolve_application_base_def_id(
+            self.state.ctx.types,
+            &self.state.ctx,
+            base,
+        )
     }
 }
 

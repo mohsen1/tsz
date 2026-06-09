@@ -166,6 +166,31 @@ pub(crate) fn stable_call_recovery_return_type(
     candidate
 }
 
+/// Resolve an application base to the declaration identity used for generic
+/// call inference.
+///
+/// Cross-file alias lowering can leave application bases in any of the same
+/// reference forms that evaluator normalization accepts. Keep that solver-shape
+/// decoding behind this boundary so call checking only asks for the declaration
+/// identity it needs.
+pub(crate) fn resolve_application_base_def_id<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    base: TypeId,
+) -> Option<tsz_solver::DefId> {
+    lazy_def_id_for_type(db, base)
+        .or_else(|| {
+            tsz_solver::type_queries::get_type_query_symbol_ref(db, base)
+                .and_then(|sym_ref| resolver.symbol_to_def_id(sym_ref))
+        })
+        .or_else(|| {
+            tsz_solver::visitor::unresolved_type_name_atom(db, base).and_then(|atom| {
+                let name = db.resolve_atom(atom);
+                resolver.resolve_unresolved_type_name(&name)
+            })
+        })
+}
+
 /// Get the construct signature of a type, preferring a generic one.
 /// Used for two-pass inference in `new` expressions where the construct
 /// signature may have type parameters that need to be inferred.
