@@ -45,7 +45,26 @@
 #   exact-head aggregate and stay listed.
 # Keep these visible as accepted-regression debt until their owning parity
 # fixes remove them from exact-head aggregate output.
-TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
+# constructorWithIncompleteTypeAnnotation.ts: RESOLVED. Two parser error-recovery
+# divergences in this torture file, both now matching tsc exactly (diagnostics
+# and JS emit):
+#   1. A misplaced `case`/`default` switch-clause keyword in a class body
+#      (`case d = () => { yield 0; };`) emitted a spurious TS1163
+#      ("A 'yield' expression is only allowed in a generator body."). tsc reports
+#      only TS1068, consumes the keyword, and keeps the recovered member (it still
+#      emits `this.d = () => { yield 0; }`) but does not run the post-parse grammar
+#      check on it. tsz emits TS1163 eagerly in the parser, so it now suppresses
+#      it for the recovered member (scoped per member) while still parsing and
+#      emitting the member.
+#   2. An empty element access (`x[]`, TS1011) followed by a stray close token
+#      reported TS1128 ("Declaration or statement expected.") instead of tsc's
+#      TS1005 ("';' expected."): the distance-based missing-semicolon suppression
+#      dropped the `;` error because the TS1011 was a few tokens away. tsc dedups
+#      that error by exact start only, so it reports both. The missing-semicolon
+#      path now keeps the `;` error past a different-position TS1011 (mirroring the
+#      existing leading-zero exception). Covered by
+#      parser_improvement_class_member_recovery_tests::misplaced_case_clause_* and
+#      parser_improvement_expression_recovery_tests::empty_element_access_*.
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts

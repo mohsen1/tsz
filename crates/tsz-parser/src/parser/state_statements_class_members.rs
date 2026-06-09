@@ -1334,6 +1334,11 @@ impl ParserState {
         use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
 
+        // Clear any leftover recovered-clause yield suppression from the
+        // previous member; it is (re)armed below only for a misplaced
+        // `case`/`default` clause and must not leak into sibling members.
+        self.suppress_recovered_clause_member_yield_grammar = false;
+
         if self.is_token(SyntaxKind::SemicolonToken) {
             let end_pos = self.token_end();
             self.next_token();
@@ -1369,6 +1374,14 @@ impl ParserState {
                 diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
             );
             self.next_token();
+            // tsc keeps the recovered clause body as a class member (it still
+            // emits, e.g. `case d = () => {...}` -> `this.d = () => {...}`) but
+            // does not run the post-parse grammar checks on it, so the
+            // yield-outside-generator check (TS1163) does not fire. tsz emits
+            // TS1163 eagerly in the parser, so suppress it while this recovered
+            // member is parsed. The flag is reset at the top of the next
+            // `parse_class_member`, scoping it to exactly this member.
+            self.suppress_recovered_clause_member_yield_grammar = true;
         }
 
         // Handle bare `#` that can't become a PrivateIdentifier.

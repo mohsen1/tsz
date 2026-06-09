@@ -272,3 +272,147 @@ class C {
         "Valid private names should not emit TS1127, got diagnostics: {diagnostics:?}"
     );
 }
+
+// =====================================================================
+// Misplaced `case`/`default` switch-clause keyword in a class body.
+//
+// When a class member begins with `case`/`default` followed by a property
+// name on the same line (a misplaced switch clause), tsc reports a single
+// TS1068 ("A constructor, method, accessor, or property was expected."),
+// consumes the keyword, and parses the rest as a normal class member that it
+// KEEPS (it still emits — `case d = () => {...}` -> `this.d = () => {...}`).
+// It does not, however, run the post-parse grammar checks on that recovered
+// member, so the yield-outside-generator check (TS1163) does not fire. tsz
+// emits TS1163 eagerly in the parser, so it suppresses it for the recovered
+// member while still parsing (and thus emitting) the member.
+// =====================================================================
+
+fn diagnostic_codes_of(source: &str) -> Vec<u32> {
+    let (parser, _root) = parse_source(source);
+    let mut codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+    codes
+}
+
+/// Number of class members in the first top-level class declaration.
+fn first_class_member_count(source: &str) -> usize {
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = arena.get(class_idx).unwrap();
+    arena.get_class(class_node).unwrap().members.nodes.len()
+}
+
+#[test]
+fn misplaced_case_clause_with_yield_arrow_reports_only_ts1068() {
+    // The witness from `constructorWithIncompleteTypeAnnotation.ts`: a
+    // misplaced `case` clause whose initializer is a non-generator arrow with a
+    // `yield` expression. tsc reports only TS1068 — the recovered member is
+    // kept but its yield is not grammar-checked (no TS1163).
+    let source = "class Widget {\n     case  handler = () => {  yield  0; };\n    render() { return 0; }\n}\n";
+    let codes = diagnostic_codes_of(source);
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED],
+        "misplaced `case` clause must report only TS1068, never the recovered \
+         member's TS1163; got {:?}",
+        diagnostic_codes_of(source)
+    );
+}
+
+#[test]
+fn misplaced_case_clause_keeps_recovered_member_for_emit() {
+    // tsc keeps the recovered `handler` member (it emits `this.handler = ...`),
+    // so tsz must not drop it. The class retains both the recovered member and
+    // the following `render` method.
+    let source = "class Widget {\n     case  handler = () => {  yield  0; };\n    render() { return 0; }\n}\n";
+    assert_eq!(
+        first_class_member_count(source),
+        2,
+        "the recovered `case` member must be kept alongside the following method"
+    );
+}
+
+#[test]
+fn misplaced_case_clause_with_object_literal_reports_only_ts1068() {
+    // A balanced object/array literal initializer parses as part of the kept
+    // member; only the leading TS1068 is reported.
+    let source = "class Registry {\n  case  entry = { a: 1, b: [2, 3] };\n  size() {}\n}\n";
+    assert_eq!(
+        diagnostic_codes_of(source),
+        vec![diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED],
+    );
+}
+
+#[test]
+fn misplaced_case_clause_before_class_close_reports_only_ts1068() {
+    // The recovered member ends via ASI at the class close `}`; no cascading
+    // errors leak past the class body.
+    let source = "class Node_ {\n  case  next = 1 }\n";
+    assert_eq!(
+        diagnostic_codes_of(source),
+        vec![diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED],
+    );
+}
+
+#[test]
+fn misplaced_default_clause_with_yield_arrow_reports_only_ts1068() {
+    // `default` shares the misplaced-switch-clause recovery with `case`.
+    let source = "class Surface {\n  default  paint = () => { yield 1; };\n  area() {}\n}\n";
+    assert_eq!(
+        diagnostic_codes_of(source),
+        vec![diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED],
+    );
+}
+
+#[test]
+fn case_as_property_name_followed_by_semicolon_is_still_valid() {
+    // Negative control: `case` is a legal property name by itself (followed by
+    // `;`/`(`), so it must NOT trigger the misplaced-clause recovery. A bare
+    // `case;` property parses without any TS1068.
+    let source = "class Bag {\n  case;\n  value() {}\n}\n";
+    let codes = diagnostic_codes_of(source);
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "`case;` as a property name must not emit TS1068; got {codes:?}"
+    );
+}
+
+#[test]
+fn non_generator_arrow_yield_still_reports_ts1163_when_attached() {
+    // Negative control: when the arrow is a normal (non-recovered) member
+    // initializer, the yield-outside-generator grammar check still fires. The
+    // suppression flag must be scoped to the recovered member only, not leak to
+    // sibling members.
+    let source = "class Live {\n  handler = () => {  yield  0; };\n  run() {}\n}\n";
+    let codes = diagnostic_codes_of(source);
+    assert!(
+        codes.contains(&diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY),
+        "a genuine non-generator arrow `yield` must still report TS1163; got {codes:?}"
+    );
+}
+
+#[test]
+fn yield_suppression_does_not_leak_to_sibling_member_after_case() {
+    // The recovered `case` member suppresses its own TS1163, but the *following*
+    // genuine member's non-generator `yield` must still report TS1163 — the flag
+    // is reset per member.
+    let source = "class Mixed {\n  case  a = () => { yield 0; };\n  b = () => { yield 1; };\n}\n";
+    let codes = diagnostic_codes_of(source);
+    assert!(
+        codes.contains(&diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY),
+        "the sibling member's yield must still report TS1163; got {codes:?}"
+    );
+    // Exactly one TS1163 (from the sibling `b`, not the recovered `a`).
+    let ts1163 = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY)
+        .count();
+    assert_eq!(
+        ts1163, 1,
+        "only the sibling member should report TS1163; got {codes:?}"
+    );
+}

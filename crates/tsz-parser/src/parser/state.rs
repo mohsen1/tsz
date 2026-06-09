@@ -301,6 +301,13 @@ pub struct ParserState {
     /// A malformed JSX attribute list used bracket syntax in a tag head, as in
     /// `<a[foo]>`; the closing tag should be recovered by outer expression code.
     pub(crate) suppress_next_jsx_head_missing_semicolon: bool,
+    /// Set while parsing a class member recovered after a misplaced
+    /// `case`/`default` switch-clause keyword (TS1068). tsc keeps such a member
+    /// (it still emits) but does not run post-parse grammar checks on it, so the
+    /// yield-outside-generator check (TS1163) does not fire; tsz emits TS1163
+    /// eagerly in the parser, so this suppresses it for the recovered member.
+    /// Reset at the top of every `parse_class_member`.
+    pub(crate) suppress_recovered_clause_member_yield_grammar: bool,
     /// A JSX closing tag had trailing attributes (`</div {...props}>`). The
     /// tail is recovered as source-level syntax after the JSX expression.
     pub(crate) recover_jsx_closing_tag_trailing_tail: bool,
@@ -430,6 +437,7 @@ impl ParserState {
             in_jsx_attribute_initializer_element: false,
             recover_jsx_missing_attr_initializer_head: false,
             suppress_next_jsx_head_missing_semicolon: false,
+            suppress_recovered_clause_member_yield_grammar: false,
             recover_jsx_closing_tag_trailing_tail: false,
             recover_jsx_closing_tag_extra_namespace_tail: false,
             recover_jsx_invalid_namespace_head_tail: false,
@@ -485,6 +493,7 @@ impl ParserState {
         self.in_jsx_attribute_initializer_element = false;
         self.recover_jsx_missing_attr_initializer_head = false;
         self.suppress_next_jsx_head_missing_semicolon = false;
+        self.suppress_recovered_clause_member_yield_grammar = false;
         self.recover_jsx_closing_tag_trailing_tail = false;
         self.recover_jsx_closing_tag_extra_namespace_tail = false;
         self.recover_jsx_invalid_namespace_head_tail = false;
@@ -555,6 +564,25 @@ impl ParserState {
             == diagnostic_codes::OCTAL_LITERALS_ARE_NOT_ALLOWED_USE_THE_SYNTAX
             || last.code == diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_ARE_NOT_ALLOWED;
         is_leading_zero && last.start != self.token_pos()
+    }
+
+    /// Returns true when the most recent parse diagnostic was an
+    /// "element access expression should take an argument" error (TS1011) at a
+    /// position different from the current token. Like the leading-zero case,
+    /// this is orthogonal to the missing-semicolon error (TS1005) that follows
+    /// a completed postfix expression: for `x[] )` tsc reports TS1011 at the
+    /// empty subscript AND `';' expected.` at the stray close token, because its
+    /// `parseErrorAtPosition` dedups only by exact start. tsz's distance-based
+    /// suppression would otherwise drop the `';' expected.` (because the TS1011
+    /// is within a few tokens), leaving the close token to fall through to the
+    /// statement list as a spurious TS1128.
+    pub(crate) fn last_error_was_element_access_missing_argument_at_other_pos(&self) -> bool {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let Some(last) = self.parse_diagnostics.last() else {
+            return false;
+        };
+        last.code == diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT
+            && last.start != self.token_pos()
     }
 
     pub(crate) fn should_emit_jsx_missing_close_brace_at_semicolon(
@@ -1855,7 +1883,9 @@ impl ParserState {
                 .take(4)
                 .any(|diag| diag.start == token_pos);
             if !already_reported_here
-                && (self.should_report_error() || self.last_error_was_leading_zero_at_other_pos())
+                && (self.should_report_error()
+                    || self.last_error_was_leading_zero_at_other_pos()
+                    || self.last_error_was_element_access_missing_argument_at_other_pos())
             {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
