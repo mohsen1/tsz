@@ -100,6 +100,12 @@ jobs:
           arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
+          # Single source of truth for "this path touches compiler/runtime
+          # CI inputs". Used in two places: the initial PR-diff classifier
+          # (sets compiler_checks_required) and the skip-main-CI logic
+          # (decides whether heavy gates are required for cached PRs).
+          # Keeping one copy prevents the two sites from drifting apart.
+          COMPILER_PATH_PATTERN='^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)'
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
             # Native merge queue validates a GitHub-owned synthetic merge
             # commit. Run the same Cloud Run-backed compiler suite here so
@@ -184,7 +190,7 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E "$COMPILER_PATH_PATTERN" \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
@@ -433,7 +439,7 @@ jobs:
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
                     compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
-                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      | grep -E "$COMPILER_PATH_PATTERN" \
                       || true)
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \
@@ -1067,11 +1073,11 @@ jobs:
               "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
               2>/dev/null || echo '{}')
             count=$(echo "$api_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
-          print(c)
-          " 2>/dev/null || echo 0)
+import sys, json
+data = json.load(sys.stdin)
+c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
+print(c)
+" 2>/dev/null || echo 0)
             echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
             if [ "${count}" -ge "${EXPECTED}" ]; then
               echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
@@ -1085,13 +1091,13 @@ jobs:
               "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
               2>/dev/null || echo '{}')
             shard_summary=$(echo "$jobs_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
-          done = [j for j in jobs if j.get('status') == 'completed']
-          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
-          print(f'done={len(done)} failed={len(failed)} names={failed}')
-          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
+import sys, json
+data = json.load(sys.stdin)
+jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
+done = [j for j in jobs if j.get('status') == 'completed']
+failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
+print(f'done={len(done)} failed={len(failed)} names={failed}')
+" 2>/dev/null || echo 'done=0 failed=0 names=[]')
             echo "  shard jobs: ${shard_summary}"
             # If all shards are done and we still don't have all artifacts, a shard
             # failed without uploading (infra kill). Stop waiting and let the
