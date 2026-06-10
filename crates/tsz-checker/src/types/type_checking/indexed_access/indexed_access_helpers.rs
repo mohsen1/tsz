@@ -1267,7 +1267,92 @@ impl<'a> CheckerState<'a> {
         let Some((constraint_target, constraint_base, constraint_index)) =
             self.keyof_indexed_access_target(index_constraint)
         else {
-            return false;
+            // Simple `keyof A` constraint: T extends `keyof A` but indexes B.
+            // No TS2536 when every key of A is also a key of B, i.e. `keyof A ≤ keyof B`.
+            //
+            // Avoid comparing the keyof unions directly — for large DOM maps (e.g.
+            // `ElementTagNameMap` vs `HTMLElementTagNameMap`) this compares hundreds of
+            // string-literal union members and can hit iteration limits in the solver,
+            // causing a spurious "assignable" result and silently dropping the error.
+            //
+            // Instead, exploit the keyof contravariance: `keyof A ≤ keyof B` iff `B ≤ A`
+            // (B is assignable to A). Extract A from the constraint (`keyof A` → A) and
+            // check `is_assignable_to(B, A)` directly on the object types.
+            //
+            // Fire TS2536 only when we can *prove* the key spaces differ. The proof
+            // requires both the constraint operand and the indexed object to be named
+            // Lazy aliases with distinct DefIds. For Application types, inline object
+            // types, and conditional types — where `lazy_def_id` returns `None` — we
+            // cannot prove a difference, so we default to suppressing the error.
+            let mut provably_different_named_type = false;
+            for current_object in [object_type, object_type_for_check] {
+                if crate::query_boundaries::common::is_type_parameter_like(
+                    self.ctx.types,
+                    current_object,
+                ) {
+                    return false; // Can't determine key space statically; defer.
+                }
+                if let Some(constraint_operand) =
+                    crate::query_boundaries::state::checking::keyof_target(
+                        self.ctx.types,
+                        index_constraint,
+                    )
+                {
+                    // Fast-path 1: same TypeId → trivially valid.
+                    if same_object_key_space(self.ctx.types, constraint_operand, current_object) {
+                        return false;
+                    }
+                    // Fast-path 2: same DefId (both operands are Lazy for the same alias).
+                    let constraint_def = crate::query_boundaries::common::lazy_def_id(
+                        self.ctx.types,
+                        constraint_operand,
+                    );
+                    let current_def = crate::query_boundaries::common::lazy_def_id(
+                        self.ctx.types,
+                        current_object,
+                    );
+                    if constraint_def.is_some() && constraint_def == current_def {
+                        return false;
+                    }
+                    // Fast-path 3: structural evaluation match — Lazy(X) vs evaluated-X.
+                    if self.same_key_space_after_evaluation(constraint_operand, current_object) {
+                        return false;
+                    }
+                    // Fast-path 4: body-TypeId match for Lazy alias vs its stored body.
+                    //
+                    // Two evaluation paths for the same type alias can produce different TypeIds:
+                    // `get_type_from_type_node(ETM)` returns the stored body TypeId directly,
+                    // while `evaluate_type_with_env(Lazy(DefId))` recursively evaluates members
+                    // and interns a NEW intersection TypeId. Because the intersection is not
+                    // structurally interned to the same ID, TypeId equality fails in fast-paths
+                    // 1-3 even when both represent the exact same type alias.
+                    //
+                    // The DefinitionStore.get_body(DefId) gives the stored body TypeId (same one
+                    // returned by `get_type_from_type_node`), so comparing it against
+                    // `current_object` detects this case without any structural comparison.
+                    if let Some(def_id) = constraint_def
+                        && let Some(body_type) = self.ctx.definition_store.get_body(def_id)
+                        && body_type == current_object
+                    {
+                        return false;
+                    }
+                    // Both are named Lazy aliases with DIFFERENT DefIds (fast-path 2 didn't
+                    // fire). This is the only case where we can prove distinct key spaces.
+                    if constraint_def.is_some() && current_def.is_some() {
+                        provably_different_named_type = true;
+                    }
+                } else {
+                    // Non-keyof constraint (e.g. `string`, `number`): compare the
+                    // constraint directly against `keyof B`. This path is rare; the
+                    // large-union issue doesn't apply here since the constraint is not
+                    // itself a computed keyof union.
+                    let keyof_current = self.ctx.types.factory().keyof(current_object);
+                    if self.is_assignable_to(index_constraint, keyof_current) {
+                        return false;
+                    }
+                }
+            }
+            return provably_different_named_type;
         };
 
         for current_object in [object_type, object_type_for_check] {
