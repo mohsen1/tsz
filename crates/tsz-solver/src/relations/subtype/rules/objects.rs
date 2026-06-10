@@ -389,16 +389,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Decide whether a source property satisfies a *nominal* (private or
-    /// protected) target property, given the two declaring-class symbols
-    /// (`parent_id`s) and the target member's visibility.
+    /// protected) target property, given the member name, the two
+    /// declaring-class symbols (`parent_id`s), and the target member's
+    /// visibility.
     ///
-    /// - `private` requires *declaration identity*: the source property must
-    ///   originate from the exact same declaration.
+    /// - `private` (modifier) requires *declaration identity*: the source
+    ///   property must originate from the exact same declaration.
     /// - `protected` is *hierarchical*: tsc accepts the member when the source
     ///   property is declared in the target's protected-declaring class or in a
     ///   class derived from it (`isPropertyInClassDerivedFrom`). The source may
     ///   also legally widen the member from `protected` to `public`, so its own
     ///   visibility is not consulted.
+    /// - ES private identifiers (`#name`) are *hierarchical* too: tsc keys each
+    ///   `#name` slot per declaring class (escaped `__#<id>@name`), so a derived
+    ///   class redeclaring the same `#name` still carries the base class's slot
+    ///   as a separate member and remains assignable to the base. tsz's merged
+    ///   object shapes key properties by surface name, which lets the derived
+    ///   redeclaration shadow the inherited brand; the declaring-class
+    ///   derivation check restores the tsc verdict (the inherited slot is
+    ///   always present on a derived class).
     ///
     /// Falls back to declaration identity when class symbols or the inheritance
     /// graph are unavailable, preserving the previous strict nominal behavior
@@ -407,6 +416,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// nominal-brand override.
     pub(crate) fn nominal_member_origin_ok(
         &self,
+        member_name: tsz_common::interner::Atom,
         source_parent: Option<tsz_binder::SymbolId>,
         target_parent: Option<tsz_binder::SymbolId>,
         target_visibility: Visibility,
@@ -417,12 +427,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source_parent == target_parent {
             return true;
         }
-        // `private` requires strict declaration identity, which just failed.
-        if target_visibility != Visibility::Protected {
+        // `private` (modifier) requires strict declaration identity, which just
+        // failed — unless the member is an ES private identifier (`#name`),
+        // which is a per-class slot that a derived class always inherits.
+        let is_es_private_identifier = self
+            .interner
+            .resolve_atom_ref(member_name)
+            .as_ref()
+            .starts_with('#');
+        if target_visibility != Visibility::Protected && !is_es_private_identifier {
             return false;
         }
-        // `protected`: the source's declaring class must derive from (or equal)
-        // the target's protected-declaring class.
+        // `protected` / `#name`: the source's declaring class must derive from
+        // (or equal) the target's declaring class.
         match (source_parent, target_parent, self.inheritance_graph) {
             (Some(src_class), Some(tgt_class), Some(graph)) => {
                 graph.is_derived_from(src_class, tgt_class)
@@ -512,8 +529,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // is hierarchical (a derived class may widen it to `public`). Both are
         // decided by the shared `nominal_member_origin_ok`.
         if target.visibility != Visibility::Public {
-            if !self.nominal_member_origin_ok(source.parent_id, target.parent_id, target.visibility)
-            {
+            if !self.nominal_member_origin_ok(
+                target.name,
+                source.parent_id,
+                target.parent_id,
+                target.visibility,
+            ) {
                 return SubtypeResult::False;
             }
         } else if source.visibility != Visibility::Public {
@@ -1259,6 +1280,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // identity, `protected` is hierarchical (shared helper).
                 if t_prop.visibility != Visibility::Public {
                     if !self.nominal_member_origin_ok(
+                        t_prop.name,
                         sp.parent_id,
                         t_prop.parent_id,
                         t_prop.visibility,

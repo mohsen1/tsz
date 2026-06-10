@@ -1743,3 +1743,7 @@ path = "tests/type_param_pick_subset_assignability_tests.rs"
 [[test]]
 name = "deeply_nested_mapped_types_tests"
 path = "tests/deeply_nested_mapped_types_tests.rs"
+
+[[test]]
+name = "implements_type_param_generation_identity_tests"
+path = "tests/implements_type_param_generation_identity_tests.rs"
