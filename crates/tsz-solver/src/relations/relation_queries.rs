@@ -757,6 +757,28 @@ pub fn check_application_variance<R: TypeResolver>(
 
     let def_id = lazy_def_id(db, s_app.base)?;
 
+    // Conditional type aliases with concrete (non-type-parameter) arguments
+    // must expand structurally so that tsc's `getRecursionIdentity` depth cap
+    // can apply. A direct variance check would short-circuit the recursive
+    // evaluation path and produce false TS2322 errors for deeply-recursive
+    // conditional aliases like `PathRecord<"a.b.c.d", V>` where tsc returns
+    // `Ternary.Maybe` (assumed compatible) after hitting the recursion limit.
+    //
+    // When the source arguments contain free type parameters (e.g.
+    // `__Awaited<T>` vs `__Awaited<U>` where T and U are different unconstrained
+    // type params), variance is reliable: the recursion-identity depth cap does
+    // not fire for type parameters (they have no concrete string value to split),
+    // and T is genuinely not assignable to U.
+    if let Some(body) = resolver.get_def_raw_body(def_id, db)
+        && matches!(db.lookup(body), Some(TypeData::Conditional(_)))
+        && !s_app
+            .args
+            .iter()
+            .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+    {
+        return None;
+    }
+
     let variances = resolver.get_type_param_variance(def_id).or_else(|| {
         crate::relations::variance::compute_type_param_variances_with_resolver_cached(
             db, resolver, query_db, def_id,
