@@ -1231,7 +1231,6 @@ impl<'a> CheckerState<'a> {
 
         let mut updates = Vec::new();
         let mut added_params: Vec<NodeIndex> = Vec::new();
-        let factory = self.ctx.types.factory();
 
         // Pass 1: Add all type parameters to scope WITHOUT constraints
         for param_indices in enclosing_param_indices.into_iter().rev() {
@@ -1261,7 +1260,15 @@ impl<'a> CheckerState<'a> {
                     default: None,
                     is_const,
                 };
-                let type_id = factory.type_param(info);
+                // Mint through the declaration-scoped cache (not a structural
+                // `factory.type_param` intern) so the enclosing parameter
+                // resolves to the SAME `TypeId` here as under
+                // `push_type_parameters`. A structural mint gives a member
+                // annotation a different identity for the same declared
+                // parameter than the one the `implements`-clause type
+                // arguments resolve to, breaking the alias-application
+                // identity fast path (false TS2416, #13044).
+                let type_id = self.intern_type_param_for_decl(data.name, info);
 
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
                 updates.push((name, previous, false));
@@ -1303,7 +1310,7 @@ impl<'a> CheckerState<'a> {
                 default: None,
                 is_const,
             };
-            let constrained_type_id = factory.type_param(info);
+            let constrained_type_id = self.intern_type_param_for_decl(data.name, info);
             self.ctx
                 .type_parameter_scope
                 .insert(name, constrained_type_id);

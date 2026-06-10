@@ -514,9 +514,17 @@ impl<'a> TypeInstantiator<'a> {
 
         let type_params = self.instantiate_type_params_if_changed(&sig.type_params);
         let local_start = self.local_type_params.len();
-        for type_param in type_params.as_deref().unwrap_or(&sig.type_params) {
-            self.local_type_params
-                .push((type_param.name, self.interner.type_param(*type_param)));
+        // Redirect occurrences of the signature's own params only when their
+        // infos actually changed (constraint/default instantiated). When
+        // unchanged, pushing a structural re-intern would rewrite
+        // declaration-scoped fresh params to the structural canonical and
+        // erase declaration identity; the shadowing scope already preserves
+        // them as-is (#13044).
+        if let Some(changed_params) = type_params.as_deref() {
+            for type_param in changed_params {
+                self.local_type_params
+                    .push((type_param.name, self.interner.type_param(*type_param)));
+            }
         }
         let type_predicate = sig
             .type_predicate
@@ -583,7 +591,13 @@ impl<'a> TypeInstantiator<'a> {
                         shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
                         "instantiate TypeParameter: SHADOWED"
                     );
-                    return self.interner.intern(*key);
+                    // Return the ORIGINAL id, not a structural re-intern:
+                    // declaration-scoped type parameters are interned fresh
+                    // (`intern_fresh` bypasses the dedupe table), so
+                    // `intern(*key)` would silently rewrite them to the
+                    // structural canonical and erase declaration identity
+                    // (#13044).
+                    return type_id;
                 }
                 if let Some(substituted) = self.substitution.get(info.name) {
                     tracing::trace!(
@@ -613,8 +627,13 @@ impl<'a> TypeInstantiator<'a> {
                             }
                         }
                     }
-                    // No substitution and no instantiated constraint, return original
-                    self.interner.intern(*key)
+                    // No substitution and no instantiated constraint: return
+                    // the ORIGINAL id. A structural re-intern would rewrite
+                    // declaration-scoped fresh type parameters to the
+                    // structural canonical, splitting identity between
+                    // instantiated and never-instantiated mentions of the
+                    // same declaration (#13044).
+                    type_id
                 }
             }
 
@@ -913,12 +932,14 @@ impl<'a> TypeInstantiator<'a> {
                 let instantiated_type_params =
                     self.instantiate_type_params_if_changed(&shape.type_params);
                 let local_start = self.local_type_params.len();
-                for type_param in instantiated_type_params
-                    .as_deref()
-                    .unwrap_or(&shape.type_params)
-                {
-                    self.local_type_params
-                        .push((type_param.name, self.interner.type_param(*type_param)));
+                // Redirect own-param occurrences only when the param infos
+                // changed; see `instantiate_call_signature_if_changed` for
+                // the declaration-identity rationale (#13044).
+                if let Some(changed_params) = instantiated_type_params.as_deref() {
+                    for type_param in changed_params {
+                        self.local_type_params
+                            .push((type_param.name, self.interner.type_param(*type_param)));
+                    }
                 }
                 let type_predicate = shape
                     .type_predicate

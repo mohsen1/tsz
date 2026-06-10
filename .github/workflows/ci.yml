@@ -100,6 +100,12 @@ jobs:
           arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
+          # Single source of truth for "this path touches compiler/runtime
+          # CI inputs". Used in two places: the initial PR-diff classifier
+          # (sets compiler_checks_required) and the skip-main-CI logic
+          # (decides whether heavy gates are required for cached PRs).
+          # Keeping one copy prevents the two sites from drifting apart.
+          COMPILER_PATH_PATTERN='^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)'
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
             # Native merge queue validates a GitHub-owned synthetic merge
             # commit. Run the same Cloud Run-backed compiler suite here so
@@ -184,7 +190,7 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E "$COMPILER_PATH_PATTERN" \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
@@ -433,7 +439,7 @@ jobs:
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
                     compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
-                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      | grep -E "$COMPILER_PATH_PATTERN" \
                       || true)
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \

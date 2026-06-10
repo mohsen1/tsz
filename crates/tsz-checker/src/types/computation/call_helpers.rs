@@ -561,6 +561,12 @@ impl<'a> CheckerState<'a> {
     /// For example, `declare var Math: Math` has type annotation "Math"
     /// which matches the symbol name "Math". This pattern is common for
     /// lib globals that follow the `declare var X: X` pattern.
+    ///
+    /// A reference with type arguments (`declare var Bag: Bag<string>`) is
+    /// NOT self-referential in this sense: the annotation is a generic
+    /// instantiation of the merged interface, so value position must keep
+    /// the instantiated type instead of being replaced by the raw
+    /// (uninstantiated) interface shape.
     pub(crate) fn is_self_referential_var_type(
         &self,
         _sym_id: SymbolId,
@@ -576,7 +582,7 @@ impl<'a> CheckerState<'a> {
             && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            return ident.escaped_text == name;
+            return type_ref.type_arguments.is_none() && ident.escaped_text == name;
         }
 
         // For declarations in other arenas (lib files), check via declaration_arenas
@@ -594,7 +600,7 @@ impl<'a> CheckerState<'a> {
             && let Some(name_node) = decl_arena.get(type_ref.type_name)
             && let Some(ident) = decl_arena.get_identifier(name_node)
         {
-            return ident.escaped_text == name;
+            return type_ref.type_arguments.is_none() && ident.escaped_text == name;
         }
 
         false

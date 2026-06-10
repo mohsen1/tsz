@@ -153,6 +153,9 @@ mod class_namespace_static_relation_routing_arch_tests;
 #[path = "../tests/class_property_typed_const_initializer_tests.rs"]
 mod class_property_typed_const_initializer_tests;
 #[cfg(test)]
+#[path = "tests/comlink_row_regression_tests.rs"]
+mod comlink_row_regression_tests;
+#[cfg(test)]
 #[path = "tests/common_boundary_export_ratchets.rs"]
 mod common_boundary_export_ratchets;
 #[cfg(test)]
@@ -686,6 +689,9 @@ mod cross_file_generic_alias_union_implements_tests;
 #[cfg(test)]
 #[path = "tests/cross_file_interface_property_access_tests.rs"]
 mod cross_file_interface_property_access_tests;
+#[cfg(test)]
+#[path = "tests/cross_file_type_param_decl_identity_tests.rs"]
+mod cross_file_type_param_decl_identity_tests;
 #[cfg(test)]
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;

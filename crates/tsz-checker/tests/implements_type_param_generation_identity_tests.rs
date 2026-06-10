@@ -3,24 +3,20 @@
 //! Structural rule: every resolution of the same type-parameter declaration
 //! (class member checking, heritage-clause type-argument resolution, interface
 //! member rebuilding for the `implements` check) must converge on a single
-//! `TypeId` per `TypeParamInfo`. `tsc` identifies type parameters by symbol;
-//! `tsz` approximates that with declaration-scoped fresh `TypeId`s deduped in
-//! `intern_type_param_for_decl` — plus a *separate* structurally-interned
-//! scheme used by the lowering for class member shapes. The two schemes do
-//! not converge: trace evidence shows the impl-side member embedding
-//! lowered/structural param ids while the heritage-clause substitution
-//! produces checker-fresh ids for the same declarations. Member types
-//! embedding those ids inside *deferred* types (conditional `extends`
-//! clauses, which relate by `TypeId` identity) then fail against each other:
-//! false TS2416 on `implements` members (the dominant kysely builder family).
+//! declaration-scoped `TypeId` per `TypeParamInfo`. `tsc` identifies type
+//! parameters by symbol; `tsz` approximates that with `intern_type_param_for_decl`
+//! and the shared `DefinitionStore` declaration-node map. Trace evidence showed
+//! the impl-side member and heritage-clause substitution producing different ids
+//! for the same declarations. Member types embedding those ids inside *deferred*
+//! types (conditional `extends` clauses, which relate by `TypeId` identity) then
+//! failed against each other: false TS2416 on `implements` members (the dominant
+//! kysely builder family).
 //!
-//! The convergence: `intern_type_param_for_decl` interns class/interface/
-//! type-alias type parameters *structurally* (`TypeInterner::type_param`),
-//! matching the lowering's scheme, so every resolution of a type-level
-//! declaration's parameter produces one `TypeId`. Function-like declarations
-//! keep declaration-scoped fresh ids so distinct same-named, same-constrained
-//! function params stay distinct (`S[K_outer]` vs `S[K_inner]` keeps
-//! erroring). All witnesses are tsc-5.5-verified.
+//! The convergence: `intern_type_param_for_decl` routes repeated pushes for the
+//! same declaration through one shared per-declaration identity. Function-like
+//! declarations keep declaration-scoped fresh ids so distinct same-named,
+//! same-constrained function params stay distinct (`S[K_outer]` vs `S[K_inner]`
+//! keeps erroring). All witnesses are tsc-5.5-verified.
 //!
 //! The remaining ignored test pins a separate residue: a deferred
 //! conditional instantiated with concrete type arguments must relate to its
@@ -28,8 +24,8 @@
 //! alone does not provide.
 //!
 //! Owner layer: checker type-parameter identity
-//! (`state/type_analysis/core.rs::intern_type_param_for_decl` and the
-//! lowering's structural `type_param` interning).
+//! (`state/type_analysis/core.rs::intern_type_param_for_decl` and the shared
+//! solver `DefinitionStore` declaration-node map).
 
 use tsz_checker::test_utils::check_source_diagnostics;
 

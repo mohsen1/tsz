@@ -1785,7 +1785,19 @@ pub fn apply_contextual_type(
         None => return expr_type,
     };
 
-    // If expression type is any, unknown, or error, use contextual type
+    // `any` stays `any`: tsc computes an object-literal property's type from
+    // the expression itself; a contextual property type influences widening
+    // and freshness but never overwrites an `any` value with the contextual
+    // type. Substituting here turned `{ value }` (shorthand, `value: any`)
+    // into the union of contextual property types across a discriminated
+    // union target (`unknown | {}`), producing false TS2322. `any` is
+    // assignable everywhere, so preserving it cannot mask a real
+    // assignability error.
+    if expr_type == TypeId::ANY {
+        return expr_type;
+    }
+
+    // If expression type is unknown or error, use contextual type
     if expr_type.is_any_or_unknown() || expr_type.is_error() {
         return ctx_type;
     }

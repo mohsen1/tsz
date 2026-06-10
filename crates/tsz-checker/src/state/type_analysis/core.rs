@@ -4,7 +4,7 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::common as common_query;
-use crate::query_boundaries::common::{lazy_def_id, type_param_info};
+use crate::query_boundaries::common::lazy_def_id;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -828,55 +828,51 @@ impl<'a> CheckerState<'a> {
     /// refinement pass can install a constrained variant when the user
     /// wrote `T extends C`.
     ///
-    /// For type parameters that have no `DefId` registration (class, method,
-    /// and interface type parameters are not emitted into `semantic_defs` by
-    /// the binder), a secondary node-keyed cache (`type_param_node_cache`) is
-    /// consulted. Without it, `get_class_instance_type_inner` and the outer
-    /// `check_class_declaration` each call `push_type_parameters` independently,
-    /// producing different `TypeIds` for the same `T`. That discrepancy causes
-    /// `MappedType.constraint = KeyOf(T_id_instance)` to differ from
-    /// `K.constraint = KeyOf(T_id_check)`, silently defeating
-    /// `type_param_constraint_matches` in the solver's `visit_mapped` and
-    /// producing a false TS2349 on `this.map[key]()` patterns.
-    fn intern_type_param_for_decl(
+    /// The canonical identity lives in the shared `DefinitionStore` (one
+    /// `Arc` across parent and child checkers) under a multi-entry
+    /// `(file-name Atom, name_node, info)` map. The file component makes
+    /// the arena-local `NodeIndex` globally unambiguous. Identity is
+    /// deliberately NOT keyed by `DefId`: the only def lookup available at
+    /// mint time rides the file-agnostic raw-`SymbolId` index
+    /// (`find_def_by_symbol`), whose cross-binder collisions would let two
+    /// unrelated same-named declarations converge on one `TypeId`
+    /// (over-sharing — observed as `RawBuilder<unknown>` contextual
+    /// inference regressions on the kysely row).
+    ///
+    /// Sharing matters twice over. Within one checker,
+    /// `get_class_instance_type_inner` and the outer
+    /// `check_class_declaration` each call `push_type_parameters`
+    /// independently; without a per-declaration cache they would mint
+    /// different `TypeIds` for the same `T`, making
+    /// `MappedType.constraint = KeyOf(T_id_instance)` differ from
+    /// `K.constraint = KeyOf(T_id_check)` and silently defeating
+    /// `type_param_constraint_matches` in the solver's `visit_mapped`
+    /// (false TS2349 on `this.map[key]()` patterns). Across checkers,
+    /// cross-arena delegation spawns child `CheckerContext`s for the same
+    /// files; a per-context cache lets each child mint its own ids for the
+    /// same declarations, so an `implements` clause's type arguments and a
+    /// member annotation disagree and the relation identity fast path goes
+    /// dead (false `TS2416`/`TS2740` `ExpressionBuilder<DB, TB>` vs itself
+    /// on `kysely`-style generic-alias parameter annotations, #13044).
+    ///
+    /// The map is multi-entry per declaration because the two-phase push
+    /// pattern (pass 1 unconstrained, pass 2 constrained refinement) needs
+    /// the unconstrained and constrained variants to each keep their own
+    /// stable id; a single-slot cache ping-pongs and re-mints fresh ids on
+    /// every push sequence.
+    ///
+    /// The per-context `type_param_node_cache` is kept as a thin L1 in
+    /// front of the shared store; its entries are only ever written with
+    /// the store's canonical id.
+    pub(crate) fn intern_type_param_for_decl(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
         info: tsz_solver::TypeParamInfo,
     ) -> tsz_solver::TypeId {
-        // Type-level declarations (class/interface/type-alias) intern their
-        // type parameters *structurally*, converging with the `tsz-lowering`
-        // scheme that builds these declarations' def bodies. Without this, the
-        // same declaration's `DB`/`TB` exist in two generations — a
-        // checker-fresh id (heritage-clause arguments, annotation scope) and a
-        // lowering-structural id (def-lowered member shapes) — and
-        // identity-sensitive relation rules (conditional `extends` equivalence,
-        // `S[T1]`-vs-`S[T2]` index-access distinctness) treat one declaration
-        // as two unrelated type parameters: false TS2416 on `implements`/
-        // `extends` members whose deferred types close over the outer params
-        // (the dominant kysely builder family).
-        //
-        // Function-like declarations keep declaration-scoped *fresh* ids:
-        // two same-named, same-constrained params of different functions are
-        // distinct in tsc (`S[K_outer]` vs `S[K_inner]` must keep erroring),
-        // and call-site relation paths reconcile method-local params through
-        // name-keyed signature unification instead of id identity.
-        if self.type_param_belongs_to_type_level_decl(name_node) {
-            let type_id = self.ctx.types.type_param(info);
-            if let Some(def_id) = self
-                .ctx
-                .binder
-                .node_symbols
-                .get(&name_node.0)
-                .and_then(|&sym_id| self.ctx.definition_store.find_def_by_symbol(sym_id.0))
-            {
-                self.ctx
-                    .definition_store
-                    .register_type_to_def(type_id, def_id);
-                self.ctx
-                    .definition_store
-                    .register_type_param_for_def(def_id, type_id);
-            }
-            return type_id;
+        // L1: per-context cache. `name_node` always belongs to `ctx.arena`,
+        // so the arena-local key is unambiguous within one context.
+        if let Some(&cached) = self.ctx.type_param_node_cache.get(&(name_node.0, info)) {
+            return cached;
         }
 
         let registered_def = self
@@ -886,74 +882,36 @@ impl<'a> CheckerState<'a> {
             .get(&name_node.0)
             .and_then(|&sym_id| self.ctx.definition_store.find_def_by_symbol(sym_id.0));
 
-        let cached = registered_def.and_then(|def_id| {
-            let cached_id = self.ctx.definition_store.find_type_param_for_def(def_id)?;
-            if type_param_info(self.ctx.types, cached_id) == Some(info) {
-                Some(cached_id)
-            } else {
-                None
-            }
-        });
+        let file_atom = self.ctx.types.intern_string(&self.ctx.file_name);
 
-        // Fallback: for type params with no DefId (class/method/interface type params
-        // omitted from semantic_defs), use the node-keyed cache so repeated
-        // push_type_parameters calls for the same declaration converge on the same TypeId.
-        let cached = cached.or_else(|| {
-            if registered_def.is_none() {
-                self.ctx
-                    .type_param_node_cache
-                    .get(&(name_node.0, info))
-                    .copied()
-            } else {
-                None
-            }
-        });
+        let cached =
+            self.ctx
+                .definition_store
+                .find_type_param_for_decl_node(file_atom, name_node.0, &info);
 
-        let type_id = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
+        let minted = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
+
+        // Adopt the canonical id from the shared node-keyed map (first
+        // writer wins across parallel checkers and cross-arena delegation).
+        let type_id = self.ctx.definition_store.register_type_param_for_decl_node(
+            file_atom,
+            name_node.0,
+            info,
+            minted,
+        );
 
         if let Some(def_id) = registered_def {
             self.ctx
                 .definition_store
                 .register_type_to_def(type_id, def_id);
-            self.ctx
-                .definition_store
-                .register_type_param_for_def(def_id, type_id);
-        } else {
-            // Keep the node-keyed cache up to date so the next push_type_parameters
-            // call for this same declaration returns the same TypeId.
-            self.ctx
-                .type_param_node_cache
-                .insert((name_node.0, info), type_id);
         }
+        // Keep the L1 cache up to date so the next push_type_parameters
+        // call for this same declaration returns the same TypeId.
+        self.ctx
+            .type_param_node_cache
+            .insert((name_node.0, info), type_id);
 
         type_id
-    }
-
-    /// Whether `name_node` (a type-parameter's name identifier) belongs to a
-    /// type-level declaration — class, interface, or type alias — whose def
-    /// body is lowered with structurally-interned type parameters.
-    ///
-    /// The chain is `name identifier -> TypeParameter node -> declaring node`.
-    fn type_param_belongs_to_type_level_decl(
-        &self,
-        name_node: tsz_parser::parser::NodeIndex,
-    ) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-        let Some(param_idx) = self.ctx.arena.parent_of(name_node) else {
-            return false;
-        };
-        let Some(decl_idx) = self.ctx.arena.parent_of(param_idx) else {
-            return false;
-        };
-        self.ctx.arena.get(decl_idx).is_some_and(|node| {
-            matches!(
-                node.kind,
-                k if k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::CLASS_EXPRESSION
-                    || k == syntax_kind_ext::INTERFACE_DECLARATION
-                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-            )
-        })
     }
 
     pub(super) fn empty_type_literal_satisfies_optional_mapped_constraint(
