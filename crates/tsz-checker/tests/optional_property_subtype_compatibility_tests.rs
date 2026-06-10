@@ -8,7 +8,10 @@
 //! it does not make an absent property count as present.
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_source_codes, check_with_options, has_diagnostic_code};
+use crate::test_utils::{
+    check_source_codes, check_source_with_libs_code_messages, check_with_options,
+    has_diagnostic_code, load_lib_files,
+};
 
 // ── Standard mode ────────────────────────────────────────────────────────────
 
@@ -179,8 +182,15 @@ type Expected = { foo: string; bar?: boolean; baz?: any };
 const innerProps = { foo: string.isRequired, bar: bool, baz: any };
 const assign: Validator<Expected> = shape(innerProps).isRequired;
 "#;
+    let lib_files = load_lib_files(&["es5.d.ts"]);
+    let messages = check_source_with_libs_code_messages(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    );
     assert!(
-        check_source_codes(source).is_empty(),
-        "expected prop-types shape inference to match the declared props shape"
+        messages.is_empty(),
+        "expected prop-types shape inference to match the declared props shape. Got: {messages:?}"
     );
 }
