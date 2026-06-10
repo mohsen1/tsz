@@ -1267,7 +1267,46 @@ impl<'a> CheckerState<'a> {
         let Some((constraint_target, constraint_base, constraint_index)) =
             self.keyof_indexed_access_target(index_constraint)
         else {
-            return false;
+            // Simple `keyof A` constraint: T extends `keyof A` but indexes B.
+            // By covariance of keyof under structural subtyping, `keyof A ≤ keyof B` iff
+            // B ≤ A (B has at least all of A's keys). No TS2536 when B ≤ A.
+            // Use assign_relation_outcome for structural comparison — it uses the full
+            // checker resolver unlike evaluate_keyof (which uses NoopResolver and cannot
+            // expand lazy DOM types like `ElementTagNameMap`, causing false negatives).
+            let Some(simple_target) = crate::query_boundaries::state::checking::keyof_target(
+                self.ctx.types,
+                index_constraint,
+            )
+            .or_else(|| {
+                let evaluated = self.evaluate_type_with_env(index_constraint);
+                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, evaluated)
+            }) else {
+                return false;
+            };
+            // If A is a type parameter (e.g. `T extends keyof Arr` where `Arr` is generic),
+            // the key space can't be determined statically — defer to avoid false positives.
+            if crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                simple_target,
+            ) {
+                return false;
+            }
+            for current_object in [object_type, object_type_for_check] {
+                if crate::query_boundaries::common::is_type_parameter_like(
+                    self.ctx.types,
+                    current_object,
+                ) {
+                    return false; // Can't determine key space statically; defer.
+                }
+                // No TS2536 when B ≤ A: every key of A is a key of B, so T ≤ keyof A ≤ keyof B.
+                if self
+                    .assign_relation_outcome(current_object, simple_target)
+                    .related
+                {
+                    return false;
+                }
+            }
+            return true;
         };
 
         for current_object in [object_type, object_type_for_check] {
