@@ -4,7 +4,7 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::common as common_query;
-use crate::query_boundaries::common::{lazy_def_id, type_param_info};
+use crate::query_boundaries::common::lazy_def_id;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -828,35 +828,51 @@ impl<'a> CheckerState<'a> {
     /// refinement pass can install a constrained variant when the user
     /// wrote `T extends C`.
     ///
-    /// A secondary node-keyed cache (`type_param_node_cache`, multi-entry per
-    /// `(name_node, info)`) is consulted for every declaration — both for type
-    /// parameters with no `DefId` registration (class, method, and interface
-    /// type parameters are not emitted into `semantic_defs` by the binder) and
-    /// as a backstop for the def-keyed slot. Without it,
-    /// `get_class_instance_type_inner` and the outer `check_class_declaration`
-    /// each call `push_type_parameters` independently, producing different
-    /// `TypeIds` for the same `T`. That discrepancy causes
-    /// `MappedType.constraint = KeyOf(T_id_instance)` to differ from
-    /// `K.constraint = KeyOf(T_id_check)`, silently defeating
-    /// `type_param_constraint_matches` in the solver's `visit_mapped` and
-    /// producing a false TS2349 on `this.map[key]()` patterns.
+    /// The canonical identity lives in the shared `DefinitionStore` (one
+    /// `Arc` across parent and child checkers) under two multi-entry maps:
     ///
-    /// The def-keyed `find_type_param_for_def` slot is single-entry and
-    /// overwritten on every mint, so the two-phase push pattern
-    /// (pass 1 unconstrained, pass 2 constrained refinement) ping-pongs it:
-    /// each later pass-1 lookup misses the registered constrained variant and
-    /// would mint a fresh id, then the constrained lookup misses the fresh
-    /// unconstrained one, and so on. Consulting the node-keyed cache even when
-    /// a `DefId` registration exists keeps one canonical `TypeId` per
-    /// `(declaration, info)` pair, so an `implements` clause's type arguments
-    /// and a member annotation lowered under `push_enclosing_type_parameters`
-    /// agree on the same `TypeId` for the same declared parameter (false
-    /// `TS2416` on `kysely`-style generic-alias parameter annotations, #13044).
+    /// - `(DefId, info)` for declarations the binder registered into
+    ///   `semantic_defs`;
+    /// - `(file-name Atom, name_node, info)` for the rest (class, method,
+    ///   and interface type parameters have no `DefId`). The file component
+    ///   makes the arena-local `NodeIndex` globally unambiguous.
+    ///
+    /// Sharing matters twice over. Within one checker,
+    /// `get_class_instance_type_inner` and the outer
+    /// `check_class_declaration` each call `push_type_parameters`
+    /// independently; without a per-declaration cache they would mint
+    /// different `TypeIds` for the same `T`, making
+    /// `MappedType.constraint = KeyOf(T_id_instance)` differ from
+    /// `K.constraint = KeyOf(T_id_check)` and silently defeating
+    /// `type_param_constraint_matches` in the solver's `visit_mapped`
+    /// (false TS2349 on `this.map[key]()` patterns). Across checkers,
+    /// cross-arena delegation spawns child `CheckerContext`s for the same
+    /// files; a per-context cache lets each child mint its own ids for the
+    /// same declarations, so an `implements` clause's type arguments and a
+    /// member annotation disagree and the relation identity fast path goes
+    /// dead (false `TS2416`/`TS2740` `ExpressionBuilder<DB, TB>` vs itself
+    /// on `kysely`-style generic-alias parameter annotations, #13044).
+    ///
+    /// Both maps are multi-entry per declaration because the two-phase push
+    /// pattern (pass 1 unconstrained, pass 2 constrained refinement) needs
+    /// the unconstrained and constrained variants to each keep their own
+    /// stable id; a single-slot cache ping-pongs and re-mints fresh ids on
+    /// every push sequence.
+    ///
+    /// The per-context `type_param_node_cache` is kept as a thin L1 in
+    /// front of the shared store; its entries are only ever written with
+    /// the store's canonical id.
     pub(crate) fn intern_type_param_for_decl(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
         info: tsz_solver::TypeParamInfo,
     ) -> tsz_solver::TypeId {
+        // L1: per-context cache. `name_node` always belongs to `ctx.arena`,
+        // so the arena-local key is unambiguous within one context.
+        if let Some(&cached) = self.ctx.type_param_node_cache.get(&(name_node.0, info)) {
+            return cached;
+        }
+
         let registered_def = self
             .ctx
             .binder
@@ -864,28 +880,32 @@ impl<'a> CheckerState<'a> {
             .get(&name_node.0)
             .and_then(|&sym_id| self.ctx.definition_store.find_def_by_symbol(sym_id.0));
 
-        let cached = registered_def.and_then(|def_id| {
-            let cached_id = self.ctx.definition_store.find_type_param_for_def(def_id)?;
-            if type_param_info(self.ctx.types, cached_id) == Some(info) {
-                Some(cached_id)
-            } else {
-                None
-            }
-        });
+        let file_atom = self.ctx.types.intern_string(&self.ctx.file_name);
 
-        // Node-keyed fallback: consult the `(name_node, info)` cache for every
-        // declaration (not just DefId-less ones). The def-keyed slot above is
-        // single-entry, so the unconstrained/constrained two-phase push pattern
-        // ping-pongs it; this multi-entry cache keeps one canonical `TypeId`
-        // per `(declaration, info)` pair across all scope-push paths.
-        let cached = cached.or_else(|| {
-            self.ctx
-                .type_param_node_cache
-                .get(&(name_node.0, info))
-                .copied()
-        });
+        let cached = registered_def
+            .and_then(|def_id| {
+                self.ctx
+                    .definition_store
+                    .find_type_param_for_def(def_id, &info)
+            })
+            .or_else(|| {
+                self.ctx.definition_store.find_type_param_for_decl_node(
+                    file_atom,
+                    name_node.0,
+                    &info,
+                )
+            });
 
-        let type_id = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
+        let minted = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
+
+        // Adopt the canonical id from the shared node-keyed map (first
+        // writer wins across parallel checkers and cross-arena delegation).
+        let type_id = self.ctx.definition_store.register_type_param_for_decl_node(
+            file_atom,
+            name_node.0,
+            info,
+            minted,
+        );
 
         if let Some(def_id) = registered_def {
             self.ctx
@@ -893,9 +913,9 @@ impl<'a> CheckerState<'a> {
                 .register_type_to_def(type_id, def_id);
             self.ctx
                 .definition_store
-                .register_type_param_for_def(def_id, type_id);
+                .register_type_param_for_def(def_id, info, type_id);
         }
-        // Keep the node-keyed cache up to date so the next push_type_parameters
+        // Keep the L1 cache up to date so the next push_type_parameters
         // call for this same declaration returns the same TypeId.
         self.ctx
             .type_param_node_cache
