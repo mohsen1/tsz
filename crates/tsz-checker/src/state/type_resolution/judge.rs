@@ -1,8 +1,8 @@
 //! Judge Integration for the Checker
 //!
-//! Provides integration between the Checker and the Solver's Judge trait.
+//! Provides integration between the Checker and the Solver's concrete Judge.
 
-use crate::query_boundaries::common::{DefaultJudge, Judge, JudgeConfig};
+use crate::query_boundaries::common::{DefaultJudge, JudgeConfig};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 

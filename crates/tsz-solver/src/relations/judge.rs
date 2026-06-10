@@ -36,7 +36,7 @@
 //! ## Usage
 //!
 //! ```text
-//! let judge = Judge::new(&interner);
+//! let judge = DefaultJudge::with_defaults(&interner, &env);
 //!
 //! // Pure subtype check (cached)
 //! let is_subtype = judge.is_subtype(source, target);
@@ -62,8 +62,8 @@ use std::cell::RefCell;
 use std::sync::{Arc, LazyLock};
 use tsz_common::interner::Atom;
 
-/// Pre-allocated empty Arc<Vec> singletons to avoid repeated heap allocations
-/// in trait method implementations that return `Arc<Vec<T>>` for empty results.
+/// Pre-allocated empty `Arc<Vec>` singletons to avoid repeated heap allocations
+/// in query helpers that return `Arc<Vec<T>>` for empty results.
 static EMPTY_MEMBERS: LazyLock<Arc<Vec<(Atom, TypeId)>>> = LazyLock::new(|| Arc::new(Vec::new()));
 static EMPTY_CALL_SIGS: LazyLock<Arc<Vec<CallSignature>>> = LazyLock::new(|| Arc::new(Vec::new()));
 
@@ -212,154 +212,14 @@ impl Default for JudgeConfig {
 }
 
 // =============================================================================
-// Judge Trait
+// Concrete Judge Implementation
 // =============================================================================
 
-/// The Judge trait: pure type algebra queries.
+/// Concrete implementation of Judge-layer type algebra queries.
 ///
-/// This trait defines the query interface for type checking operations.
-/// Implementations can provide different caching strategies (e.g., Salsa).
-///
-/// ## Coinductive Semantics
-///
-/// Subtype checks use coinductive semantics for recursive types:
-/// - When a cycle is detected, assume `true` (greatest fixed point)
-/// - This correctly handles types like `type List<T> = { head: T; tail: List<T> }`
-///
-/// ## Memoization
-///
-/// All methods are designed to be memoizable:
-/// - No side effects (diagnostics handled separately)
-/// - Deterministic results for same inputs
-/// - Configuration is explicit (not implicit state)
-pub trait Judge {
-    // =========================================================================
-    // Core Type Relations
-    // =========================================================================
-
-    /// Check if `source` is a subtype of `target`.
-    ///
-    /// Uses coinductive semantics: cycles assume `true`.
-    ///
-    /// # Example
-    /// ```text
-    /// // number <: number | string
-    /// assert!(judge.is_subtype(TypeId::NUMBER, union_type));
-    /// ```
-    fn is_subtype(&self, source: TypeId, target: TypeId) -> bool;
-
-    /// Check if two types are identical (stricter than subtyping).
-    ///
-    /// Identity requires both `A <: B` and `B <: A`.
-    fn are_identical(&self, a: TypeId, b: TypeId) -> bool {
-        a == b || (self.is_subtype(a, b) && self.is_subtype(b, a))
-    }
-
-    // =========================================================================
-    // Type Evaluation
-    // =========================================================================
-
-    /// Evaluate a type, resolving meta-types (conditional, mapped, keyof, etc.).
-    ///
-    /// Returns the evaluated type (may be the same if no evaluation needed).
-    ///
-    /// # Cycle Recovery
-    /// Returns the input type on cycle (identity recovery).
-    fn evaluate(&self, type_id: TypeId) -> TypeId;
-
-    /// Instantiate a generic type with type arguments.
-    ///
-    /// # Example
-    /// ```text
-    /// // Array<number> from Array<T> with T=number
-    /// let array_number = judge.instantiate(array_generic, &[TypeId::NUMBER]);
-    /// ```
-    fn instantiate(&self, generic: TypeId, args: &[TypeId]) -> TypeId;
-
-    // =========================================================================
-    // Type Classifiers
-    // =========================================================================
-
-    /// Classify how a type can be iterated.
-    ///
-    /// Used for:
-    /// - for-of loop targets
-    /// - Spread operators
-    /// - `Array.from()` arguments
-    fn classify_iterable(&self, type_id: TypeId) -> IterableKind;
-
-    /// Classify how a type can be called.
-    ///
-    /// Used for:
-    /// - Call expressions
-    /// - new expressions
-    /// - Overload resolution
-    fn classify_callable(&self, type_id: TypeId) -> CallableKind;
-
-    /// Get primitive-like behavior flags for a type.
-    ///
-    /// Used for:
-    /// - Binary operator resolution
-    /// - Type coercion rules
-    fn classify_primitive(&self, type_id: TypeId) -> PrimitiveFlags;
-
-    /// Classify a type's truthiness behavior.
-    ///
-    /// Used for:
-    /// - Control flow narrowing
-    /// - Conditional expressions
-    fn classify_truthiness(&self, type_id: TypeId) -> TruthinessKind;
-
-    // =========================================================================
-    // Property Access
-    // =========================================================================
-
-    /// Get the apparent type (unwrap type params, resolve constraints).
-    fn apparent_type(&self, type_id: TypeId) -> TypeId;
-
-    /// Get a specific property's type from a type.
-    ///
-    /// Returns `PropertyResult` which distinguishes between:
-    /// - Property found
-    /// - Property not found
-    /// - Index signature match
-    /// - Special types (any, unknown, error)
-    fn get_property(&self, type_id: TypeId, name: Atom) -> PropertyResult;
-
-    /// Get all members of a type as (name, type) pairs.
-    fn get_members(&self, type_id: TypeId) -> Arc<Vec<(Atom, TypeId)>>;
-
-    /// Get call signatures of a type.
-    fn get_call_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>>;
-
-    /// Get construct signatures of a type.
-    fn get_construct_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>>;
-
-    /// Get the result of indexing: T[K]
-    fn get_index_type(&self, object: TypeId, key: TypeId) -> TypeId;
-
-    /// Get index signature type (string or number indexer).
-    fn get_index_signature(&self, type_id: TypeId, kind: IndexKind) -> Option<TypeId>;
-
-    /// Get keyof: keyof T
-    fn get_keyof(&self, type_id: TypeId) -> TypeId;
-
-    // =========================================================================
-    // Configuration
-    // =========================================================================
-
-    /// Get the current configuration.
-    fn config(&self) -> &JudgeConfig;
-}
-
-// =============================================================================
-// Default Judge Implementation
-// =============================================================================
-
-/// Default implementation of the Judge trait.
-///
-/// Uses basic caching with `FxHashMap`. For production use with incremental
-/// compilation, consider a Salsa-based implementation.
+/// Uses operation-local caches with `FxHashMap`. Relation decisions continue to
+/// flow through [`SubtypeChecker`]; this type owns query orchestration and
+/// classifier helpers.
 pub struct DefaultJudge<'a> {
     db: &'a dyn TypeDatabase,
     config: JudgeConfig,
@@ -436,8 +296,9 @@ impl<'a> DefaultJudge<'a> {
     }
 }
 
-impl<'a> Judge for DefaultJudge<'a> {
-    fn is_subtype(&self, source: TypeId, target: TypeId) -> bool {
+impl<'a> DefaultJudge<'a> {
+    /// Check if `source` is a subtype of `target`.
+    pub fn is_subtype(&self, source: TypeId, target: TypeId) -> bool {
         // Fast path: identity
         if source == target {
             return true;
@@ -464,7 +325,13 @@ impl<'a> Judge for DefaultJudge<'a> {
         result
     }
 
-    fn evaluate(&self, type_id: TypeId) -> TypeId {
+    /// Check if two types are identical.
+    pub fn are_identical(&self, a: TypeId, b: TypeId) -> bool {
+        a == b || (self.is_subtype(a, b) && self.is_subtype(b, a))
+    }
+
+    /// Evaluate a type, resolving meta-types where possible.
+    pub fn evaluate(&self, type_id: TypeId) -> TypeId {
         // Fast path: intrinsics don't need evaluation
         if type_id.is_intrinsic() {
             return type_id;
@@ -485,7 +352,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         result
     }
 
-    fn instantiate(&self, generic: TypeId, args: &[TypeId]) -> TypeId {
+    /// Instantiate a generic type with type arguments.
+    pub fn instantiate(&self, generic: TypeId, args: &[TypeId]) -> TypeId {
         use crate::instantiation::instantiate::instantiate_generic;
 
         // Get type params from the generic type
@@ -505,7 +373,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         generic
     }
 
-    fn classify_iterable(&self, type_id: TypeId) -> IterableKind {
+    /// Classify how a type can be iterated.
+    pub fn classify_iterable(&self, type_id: TypeId) -> IterableKind {
         let evaluated = self.evaluate(type_id);
 
         // Check for special types
@@ -594,7 +463,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn classify_callable(&self, type_id: TypeId) -> CallableKind {
+    /// Classify how a type can be called.
+    pub fn classify_callable(&self, type_id: TypeId) -> CallableKind {
         let evaluated = self.evaluate(type_id);
 
         if evaluated == TypeId::ANY {
@@ -634,7 +504,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn classify_primitive(&self, type_id: TypeId) -> PrimitiveFlags {
+    /// Get primitive-like behavior flags for a type.
+    pub fn classify_primitive(&self, type_id: TypeId) -> PrimitiveFlags {
         let mut flags = PrimitiveFlags::empty();
 
         // Handle intrinsics directly
@@ -680,7 +551,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         flags
     }
 
-    fn classify_truthiness(&self, type_id: TypeId) -> TruthinessKind {
+    /// Classify a type's truthiness behavior.
+    pub fn classify_truthiness(&self, type_id: TypeId) -> TruthinessKind {
         // Handle intrinsics
         match type_id {
             TypeId::ANY | TypeId::UNKNOWN => return TruthinessKind::Unknown,
@@ -767,7 +639,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn apparent_type(&self, type_id: TypeId) -> TypeId {
+    /// Get the apparent type (unwrap type params, resolve constraints).
+    pub fn apparent_type(&self, type_id: TypeId) -> TypeId {
         if type_id.is_intrinsic() {
             return type_id;
         }
@@ -782,7 +655,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn get_property(&self, type_id: TypeId, name: Atom) -> PropertyResult {
+    /// Get a specific property's type from a type.
+    pub fn get_property(&self, type_id: TypeId, name: Atom) -> PropertyResult {
         // Handle special types
         match type_id {
             TypeId::ANY => return PropertyResult::IsAny,
@@ -946,7 +820,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn get_members(&self, type_id: TypeId) -> Arc<Vec<(Atom, TypeId)>> {
+    /// Get all members of a type as (name, type) pairs.
+    pub fn get_members(&self, type_id: TypeId) -> Arc<Vec<(Atom, TypeId)>> {
         let evaluated = self.evaluate(type_id);
         let key = match self.db.lookup(evaluated) {
             Some(k) => k,
@@ -978,7 +853,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn get_call_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>> {
+    /// Get call signatures of a type.
+    pub fn get_call_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>> {
         let evaluated = self.evaluate(type_id);
         let key = match self.db.lookup(evaluated) {
             Some(k) => k,
@@ -1008,7 +884,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn get_construct_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>> {
+    /// Get construct signatures of a type.
+    pub fn get_construct_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>> {
         let evaluated = self.evaluate(type_id);
         let key = match self.db.lookup(evaluated) {
             Some(k) => k,
@@ -1038,7 +915,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn get_index_type(&self, object: TypeId, key: TypeId) -> TypeId {
+    /// Get the result of indexing: `T[K]`.
+    pub fn get_index_type(&self, object: TypeId, key: TypeId) -> TypeId {
         crate::evaluation::evaluate::evaluate_index_access_with_options(
             self.db,
             object,
@@ -1047,7 +925,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         )
     }
 
-    fn get_index_signature(&self, type_id: TypeId, kind: IndexKind) -> Option<TypeId> {
+    /// Get index signature type (string or number indexer).
+    pub fn get_index_signature(&self, type_id: TypeId, kind: IndexKind) -> Option<TypeId> {
         let evaluated = self.evaluate(type_id);
         let key = self.db.lookup(evaluated)?;
 
@@ -1069,11 +948,13 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
     }
 
-    fn get_keyof(&self, type_id: TypeId) -> TypeId {
+    /// Get `keyof T`.
+    pub fn get_keyof(&self, type_id: TypeId) -> TypeId {
         crate::evaluation::evaluate::evaluate_keyof(self.db, type_id)
     }
 
-    fn config(&self) -> &JudgeConfig {
+    /// Get the current configuration.
+    pub const fn config(&self) -> &JudgeConfig {
         &self.config
     }
 }
