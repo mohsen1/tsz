@@ -9,8 +9,8 @@
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{
-    check_source_codes, check_source_with_libs, check_source_with_libs_code_messages,
-    check_with_options, has_diagnostic_code, load_lib_files,
+    check_source_codes, check_source_with_libs_code_messages, check_with_options,
+    has_diagnostic_code, load_lib_files,
 };
 
 // ── Standard mode ────────────────────────────────────────────────────────────
