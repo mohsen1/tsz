@@ -1465,6 +1465,16 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Inside a diagnostic display-budget scope, evaluation results are
+        // memoized and total evaluation work is fuel-bounded (issue #13040).
+        // Self-expanding application chains intern fresh types per
+        // evaluation, so the cycle set below never converges on them; the
+        // fuel guarantees rendering one type does bounded work. Outside a
+        // scope (relation/semantic paths) both are inert.
+        if let Some(cached) = crate::error_reporter::display_budget::cached_eval(type_id) {
+            return cached;
+        }
+
         thread_local! {
             static ASSIGNABILITY_EVAL_VISITING: std::cell::RefCell<FxHashSet<TypeId>> =
                 Default::default();
@@ -1476,8 +1486,16 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        if !crate::error_reporter::display_budget::try_consume_eval_fuel() {
+            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().remove(&type_id));
+            return type_id;
+        }
+
         let result = self.evaluate_type_for_assignability_inner(type_id);
         ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().remove(&type_id));
+        // Cycle-truncated returns above are never recorded — only complete
+        // results are safe to replay for later calls in this scope.
+        crate::error_reporter::display_budget::record_eval(type_id, result);
         result
     }
 

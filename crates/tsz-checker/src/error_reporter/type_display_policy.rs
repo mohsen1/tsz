@@ -86,6 +86,11 @@ impl<'a> CheckerState<'a> {
         if self.ctx.diagnostics_discarded {
             return format!("[discarded #{}]", ty.0);
         }
+        // One rendered type, one work budget: bounds the display
+        // normalization and evaluation work spent producing this string so
+        // diagnostic emission stays terminating on self-expanding generic
+        // types (issue #13040).
+        let _budget_scope = crate::error_reporter::display_budget::DisplayBudgetScope::enter();
         // Only apply the indexed-access alias resolution for roles where the
         // alias would otherwise leak through unresolved (call parameters /
         // arguments / direct assignability). For declaration-emit-adjacent

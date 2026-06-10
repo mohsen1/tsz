@@ -30,6 +30,7 @@ mod conditional_alias_display;
 mod core;
 mod core_alias_display;
 mod core_formatting;
+pub(crate) mod display_budget;
 mod emitters;
 mod fingerprint_policy;
 mod generic_display_helpers;

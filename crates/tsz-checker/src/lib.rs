@@ -714,6 +714,9 @@ mod direct_generic_return_tests;
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]
+#[path = "tests/display_normalization_budget_tests.rs"]
+mod display_normalization_budget_tests;
+#[cfg(test)]
 #[path = "tests/do_while_exit_narrowing_tests.rs"]
 mod do_while_exit_narrowing_tests;
 #[cfg(test)]
