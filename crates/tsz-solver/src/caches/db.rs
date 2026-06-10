@@ -546,6 +546,13 @@ pub trait TypeDatabase:
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         false
     }
+
+    /// Reset the global evaluation fuel counter at a top-level check
+    /// boundary (per file-check session). Mirrors `tsc` resetting
+    /// `instantiationCount` per checked source element: the budget bounds
+    /// per-check runaway, not cumulative whole-program work. Default no-op
+    /// for databases without a fuel counter.
+    fn reset_evaluation_fuel(&self) {}
 }
 
 impl TypePredicateCache for TypeInterner {
@@ -1029,6 +1036,10 @@ impl TypeDatabase for TypeInterner {
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         Self::is_evaluation_fuel_exhausted(self)
+    }
+
+    fn reset_evaluation_fuel(&self) {
+        Self::reset_evaluation_fuel(self);
     }
 }
 

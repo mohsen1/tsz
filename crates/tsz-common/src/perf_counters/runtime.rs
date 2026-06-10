@@ -8,6 +8,11 @@ pub struct PerfCounters {
     pub delegate_cross_arena_cache_hits_lib: AtomicU64,
     pub delegate_cross_arena_cache_hits_cross_file: AtomicU64,
     pub delegate_cross_arena_misses: AtomicU64,
+    /// Of `delegate_cross_arena_misses` (full child-checker work), how many
+    /// completed with a sentinel (`ERROR`/`UNKNOWN`) result. Sentinels are
+    /// refused by the shared cross-file buckets, so a large count here means
+    /// the same failed resolutions are being recomputed per delegation tree.
+    pub delegate_cross_arena_full_work_sentinel_results: AtomicU64,
     /// T2.2 cross-file type-parameter memo: hits and misses on the
     /// `extract_type_params_from_decl` slow-path memoization. A hit means
     /// the slow-path's `with_parent_cache_attributed(..., TypeEnvironmentCore)`
@@ -191,6 +196,7 @@ impl PerfCounters {
             delegate_cross_arena_cache_hits_lib: AtomicU64::new(0),
             delegate_cross_arena_cache_hits_cross_file: AtomicU64::new(0),
             delegate_cross_arena_misses: AtomicU64::new(0),
+            delegate_cross_arena_full_work_sentinel_results: AtomicU64::new(0),
             cross_file_type_params_cache_hits: AtomicU64::new(0),
             cross_file_type_params_cache_misses: AtomicU64::new(0),
             delegate_max_recursion_depth: AtomicU64::new(0),
@@ -785,6 +791,19 @@ pub fn record_delegate_cross_arena_miss() {
     let c = counters();
     c.delegate_cross_arena_calls.fetch_add(1, Ordering::Relaxed);
     c.delegate_cross_arena_misses
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record that a full-work cross-arena delegation (a miss that ran a child
+/// checker) completed with a sentinel (`ERROR`/`UNKNOWN`) result that the
+/// shared cross-file buckets refuse to store.
+#[inline]
+pub fn record_delegate_cross_arena_full_work_sentinel_result() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .delegate_cross_arena_full_work_sentinel_results
         .fetch_add(1, Ordering::Relaxed);
 }
 

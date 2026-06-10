@@ -336,7 +336,7 @@ fn delegate_explicit_cross_file_source_function_lowers_annotated_signature() {
     assert_eq!(shape.return_type, TypeId::STRING);
     assert_eq!(
         state.ctx.cached_cross_file_symbol_type(summarize_sym, 1),
-        Some((ty, params)),
+        Some((ty, std::sync::Arc::new(params))),
         "explicit cross-file function result should be cached by file target",
     );
 }
@@ -403,7 +403,7 @@ fn delegate_explicit_cross_file_source_const_arrow_lowers_type_predicate() {
     assert_ne!(predicate.type_id, Some(TypeId::ERROR));
     assert_eq!(
         state.ctx.cached_cross_file_symbol_type(guard_sym, 1),
-        Some((ty, params)),
+        Some((ty, std::sync::Arc::new(params))),
         "explicit cross-file const arrow result should be cached by file target",
     );
 }

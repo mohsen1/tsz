@@ -919,6 +919,10 @@ impl DefinitionStore {
     }
 
     /// Look up a previously resolved cross-file query result.
+    ///
+    /// Returns the shared `Arc` over the cached type-params so per-hit reads
+    /// are O(1) (no `Vec<TypeParamInfo>` deep clone). Callers that need an
+    /// owned `Vec` clone at their own boundary.
     pub fn get_resolved_cross_file_query(
         &self,
         kind: u8,
@@ -926,12 +930,12 @@ impl DefinitionStore {
         primary: u32,
         secondary: u32,
         args_hash: u64,
-    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+    ) -> Option<(TypeId, Arc<Vec<TypeParamInfo>>)> {
         self.resolved_cross_file_queries
             .get(&(kind, file_idx, primary, secondary, args_hash))
             .map(|entry| {
                 let (type_id, params) = entry.value();
-                (*type_id, params.as_ref().clone())
+                (*type_id, Arc::clone(params))
             })
     }
 

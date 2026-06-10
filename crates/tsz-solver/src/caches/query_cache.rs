@@ -1352,6 +1352,10 @@ impl TypeDatabase for QueryCache<'_> {
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         self.interner.is_evaluation_fuel_exhausted()
     }
+
+    fn reset_evaluation_fuel(&self) {
+        self.interner.reset_evaluation_fuel();
+    }
 }
 
 /// Implement `TypeResolver` for `QueryCache` with noop resolution.

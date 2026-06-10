@@ -669,7 +669,7 @@ impl<'a> CheckerState<'a> {
                 // which only searches the *current* arena and returns None
                 // for cross-file classes — so the constructor type leaks
                 // into the instance position.
-                if let Some(cached) = self
+                if let Some((cached_type, cached_params)) = self
                     .ctx
                     .cached_cross_file_symbol_type(sym_id, file_idx as u32)
                 {
@@ -681,7 +681,7 @@ impl<'a> CheckerState<'a> {
                     {
                         self.ctx.symbol_instance_types.insert(sym_id, inst_type);
                     }
-                    return cached;
+                    return (cached_type, cached_params.as_ref().clone());
                 }
                 // Found class in another file's arena. Create a child checker
                 // with that arena and directly compute the class type.
