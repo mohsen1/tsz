@@ -652,18 +652,24 @@ impl<'a> DeclarationEmitter<'a> {
                 let var_name = self.unique_default_export_name();
 
                 // TS2883: Check for non-portable inferred type references
-                // in export default expressions
-                if let Some(file_path) = self.current_file_path.clone() {
+                // in export default expressions.
+                // For Object.assign calls the checker handles TS2883 authoritatively
+                // via first_non_portable_object_assign_object_literal_reference; the
+                // emitter's type-level walk finds a deeper nested type and must not
+                // duplicate the checker's diagnostic.
+                let is_object_assign_call = expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    && self
+                        .arena
+                        .get_call_expr(expr_node)
+                        .is_some_and(|call| self.is_object_assign_call(call.expression));
+                if let Some(file_path) = self.current_file_path.clone()
+                    && !is_object_assign_call
+                {
                     let has_safe_nameable_surface_type =
                         self.default_expression_has_safe_nameable_surface_type(assign.expression);
-                    let is_object_assign_call = expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                        && self
-                            .arena
-                            .get_call_expr(expr_node)
-                            .is_some_and(|call| self.is_object_assign_call(call.expression));
                     let reported = self
                         .get_node_type(assign.expression)
-                        .filter(|_| !has_safe_nameable_surface_type || is_object_assign_call)
+                        .filter(|_| !has_safe_nameable_surface_type)
                         .is_some_and(|type_id| {
                             self.emit_non_portable_type_diagnostic(
                                 type_id,
@@ -1183,87 +1189,30 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(expr_node) = self.arena.get(expr_idx)
             && let Some(file_path) = self.current_file_path.clone()
         {
-            let (diag_pos, diag_len) = self
-                .arena
-                .get(export_idx)
-                .map(|export_node| (export_node.pos, export_node.end - export_node.pos))
-                .unwrap_or((expr_node.pos, expr_node.end - expr_node.pos));
-            let has_safe_nameable_surface_type =
-                self.default_expression_has_safe_nameable_surface_type(expr_idx);
+            // For Object.assign calls, the checker's statement_callback_bridge handles
+            // TS2883 authoritatively via first_non_portable_object_assign_object_literal_reference;
+            // the emitter's type-level walk finds deeper nested types and must not duplicate.
             let is_object_assign_call = expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
                 && self
                     .arena
                     .get_call_expr(expr_node)
                     .is_some_and(|call| self.is_object_assign_call(call.expression));
-            let reported = self
-                .get_node_type(expr_idx)
-                .filter(|_| !has_safe_nameable_surface_type || is_object_assign_call)
-                .is_some_and(|type_id| {
-                    self.emit_non_portable_type_diagnostic(
-                        type_id, "default", &file_path, diag_pos, diag_len,
-                    )
-                });
-
-            if !reported
-                && expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                && let Some(call) = self.arena.get_call_expr(expr_node)
-                && self.is_object_assign_call(call.expression)
-                && let Some(args) = &call.arguments
-            {
-                for &arg_idx in &args.nodes {
-                    if self.emit_non_portable_object_assign_object_literal_diagnostic(
-                        arg_idx, "default", &file_path, diag_pos, diag_len,
-                    ) {
-                        break;
-                    }
-                    if self.default_expression_has_safe_nameable_surface_type(arg_idx) {
-                        continue;
-                    }
-                    let arg_type_text =
-                        self.preferred_expression_type_text(arg_idx).or_else(|| {
-                            self.get_node_type_or_names(&[arg_idx])
-                                .map(|type_id| self.print_type_id(type_id))
-                        });
-                    let arg_has_nameable_surface = arg_type_text
-                        .as_deref()
-                        .is_some_and(|text| self.type_text_is_directly_nameable_reference(text));
-                    let arg_is_object_literal = self.arena.get(arg_idx).is_some_and(|node| {
-                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            if !is_object_assign_call {
+                let (diag_pos, diag_len) = self
+                    .arena
+                    .get(export_idx)
+                    .map(|export_node| (export_node.pos, export_node.end - export_node.pos))
+                    .unwrap_or((expr_node.pos, expr_node.end - expr_node.pos));
+                let has_safe_nameable_surface_type =
+                    self.default_expression_has_safe_nameable_surface_type(expr_idx);
+                let _ = self
+                    .get_node_type(expr_idx)
+                    .filter(|_| !has_safe_nameable_surface_type)
+                    .is_some_and(|type_id| {
+                        self.emit_non_portable_type_diagnostic(
+                            type_id, "default", &file_path, diag_pos, diag_len,
+                        )
                     });
-                    if let Some(arg_type_id) = self
-                        .get_node_type_or_names(&[arg_idx])
-                        .or_else(|| self.get_type_via_symbol(arg_idx))
-                        && !arg_is_object_literal
-                        && self.emit_non_portable_type_diagnostic(
-                            arg_type_id,
-                            "default",
-                            &file_path,
-                            diag_pos,
-                            diag_len,
-                        )
-                    {
-                        break;
-                    }
-                    if let Some(arg_type_text) = arg_type_text
-                        && Self::type_text_starts_with_import_type(&arg_type_text)
-                        && self.emit_non_portable_import_type_text_diagnostics(
-                            &arg_type_text,
-                            "default",
-                            &file_path,
-                            diag_pos,
-                            diag_len,
-                        )
-                    {
-                        break;
-                    }
-                    if !arg_has_nameable_surface
-                        && self.emit_non_portable_initializer_declaration_diagnostics(
-                            arg_idx, "default", &file_path, diag_pos, diag_len,
-                        )
-                    {
-                        break;
-                    }
-                }
             }
         }
 

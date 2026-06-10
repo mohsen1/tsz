@@ -980,7 +980,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         };
 
-        // Cleanup: leave both guards
+        // Cleanup: leave both guards.
         if let Some(dp) = def_entered {
             self.def_guard.leave(dp);
         }
@@ -1073,32 +1073,79 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check whether an Application base TypeId belongs to a conditional type alias.
     ///
     /// First checks the pre-populated `conditional_alias_bases` cache (fast path).
-    /// Falls back to resolving the DefId's body when the cache hasn't been populated
-    /// yet (e.g., when the subtype check runs before the alias has been evaluated).
+    /// Falls back to the raw definition-store body for the `DefId`, bypassing the
+    /// full `resolve_lazy` chain which can return a cached `Application` form or a
+    /// self-`Lazy` wrapper for generic type aliases (hiding the real `Conditional`
+    /// body). Only when the raw body is unavailable does this fall back to
+    /// `resolve_lazy`, filtering out self-wrappers there too.
     pub(crate) fn is_conditional_alias_base_inline(&self, base: TypeId) -> bool {
         if self.interner.is_conditional_alias_base(base) {
             return true;
         }
         let Some(def_id) = lazy_def_id(self.interner, base) else {
+            tracing::trace!(
+                base = base.0,
+                "is_conditional_alias_base_inline: no lazy def_id"
+            );
             return false;
         };
-        if !matches!(
-            self.resolver.get_def_kind(def_id),
-            Some(crate::def::DefKind::TypeAlias)
-        ) {
+        let def_kind = self.resolver.get_def_kind(def_id);
+        if !matches!(def_kind, Some(crate::def::DefKind::TypeAlias)) {
+            tracing::trace!(
+                base = base.0,
+                def_id = def_id.0,
+                def_kind = ?def_kind,
+                "is_conditional_alias_base_inline: not TypeAlias"
+            );
             return false;
         }
-        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+
+        // Prefer the raw definition-store body, which always holds the
+        // un-evaluated structural body registered at alias-definition time.
+        // `resolve_lazy` for generic aliases can return a cached `Application`
+        // TypeId (from `symbol_types`) that obscures the real `Conditional` body.
+        let raw_body = self.resolver.get_def_raw_body(def_id, self.interner);
+        let body_opt = raw_body.or_else(|| {
+            let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+            // Filter out self-wrappers: a Lazy(def_id) returned by resolve_lazy
+            // for a TypeAlias means the body wasn't available; treat as unknown.
+            if lazy_def_id(self.interner, body) == Some(def_id) {
+                None
+            } else {
+                Some(body)
+            }
+        });
+
+        let Some(body) = body_opt else {
             // Same undetermined-result event as `resolve_lazy_type`: the
             // conditional-alias-base decision derived from an unresolvable
             // `Lazy` must not poison the subtype cache in the enclosing call.
+            tracing::trace!(
+                base = base.0,
+                def_id = def_id.0,
+                "is_conditional_alias_base_inline: no body found"
+            );
             note_lazy_resolve_failure();
             return false;
         };
-        if matches!(self.interner.lookup(body), Some(TypeData::Conditional(_))) {
+        let body_kind = self.interner.lookup(body);
+        if matches!(body_kind, Some(TypeData::Conditional(_))) {
+            tracing::trace!(
+                base = base.0,
+                def_id = def_id.0,
+                body = body.0,
+                "is_conditional_alias_base_inline: found Conditional body → true"
+            );
             self.interner.mark_conditional_alias_base(base);
             return true;
         }
+        tracing::trace!(
+            base = base.0,
+            def_id = def_id.0,
+            body = body.0,
+            body_kind = ?body_kind,
+            "is_conditional_alias_base_inline: body is not Conditional → false"
+        );
         false
     }
 

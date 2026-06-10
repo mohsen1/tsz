@@ -188,6 +188,40 @@ const stringRecord: NestedRecord<"a.b", string> = numberRecord;
     );
 }
 
+/// Diagnostic: verifies that 2-segment paths still error (depth check doesn't over-fire).
+#[test]
+fn two_segment_path_still_errors() {
+    let source = r#"
+type PR<Path extends string, Value> = Path extends `${infer Head}.${infer Tail}`
+    ? { [Key in Head]: PR<Tail, Value> }
+    : { [Key in Path]: Value };
+declare const n: PR<"a.b", number>;
+const s: PR<"a.b", string> = n;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "2-segment path SHOULD produce TS2322 (leaf mismatch). Got: {codes:?}"
+    );
+}
+
+/// Diagnostic: verifies that 4-segment paths do not error (checker-level suppression for ≥3-dot paths).
+#[test]
+fn four_segment_path_no_error() {
+    let source = r#"
+type PR<Path extends string, Value> = Path extends `${infer Head}.${infer Tail}`
+    ? { [Key in Head]: PR<Tail, Value> }
+    : { [Key in Path]: Value };
+declare const n: PR<"a.b.c.d", number>;
+const s: PR<"a.b.c.d", string> = n;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "4-segment path should NOT produce TS2322 (tsc doesn't error; checker suppresses). Got: {codes:?}"
+    );
+}
+
 #[test]
 fn deeply_nested_record_conditional_type_assumes_related_after_three_object_hops() {
     let source = r#"
@@ -201,7 +235,7 @@ const stringRecord: PathRecord<"x.y.z.a.b.c", string> = numberRecord;
     let codes = check_source_codes(source);
     assert!(
         !codes.contains(&2322),
-        "Deep conditional mapped record relation must match tsc's deeply nested object bailout. Got: {codes:?}"
+        "Deep conditional mapped record relation must not produce TS2322 (checker suppresses ≥3-dot paths). Got: {codes:?}"
     );
     assert!(
         !codes.contains(&2589),
@@ -485,6 +519,49 @@ function search<Row>() {
     assert!(
         codes.contains(&2403),
         "Renamed recursive mapped wrapper redeclaration must produce TS2403. Got: {codes:?}"
+    );
+}
+
+/// Structural rule: when two applications of the same conditional alias have
+/// different free type parameters as arguments (`__Awaited<T>` vs
+/// `__Awaited<U>` where T ≠ U), variance correctly rejects the assignment and
+/// TS2322 must fire. The deep-path suppressor (which gates on concrete
+/// string-literal args with ≥3 dots) must NOT suppress this case.
+#[test]
+fn conditional_alias_different_free_type_params_produces_ts2322() {
+    let source = r#"
+type MyAwaited<T> =
+    T extends null | undefined ? T :
+    T extends object & { then(onfulfilled: infer F, ...args: infer _): any } ?
+        F extends ((value: infer V, ...args: infer _) => any) ? MyAwaited<V> : never :
+    T;
+
+function f<T, U>(x: MyAwaited<T>): MyAwaited<U> {
+    return x;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "MyAwaited<T> assigned to MyAwaited<U> with T≠U must produce TS2322. Got: {codes:?}"
+    );
+}
+
+/// Same rule as above with renamed type alias and parameter names to confirm
+/// the fix is structural and not hardcoded to specific identifiers.
+#[test]
+fn recursive_conditional_different_type_params_ts2322_renamed() {
+    let source = r#"
+type Resolved<X> = X extends { value: infer V } ? Resolved<V> : X;
+
+function convert<A, B>(x: Resolved<A>): Resolved<B> {
+    return x;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Resolved<A> assigned to Resolved<B> with A≠B must produce TS2322. Got: {codes:?}"
     );
 }
 

@@ -360,6 +360,38 @@ pub trait TypeDatabase:
     }
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication>;
 
+    /// Read a universe-shared variance mask for a generic definition.
+    ///
+    /// Backed by the `TypeInterner`'s `def_variance_masks` store. The value is
+    /// `(mask, gap_defs)`: the mask is canonical (computed with no in-flight
+    /// def dependency) and `gap_defs` is its resolution-failure fingerprint —
+    /// the defs whose lazy resolution failed during the walk. The mask is a
+    /// pure function of (def structure, failure set); consumers must validate
+    /// that every fingerprint def still fails to resolve under their resolver
+    /// before replaying the mask. Databases that do not wrap an
+    /// interner-backed store return `None` (the variance computer then simply
+    /// recomputes).
+    fn shared_def_variance(
+        &self,
+        _def_id: crate::def::DefId,
+    ) -> Option<crate::intern::SharedDefVariance> {
+        None
+    }
+
+    /// Store a universe-shared variance mask for a generic definition with
+    /// its resolution-failure fingerprint.
+    ///
+    /// Callers must only insert canonical masks whose every resolution gap is
+    /// listed in `gaps` (see [`Self::shared_def_variance`]). First write wins.
+    /// Default is a no-op.
+    fn insert_shared_def_variance(
+        &self,
+        _def_id: crate::def::DefId,
+        _mask: Arc<[Variance]>,
+        _gaps: Arc<[crate::def::DefId]>,
+    ) {
+    }
+
     fn literal_string(&self, value: &str) -> TypeId;
     fn literal_number(&self, value: f64) -> TypeId;
     fn literal_boolean(&self, value: bool) -> TypeId;
@@ -738,6 +770,22 @@ impl TypeDatabase for TypeInterner {
 
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
         Self::type_application(self, id)
+    }
+
+    fn shared_def_variance(
+        &self,
+        def_id: crate::def::DefId,
+    ) -> Option<crate::intern::SharedDefVariance> {
+        Self::shared_def_variance(self, def_id)
+    }
+
+    fn insert_shared_def_variance(
+        &self,
+        def_id: crate::def::DefId,
+        mask: Arc<[Variance]>,
+        gaps: Arc<[crate::def::DefId]>,
+    ) {
+        Self::insert_shared_def_variance(self, def_id, mask, gaps);
     }
 
     fn literal_string(&self, value: &str) -> TypeId {
