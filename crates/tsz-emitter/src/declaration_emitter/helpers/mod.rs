@@ -3,44 +3,23 @@
 //! Type syntax emission (type references, unions, mapped types, etc.) is in `type_emission.rs`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::source_map::escape_js_string;
 use tsz_parser::parser::NodeIndex;
 
 /// Escape a cooked string value for embedding in a double-quoted string literal.
 ///
-/// The scanner stores "cooked" (unescaped) text for string literals. When
-/// writing strings back into `.d.ts` output we must re-escape characters
-/// that cannot appear raw inside double-quoted string literals.
+/// Delegates to `tsz_common::source_map::escape_js_string` so there is one
+/// canonical escape implementation in the workspace.
 pub(crate) fn escape_string_for_double_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
-            c => out.push(c),
-        }
-    }
-    out
+    escape_js_string(s, '"')
 }
 
 /// Escape a cooked string value for embedding in a single-quoted string literal.
+///
+/// Delegates to `tsz_common::source_map::escape_js_string` so there is one
+/// canonical escape implementation in the workspace.
 pub(crate) fn escape_string_for_single_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '\'' => out.push_str("\\'"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
-            c => out.push(c),
-        }
-    }
-    out
+    escape_js_string(s, '\'')
 }
 
 type JsFoldedNamedExports = (
