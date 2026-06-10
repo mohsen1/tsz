@@ -15,7 +15,7 @@ pub(crate) use tsz_solver::narrowing::{
 pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
-pub(crate) use tsz_solver::relations::judge::{DefaultJudge, Judge, JudgeConfig};
+pub(crate) use tsz_solver::relations::judge::{DefaultJudge, JudgeConfig};
 pub(crate) use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
 pub(crate) use tsz_solver::type_queries::{
     RemappedMappedIndexAccessResult, TypeIdList, TypeTraversalKind,
