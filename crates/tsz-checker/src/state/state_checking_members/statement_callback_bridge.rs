@@ -889,7 +889,26 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         request: &TypingRequest,
     ) -> TypeId {
         let request = request.read().contextual(switch_type);
-        self.get_type_of_node_with_request(case_expr, &request)
+        let case_type = self.get_type_of_node_with_request(case_expr, &request);
+        // Contextual requests bypass the plain `node_types` cache, but
+        // switch-clause flow narrowing reads case-expression discriminant
+        // types from `node_types` (`literal_type_from_node`). Property and
+        // element reads are context-independent, so record them here; without
+        // this, `case ImportedEnum.Member:` cannot narrow a discriminated
+        // union because the flow layer sees neither a cached node type nor a
+        // local ENUM symbol for the imported alias.
+        if case_type != TypeId::ERROR
+            && self.ctx.arena.get(case_expr).is_some_and(|node| {
+                use tsz_parser::parser::syntax_kind_ext;
+                node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            })
+        {
+            if self.ctx.node_types.get(&case_expr.0).is_none() {
+                self.ctx.node_types.insert(case_expr.0, case_type);
+            }
+        }
+        case_type
     }
 
     fn check_switch_case_comparable(
