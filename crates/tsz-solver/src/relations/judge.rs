@@ -954,7 +954,7 @@ impl<'a> DefaultJudge<'a> {
     }
 
     /// Get the current configuration.
-    pub fn config(&self) -> &JudgeConfig {
+    pub const fn config(&self) -> &JudgeConfig {
         &self.config
     }
 }
