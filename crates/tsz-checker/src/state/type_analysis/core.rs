@@ -829,13 +829,15 @@ impl<'a> CheckerState<'a> {
     /// wrote `T extends C`.
     ///
     /// The canonical identity lives in the shared `DefinitionStore` (one
-    /// `Arc` across parent and child checkers) under two multi-entry maps:
-    ///
-    /// - `(DefId, info)` for declarations the binder registered into
-    ///   `semantic_defs`;
-    /// - `(file-name Atom, name_node, info)` for the rest (class, method,
-    ///   and interface type parameters have no `DefId`). The file component
-    ///   makes the arena-local `NodeIndex` globally unambiguous.
+    /// `Arc` across parent and child checkers) under a multi-entry
+    /// `(file-name Atom, name_node, info)` map. The file component makes
+    /// the arena-local `NodeIndex` globally unambiguous. Identity is
+    /// deliberately NOT keyed by `DefId`: the only def lookup available at
+    /// mint time rides the file-agnostic raw-`SymbolId` index
+    /// (`find_def_by_symbol`), whose cross-binder collisions would let two
+    /// unrelated same-named declarations converge on one `TypeId`
+    /// (over-sharing — observed as `RawBuilder<unknown>` contextual
+    /// inference regressions on the kysely row).
     ///
     /// Sharing matters twice over. Within one checker,
     /// `get_class_instance_type_inner` and the outer
@@ -853,7 +855,7 @@ impl<'a> CheckerState<'a> {
     /// dead (false `TS2416`/`TS2740` `ExpressionBuilder<DB, TB>` vs itself
     /// on `kysely`-style generic-alias parameter annotations, #13044).
     ///
-    /// Both maps are multi-entry per declaration because the two-phase push
+    /// The map is multi-entry per declaration because the two-phase push
     /// pattern (pass 1 unconstrained, pass 2 constrained refinement) needs
     /// the unconstrained and constrained variants to each keep their own
     /// stable id; a single-slot cache ping-pongs and re-mints fresh ids on
@@ -882,19 +884,10 @@ impl<'a> CheckerState<'a> {
 
         let file_atom = self.ctx.types.intern_string(&self.ctx.file_name);
 
-        let cached = registered_def
-            .and_then(|def_id| {
-                self.ctx
-                    .definition_store
-                    .find_type_param_for_def(def_id, &info)
-            })
-            .or_else(|| {
-                self.ctx.definition_store.find_type_param_for_decl_node(
-                    file_atom,
-                    name_node.0,
-                    &info,
-                )
-            });
+        let cached =
+            self.ctx
+                .definition_store
+                .find_type_param_for_decl_node(file_atom, name_node.0, &info);
 
         let minted = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
 
@@ -911,9 +904,6 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_to_def(type_id, def_id);
-            self.ctx
-                .definition_store
-                .register_type_param_for_def(def_id, info, type_id);
         }
         // Keep the L1 cache up to date so the next push_type_parameters
         // call for this same declaration returns the same TypeId.

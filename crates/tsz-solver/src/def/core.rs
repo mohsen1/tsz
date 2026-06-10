@@ -267,22 +267,6 @@ pub struct DefinitionStore {
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DefDashMap<TypeId, DefId>,
 
-    /// Forward map: `(DefId, TypeParamInfo)` -> `TypeId` for type-parameter
-    /// declarations.
-    ///
-    /// Lets the checker reuse the canonical `TypeId` allocated for a
-    /// type-parameter declaration across reprocessings of the same
-    /// signature. Cross-declaration distinctness is still guaranteed
-    /// by `intern_fresh` because lookups key on the declaration's
-    /// `DefId`, not on `TypeParamInfo` content alone. The map is
-    /// multi-entry per `DefId`: the two-phase scope push (pass 1
-    /// unconstrained, pass 2 constrained refinement) needs the
-    /// unconstrained and constrained variants of one declaration to each
-    /// keep their own stable `TypeId` — a single-slot cache ping-pongs
-    /// between them and re-mints fresh ids on every push sequence. See
-    /// `CheckerState::intern_type_param_for_decl` for the rationale.
-    type_param_for_def: DefDashMap<(DefId, TypeParamInfo), TypeId>,
-
     /// Shared `(file, type-parameter name node, TypeParamInfo)` -> `TypeId`
     /// canonical identity map for type-parameter declarations that have no
     /// `DefId` registration (class, method, and interface type parameters
@@ -607,10 +591,6 @@ impl DefinitionStore {
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             generation: AtomicU64::new(1),
             type_to_def: DefDashMap::default(),
-            type_param_for_def: DefDashMap::with_capacity_and_hasher(
-                id_capacity,
-                Default::default(),
-            ),
             type_param_for_decl_node: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             symbol_only_index: DefDashMap::with_capacity_and_hasher(
@@ -1054,7 +1034,6 @@ impl DefinitionStore {
     pub fn clear(&self) {
         self.definitions.clear();
         self.type_to_def.clear();
-        self.type_param_for_def.clear();
         self.type_param_for_decl_node.clear();
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
@@ -1122,39 +1101,6 @@ impl DefinitionStore {
     /// Returns `Some(def_id)` if a class/interface was registered for this type.
     pub fn find_def_for_type(&self, type_id: TypeId) -> Option<DefId> {
         self.type_to_def.get(&type_id).map(|r| *r)
-    }
-
-    /// Look up the canonical `TypeId` previously allocated for a
-    /// type-parameter declaration's `DefId` with this exact
-    /// `TypeParamInfo` content.
-    ///
-    /// Returns `Some(type_id)` if `register_type_param_for_def` has been
-    /// called for this `(DefId, info)` pair. Callers reuse the returned
-    /// `TypeId` instead of allocating a fresh non-deduped one so that two
-    /// processings of the same declaration produce a single canonical
-    /// type parameter. The unconstrained pass-1 entry and the constrained
-    /// pass-2 entry of one declaration each keep their own stable id.
-    pub fn find_type_param_for_def(&self, def_id: DefId, info: &TypeParamInfo) -> Option<TypeId> {
-        self.type_param_for_def.get(&(def_id, *info)).map(|r| *r)
-    }
-
-    /// Register the canonical `TypeId` for a type-parameter declaration's
-    /// `(DefId, TypeParamInfo)` pair.
-    ///
-    /// First writer wins: the returned `TypeId` is the canonical one, which
-    /// may differ from `type_id` when another checker registered the same
-    /// pair first (parallel file checking). Callers must adopt the returned
-    /// id so all checkers converge on a single identity per declaration.
-    pub fn register_type_param_for_def(
-        &self,
-        def_id: DefId,
-        info: TypeParamInfo,
-        type_id: TypeId,
-    ) -> TypeId {
-        *self
-            .type_param_for_def
-            .entry((def_id, info))
-            .or_insert(type_id)
     }
 
     /// Look up the canonical `TypeId` for a type-parameter declaration
@@ -1586,13 +1532,6 @@ impl DefinitionStore {
                 }
             }
         }
-
-        // Clean up the type-parameter canonical cache in one pass. The map
-        // is keyed by `(DefId, TypeParamInfo)`, so a direct key remove is
-        // not possible; invalidation is rare and bounded by map size.
-        let removed: FxHashSet<DefId> = def_ids.iter().copied().collect();
-        self.type_param_for_def
-            .retain(|(def_id, _), _| !removed.contains(def_id));
 
         trace!(
             instance_id = self.instance_id,
