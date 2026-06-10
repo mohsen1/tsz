@@ -573,113 +573,22 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn normalize_portability_diagnostics(
         diagnostics: Vec<Diagnostic>,
     ) -> Vec<Diagnostic> {
-        let mut exact_seen: FxHashMap<(u32, String, u32, u32, String), usize> =
-            FxHashMap::default();
-        let mut unique: Vec<(Diagnostic, bool)> = Vec::new();
-
-        for diagnostic in diagnostics {
-            let mut diagnostic = diagnostic;
-            let mut was_canonicalized = false;
-            if diagnostic.code == 2883 {
-                if let Some(message) =
-                    Self::canonical_ts2883_named_reference_message(&diagnostic.message_text)
-                {
-                    diagnostic.message_text = message;
-                    was_canonicalized = true;
-                }
-            }
-            let exact_key = (
-                diagnostic.code,
-                diagnostic.file.clone(),
-                diagnostic.start,
-                diagnostic.length,
-                diagnostic.message_text.clone(),
-            );
-            if let Some(&existing_idx) = exact_seen.get(&exact_key) {
-                if !was_canonicalized && unique[existing_idx].1 {
-                    unique[existing_idx] = (diagnostic, was_canonicalized);
-                }
-                continue;
-            }
-
-            exact_seen.insert(exact_key, unique.len());
-            unique.push((diagnostic, was_canonicalized));
-        }
-
-        let surviving_canonical_sites: FxHashSet<_> = unique
-            .iter()
-            .filter_map(|(diagnostic, was_canonicalized)| {
-                if diagnostic.code != 2883 || *was_canonicalized {
-                    return None;
-                }
-                let (first, second) =
-                    Self::parse_ts2883_named_reference_message(&diagnostic.message_text)?;
-                (!Self::looks_like_module_path(&first) && Self::looks_like_module_path(&second))
-                    .then(|| (diagnostic.file.clone(), diagnostic.start, diagnostic.length))
-            })
-            .collect();
-
-        unique
+        // Exact dedup: remove complete duplicates within emitter diagnostics.
+        // All TS2883 emission sites now use correct argument order, so no
+        // message-text canonicalization is needed.
+        let mut exact_seen: FxHashSet<(u32, String, u32, u32, String)> = FxHashSet::default();
+        diagnostics
             .into_iter()
-            .filter_map(|(diagnostic, was_canonicalized)| {
-                if diagnostic.code != 2883 {
-                    return Some(diagnostic);
-                }
-
-                let Some((first, second)) =
-                    Self::parse_ts2883_named_reference_message(&diagnostic.message_text)
-                else {
-                    return Some(diagnostic);
-                };
-
-                if !was_canonicalized
-                    || Self::looks_like_module_path(&first)
-                    || !Self::looks_like_module_path(&second)
-                {
-                    return Some(diagnostic);
-                }
-
-                (!surviving_canonical_sites.contains(&(
-                    diagnostic.file.clone(),
-                    diagnostic.start,
-                    diagnostic.length,
-                )))
-                .then_some(diagnostic)
+            .filter(|d| {
+                exact_seen.insert((
+                    d.code,
+                    d.file.clone(),
+                    d.start,
+                    d.length,
+                    d.message_text.clone(),
+                ))
             })
             .collect()
-    }
-
-    pub(in crate::declaration_emitter) fn parse_ts2883_named_reference_message(
-        message: &str,
-    ) -> Option<(String, String)> {
-        let prefix = "cannot be named without a reference to '";
-        let start = message.find(prefix)? + prefix.len();
-        let rest = &message[start..];
-        let (first, tail) = rest.split_once("' from '")?;
-        let (second, _) = tail.split_once('\'')?;
-        Some((first.to_string(), second.to_string()))
-    }
-
-    pub(in crate::declaration_emitter) fn canonical_ts2883_named_reference_message(
-        message: &str,
-    ) -> Option<String> {
-        let (first, second) = Self::parse_ts2883_named_reference_message(message)?;
-        if !Self::looks_like_module_path(&first) || Self::looks_like_module_path(&second) {
-            return None;
-        }
-
-        Some(message.replace(
-            &format!("reference to '{first}' from '{second}'"),
-            &format!("reference to '{second}' from '{first}'"),
-        ))
-    }
-
-    pub(in crate::declaration_emitter) fn looks_like_module_path(text: &str) -> bool {
-        text.starts_with('.')
-            || text.starts_with('/')
-            || text.contains('/')
-            || text.contains('\\')
-            || text.contains("node_modules")
     }
 
     /// Collect all imported symbols from an `ImportClause`.
