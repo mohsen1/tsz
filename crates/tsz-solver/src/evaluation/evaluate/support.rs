@@ -1495,22 +1495,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     changed = true;
                     continue;
-                } else if let Some(TypeData::Array(element_type)) = self.interner.lookup(evaluated)
-                {
-                    // Rest element evaluating to an array stays as rest
-                    let rest_element = TupleElement {
-                        type_id: element_type,
-                        name: elem.name,
-                        optional: elem.optional,
-                        rest: true,
-                    };
-                    for alternative in &mut alternatives {
-                        alternative.push(rest_element);
-                    }
-                    if element_type != elem.type_id {
-                        changed = true;
-                    }
-                    continue;
                 } else if let Some(TypeData::Union(list_id)) = self.interner.lookup(evaluated) {
                     let members = self.interner.type_list(list_id);
                     let mut spread_alternatives: Vec<Vec<TupleElement>> =
@@ -1523,9 +1507,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 spread_alternatives
                                     .push(self.interner.tuple_list(inner_list_id).to_vec());
                             }
-                            Some(TypeData::Array(element_type)) => {
+                            Some(TypeData::Array(_)) => {
+                                // Keep the array form: a rest `TupleElement`'s
+                                // `type_id` holds the spread operand (`E[]` for
+                                // `...E[]`), matching the type-node lowering,
+                                // the instantiator, and `expand_tuple_rest`.
+                                // Unwrapping to the element type here corrupts
+                                // the rebuilt tuple and makes the relation
+                                // checker compare `E` against `E[]`.
                                 spread_alternatives.push(vec![TupleElement {
-                                    type_id: element_type,
+                                    type_id: member_inner,
                                     name: elem.name,
                                     optional: elem.optional,
                                     rest: true,
@@ -1575,6 +1566,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
+            // Default: keep the (evaluated) type as-is. For rest elements this
+            // preserves the spread-operand form (`E[]` for `...E[]`) that the
+            // type-node lowering, the instantiator, and `expand_tuple_rest`
+            // all assume; an earlier version unwrapped array rests to their
+            // element type here, corrupting every evaluated tuple with a
+            // concrete array rest (`[Box<T>, ...number[]]` became
+            // `[Box<T>, ...number]`) and breaking recursive-generic relations.
             let next_element = TupleElement {
                 type_id: evaluated,
                 name: elem.name,

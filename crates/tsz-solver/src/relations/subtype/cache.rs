@@ -986,6 +986,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         self.guard.leave(pair);
 
+        tracing::trace!(
+            src = source.0,
+            tgt = target.0,
+            ?result,
+            "check_subtype dispatch result"
+        );
+
         // Cache definitive results for cross-checker memoization.
         // Skip context-dependent results (see lookup guard above).
         if can_use_shared_relation_cache && let Some(db) = self.query_db {
@@ -1014,11 +1021,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// compares Application type arguments before assuming related.
     /// In normal mode, delegates to `cycle_result` (coinductive assumption).
     fn result_on_cycle(&self, source: TypeId, target: TypeId) -> SubtypeResult {
-        if self.identity_cycle_check {
+        let result = if self.identity_cycle_check {
             self.identity_cycle_result(source, target)
         } else {
             self.cycle_result()
-        }
+        };
+        tracing::trace!(
+            src = source.0,
+            tgt = target.0,
+            ?result,
+            "relation cycle hit"
+        );
+        result
     }
 
     /// Identity-mode cycle result: check Application type arguments at cycle points.

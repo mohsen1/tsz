@@ -44,6 +44,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &[TupleElement],
         target: &[TupleElement],
     ) -> SubtypeResult {
+        tracing::trace!(?source, ?target, "check_tuple_subtype enter");
         // Fast path: [...S] <: [...T] when both are single-rest-element tuples.
         // tsc treats these as equivalent to S <: T for assignability.
         // This handles variadic tuple identity: [...U] <: [...T] when U extends T.
