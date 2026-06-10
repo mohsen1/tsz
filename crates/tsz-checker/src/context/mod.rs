@@ -59,7 +59,7 @@ pub use symbol_file_targets::SymbolFileTargetsOverlay;
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -1245,6 +1245,22 @@ pub struct CheckerContext<'a> {
     /// Eliminates O(N) scans when resolving module augmentations for interface
     /// declaration merging (`interface_type.rs`, computed.rs).
     pub global_module_augmentations_index: Option<GlobalModuleAugmentationsIndex>,
+
+    /// Lazily-built per-checker candidate list for the duplicate-identifier
+    /// global-scope conflict scan: `(file_idx, top-level statement)` pairs that
+    /// are `export as namespace X` declarations or `declare global { … }`
+    /// blocks in *any* file. The per-symbol-name scan previously walked every
+    /// arena's top-level statements once per distinct name per file; almost
+    /// all files contain neither construct, so this collapses those walks to
+    /// one pass per checker. Entries preserve (file, statement) order.
+    pub global_scope_conflict_candidates: OnceCell<Vec<(usize, tsz_parser::parser::NodeIndex)>>,
+
+    /// Memo for `effective_jsx_mode`, keyed by the file index it was computed
+    /// for (child checkers and session resets re-point `current_file_idx`).
+    /// The mode is a pure function of the file's source text and compiler
+    /// options; without the memo every consumer re-scans the source for the
+    /// `@jsxRuntime` pragma.
+    pub effective_jsx_mode_cache: Cell<Option<(usize, tsz_common::checker_options::JsxMode)>>,
 
     /// Pre-built global index: `module_specifier` -> Vec<(SymbolId, `file_idx`)>.
     /// Merges all binders' `augmentation_target_modules` (reverse map: symbol -> module)

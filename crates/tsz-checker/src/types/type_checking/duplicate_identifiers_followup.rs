@@ -129,14 +129,22 @@ impl<'a> CheckerState<'a> {
 
         let mut seen = FxHashSet::default();
 
-        let block_function_decls: Vec<(tsz_binder::SymbolId, NodeIndex, String)> = self
-            .ctx
-            .binder
-            .symbols
-            .iter()
-            .filter(|symbol| symbol.has_any_flags(symbol_flags::FUNCTION))
-            .flat_map(|symbol| {
-                symbol.declarations.iter().filter_map(|&decl_idx| {
+        // When libs are loaded the binder's symbol table also holds the
+        // thousands of merged lib symbols. Block-scoped function conflicts
+        // can only involve functions declared by nodes of the *current file*,
+        // so walk the symbols bound from this file's nodes (mirrors
+        // `collect_duplicate_check_symbol_ids`) instead of filtering the full
+        // lib-merged table once per checked file. Ids are sorted so the
+        // candidate order matches the symbol-table iteration order the
+        // unrestricted path produces.
+        let has_libs = self.ctx.has_lib_loaded() || !self.ctx.binder.lib_symbol_ids.is_empty();
+
+        let function_symbol_decls = |symbol: &tsz_binder::Symbol| {
+            let sym_id = symbol.id;
+            symbol
+                .declarations
+                .iter()
+                .filter_map(|&decl_idx| {
                     let node = self.ctx.arena.get(decl_idx)?;
                     if node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION {
                         return None;
@@ -145,10 +153,31 @@ impl<'a> CheckerState<'a> {
                         return None;
                     }
                     let name = self.get_declaration_name_text(decl_idx)?;
-                    Some((symbol.id, decl_idx, name))
+                    Some((sym_id, decl_idx, name))
                 })
-            })
-            .collect();
+                .collect::<Vec<_>>()
+        };
+
+        let block_function_decls: Vec<(tsz_binder::SymbolId, NodeIndex, String)> = if has_libs {
+            let mut user_sym_ids: Vec<tsz_binder::SymbolId> =
+                self.ctx.binder.node_symbols.values().copied().collect();
+            user_sym_ids.sort_unstable();
+            user_sym_ids.dedup();
+            user_sym_ids
+                .into_iter()
+                .filter_map(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .filter(|symbol| symbol.has_any_flags(symbol_flags::FUNCTION))
+                .flat_map(&function_symbol_decls)
+                .collect()
+        } else {
+            self.ctx
+                .binder
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.has_any_flags(symbol_flags::FUNCTION))
+                .flat_map(function_symbol_decls)
+                .collect()
+        };
 
         for (current_sym_id, decl_idx, name) in block_function_decls {
             let Some((outer_sym_id, outer_decls)) = self

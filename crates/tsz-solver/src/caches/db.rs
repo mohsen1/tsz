@@ -132,6 +132,40 @@ pub trait TypePredicateCache {
     /// Record the result of the alias-opaque `contains Conditional` walk in the
     /// shared interner cache. Default impl is a no-op.
     fn set_contains_conditional_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached root result for the depth-limited
+    /// `visitor_predicates::contains_type_parameters` walk. The walk always
+    /// starts from a fresh recursion guard, so the answer is a pure function
+    /// of the root `TypeId`. Default impl returns `None` (no caching).
+    fn contains_param_or_infer_root_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record a root result of the depth-limited
+    /// `visitor_predicates::contains_type_parameters` walk. Default no-op.
+    fn set_contains_param_or_infer_root_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached root result for the depth-limited
+    /// `contains_generic_type_parameters_db` walk. Default `None`.
+    fn contains_generic_params_root_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record a root result of the depth-limited
+    /// `contains_generic_type_parameters_db` walk. Default no-op.
+    fn set_contains_generic_params_root_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached result of the evaluator's `type_contains_infer`
+    /// walk (structural `Infer` nodes only; descends `Application` bases).
+    /// Default impl returns `None` (no caching).
+    fn eval_contains_infer_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record a result of the evaluator's `type_contains_infer` walk.
+    /// Only cycle-untainted (fully explored) results may be stored.
+    /// Default impl is a no-op.
+    fn set_eval_contains_infer_cache(&self, _type_id: TypeId, _result: bool) {}
 }
 
 /// Narrow signal for tuple-size overflow discovered during solver evaluation.
@@ -627,6 +661,36 @@ impl TypePredicateCache for TypeInterner {
 
     fn set_contains_conditional_cache(&self, type_id: TypeId, result: bool) {
         self.contains_conditional_cache.insert(type_id, result);
+    }
+
+    fn contains_param_or_infer_root_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_param_or_infer_root_cache
+            .get(&type_id)
+            .map(|v| *v)
+    }
+
+    fn set_contains_param_or_infer_root_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_param_or_infer_root_cache
+            .insert(type_id, result);
+    }
+
+    fn contains_generic_params_root_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_generic_params_root_cache
+            .get(&type_id)
+            .map(|v| *v)
+    }
+
+    fn set_contains_generic_params_root_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_generic_params_root_cache
+            .insert(type_id, result);
+    }
+
+    fn eval_contains_infer_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.eval_contains_infer_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_eval_contains_infer_cache(&self, type_id: TypeId, result: bool) {
+        self.eval_contains_infer_cache.insert(type_id, result);
     }
 }
 
