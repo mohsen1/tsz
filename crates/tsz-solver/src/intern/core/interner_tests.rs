@@ -1,4 +1,5 @@
 use super::*;
+use crate::caches::db::TypeDatabase;
 
 #[test]
 fn interned_type_limit_fallback_poison_returns_error() {
@@ -18,6 +19,37 @@ fn interned_type_limit_fallback_poison_returns_error() {
     );
     assert_eq!(interner.poison_due_to_interned_type_limit(), TypeId::ERROR);
     assert!(interner.poisoned.load(Ordering::Relaxed));
+}
+
+#[test]
+fn poisoned_interner_keeps_existing_types_readable_and_rejects_new_ones() {
+    let interner = TypeInterner::new();
+
+    // Intern a couple of structurally distinct types before the limit hits.
+    let pre_limit_union = TypeDatabase::union2(&interner, TypeId::STRING, TypeId::NUMBER);
+    let pre_limit_data = interner
+        .lookup(pre_limit_union)
+        .expect("freshly interned type must be readable");
+
+    // Simulate crossing the type-count limit.
+    interner
+        .alloc_counter
+        .store((MAX_INTERNED_TYPES + 1) as u32, Ordering::Relaxed);
+    assert_eq!(interner.poison_due_to_interned_type_limit(), TypeId::ERROR);
+    assert!(interner.poisoned.load(Ordering::Relaxed));
+
+    // Already-interned ids stay readable: graceful degradation must not
+    // collapse previously computed program types (or the shared cross-file
+    // caches holding their ids) into opaque misses.
+    assert_eq!(interner.lookup(pre_limit_union), Some(pre_limit_data));
+
+    // Re-interning an existing key resolves to the existing id.
+    let reinterned = TypeDatabase::union2(&interner, TypeId::STRING, TypeId::NUMBER);
+    assert_eq!(reinterned, pre_limit_union);
+
+    // Brand-new structural keys degrade to ERROR.
+    let fresh = TypeDatabase::union2(&interner, TypeId::BOOLEAN, TypeId::NUMBER);
+    assert_eq!(fresh, TypeId::ERROR);
 }
 
 #[test]

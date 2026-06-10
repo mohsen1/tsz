@@ -921,6 +921,15 @@ pub struct CheckerContext<'a> {
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
     pub class_constructor_resolution_set: FxHashSet<SymbolId>,
+    /// Window-scoped partial constructor types published while a class's
+    /// constructor type is being computed. Consulted ONLY by value-position
+    /// fallbacks (the identifier resolver's `ctor_already_resolving` path,
+    /// the mid-resolution base-heritage lookup, and — only when nested
+    /// inside a foreign class's window — the constructor-resolution
+    /// re-entrancy guard) so nested computations observe the class's
+    /// construct-signature arity. Never read in type positions; entries are
+    /// removed when the window closes.
+    pub window_partial_ctor_types: FxHashMap<SymbolId, TypeId>,
     /// O(1) lookup set for JSDoc `@enum` annotation resolution. Without this
     /// guard, `/** @enum {E} */ const E = { ... }` recurses through name
     /// resolution → `resolve_jsdoc_symbol_type(E)` → `@enum` annotation lookup

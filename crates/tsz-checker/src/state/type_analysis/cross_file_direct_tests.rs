@@ -789,7 +789,7 @@ fn delegate_source_file_type_alias_caches_generic_params() {
         state
             .ctx
             .cached_stable_source_file_symbol_arena_type(leaf_sym, target_file_idx, scope),
-        Some((ty, params)),
+        Some((ty, std::sync::Arc::new(params))),
         "stable source-file symbol-arena cache hits must preserve generic params",
     );
     assert_eq!(
@@ -850,7 +850,7 @@ fn assert_explicit_cross_file_source_alias_lowers(alias_name: &str, source: &str
     );
     assert_eq!(
         state.ctx.cached_cross_file_symbol_type(alias_sym, 1),
-        Some((ty, params)),
+        Some((ty, std::sync::Arc::new(params))),
         "explicit cross-file alias result should be cached by file target",
     );
 }

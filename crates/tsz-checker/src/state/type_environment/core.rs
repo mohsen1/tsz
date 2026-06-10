@@ -1246,6 +1246,12 @@ impl<'a> CheckerState<'a> {
         // fresh budget for Application type evaluations. Without this, a complex
         // file (react16.d.ts) would exhaust the fuel and starve subsequent files.
         self.ctx.eval_session.reset_instantiation_fuel();
+        // Likewise reset the interner's global evaluation fuel: `tsc` resets
+        // `instantiationCount` per checked source element, so the budget must
+        // bound per-file runaway evaluation. Left cumulative, a
+        // multi-thousand-file program exhausts it early and every later
+        // file's evaluations collapse to `TypeId::ERROR`.
+        self.ctx.types.reset_evaluation_fuel();
 
         // Collect unique symbols from user code only (node_symbols).
         // Lib symbols from file_locals are NOT included here — they are resolved

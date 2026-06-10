@@ -363,6 +363,7 @@ mod json_tests {
                 "cache_hits_lib",
                 "cache_hits_cross_file",
                 "misses",
+                "full_work_sentinel_results",
                 "max_recursion_depth",
                 "cross_file_type_params_cache_hits",
                 "cross_file_type_params_cache_misses",

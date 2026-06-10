@@ -299,6 +299,9 @@ pub struct DelegateCounters {
     pub cache_hits_lib: u64,
     pub cache_hits_cross_file: u64,
     pub misses: u64,
+    /// Of `misses` (full child-checker work), completions whose result was a
+    /// sentinel (`ERROR`/`UNKNOWN`) the shared cross-file buckets refuse.
+    pub full_work_sentinel_results: u64,
     pub max_recursion_depth: u64,
     /// T2.2 typed-query memo: hits on the cross-file type-parameter cache.
     pub cross_file_type_params_cache_hits: u64,
@@ -506,6 +509,9 @@ impl PerfCounters {
                 cache_hits_lib: load(&c.delegate_cross_arena_cache_hits_lib),
                 cache_hits_cross_file: load(&c.delegate_cross_arena_cache_hits_cross_file),
                 misses: load(&c.delegate_cross_arena_misses),
+                full_work_sentinel_results: load(
+                    &c.delegate_cross_arena_full_work_sentinel_results,
+                ),
                 max_recursion_depth: load(&c.delegate_max_recursion_depth),
                 cross_file_type_params_cache_hits: load(&c.cross_file_type_params_cache_hits),
                 cross_file_type_params_cache_misses: load(&c.cross_file_type_params_cache_misses),
