@@ -11,8 +11,6 @@ const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
     "noImplicitReferences",
     "noErrorTruncation",
     "noTypesAndSymbols",
-    "sourcemap",
-    "sourceMap",
     "suppressOutputPathCheck",
     "symlink",
     "link",
@@ -337,5 +335,36 @@ mod tests {
         let opts = value.as_object().expect("compilerOptions object");
 
         assert_eq!(opts.get("noCheck"), Some(&serde_json::Value::Bool(true)));
+    }
+
+    #[test]
+    fn shared_converter_preserves_source_map_compiler_options() {
+        let options = HashMap::from([
+            ("sourceMap".to_string(), "true".to_string()),
+            ("inlineSourceMap".to_string(), "false".to_string()),
+            ("inlineSources".to_string(), "true".to_string()),
+            ("mapRoot".to_string(), "/generated".to_string()),
+            ("sourceRoot".to_string(), "/src".to_string()),
+        ]);
+        let value = directives_to_tsconfig(&options);
+        let opts = value.as_object().expect("compilerOptions object");
+
+        assert_eq!(opts.get("sourceMap"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            opts.get("inlineSourceMap"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert_eq!(
+            opts.get("inlineSources"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            opts.get("mapRoot"),
+            Some(&serde_json::Value::String("/generated".to_string()))
+        );
+        assert_eq!(
+            opts.get("sourceRoot"),
+            Some(&serde_json::Value::String("/src".to_string()))
+        );
     }
 }
