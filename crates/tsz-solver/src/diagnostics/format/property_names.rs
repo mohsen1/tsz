@@ -2,6 +2,8 @@
 
 use std::borrow::Cow;
 
+use tsz_scanner::{is_ecmascript_identifier_part, is_ecmascript_identifier_start};
+
 /// Format the property-name slot used by excess-property diagnostics.
 ///
 /// The full diagnostic already wraps this value in single quotes. For property
@@ -34,10 +36,12 @@ pub(crate) fn needs_property_name_quotes(name: &str) -> bool {
     if crate::utils::is_numeric_literal_name(name) {
         return false;
     }
+    // Unicode-aware ECMAScript identifier check: delegates to the scanner tables
+    // so that property names like `café` or `naïve` are not incorrectly quoted.
     let mut chars = name.chars();
     match chars.next() {
-        Some(first) if first.is_ascii_alphabetic() || first == '_' || first == '$' => {
-            !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        Some(first) if is_ecmascript_identifier_start(first) => {
+            !chars.all(is_ecmascript_identifier_part)
         }
         _ => true,
     }
