@@ -187,6 +187,25 @@ fn namespace_import_distributive_filter() {
     );
 }
 
+#[test]
+fn namespace_import_class_filter() {
+    // Validates the `symbol_flags::CLASS` branch of `collect_namespace_qualified_interface_syms`:
+    // a star-namespace-imported class must be pre-warmed the same way as an interface.
+    assert_filtered_keys_preserved(
+        &format!(
+            r#"
+            import * as L from "./lib";
+            type Conc = {{ array: L.Validator<number>; bool: L.Validator<boolean> }};
+            type RK<W> = {{ [K in keyof W]-?: W[K] extends L.Validator<any> ? K : never }}[keyof W];
+            type R = RK<Conc>;
+            {PROBE_TAIL}
+            "#
+        ),
+        "export class Validator<T> { tag?: T; }",
+        "namespace-import-class",
+    );
+}
+
 // Note: the *infer-bearing* value-map regression (an `extends V<infer X>`
 // per-key conditional that must keep evaluating eagerly rather than deferring)
 // is guarded by the conformance fixture
