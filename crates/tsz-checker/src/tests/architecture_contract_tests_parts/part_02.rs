@@ -320,9 +320,10 @@ fn test_diagnostic_paths_use_relation_outcome_hint() {
         .expect("failed to read assignability_diagnostics.rs");
 
     assert!(
-        source.contains("assign_relation_outcome("),
-        "check_assignable_or_report_at must obtain a RelationOutcome via the named \
-         assign_relation_outcome helper instead of re-calling the solver separately"
+        source.contains("assign_relation_outcome(")
+            || source.contains("assignability_reason_relation_outcome("),
+        "check_assignable_or_report_at must obtain a RelationOutcome via a named \
+         assignability relation outcome helper instead of re-calling the solver separately"
     );
     assert!(
         source.contains("should_skip_weak_union_error_with_hint(")
