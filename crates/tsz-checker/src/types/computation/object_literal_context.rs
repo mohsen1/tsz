@@ -1213,6 +1213,7 @@ impl<'a> CheckerState<'a> {
             && effective_property_presence != ContextualPropertyPresence::Absent
         {
             tracing::trace!(
+                original_contextual_type = original_contextual_type.0,
                 contextual_type = contextual_type.0,
                 property_name,
                 "contextual_object_literal_property_type: deferred unknown"

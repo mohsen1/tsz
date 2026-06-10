@@ -221,6 +221,15 @@ impl<'a> CheckerState<'a> {
             && self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
                 arg_index.is_some_and(|index| index < skip.len() && skip[index])
             })
+            // Only restore the callee's raw (uninstantiated) parameter type when
+            // the incoming contextual type is itself still unresolved (a bare type
+            // parameter or a type mentioning one). When a return-context refresh
+            // already instantiated the parameter to a concrete contextual type
+            // (e.g. `T` pinned to `WithNodeFactory` from `freeze(...)`'s
+            // contextual return), that concrete type must stay authoritative so
+            // nested method bodies see their real contextual signatures instead
+            // of widening against bare `T`.
+            && contains_type_parameters(self.ctx.types, type_id)
             && let Some(arg_index) = arg_index
             && let Some(callable_type) = callable_ctx.callable_type
             && let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
