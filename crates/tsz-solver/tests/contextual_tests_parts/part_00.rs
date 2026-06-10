@@ -472,22 +472,23 @@ fn test_apply_contextual_no_context() {
 }
 
 #[test]
-fn test_apply_contextual_any_uses_context() {
+fn test_apply_contextual_any_stays_any() {
     let interner = TypeInterner::new();
 
-    // Expression type is any - use contextual type
+    // tsc parity: an any-typed expression keeps `any`; the contextual type
+    // influences widening/freshness only (comlink toWireValue regression).
     let result = apply_contextual_type(&interner, TypeId::ANY, Some(TypeId::STRING));
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, TypeId::ANY);
 }
 
 #[test]
-fn test_apply_contextual_any_uses_literal_context() {
+fn test_apply_contextual_any_stays_any_under_literal_context() {
     let interner = TypeInterner::new();
     let literal = interner.literal_string("ready");
 
-    // Expression type is any - use contextual literal type
+    // Same rule with a literal contextual type: `any` is preserved.
     let result = apply_contextual_type(&interner, TypeId::ANY, Some(literal));
-    assert_eq!(result, literal);
+    assert_eq!(result, TypeId::ANY);
 }
 
 #[test]
@@ -606,7 +607,13 @@ fn test_contextual_union_function_return_preserves_literal() {
 }
 
 #[test]
-fn test_contextual_generic_return_union_any_uses_context() {
+fn test_contextual_generic_return_union_any_stays_any() {
+    // tsc parity: `any` is never overwritten by the contextual type.
+    // apply_contextual_type's consumers are object-literal property values,
+    // where tsc derives the property type from the expression and keeps
+    // `any` (contextual types drive widening/freshness only). See the
+    // comlink toWireValue regression (shorthand any vs discriminated
+    // union contextual property type `unknown | {}`).
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
 
@@ -639,9 +646,8 @@ fn test_contextual_generic_return_union_any_uses_context() {
     let inferred = infer_ctx.resolve_with_constraints(var_t).unwrap();
     assert_eq!(inferred, TypeId::ANY);
 
-    let expected_return = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let result = apply_contextual_type(&interner, inferred, return_ctx.expected());
-    assert_eq!(result, expected_return);
+    assert_eq!(result, TypeId::ANY);
 }
 
 #[test]

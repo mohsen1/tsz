@@ -899,14 +899,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // local ENUM symbol for the imported alias.
         if case_type != TypeId::ERROR
             && self.ctx.arena.get(case_expr).is_some_and(|node| {
-                use tsz_parser::parser::syntax_kind_ext;
                 node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             })
+            && self.ctx.node_types.get(&case_expr.0).is_none()
         {
-            if self.ctx.node_types.get(&case_expr.0).is_none() {
-                self.ctx.node_types.insert(case_expr.0, case_type);
-            }
+            self.ctx.node_types.insert(case_expr.0, case_type);
         }
         case_type
     }
