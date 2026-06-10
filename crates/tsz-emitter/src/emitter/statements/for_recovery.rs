@@ -356,17 +356,15 @@ mod tests {
 
     #[test]
     fn typed_for_body_call_recovery_accepts_unicode_identifiers() {
-        let output = emit_es5(
-            "for (let r\u{e9}sum\u{e9}: Type) { donn\u{e9}es(r\u{e9}sum\u{e9}); }",
-        );
+        // \u{e9} and \u{65e5} are valid ECMAScript identifier-start chars.
+        let output = emit_es5("for (let r\u{e9}sum\u{e9}: Type) { donn\u{e9}es(r\u{e9}sum\u{e9}); }");
         assert!(
             output.contains("r\u{e9}sum\u{e9}"),
             "Unicode binding identifier should be preserved in recovery.\nOutput:\n{output}"
         );
 
-        let output2 = emit_es5(
-            "for (let \u{65e5}\u{672c}\u{8a9e}: T) { \u{51e6}\u{7406}(\u{65e5}\u{672c}\u{8a9e}); }",
-        );
+        let output2 =
+            emit_es5("for (let \u{65e5}\u{672c}\u{8a9e}: T) { \u{51e6}\u{7406}(\u{65e5}\u{672c}\u{8a9e}); }");
         assert!(
             output2.contains("\u{65e5}\u{672c}\u{8a9e}"),
             "CJK binding identifier should be preserved in recovery.\nOutput:\n{output2}"
