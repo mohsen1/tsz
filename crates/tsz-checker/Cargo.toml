@@ -1736,3 +1736,7 @@ path = "tests/call_argument_boolean_literal_array_display_tests.rs"
 [[test]]
 name = "type_param_pick_subset_assignability_tests"
 path = "tests/type_param_pick_subset_assignability_tests.rs"
+
+[[test]]
+name = "deeply_nested_mapped_types_tests"
+path = "tests/deeply_nested_mapped_types_tests.rs"
