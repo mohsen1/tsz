@@ -65,9 +65,24 @@
 #      existing leading-zero exception). Covered by
 #      parser_improvement_class_member_recovery_tests::misplaced_case_clause_* and
 #      parser_improvement_expression_recovery_tests::empty_element_access_*.
-TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
+# deeplyNestedMappedTypes.ts: RESOLVED (ledger drift). Both the recursive
+# mapped-type assignability cases (`Id<{...number...}>` vs `Id<{...string...}>`,
+# `Id2` variant) and the nested plain-object array cases (lines 70/74/78) now
+# match tsc on exact-head against the pinned TypeScript 6.0.3 corpus. The entry
+# was observed as a PASS in conformance-baseline.txt and confirmed locally via
+#   tsz --noEmit <repro.ts>
+# reporting exactly the five expected TS2322 diagnostics. Verify with:
+#   scripts/conformance/conformance.sh run --test-dir <ts-6.0.3>/tests/cases \
+#     --filter deeplyNestedMappedTypes --workers 1
+# propTypeValidatorInference.ts: RESOLVED (ledger drift). The PropTypes-style
+# validator inference pattern (`Validator<T>`, `InferType<V>`, conditional
+# `RequiredKeys`/`OptionalKeys` mapped types) now produces zero errors matching
+# tsc. The entry was observed as a PASS in conformance-baseline.txt and
+# confirmed locally via tsz --noEmit <repro.ts> (exit 0, no diagnostics).
+# Verify with:
+#   scripts/conformance/conformance.sh run --test-dir <ts-6.0.3>/tests/cases \
+#     --filter propTypeValidatorInference --workers 1
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
-TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 # intersectionsOfLargeUnions.ts: PARTIAL PROGRESS. The IndexAccess structural
 # comparison fix (this PR) resolves the TS2536 unit-test cases, but the full
 # conformance test still has unlisted failures at this point. The conformance
