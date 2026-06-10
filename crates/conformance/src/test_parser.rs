@@ -143,9 +143,9 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
 /// module=System, TS5095 for moduleResolution=bundler) because the runner
 /// produced diagnostics from non-first variants that had no cache counterpart.
 pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<String, String>> {
-    // The cache generator takes only the first comma-separated value for all
-    // non-list options (see convert_options_to_tsconfig line 628).  The runner
-    // must do the same to produce matching diagnostic sets.
+    // The shared tsconfig converter takes only the first comma-separated value
+    // for all non-list options. The runner must do the same to produce matching
+    // diagnostic sets.
     //
     // Boolean options like "alwaysstrict" and "nolib" are also NOT expanded:
     // the cache generator passes the raw multi-value string (e.g. "true, false")

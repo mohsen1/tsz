@@ -2,7 +2,7 @@
 //!
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
-use crate::compiler_options::canonical_option_name;
+use crate::compiler_options::directives_to_tsconfig;
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
@@ -1157,37 +1157,6 @@ fn normalize_ts2883_node_modules_message(path: &str) -> String {
     )
 }
 
-/// Test harness-specific directives that should NOT be passed to tsconfig.json
-const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
-    "filename",
-    "allowNonTsExtensions",
-    "useCaseSensitiveFileNames",
-    "baselineFile",
-    "noErrorTruncation",
-    "suppressOutputPathCheck",
-    "noImplicitReferences",
-    "currentDirectory",
-    "traceResolution",
-    "symlink",
-    "link",
-    "noTypesAndSymbols",
-    "fullEmitPaths",
-    "reportDiagnostics",
-    "captureSuggestions",
-    "typeScriptVersion",
-    "skip",
-];
-
-/// List-type compiler options that accept comma-separated values
-const LIST_OPTIONS: &[&str] = &[
-    "lib",
-    "types",
-    "typeRoots",
-    "rootDirs",
-    "moduleSuffixes",
-    "customConditions",
-];
-
 fn no_types_and_symbols_enabled(options: &HashMap<String, String>) -> bool {
     options
         .get("noTypesAndSymbols")
@@ -1248,125 +1217,16 @@ fn declaration_file_linked_into_node_modules(
     })
 }
 
-/// Convert test directive options to tsconfig compiler options
+/// Convert test directive options to tsconfig compiler options.
 ///
-/// Handles:
-/// - Boolean options (true/false)
-/// - List options (comma-separated values like @lib: es6,dom)
-/// - String/enum options (target, module, etc.)
-/// - Filters out test harness-specific directives
-///
-/// `key_order` is kept for compatibility with call sites, but conversion output
-/// is normalized to match cache generation.
+/// `key_order` is kept for compatibility with call sites. The actual conversion
+/// is shared with the cache generators so runner/cache option shapes cannot
+/// drift.
 fn convert_options_to_tsconfig(
     options: &HashMap<String, String>,
     _key_order: &[String],
 ) -> serde_json::Value {
-    let mut opts = serde_json::Map::new();
-    let mut strict_explicit = false;
-
-    for (key, value) in options {
-        // Skip test harness-specific directives
-        let key_lower = key.to_lowercase();
-        if HARNESS_ONLY_DIRECTIVES
-            .iter()
-            .any(|&d| d.to_lowercase() == key_lower)
-        {
-            continue;
-        }
-
-        if key_lower == "strict" {
-            strict_explicit = true;
-        }
-
-        // Use canonical_option_name to match the casing the TSC cache generator used.
-        // Options NOT in the map stay lowercase, causing tsz to emit TS5025 (matching
-        // TSC's behavior when it receives lowercase option names).
-        let tsconfig_key = canonical_option_name(&key_lower);
-        let json_value = if value == "true" {
-            serde_json::Value::Bool(true)
-        } else if value == "false" {
-            serde_json::Value::Bool(false)
-        } else if LIST_OPTIONS
-            .iter()
-            .any(|&opt| opt.to_lowercase() == key_lower)
-        {
-            // Parse comma-separated list
-            // For typeRoots: strip leading '/' from virtual absolute paths (e.g. "/types" → "types")
-            // The conformance runner places virtual absolute paths at {temp_dir}/{path},
-            // so we need relative paths for typeRoots to resolve correctly.
-            let is_type_roots = key_lower == "typeroots";
-            let items: Vec<serde_json::Value> = value
-                .split(',')
-                .map(|s| {
-                    let s = s.trim();
-                    let s = if is_type_roots {
-                        s.trim_start_matches('/')
-                    } else {
-                        s
-                    };
-                    serde_json::Value::String(s.to_string())
-                })
-                .collect();
-            serde_json::Value::Array(items)
-        } else {
-            // For non-list options, take only the first comma-separated value
-            // to match the cache generator behavior.
-            let effective_value = value.split(',').next().unwrap_or(value).trim();
-            // NOTE: Do NOT convert effective_value "true"/"false" to Bool here.
-            // The cache generator keeps split results as strings (e.g.,
-            // "strictNullChecks": "true"), which triggers TS5024 in tsc.
-            // We must produce the same tsconfig to match expected diagnostics.
-            if let Ok(num) = effective_value.parse::<i64>() {
-                // Handle numeric options (e.g., maxNodeModuleJsDepth)
-                serde_json::Value::Number(num.into())
-            } else {
-                serde_json::Value::String(effective_value.to_string())
-            }
-        };
-
-        opts.insert(tsconfig_key.to_string(), json_value);
-    }
-
-    // Mirror TypeScript harness behavior by leaving `strict` absent unless the
-    // test explicitly requested it. The cached TSC baselines include strict-mode
-    // diagnostics for many tests without `@strict`, so forcing `strict: false`
-    // here suppresses real expected errors like TS2564.
-    //
-    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
-    // tsz's config parser handles `strict: true` → sub-options expansion, but the
-    // conformance test runner strips source pragmas before writing test files, so
-    // tsz can only read options from the tsconfig. We must expand strict here to
-    // ensure tsz gets the correct sub-options.
-    //
-    // Only expand when the test explicitly set `@strict`.
-    if strict_explicit {
-        if let Some(serde_json::Value::Bool(strict_val)) = opts.get("strict").cloned() {
-            // Expand strict sub-options for both strict: true and strict: false.
-            // The tsc cache generator writes these explicitly in both directions.
-            // NOTE: alwaysStrict must be included in automatic expansion.
-            // When strict=false expands to include alwaysStrict=false, tsc 6.0 emits TS5107
-            // (deprecation warning) which suppresses all file-level errors, matching test expectations.
-            for key in [
-                "alwaysStrict",
-                "noImplicitAny",
-                "noImplicitThis",
-                "strictNullChecks",
-                "strictFunctionTypes",
-                "strictBindCallApply",
-                "strictPropertyInitialization",
-                "useUnknownInCatchVariables",
-            ] {
-                opts.entry(key.to_string())
-                    .or_insert(serde_json::Value::Bool(strict_val));
-            }
-        }
-    }
-
-    // Sort properties alphabetically for deterministic tsconfig output.
-    opts.sort_keys();
-
-    serde_json::Value::Object(opts)
+    directives_to_tsconfig(options)
 }
 
 fn copy_tsconfig_to_root_if_needed(

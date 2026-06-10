@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use tsz_conformance::compiler_options::canonical_option_name;
+use tsz_conformance::compiler_options::directives_to_tsconfig;
 use walkdir::WalkDir;
 
 /// Timeout for reading tsserver responses (in seconds)
@@ -411,135 +411,6 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Test harness-specific directives that should NOT be passed to tsconfig.json
-/// These are handled by the test infrastructure, not the TypeScript compiler
-const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
-    "filename",
-    "allowNonTsExtensions",
-    "useCaseSensitiveFileNames",
-    "baselineFile",
-    "noErrorTruncation",
-    "suppressOutputPathCheck",
-    "noImplicitReferences",
-    "currentDirectory",
-    "traceResolution",
-    "symlink",
-    "link",
-    "noTypesAndSymbols",
-    "fullEmitPaths",
-    "noCheck",
-    "nocheck",
-    "reportDiagnostics",
-    "captureSuggestions",
-    "typeScriptVersion",
-    "skip",
-];
-
-/// List-type compiler options that accept comma-separated values
-const LIST_OPTIONS: &[&str] = &[
-    "lib",
-    "types",
-    "typeRoots",
-    "rootDirs",
-    "moduleSuffixes",
-    "customConditions",
-];
-
-/// Convert test directive options to tsconfig compiler options JSON
-///
-/// Handles:
-/// - Boolean options (true/false)
-/// - List options (comma-separated values like @lib: es6,dom)
-/// - String/enum options (target, module, etc.)
-/// - Filters out test harness-specific directives
-fn convert_options_to_tsconfig(
-    options: &std::collections::HashMap<String, String>,
-) -> serde_json::Value {
-    let mut opts = serde_json::Map::new();
-    let mut strict_explicit = false;
-
-    for (key, value) in options {
-        let key_lower = key.to_lowercase();
-        if HARNESS_ONLY_DIRECTIVES
-            .iter()
-            .any(|&d| d.to_lowercase() == key_lower)
-        {
-            continue;
-        }
-
-        if key_lower == "strict" {
-            strict_explicit = true;
-        }
-
-        let canonical_key = canonical_option_name(&key_lower);
-        let json_value = if value == "true" {
-            serde_json::Value::Bool(true)
-        } else if value == "false" {
-            serde_json::Value::Bool(false)
-        } else if LIST_OPTIONS
-            .iter()
-            .any(|&opt| opt.to_lowercase() == key_lower)
-        {
-            // For typeRoots: strip leading '/' from virtual absolute paths (e.g.
-            // "/types" → "types").  Tests use absolute paths as virtual FS roots;
-            // files are written at {test_dir}/{path}, so relative paths are needed.
-            let is_type_roots = key_lower == "typeroots";
-            let items: Vec<serde_json::Value> = value
-                .split(',')
-                .map(|s| {
-                    let s = s.trim();
-                    let s = if is_type_roots {
-                        s.trim_start_matches('/')
-                    } else {
-                        s
-                    };
-                    serde_json::Value::String(s.to_string())
-                })
-                .collect();
-            serde_json::Value::Array(items)
-        } else {
-            // For non-list options, take only the first comma-separated value
-            let effective_value = value.split(',').next().unwrap_or(value).trim();
-            if let Ok(num) = effective_value.parse::<i64>() {
-                serde_json::Value::Number(num.into())
-            } else {
-                serde_json::Value::String(effective_value.to_string())
-            }
-        };
-
-        opts.insert(canonical_key.to_string(), json_value);
-    }
-
-    // Mirror TypeScript harness behavior by leaving `strict` absent unless the
-    // test explicitly requested it.
-    //
-    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
-    if strict_explicit {
-        if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-            let strict = *strict;
-            for key in [
-                "noImplicitAny",
-                "noImplicitThis",
-                "strictNullChecks",
-                "strictFunctionTypes",
-                "strictBindCallApply",
-                "strictPropertyInitialization",
-                "useUnknownInCatchVariables",
-                "alwaysStrict",
-            ] {
-                opts.entry(key.to_string())
-                    .or_insert(serde_json::Value::Bool(strict));
-            }
-        }
-    }
-
-    // Keep compilerOptions ordering deterministic so TS5023/TS5025 line/column
-    // locations are stable across cache generation runs.
-    opts.sort_keys();
-
-    serde_json::Value::Object(opts)
-}
-
 fn process_test_file(
     client: &mut TsServerClient,
     path: &Path,
@@ -619,7 +490,7 @@ fn process_test_file(
     if !has_tsconfig_file {
         let tsconfig_path = test_dir.join("tsconfig.json");
         let tsconfig_content = serde_json::json!({
-            "compilerOptions": convert_options_to_tsconfig(&options),
+            "compilerOptions": directives_to_tsconfig(&options),
             "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
             "exclude": ["node_modules"]
         });
