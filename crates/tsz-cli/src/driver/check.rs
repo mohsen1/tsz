@@ -331,6 +331,27 @@ fn parallel_file_session_reuse_requested() -> bool {
     )
 }
 
+/// Decide whether fresh per-file checkers run sequentially instead of on the
+/// rayon pool.
+///
+/// Tiny batches stay sequential to avoid pool overhead. Large wildcard
+/// barrels (PR #5881) and DOM/webworker-lib projects (PR #7312) stay
+/// sequential because correctness and termination on type-heavy projects
+/// currently depend on checking files in deterministic order with a
+/// progressively warmed `SharedQueryCache`.
+///
+/// Investigated 2026-06 while attempting to lift the DOM gate for the
+/// ts-toolbelt row: the blocker is not (only) racing shared state. Checking
+/// `ts-toolbelt/sources/Function/AutoPath.ts` *alone* (cold caches, fully
+/// sequential) is a runaway evaluation, and `sources/Number/Greater.ts`
+/// alone emits a false `TS2344` (`'undefined'` vs the `Iteration` tuple
+/// constraint). The sequential project run masks both because earlier files
+/// warm the shared eval/relation caches before the heavy files are reached.
+/// Under parallel fresh checking, workers start those files cold, so runs
+/// nondeterministically hang or surface the false diagnostics. Lifting this
+/// gate requires fixing the cold-start conditional/`infer` evaluation
+/// family first (then re-running the 10x byte-diff determinism loop on
+/// ts-toolbelt at full width).
 const fn should_use_sequential_fresh_checking(
     work_item_count: usize,
     has_large_wildcard_barrel: bool,
