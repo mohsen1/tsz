@@ -207,10 +207,10 @@ export function assertNodeProperty<
         ));
     let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
     let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
-    assert!(
-        ts2536_count >= 1,
-        "Expected TS2536 for `V extends HTMLElementTagNameMap[T][P]` (intersectionsOfLargeUnions.ts). \
-         Got: {diagnostics:#?}"
+    assert_eq!(
+        ts2536_count, 2,
+        "Expected exactly 2 TS2536 errors (T and P) for `V extends HTMLElementTagNameMap[T][P]` \
+         (intersectionsOfLargeUnions.ts). Got: {diagnostics:#?}"
     );
     assert!(
         ts2345_count == 0,
