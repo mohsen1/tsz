@@ -131,7 +131,7 @@ impl<'a> CheckerState<'a> {
     /// is replayable only under the identical in-progress context.
     fn cross_arena_context_fingerprint(&self) -> u64 {
         #[inline]
-        fn mix(value: u64) -> u64 {
+        const fn mix(value: u64) -> u64 {
             // splitmix64 finalizer
             let mut z = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
             z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);

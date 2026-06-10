@@ -166,6 +166,11 @@ impl CrossFileDelegationCache {
 ///
 /// In-progress guard returns (cross-arena depth, per-checker recursion
 /// budget) are *not* completed results and must never be written here.
+/// Memo key: `(owner_file_idx, raw symbol id, in-progress-context fingerprint)`.
+type SessionMemoKey = (u32, u32, u64);
+/// Completed symbol-resolution payload: resolved type plus captured type params.
+type ResolvedSymbolType = (TypeId, Vec<TypeParamInfo>);
+
 #[derive(Default)]
 pub struct CrossArenaSessionMemo {
     /// Set on every insert; lets `clear_for_new_delegation_tree` skip the
@@ -174,13 +179,13 @@ pub struct CrossArenaSessionMemo {
     dirty: std::sync::atomic::AtomicBool,
     /// `delegate_cross_arena_symbol_resolution` completed sentinel results,
     /// keyed by `(owner_file_idx, raw symbol id, context fingerprint)`.
-    pub symbol: dashmap::DashMap<(u32, u32, u64), (TypeId, Vec<TypeParamInfo>)>,
+    pub symbol: dashmap::DashMap<SessionMemoKey, ResolvedSymbolType>,
     /// `delegate_cross_arena_class_instance_type` completed negative results
     /// (`None` or sentinel-typed = completed without a usable instance type).
-    pub class_instance: dashmap::DashMap<(u32, u32, u64), Option<(TypeId, Vec<TypeParamInfo>)>>,
+    pub class_instance: dashmap::DashMap<SessionMemoKey, Option<ResolvedSymbolType>>,
     /// `delegate_cross_arena_interface_type` completed-`None` child-checker
     /// results (completed with `UNKNOWN`/`ERROR`).
-    pub interface: dashmap::DashMap<(u32, u32, u64), Option<TypeId>>,
+    pub interface: dashmap::DashMap<SessionMemoKey, Option<TypeId>>,
 }
 
 impl CrossArenaSessionMemo {
