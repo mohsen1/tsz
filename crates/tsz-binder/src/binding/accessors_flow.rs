@@ -103,6 +103,21 @@ impl BinderState {
     /// 1. Local `file_locals` (for user-defined globals or merged lib symbols)
     /// 2. Lib binders (only when `lib_symbols_merged` is false)
     ///
+    /// Resolve a name against the program-wide LIB globals carried by
+    /// cross-file lookup binders (`MergedProgram::lib_globals`).
+    ///
+    /// This is a dedicated accessor, NOT folded into `get_global_type*`:
+    /// many checker paths depend on those returning `None` on a cross-file
+    /// binder (e.g. JSX element-type resolution treats an unresolved global
+    /// as "use the namespace declared by the program's files"); a blanket
+    /// fallback there regresses multi-file JSX programs. Callers that
+    /// specifically resolve declaration heritage bases (`extends Request`)
+    /// through cross-arena delegation chain this explicitly so heritage does
+    /// not depend on root-file order.
+    pub fn program_global_type(&self, name: &str) -> Option<SymbolId> {
+        self.program_globals.get(name)
+    }
+
     /// Returns the `SymbolId` if found, None otherwise.
     pub fn get_global_type(&self, name: &str) -> Option<SymbolId> {
         // First check file_locals (includes merged lib symbols when lib_symbols_merged is true)

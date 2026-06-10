@@ -33,8 +33,6 @@ mod contextual;
 pub mod def;
 mod diagnostics;
 pub mod evaluation;
-#[cfg(test)]
-mod flow_analysis;
 mod inference;
 mod instantiation;
 mod intern;

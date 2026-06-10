@@ -368,6 +368,14 @@ pub struct MergedProgram {
     pub cross_file_node_symbols: Arc<CrossFileNodeSymbols>,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
+    /// Lib-origin subset of `globals` (names whose `SymbolId` is in
+    /// `lib_symbol_ids`), computed once at merge time so cross-file lookup
+    /// binders can install it with an O(1) clone. Script-file globals (e.g. a
+    /// test's own `JSX` namespace) are deliberately excluded: those must keep
+    /// resolving through the per-file cross-file path with their original
+    /// symbol identity, or program-global lookups shadow/re-identify them
+    /// (witnessed as multi-file JSX conformance regressions).
+    pub lib_globals: SymbolTable,
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
     pub file_locals: Vec<SymbolTable>,
     /// Ambient module declarations across all files

@@ -1447,6 +1447,31 @@ impl BindResultReducer {
         // filtering by `entry_sym_id == sym_id` use this to do a point lookup.
         let sym_to_decl_indices = build_sym_to_decl_indices(&self.declaration_arenas);
 
+        // Lib-origin subset of the program globals (see `MergedProgram::lib_globals`).
+        // Built once here so per-binder installation stays an O(1) table clone.
+        //
+        // Module/namespace-flagged symbols (e.g. the global `JSX` namespace)
+        // are excluded even when lib-origin: their per-file augmentation and
+        // merge identity is owned by the cross-file resolution path, and
+        // serving them from a program-wide fallback re-identifies them
+        // (witnessed as multi-file JSX conformance regressions). The flag
+        // check must happen here, against the program-wide symbol arena —
+        // a cross-file lookup binder cannot resolve these ids to symbols.
+        let lib_globals = {
+            let mut table = SymbolTable::with_capacity(self.globals.len());
+            for (name, &sym_id) in self.globals.iter() {
+                if !self.global_lib_symbol_ids.contains(&sym_id) {
+                    continue;
+                }
+                let flags = self.global_symbols.get(sym_id).map_or(0, |sym| sym.flags);
+                if flags & tsz_binder::symbol_flags::MODULE != 0 {
+                    continue;
+                }
+                table.set(name.clone(), sym_id);
+            }
+            table
+        };
+
         MergedProgram {
             files: self.files,
             symbols: self.global_symbols,
@@ -1455,6 +1480,7 @@ impl BindResultReducer {
             sym_to_decl_indices: Arc::new(sym_to_decl_indices),
             cross_file_node_symbols: Arc::new(self.cross_file_node_symbols),
             globals: self.globals,
+            lib_globals,
             file_locals: self.file_locals_list,
             declared_modules: Arc::new(self.declared_modules),
             shorthand_ambient_modules: Arc::new(self.shorthand_ambient_modules),

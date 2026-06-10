@@ -8,14 +8,14 @@
 //! - Cycle detection for recursive types (coinductive)
 //! - Set-theoretic operations for unions and intersections
 //! - `TypeResolver` trait for lazy symbol resolution
-//! - Tracer pattern for zero-cost diagnostic abstraction
 
 use std::sync::Arc;
 
 use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
-use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
+#[cfg(test)]
+use crate::diagnostics::SubtypeFailureReason;
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::operations::AssignabilityChecker;
 #[cfg(test)]
@@ -279,10 +279,6 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// thousands of times. Cache the shape once per checker so those
     /// checks avoid rebuilding method signatures and property vectors.
     pub(crate) apparent_primitive_shapes: [Option<Arc<ObjectShape>>; 5],
-    /// Optional tracer for collecting subtype failure diagnostics.
-    /// When `Some`, enables detailed failure reason collection for error messages.
-    /// When `None`, disables tracing for maximum performance (default).
-    pub tracer: Option<&'a mut dyn DynSubtypeTracer>,
     /// When true (default), non-generic functions may be compared to generic functions
     /// by erasing the target's type parameters to their constraints. This matches tsc's
     /// default `eraseGenerics` behavior for structural type comparison.
@@ -378,7 +374,6 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
-            tracer: None,
             type_param_equivalences: Vec::new(),
         }
     }
@@ -427,7 +422,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
-            tracer: None,
             type_param_equivalences: Vec::new(),
         }
     }
@@ -514,10 +508,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             };
 
-            let saved_tracer = self.tracer.take();
             let compatible =
                 self.check_property_compatibility(source_prop, target_prop, None, None);
-            self.tracer = saved_tracer;
 
             if compatible.is_false() {
                 return true;

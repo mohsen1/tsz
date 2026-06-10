@@ -172,6 +172,37 @@ pub fn is_ts_file(path: &Path) -> bool {
     is_ts_declaration_file(path) || is_ts_source_file(path)
 }
 
+/// Return true when `path` is a TypeScript default library file.
+///
+/// Matches:
+/// - Any file whose name starts with `lib.` and ends with `.d.ts`
+///   (e.g. `lib.es5.d.ts`, `lib.esnext.full.d.ts`).
+/// - Files inside an `@typescript/lib-*` `node_modules` package
+///   (the split-per-lib distribution used by bundlers).
+///
+/// Case-sensitive. Use [`is_default_lib_file_name`] when you only have
+/// a bare file name rather than a full path.
+#[must_use]
+pub fn is_default_lib_file(path: &Path) -> bool {
+    is_default_lib_file_name(
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default(),
+    ) || path
+        .to_string_lossy()
+        .contains("/node_modules/@typescript/lib-")
+}
+
+/// Return true when `name` is a TypeScript default library file name.
+///
+/// Matches names that start with `"lib."` and end with `".d.ts"`.
+/// Does **not** check for `@typescript/lib-*` paths; use
+/// [`is_default_lib_file`] for full-path checks.
+#[must_use]
+pub fn is_default_lib_file_name(name: &str) -> bool {
+    name.starts_with("lib.") && name.ends_with(".d.ts")
+}
+
 /// Return true when `path` is in the JavaScript family.
 #[must_use]
 pub fn is_js_file(path: &Path) -> bool {
@@ -384,6 +415,36 @@ mod tests {
                 assert_eq!(d.strip_prefix('.'), Some(*b), "{d} → {b}");
             }
         }
+    }
+
+    #[test]
+    fn is_default_lib_file_name_matches_lib_prefix_dts_suffix() {
+        assert!(is_default_lib_file_name("lib.d.ts"));
+        assert!(is_default_lib_file_name("lib.es5.d.ts"));
+        assert!(is_default_lib_file_name("lib.esnext.full.d.ts"));
+        assert!(is_default_lib_file_name("lib.dom.d.ts"));
+        assert!(is_default_lib_file_name("lib.decorators.d.ts"));
+    }
+
+    #[test]
+    fn is_default_lib_file_name_rejects_non_lib_files() {
+        assert!(!is_default_lib_file_name("types.d.ts"));
+        assert!(!is_default_lib_file_name("index.ts"));
+        assert!(!is_default_lib_file_name("lib.custom.ts")); // not .d.ts
+        assert!(!is_default_lib_file_name("mylib.d.ts")); // no "lib." prefix
+    }
+
+    #[test]
+    fn is_default_lib_file_matches_at_typescript_lib_package() {
+        use std::path::Path;
+        // Absolute paths (as they appear in real project compilation)
+        assert!(is_default_lib_file(Path::new(
+            "/project/node_modules/@typescript/lib-es5/index.d.ts"
+        )));
+        assert!(is_default_lib_file(Path::new("lib.es5.d.ts")));
+        assert!(!is_default_lib_file(Path::new(
+            "/project/node_modules/some-pkg/index.d.ts"
+        )));
     }
 
     #[test]

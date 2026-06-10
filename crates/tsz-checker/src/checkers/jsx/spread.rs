@@ -6,6 +6,7 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::{is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 use tsz_solver::TypeId;
 
 pub(crate) struct SpreadCheckOpts<'a> {
@@ -24,14 +25,13 @@ pub(crate) struct SpreadCheckOpts<'a> {
     pub(crate) merged_attrs_display: Option<&'a str>,
 }
 
-/// Local mirror of `tsz_solver::diagnostics::format::needs_property_name_quotes`.
-/// The solver helper is private to its module, so duplicate the small predicate
-/// here for the JSX spread structural display below. Keeps the rule in lockstep
-/// with the solver's printer: numeric-only names and bracketed computed keys
-/// stay unquoted; identifier-shaped names (alphanumeric / `_` / `$` only) stay
-/// unquoted; everything else (including `data-*` and `aria-*` JSX attributes,
-/// which are common on HTML-attribute prop types) needs quoting so the
-/// rendered type stays syntactically valid TypeScript.
+/// Returns `true` if `name` must be quoted in a rendered JSX/TS property type display.
+///
+/// Uses the scanner's Unicode ECMAScript identifier tables so that Unicode property
+/// names (e.g. `café`, `naïve`) that are valid JS identifiers are not incorrectly quoted.
+/// Numeric names and bracketed computed keys stay unquoted; everything else (including
+/// `data-*` and `aria-*` JSX attributes) needs quoting so the rendered type stays
+/// syntactically valid TypeScript.
 fn jsx_property_name_needs_quotes(name: &str) -> bool {
     if name.is_empty() {
         return true;
@@ -48,10 +48,11 @@ fn jsx_property_name_needs_quotes(name: &str) -> bool {
     {
         return false;
     }
+    // Check if it's a valid ECMAScript identifier (Unicode-aware, matching the scanner)
     let mut chars = name.chars();
     match chars.next() {
-        Some(first) if first.is_ascii_alphabetic() || first == '_' || first == '$' => {
-            !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        Some(first) if is_ecmascript_identifier_start(first) => {
+            !chars.all(is_ecmascript_identifier_part)
         }
         _ => true,
     }

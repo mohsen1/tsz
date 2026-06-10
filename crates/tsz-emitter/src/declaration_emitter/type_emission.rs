@@ -9,7 +9,7 @@ use super::helpers::{escape_string_for_double_quote, escape_string_for_single_qu
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part};
 
 /// Re-escape a cooked template literal string so it can be placed back
 /// between backticks.  The parser stores the *cooked* (processed) value in
@@ -1874,8 +1874,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    const fn is_identifier_part(ch: char) -> bool {
-        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+    fn is_identifier_part(ch: char) -> bool {
+        is_ecmascript_identifier_part(ch)
     }
 }
 

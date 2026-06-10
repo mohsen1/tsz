@@ -8,6 +8,8 @@
 //! This is separate from string literal completions which handle
 //! string arguments in function calls.
 
+use tsz_common::file_extensions::{KNOWN_MODULE_EXTENSIONS, strip_known_extension};
+
 use super::{CompletionItem, CompletionItemKind, sort_priority};
 
 /// Import path completion entry from the project's file list.
@@ -86,7 +88,7 @@ pub fn build_import_paths(current_file: &str, project_files: &[String]) -> Vec<I
         let relative = compute_relative_path(current_dir, file);
 
         // Strip extension for module specifier
-        let specifier = strip_ts_extension(&relative);
+        let specifier = strip_ts_extension(&relative).to_string();
 
         entries.push(ImportPathEntry {
             specifier,
@@ -108,32 +110,22 @@ pub fn build_import_paths(current_file: &str, project_files: &[String]) -> Vec<I
     entries
 }
 
-/// Check if a file is importable (TypeScript/JavaScript).
+/// Check if a file is importable (TypeScript/JavaScript/JSON).
 fn is_importable_file(path: &str) -> bool {
-    path.ends_with(".ts")
-        || path.ends_with(".tsx")
-        || path.ends_with(".js")
-        || path.ends_with(".jsx")
-        || path.ends_with(".mts")
-        || path.ends_with(".mjs")
-        || path.ends_with(".cts")
-        || path.ends_with(".cjs")
-        || path.ends_with(".json")
+    KNOWN_MODULE_EXTENSIONS
+        .iter()
+        .any(|ext| path.ends_with(ext))
 }
 
 /// Strip TypeScript/JavaScript extensions from a path for module specifiers.
-fn strip_ts_extension(path: &str) -> String {
-    for ext in &[".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs"] {
-        if let Some(stripped) = path.strip_suffix(ext) {
-            // Don't strip .d.ts → just .ts portion
-            if let Some(base) = stripped.strip_suffix(".d") {
-                return base.to_string();
-            }
-            // Don't strip index files to just directory path
-            return stripped.to_string();
-        }
-    }
-    path.to_string()
+///
+/// Delegates to [`tsz_common::file_extensions::strip_known_extension`] which
+/// handles declaration extensions (`.d.ts`, `.d.mts`, `.d.cts`) correctly —
+/// longest suffix first — so `"types.d.ts"` → `"types"` while
+/// `"types.d.tsx"` → `"types.d"` (`.tsx` is a source extension, not a
+/// declaration extension, so only `.tsx` is stripped).
+fn strip_ts_extension(path: &str) -> &str {
+    strip_known_extension(path)
 }
 
 /// Compute a relative path from `from_dir` to `to_file`.
@@ -292,9 +284,19 @@ mod tests {
     }
 
     #[test]
-    fn strip_ts_extension_strips_d_dot_ts_to_base_name() {
-        // `.d.ts` strips both the `.ts` and the trailing `.d`.
+    fn strip_ts_extension_strips_declaration_extensions() {
+        // Declaration extensions (`.d.ts`, `.d.mts`, `.d.cts`) are stripped as
+        // a unit so `"types.d.ts"` → `"types"`, not `"types.d"`.
         assert_eq!(strip_ts_extension("types.d.ts"), "types");
+        assert_eq!(strip_ts_extension("types.d.mts"), "types");
+        assert_eq!(strip_ts_extension("types.d.cts"), "types");
+    }
+
+    #[test]
+    fn strip_ts_extension_preserves_d_part_for_source_tsx() {
+        // `.d.tsx` is a source file (not a declaration), so only `.tsx` is
+        // stripped — the `.d` part belongs to the module name.
+        assert_eq!(strip_ts_extension("types.d.tsx"), "types.d");
     }
 
     #[test]

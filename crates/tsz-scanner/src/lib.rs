@@ -586,6 +586,32 @@ pub fn token_is_trivia(token: SyntaxKind) -> bool {
 }
 
 // =============================================================================
+// ECMAScript Identifier Predicates
+// =============================================================================
+
+/// Returns `true` if `ch` is valid as the **first** character of an ECMAScript
+/// identifier (`ID_Start` per Unicode + `_` and `$`).
+///
+/// Uses the same Unicode tables as the scanner so that checker/emitter decisions
+/// about whether a property name needs quoting stay in sync with what the
+/// scanner accepts as an identifier.
+#[must_use]
+pub fn is_ecmascript_identifier_start(ch: char) -> bool {
+    scanner_impl::is_identifier_start(ch as u32)
+}
+
+/// Returns `true` if `ch` is valid as a **continuation** character of an ECMAScript
+/// identifier (`ID_Continue` per Unicode + `_`, `$`, ZWNJ U+200C, ZWJ U+200D).
+///
+/// Uses the same Unicode tables as the scanner so that checker/emitter decisions
+/// about whether a property name needs quoting stay in sync with what the
+/// scanner accepts as an identifier.
+#[must_use]
+pub fn is_ecmascript_identifier_part(ch: char) -> bool {
+    scanner_impl::is_identifier_part(ch as u32)
+}
+
+// =============================================================================
 // Keyword Text Mapping
 // =============================================================================
 

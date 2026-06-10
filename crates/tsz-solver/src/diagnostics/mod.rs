@@ -2,8 +2,6 @@
 //!
 //! This module defines the core data types for type checking diagnostics:
 //!
-//! - **Tracer pattern** (`SubtypeTracer`, `DynSubtypeTracer`): Zero-cost
-//!   abstraction for tracing subtype check failures without logic drift.
 //! - **Failure reasons** (`SubtypeFailureReason`): Structured enum capturing all the
 //!   ways a subtype check can fail.
 //! - **Lazy diagnostics** (`PendingDiagnostic`, `DiagnosticArg`): Deferred formatting

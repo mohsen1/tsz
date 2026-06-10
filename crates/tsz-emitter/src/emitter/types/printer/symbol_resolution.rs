@@ -2,13 +2,14 @@
 
 use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
+use tsz_common::source_map::escape_js_string;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::computation::{TypeSubstitution, instantiate_type_cached};
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
-use super::{TypePrinter, escape_string_for_double_quote};
+use super::TypePrinter;
 
 impl<'a> TypePrinter<'a> {
     /// Check if a symbol is visible (exported) from the current module.
@@ -935,10 +936,7 @@ impl<'a> TypePrinter<'a> {
     pub(crate) fn print_literal(&self, literal: &tsz_solver::types::LiteralValue) -> String {
         match literal {
             tsz_solver::types::LiteralValue::String(atom) => {
-                format!(
-                    "\"{}\"",
-                    escape_string_for_double_quote(&self.resolve_atom(*atom))
-                )
+                format!("\"{}\"", escape_js_string(&self.resolve_atom(*atom), '"'))
             }
             tsz_solver::types::LiteralValue::Number(n) => {
                 let v = n.0;

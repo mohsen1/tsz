@@ -6,6 +6,7 @@
 
 use super::duplicate_identifiers::DuplicateDeclarationOrigin;
 use crate::state::CheckerState;
+use crate::state_type_analysis::cross_file_direct::is_builtin_lib_file_name;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -120,7 +121,7 @@ impl<'a> CheckerState<'a> {
         let Some(sf) = arena.source_files.first() else {
             return;
         };
-        if !is_default_lib_file_name(&sf.file_name) {
+        if !is_builtin_lib_file_name(&sf.file_name) {
             return;
         }
 
@@ -224,7 +225,7 @@ impl<'a> CheckerState<'a> {
         let Some(sf) = arena.source_files.first() else {
             return;
         };
-        if !is_default_lib_file_name(&sf.file_name) {
+        if !is_builtin_lib_file_name(&sf.file_name) {
             return;
         }
         let Some(remote_node) = arena.get(remote_idx) else {
@@ -332,11 +333,6 @@ impl<'a> CheckerState<'a> {
         }
         emitted
     }
-}
-
-fn is_default_lib_file_name(file_name: &str) -> bool {
-    let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
-    base.starts_with("lib.") && base.ends_with(".d.ts")
 }
 
 /// Resolve `decl_idx` to its declaration name node within `arena`. Mirrors

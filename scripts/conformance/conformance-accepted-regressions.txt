@@ -68,6 +68,12 @@
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+# intersectionsOfLargeUnions.ts: PARTIAL PROGRESS. The IndexAccess structural
+# comparison fix (this PR) resolves the TS2536 unit-test cases, but the full
+# conformance test still has unlisted failures at this point. The conformance
+# snapshot must be updated before removing this entry. Covered by
+# import_aliases::test_ts2536_intersections_of_large_unions_with_real_lib and the
+# test_ts2536_narrow_map_indexed_by_wide_map_key* matrix.
 # importTag17.ts: RESOLVED. A JSDoc `@import { X } from "pkg" with
 # { "resolution-mode": "import" | "require" }` dropped its attribute clause: the
 # binder skipped creating the alias whenever a `with` clause was present, and the

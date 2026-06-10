@@ -17,7 +17,7 @@ pub use caches::{
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
-pub use cross_file_delegation_cache::CrossFileDelegationCache;
+pub use cross_file_delegation_cache::{CrossArenaSessionMemo, CrossFileDelegationCache};
 pub use cross_file_type_params_cache::{
     CrossFileTypeParamsCacheStatistics, cross_file_type_params_cache_statistics,
 };

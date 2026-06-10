@@ -130,6 +130,12 @@ impl<'a> CheckerState<'a> {
                         })
                     })
             })
+            // Cross-file lookup binders do not fold lib globals into
+            // `file_locals`; without this explicit fallback, a lib heritage
+            // base (`extends Request`) silently fails to resolve when the
+            // declaring file is checked through cross-arena delegation,
+            // making results depend on root-file order.
+            .or_else(|| self.ctx.binder.program_global_type(normalized))
     }
 
     /// Get the type of an interface declaration.

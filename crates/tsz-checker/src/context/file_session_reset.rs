@@ -475,6 +475,9 @@ impl<'a> CheckerContext<'a> {
         self.symbol_instance_types =
             crate::context::SymbolTypeCache::with_capacity(binder.symbols.len());
         self.enum_namespace_types.clear();
+        // Also replaces the embedded session memo of completed cross-arena
+        // delegation results (file-session-scoped; may hold contextual
+        // sentinel outcomes that must not leak into the next file).
         self.lib_delegation_cache.clear();
         self.var_decl_types.clear();
         self.merged_value_types.clear();

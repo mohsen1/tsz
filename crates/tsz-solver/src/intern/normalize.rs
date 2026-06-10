@@ -1089,6 +1089,75 @@ impl TypeInterner {
         }
     }
 
+    /// Remove string-literal union members that are matched by a sibling
+    /// template-literal member: `"foo-x" | foo-${string}` reduces to the
+    /// template member `foo-${string}`.
+    ///
+    /// This is the targeted equivalent of the generic pairwise loop in
+    /// `reduce_union_subtypes` for unions whose members are all unit/inert types
+    /// plus template literals: template literals are never reduced themselves and
+    /// unit members never reduce each other after dedup, so string-literal-vs-
+    /// template is the only pair shape that can reduce. Cost is O(L×T) cheap
+    /// string checks instead of O(N²) type lookups.
+    ///
+    /// Template spans are resolved once per template (not once per pair), and a
+    /// template whose first span is literal text only matches literals that start
+    /// with that text — checked first as an O(prefix) prefilter.
+    fn remove_string_literals_matched_by_templates(
+        &self,
+        flat: &mut TypeListBuffer,
+        string_literals: &[(usize, Atom)],
+        templates: &[TemplateLiteralId],
+    ) {
+        // Resolve each template's span list once; precompute the leading-text
+        // prefix prefilter. Mirrors the per-pair guards of
+        // `literal_string_matches_template_literal_shallow`.
+        type TemplateCandidate = (Option<Arc<str>>, Arc<[TemplateSpan]>);
+        let mut candidates: SmallVec<[TemplateCandidate; 8]> = SmallVec::new();
+        for &template_id in templates {
+            let spans = self.template_list(template_id);
+            if spans.len() > 8 {
+                continue;
+            }
+            let prefix = match spans.first() {
+                Some(TemplateSpan::Text(atom)) => Some(self.resolve_atom_ref(*atom)),
+                _ => None,
+            };
+            candidates.push((prefix, spans));
+        }
+        if candidates.is_empty() {
+            return;
+        }
+
+        let mut removed: FxHashSet<usize> = FxHashSet::default();
+        for &(idx, atom) in string_literals {
+            let literal = self.resolve_atom_ref(atom);
+            if literal.len() > 128 {
+                continue;
+            }
+            for (prefix, spans) in &candidates {
+                if let Some(prefix) = prefix
+                    && !literal.starts_with(prefix.as_ref())
+                {
+                    continue;
+                }
+                if self.match_template_literal_shallow(&literal, spans, 0) {
+                    removed.insert(idx);
+                    break;
+                }
+            }
+        }
+
+        if !removed.is_empty() {
+            let mut i = 0;
+            flat.retain(|_| {
+                let keep = !removed.contains(&i);
+                i += 1;
+                keep
+            });
+        }
+    }
+
     /// Shallow object shape subtype check with depth-limited property comparison.
     ///
     /// At depth > 0, property types are compared using `is_subtype_shallow_depth`,
@@ -1479,6 +1548,7 @@ impl TypeInterner {
         if len <= 1 {
             return;
         }
+        tracing::trace!(len, "reduce_union_subtypes: entry");
 
         // Skip reduction if all types are identity-comparable or non-reducible structures.
         // tsc's default union reduction (UnionReduction.Literal) does NOT remove structural
@@ -1490,9 +1560,20 @@ impl TypeInterner {
         // Lazy/Application/Callable types are also non-reducible because `is_subtype_shallow`
         // returns false for them — they require full type resolution. Including them here
         // avoids O(N²) wasted work in unions of class types (which are Lazy at this stage).
+        //
+        // Template-literal members are special-cased: a template literal is never itself
+        // reduced (it is never a shallow subtype of a sibling), but it CAN absorb string
+        // literal members (`"foo-x" | `foo-${string}`` → `` `foo-${string}` ``). For unions
+        // composed only of unit/inert members plus template literals — the shape produced
+        // by template-literal cross-product expansion over union placeholders (large
+        // literal+template families in lib.dom) — the generic O(N²) pairwise loop reduces
+        // to a targeted literal×template pass. See
+        // `remove_string_literals_matched_by_templates`.
         {
             let mut has_primitive = false;
-            let all_non_reducible = flat.iter().all(|&ty| {
+            let mut string_literals: Vec<(usize, Atom)> = Vec::new();
+            let mut templates: Vec<TemplateLiteralId> = Vec::new();
+            let all_non_reducible = flat.iter().enumerate().all(|(idx, &ty)| {
                 if self.is_identity_comparable_type(ty) {
                     // Track whether a widened primitive is present.
                     // If so, literals of that kind ARE reducible (absorbed by the primitive).
@@ -1504,26 +1585,43 @@ impl TypeInterner {
                     {
                         has_primitive = true;
                     }
+                    if let Some(TypeData::Literal(LiteralValue::String(atom))) = self.lookup(ty) {
+                        string_literals.push((idx, atom));
+                    }
                     return true;
                 }
-                matches!(
-                    self.lookup(ty),
+                match self.lookup(ty) {
+                    Some(TypeData::TemplateLiteral(template_id)) => {
+                        templates.push(template_id);
+                        true
+                    }
                     Some(
                         TypeData::Array(_)
-                            | TypeData::Tuple(_)
-                            | TypeData::Object(_)
-                            | TypeData::ObjectWithIndex(_)
-                            | TypeData::Enum(_, _)
-                            | TypeData::Lazy(_)
-                            | TypeData::Application(_)
-                            | TypeData::Callable(_)
-                            // Literals without a widened primitive peer are non-reducible
-                            // (no literal is a subtype of a different literal).
-                            | TypeData::Literal(_)
-                    )
-                )
+                        | TypeData::Tuple(_)
+                        | TypeData::Object(_)
+                        | TypeData::ObjectWithIndex(_)
+                        | TypeData::Enum(_, _)
+                        | TypeData::Lazy(_)
+                        | TypeData::Application(_)
+                        | TypeData::Callable(_)
+                        // Literals without a widened primitive peer are non-reducible
+                        // (no literal is a subtype of a different literal).
+                        | TypeData::Literal(_),
+                    ) => true,
+                    _ => false,
+                }
             });
             if all_non_reducible && !has_primitive {
+                // Among unit/inert members and template literals, the only shallow
+                // reduction is a string literal absorbed by a template literal.
+                // Run exactly that pass instead of the generic O(N²) loop.
+                if !templates.is_empty() && !string_literals.is_empty() {
+                    self.remove_string_literals_matched_by_templates(
+                        flat,
+                        &string_literals,
+                        &templates,
+                    );
+                }
                 return;
             }
         }
@@ -1862,5 +1960,69 @@ mod tests {
             !interner.is_subtype_shallow(literal, template),
             "union normalization should not invoke full template-literal subtype matching"
         );
+    }
+
+    #[test]
+    fn union_template_absorbs_matching_string_literal() {
+        let interner = TypeInterner::new();
+        let literal = interner.literal_string("foo-1");
+        let template = interner.template_literal(vec![
+            TemplateSpan::Text(interner.intern_string("foo-")),
+            TemplateSpan::Type(TypeId::NUMBER),
+        ]);
+
+        // `"foo-1" | `foo-${number}`` reduces to the template member.
+        assert_eq!(interner.union(vec![literal, template]), template);
+    }
+
+    #[test]
+    fn union_template_keeps_non_matching_string_literal() {
+        let interner = TypeInterner::new();
+        let literal = interner.literal_string("bar-1");
+        let template = interner.template_literal(vec![
+            TemplateSpan::Text(interner.intern_string("foo-")),
+            TemplateSpan::Type(TypeId::NUMBER),
+        ]);
+
+        let union = interner.union(vec![literal, template]);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected a two-member union to survive normalization");
+        };
+        assert_eq!(interner.type_list(list_id).len(), 2);
+    }
+
+    #[test]
+    fn union_template_without_leading_text_absorbs_literal() {
+        let interner = TypeInterner::new();
+        let literal = interner.literal_string("12px");
+        let template = interner.template_literal(vec![
+            TemplateSpan::Type(TypeId::NUMBER),
+            TemplateSpan::Text(interner.intern_string("px")),
+        ]);
+
+        // No leading-text prefilter applies; the full shallow match still runs.
+        assert_eq!(interner.union(vec![literal, template]), template);
+    }
+
+    #[test]
+    fn union_string_placeholder_template_keeps_literals_shallow() {
+        let interner = TypeInterner::new();
+        // Mirrors the lib.dom `AutoFill` family shape: many plain literals next
+        // to `${string}`-placeholder templates. Shallow matching does not match
+        // `${string}` placeholders, so every member must survive.
+        let members = vec![
+            interner.literal_string("name"),
+            interner.literal_string("billing name"),
+            interner.template_literal(vec![
+                TemplateSpan::Text(interner.intern_string("section-")),
+                TemplateSpan::Type(TypeId::STRING),
+                TemplateSpan::Text(interner.intern_string(" name")),
+            ]),
+        ];
+        let union = interner.union(members);
+        let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+            panic!("expected union to survive normalization");
+        };
+        assert_eq!(interner.type_list(list_id).len(), 3);
     }
 }
