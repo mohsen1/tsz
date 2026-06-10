@@ -50,6 +50,6 @@ Do not run full conformance, emit, fourslash, or broad project suites locally.
 - What happens cold/disabled/order-randomized?
 - Is size/residency bounded or observable?
 
-PR/comment packet: Project Corpus Impact, invariant, exact commands/CI, green
-row timing only, RSS/failure-class evidence for runtime blockers, counter
-deltas, noise/caveats, `AgentName`.
+PR/comment packet: goal (usually `fast`) and affected rows, invariant, exact
+commands/CI, green row timing only, RSS/failure-class evidence for runtime
+blockers, counter deltas, noise/caveats.

@@ -53,5 +53,5 @@ scripts/emit/run.sh --filter=<family> --dts-only --verbose --json-out=/tmp/<name
 cargo nextest run -p tsz-emitter <test-or-family>
 ```
 
-PR body: `AgentName`, failure family, structural rule, owner layer, why no
+PR body: `Goal: hold`, failure family, structural rule, owner layer, why no
 semantic validation/output surgery, targeted verification, unsupported shapes.

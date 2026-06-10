@@ -9,22 +9,22 @@ body:
       value: |
         Treat the reported repro as one witness for a broader rule. Fixes should target the owning semantic operation, not a filename, rendered message fragment, or user-chosen identifier spelling.
 
-        These fields improve issue intake only. They do not replace the `Project Corpus Impact` section required in every PR body.
+        These fields improve issue intake only. They do not replace the goal and provenance fields required in every PR body.
 
         Read the anti-hardcoding rules in `AGENTS.md` before filing. The issue should state the structural rule, not a single-test symptom patch.
   - type: input
-    id: agent
+    id: provenance
     attributes:
-      label: AgentName
-      description: Sign the issue with your stable AgentName.
-      placeholder: M1PD1
+      label: Provenance
+      description: "Which machine, assistant, and model filed this issue."
+      placeholder: "studio / claude-code / claude-opus-4-8"
     validations:
       required: true
   - type: dropdown
-    id: owner-track
+    id: owner-area
     attributes:
-      label: Owner Track
-      description: Pick the closest owning compiler or harness track.
+      label: Owner Area
+      description: Pick the closest owning compiler or harness area.
       options:
         - solver
         - checker
@@ -101,5 +101,5 @@ body:
           required: true
         - label: I read the anti-hardcoding rules in `AGENTS.md` and this issue is not asking for a single-test symptom patch.
           required: true
-        - label: I understand that PRs still need their own `Project Corpus Impact` section even when this issue has project-row fields.
+        - label: I understand that PRs still need their own goal and provenance fields even when this issue has project-row fields.
           required: true
