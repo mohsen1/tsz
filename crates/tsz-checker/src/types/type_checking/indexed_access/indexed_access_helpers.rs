@@ -1323,16 +1323,10 @@ impl<'a> CheckerState<'a> {
                     // The DefinitionStore.get_body(DefId) gives the stored body TypeId (same one
                     // returned by `get_type_from_type_node`), so comparing it against
                     // `current_object` detects this case without any structural comparison.
-                    if let Some(def_id) = constraint_def {
-                        if let Some(body_type) = self.ctx.definition_store.get_body(def_id) {
-                            if body_type == current_object {
-                                return false;
-                            }
-                        }
-                    }
-                    // B ≤ A (current_object ≤ constraint keyof operand) →
-                    // keyof A ≤ keyof B → every key of A is in B → valid index.
-                    if self.is_assignable_to(current_object, constraint_operand) {
+                    if let Some(def_id) = constraint_def
+                        && let Some(body_type) = self.ctx.definition_store.get_body(def_id)
+                        && body_type == current_object
+                    {
                         return false;
                     }
                 } else {
