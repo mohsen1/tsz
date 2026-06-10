@@ -47,6 +47,9 @@ mod dual_package_exports_tests;
 #[path = "../tests/fs_tests.rs"]
 mod fs_tests;
 #[cfg(test)]
+#[path = "../tests/lib_heritage_import_order_cli_tests.rs"]
+mod lib_heritage_import_order_cli_tests;
+#[cfg(test)]
 #[path = "../tests/lib_shadow_cli_tests.rs"]
 mod lib_shadow_cli_tests;
 #[cfg(test)]

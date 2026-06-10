@@ -923,6 +923,18 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
     binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
+    // Cross-file lookup binders deliberately keep `file_locals` per-file
+    // (ownership scans iterate that map), so carry the hoisted LIB globals
+    // separately. Without this, a lib-global name (e.g. an `extends Request`
+    // heritage base) silently fails to resolve when a file's types are
+    // computed through cross-arena delegation — making check results depend
+    // on root-file order. Lib-origin names only: script-file globals (e.g. a
+    // program's own `JSX` namespace) must keep resolving through the
+    // per-file cross-file path with their original symbol identity, or this
+    // fallback shadows/re-identifies them (multi-file JSX conformance
+    // regressions). `SymbolTable` is internally `Arc`-backed, so this clone
+    // is an O(1) refcount bump.
+    binder.program_globals = program.lib_globals.clone();
 
     binder
 }
