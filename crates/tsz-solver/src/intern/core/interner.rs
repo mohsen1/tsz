@@ -270,20 +270,34 @@ pub struct TypeInterner {
     /// `QueryCache`, and survive across files and child checkers. Values hold
     /// no `TypeId`s, only `Variance` bitmasks and `DefId`s.
     pub(super) def_variance_masks: DashMap<DefId, SharedDefVariance, FxBuildHasher>,
-    /// Global evaluation fuel counter.
-    ///
-    /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
-    /// Mirrors TypeScript's `instantiationCount` which limits total type instantiation
-    /// work across the entire program check. Prevents deeply recursive type libraries
-    /// (like ts-toolbelt) from consuming unbounded memory through repeated type
-    /// instantiation that creates new `TypeIds` on each expansion.
-    ///
-    /// When this counter exceeds `MAX_EVALUATION_FUEL`, evaluators bail out early
-    /// with `TypeId::ERROR`, matching tsc's TS2589 behavior.
-    pub(super) evaluation_fuel: AtomicU32,
     /// Unique identifier scoping this interner's entries in the thread-local
     /// lookup/intern cache. See `NEXT_INTERNER_INSTANCE_ID` for context.
     pub(super) instance_id: u32,
+}
+
+thread_local! {
+    /// Per-thread evaluation fuel counter.
+    ///
+    /// Tracks cumulative evaluation work across the `TypeEvaluator` instances
+    /// of the file-check session running on this thread. Mirrors TypeScript's
+    /// `instantiationCount`, which bounds runaway type instantiation per
+    /// checked source element. Prevents deeply recursive type libraries (like
+    /// ts-toolbelt) from consuming unbounded memory through repeated type
+    /// instantiation that creates new `TypeIds` on each expansion.
+    ///
+    /// When this counter exceeds `MAX_EVALUATION_FUEL`, evaluators bail out
+    /// early with `TypeId::ERROR`, matching tsc's TS2589 behavior.
+    ///
+    /// This is thread-local rather than a process-global atomic on purpose:
+    /// each file-check session runs entirely on one worker thread and resets
+    /// the budget at session start (`reset_evaluation_fuel` from
+    /// `build_type_environment`). A process-global counter made concurrent
+    /// fresh-checker workers consume and reset each other's budget, so
+    /// whether a deep evaluation bailed to `TypeId::ERROR` depended on
+    /// sibling-worker scheduling — the source of flaky parallel-check
+    /// diagnostics (false TS2344) and uncached re-evaluation storms on
+    /// type-heavy projects.
+    static EVALUATION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Entry-count snapshot for retained `TypeInterner` predicate caches.
@@ -388,7 +402,6 @@ impl TypeInterner {
             union_too_complex: AtomicBool::new(false),
             tuple_too_large: AtomicBool::new(false),
             def_variance_masks: DashMap::with_hasher(FxBuildHasher),
-            evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -1237,17 +1250,21 @@ impl TypeInterner {
 
     /// Consume evaluation fuel and return whether fuel is exhausted.
     ///
-    /// This is a global budget across all `TypeEvaluator` instances. When exhausted,
-    /// the current evaluation should bail out with ERROR, but the interner remains
-    /// readable so already-computed project types do not turn into opaque `Type(N)`
-    /// placeholders in later diagnostics.
+    /// This is a per-thread budget across the `TypeEvaluator` instances of
+    /// the file-check session running on this thread (see `EVALUATION_FUEL`).
+    /// When exhausted, the current evaluation should bail out with ERROR, but
+    /// the interner remains readable so already-computed project types do not
+    /// turn into opaque `Type(N)` placeholders in later diagnostics.
     #[inline]
     pub fn consume_evaluation_fuel(&self, amount: u32) -> bool {
-        let prev = self.evaluation_fuel.fetch_add(amount, Ordering::Relaxed);
-        prev.wrapping_add(amount) > MAX_EVALUATION_FUEL
+        EVALUATION_FUEL.with(|fuel| {
+            let next = fuel.get().wrapping_add(amount);
+            fuel.set(next);
+            next > MAX_EVALUATION_FUEL
+        })
     }
 
-    /// Reset the global evaluation fuel counter.
+    /// Reset this thread's evaluation fuel counter.
     ///
     /// Called at the start of each top-level file check session. `tsc` resets
     /// its `instantiationCount` per checked source element, so the fuel limit
@@ -1256,13 +1273,14 @@ impl TypeInterner {
     /// of any multi-thousand-file program into blanket `TypeId::ERROR`.
     #[inline]
     pub fn reset_evaluation_fuel(&self) {
-        self.evaluation_fuel.store(0, Ordering::Relaxed);
+        EVALUATION_FUEL.with(|fuel| fuel.set(0));
     }
 
-    /// Check whether global evaluation fuel is exhausted without consuming any.
+    /// Check whether this thread's evaluation fuel is exhausted without
+    /// consuming any.
     #[inline]
     pub fn is_evaluation_fuel_exhausted(&self) -> bool {
-        self.evaluation_fuel.load(Ordering::Relaxed) > MAX_EVALUATION_FUEL
+        EVALUATION_FUEL.with(|fuel| fuel.get() > MAX_EVALUATION_FUEL)
     }
 
     #[inline]
