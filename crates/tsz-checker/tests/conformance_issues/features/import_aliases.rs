@@ -412,6 +412,59 @@ export function assertNodeProperty<
     );
 }
 
+/// No TS2536 when T extends keyof an Application type and indexes the same Application type.
+///
+/// `Pick<A, K>` is an Application type; `lazy_def_id` returns `None` for it,
+/// so the simple-`keyof` else branch cannot prove the key spaces differ and
+/// must suppress the error. Before the fix, the branch fell through to
+/// `return true`, producing a false-positive TS2536.
+#[test]
+fn test_ts2536_suppressed_for_application_type_constraint_and_object() {
+    let source = r#"
+type Obj = { a: string; b: number; c: boolean };
+function getField<K extends keyof Pick<Obj, "a" | "b">>(
+    x: Pick<Obj, "a" | "b">,
+    k: K,
+): Pick<Obj, "a" | "b">[K] {
+    return x[k];
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536 = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536 == 0,
+        "No TS2536 expected when T extends keyof Pick<A,K> and indexes Pick<A,K> \
+         (Application type — key spaces cannot be proven distinct). Got: {diagnostics:#?}"
+    );
+}
+
+/// No TS2536 when T extends keyof of an inline object type and indexes a structurally
+/// identical inline object.
+///
+/// Inline object literals produce distinct `TypeId`s at each use-site. Because
+/// `lazy_def_id` returns `None` for them, the simple-`keyof` else branch cannot
+/// prove the key spaces differ and must suppress. Before the fix the branch
+/// returned `true`, producing a false-positive TS2536.
+#[test]
+fn test_ts2536_suppressed_for_inline_object_type_constraint_and_object() {
+    let source = r#"
+function getField<T extends keyof { a: string; b: number }>(
+    obj: { a: string; b: number },
+    key: T,
+): { a: string; b: number }[T] {
+    return obj[key];
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536 = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536 == 0,
+        "No TS2536 expected when T extends keyof of an inline object and indexes the same \
+         inline object shape (inline types have no DefId — key spaces cannot be proven \
+         distinct). Got: {diagnostics:#?}"
+    );
+}
+
 /// Suppress cascading TS2339 when `typeof a` in a type parameter constraint
 /// references a destructured parameter name.
 ///
