@@ -1477,6 +1477,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // `protected` is hierarchical (shared `nominal_member_origin_ok`).
                 if t_prop.visibility != Visibility::Public {
                     if !self.nominal_member_origin_ok(
+                        t_prop.name,
                         sp.parent_id,
                         t_prop.parent_id,
                         t_prop.visibility,
@@ -1741,6 +1742,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // decided by the shared `nominal_member_origin_ok`.
                 if t_prop.visibility != Visibility::Public {
                     if !self.nominal_member_origin_ok(
+                        t_prop.name,
                         sp.parent_id,
                         t_prop.parent_id,
                         t_prop.visibility,

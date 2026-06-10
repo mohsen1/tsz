@@ -843,6 +843,42 @@ impl<'a> CheckerState<'a> {
         name_node: tsz_parser::parser::NodeIndex,
         info: tsz_solver::TypeParamInfo,
     ) -> tsz_solver::TypeId {
+        // Type-level declarations (class/interface/type-alias) intern their
+        // type parameters *structurally*, converging with the `tsz-lowering`
+        // scheme that builds these declarations' def bodies. Without this, the
+        // same declaration's `DB`/`TB` exist in two generations — a
+        // checker-fresh id (heritage-clause arguments, annotation scope) and a
+        // lowering-structural id (def-lowered member shapes) — and
+        // identity-sensitive relation rules (conditional `extends` equivalence,
+        // `S[T1]`-vs-`S[T2]` index-access distinctness) treat one declaration
+        // as two unrelated type parameters: false TS2416 on `implements`/
+        // `extends` members whose deferred types close over the outer params
+        // (the dominant kysely builder family).
+        //
+        // Function-like declarations keep declaration-scoped *fresh* ids:
+        // two same-named, same-constrained params of different functions are
+        // distinct in tsc (`S[K_outer]` vs `S[K_inner]` must keep erroring),
+        // and call-site relation paths reconcile method-local params through
+        // name-keyed signature unification instead of id identity.
+        if self.type_param_belongs_to_type_level_decl(name_node) {
+            let type_id = self.ctx.types.type_param(info);
+            if let Some(def_id) = self
+                .ctx
+                .binder
+                .node_symbols
+                .get(&name_node.0)
+                .and_then(|&sym_id| self.ctx.definition_store.find_def_by_symbol(sym_id.0))
+            {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(type_id, def_id);
+                self.ctx
+                    .definition_store
+                    .register_type_param_for_def(def_id, type_id);
+            }
+            return type_id;
+        }
+
         let registered_def = self
             .ctx
             .binder
@@ -891,6 +927,33 @@ impl<'a> CheckerState<'a> {
         }
 
         type_id
+    }
+
+    /// Whether `name_node` (a type-parameter's name identifier) belongs to a
+    /// type-level declaration — class, interface, or type alias — whose def
+    /// body is lowered with structurally-interned type parameters.
+    ///
+    /// The chain is `name identifier -> TypeParameter node -> declaring node`.
+    fn type_param_belongs_to_type_level_decl(
+        &self,
+        name_node: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(param_idx) = self.ctx.arena.parent_of(name_node) else {
+            return false;
+        };
+        let Some(decl_idx) = self.ctx.arena.parent_of(param_idx) else {
+            return false;
+        };
+        self.ctx.arena.get(decl_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+                    || k == syntax_kind_ext::INTERFACE_DECLARATION
+                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            )
+        })
     }
 
     pub(super) fn empty_type_literal_satisfies_optional_mapped_constraint(

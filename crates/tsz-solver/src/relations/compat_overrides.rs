@@ -243,6 +243,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             match source_prop {
                 Some(sp) => {
                     if !self.subtype.nominal_member_origin_ok(
+                        target_prop.name,
                         sp.parent_id,
                         target_prop.parent_id,
                         target_prop.visibility,
