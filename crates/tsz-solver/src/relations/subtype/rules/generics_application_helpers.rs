@@ -21,18 +21,6 @@ use std::sync::Arc;
 /// exponential evaluate<->subtype expansion.
 pub(crate) const ONE_SIDED_APP_EXPANSION_MAX_DEPTH: u32 = 5;
 
-/// Maximum live comparison depth for two-sided same-base conditional alias
-/// comparisons with differing arguments.
-///
-/// Mirrors tsc's `getRecursionIdentity` depth cap for conditional type aliases.
-/// When the same conditional alias `DefId` appears as both sides of a relation
-/// with *different* args at or beyond this depth, tsc assumes the types are
-/// related (`Ternary.Maybe`) rather than expanding further. This prevents
-/// unbounded recursion for deeply nested path-splitting aliases (e.g.,
-/// `PathRecord<"a.b.c.d", V>`) while still reporting real mismatches for
-/// shallower forms (e.g., `PathRecord<"a.b", V>`).
-pub(crate) const COND_ALIAS_CMP_MAX_DEPTH: u32 = 3;
-
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Enter a one-sided application expansion for `def_id`.
     ///
@@ -54,29 +42,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// [`Self::enter_app_expansion_depth`].
     pub(crate) fn leave_app_expansion_depth(&mut self, def_id: DefId) {
         if let Some(depth) = self.app_expand_depth.get_mut(&def_id) {
-            *depth = depth.saturating_sub(1);
-        }
-    }
-
-    /// Enter a two-sided conditional alias comparison with differing args for `def_id`.
-    ///
-    /// Returns `true` when the comparison may proceed and `false` when
-    /// [`COND_ALIAS_CMP_MAX_DEPTH`] has been reached (caller should bail to
-    /// [`Self::cycle_result`]). Callers that receive `true` must pair this with
-    /// [`Self::leave_cond_alias_cmp_depth`] once the comparison completes.
-    pub(crate) fn enter_cond_alias_cmp_depth(&mut self, def_id: DefId) -> bool {
-        let depth = self.cond_alias_cmp_depth.get(&def_id).copied().unwrap_or(0);
-        if depth >= COND_ALIAS_CMP_MAX_DEPTH {
-            return false;
-        }
-        self.cond_alias_cmp_depth.insert(def_id, depth + 1);
-        true
-    }
-
-    /// Leave a conditional alias comparison depth previously entered via
-    /// [`Self::enter_cond_alias_cmp_depth`].
-    pub(crate) fn leave_cond_alias_cmp_depth(&mut self, def_id: DefId) {
-        if let Some(depth) = self.cond_alias_cmp_depth.get_mut(&def_id) {
             *depth = depth.saturating_sub(1);
         }
     }

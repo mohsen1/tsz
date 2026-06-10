@@ -584,24 +584,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None
         };
 
-        // Identify same-base conditional alias comparisons with DIFFERING args.
-        // Used below to apply tsc's recursion-identity depth cap (COND_ALIAS_CMP_MAX_DEPTH).
-        let cond_diff_args_def_id: Option<DefId> = if both_same_base_app && !is_cond_same_base_app {
-            if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
-                let s_app = self.interner.type_application(s_app_id);
-                let t_app = self.interner.type_application(t_app_id);
-                if s_app.args != t_app.args && self.is_conditional_alias_base_inline(s_app.base) {
-                    s_def_id
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
         // =======================================================================
         // Symbol-level cycle detection for cross-context DefId aliasing.
         //
@@ -934,10 +916,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return result;
         }
 
-        // Tracks whether we entered the conditional alias comparison depth counter
-        // below so the corresponding leave is guaranteed at all exit paths.
-        let mut cond_entered_def: Option<DefId> = None;
-
         // =========================================================================
         // Meta-type evaluation (after cycle detection is set up)
         // =========================================================================
@@ -982,19 +960,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return result;
             }
 
-            // tsc recursion-identity bailout for conditional aliases:
-            // when the same conditional alias DefId has been compared with differing
-            // args COND_ALIAS_CMP_MAX_DEPTH times on the live stack, assume related.
-            // Mirrors tsc's `getRecursionIdentity` depth cap for conditional types.
-            if let Some(def) = cond_diff_args_def_id {
-                if !self.enter_cond_alias_cmp_depth(def) {
-                    self.guard.leave(pair);
-                    leave_global!();
-                    return self.cycle_result();
-                }
-                cond_entered_def = Some(def);
-            }
-
             let source_raw = self.evaluate_type(source);
             let target_raw = self.evaluate_type(target);
             let source_eval = self.guard_compound_collapse(source, source_raw);
@@ -1015,10 +980,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         };
 
-        // Cleanup: leave conditional alias depth counter, then both guards.
-        if let Some(cd) = cond_entered_def {
-            self.leave_cond_alias_cmp_depth(cd);
-        }
+        // Cleanup: leave both guards.
         if let Some(dp) = def_entered {
             self.def_guard.leave(dp);
         }

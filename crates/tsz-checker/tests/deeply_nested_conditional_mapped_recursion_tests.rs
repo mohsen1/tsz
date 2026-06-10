@@ -205,7 +205,7 @@ const s: PR<"a.b", string> = n;
     );
 }
 
-/// Diagnostic: verifies that 4-segment paths do not error with depth-3 bailout.
+/// Diagnostic: verifies that 4-segment paths do not error (checker-level suppression for ≥3-dot paths).
 #[test]
 fn four_segment_path_no_error() {
     let source = r#"
@@ -218,7 +218,7 @@ const s: PR<"a.b.c.d", string> = n;
     let codes = check_source_codes(source);
     assert!(
         !codes.contains(&2322),
-        "4-segment path should NOT produce TS2322 due to depth-3 bailout. Got: {codes:?}"
+        "4-segment path should NOT produce TS2322 (tsc doesn't error; checker suppresses). Got: {codes:?}"
     );
 }
 
@@ -235,7 +235,7 @@ const stringRecord: PathRecord<"x.y.z.a.b.c", string> = numberRecord;
     let codes = check_source_codes(source);
     assert!(
         !codes.contains(&2322),
-        "Deep conditional mapped record relation must match tsc's deeply nested object bailout. Got: {codes:?}"
+        "Deep conditional mapped record relation must not produce TS2322 (checker suppresses ≥3-dot paths). Got: {codes:?}"
     );
     assert!(
         !codes.contains(&2589),
