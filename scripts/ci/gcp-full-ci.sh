@@ -943,53 +943,6 @@ run_emit_shard() {
   return 0
 }
 
-run_emit_aggregate() {
-  ci_section "Emit aggregate"
-  local bucket run_key
-  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-  local expected_shards="${_TSZ_CI_EMIT_SHARD_COUNT:-${TSZ_CI_EMIT_SHARDS:-4}}"
-
-  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
-    echo "error: cannot aggregate — no bucket or run key available" >&2
-    return 1
-  fi
-
-  local prefix="${bucket%/}/emit-runs/${run_key}"
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-
-  echo "Downloading emit shard results from ${prefix}/shard-*.json ..."
-  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
-    echo "error: failed to download emit shard results from GCS" >&2
-    return 1
-  fi
-
-  local js_passed=0 js_total=0 js_skipped=0 js_timeouts=0
-  local dts_passed=0 dts_total=0 dts_skipped=0 files_count=0
-  for f in "$tmp_dir"/shard-*.json; do
-    [[ -f "$f" ]] || continue
-    files_count=$((files_count + 1))
-    local t
-    t="$(jq -r '.js_total // 0' "$f" 2>/dev/null || echo 0)"
-    [[ "$(num_or_zero "$t")" -eq 0 ]] && continue  # skip empty trailing shards (count only for files_count)
-    js_passed=$((js_passed + $(num_or_zero "$(jq -r '.js_passed'  "$f")")))
-    js_total=$((js_total   + $(num_or_zero "$(jq -r '.js_total'   "$f")")))
-    js_skipped=$((js_skipped + $(num_or_zero "$(jq -r '.js_skipped // 0' "$f")")))
-    js_timeouts=$((js_timeouts + $(num_or_zero "$(jq -r '.js_timeouts // 0' "$f")")))
-    dts_passed=$((dts_passed + $(num_or_zero "$(jq -r '.dts_passed' "$f")")))
-    dts_total=$((dts_total   + $(num_or_zero "$(jq -r '.dts_total'  "$f")")))
-    dts_skipped=$((dts_skipped + $(num_or_zero "$(jq -r '.dts_skipped // 0' "$f")")))
-  done
-
-  validate_emit_aggregate_counts "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
-    "$dts_passed" "$dts_total" "$dts_skipped" "$files_count" "$expected_shards"
-  write_emit_metric "$METRICS_DIR/emit.json" \
-    "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
-    "$dts_passed" "$dts_total" "$dts_skipped"
-  publish_latest_metric emit "$METRICS_DIR/emit.json"
-}
-
 run_fourslash_shard() {
   ci_section "Fourslash shard"
   local bucket run_key shard_index shard_count
@@ -1143,169 +1096,6 @@ run_fourslash_aggregate() {
   echo "Fourslash OK: ${total_passed}/${total_tests}"
 }
 
-run_emit_shards() {
-  ci_section "Emit shards"
-  mkdir -p "$LOG_DIR/emit"
-  export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
-  echo "Emit shard config: shards=${SHARD_COUNT} workers_per_shard=${EMIT_WORKERS} chunk=${EMIT_CHUNK} timeout_ms=${EMIT_TIMEOUT_MS}"
-
-  for shard in $(seq 0 $((SHARD_COUNT - 1))); do
-    (
-      set +e
-      offset=$((shard * EMIT_CHUNK))
-      detail_json="$METRICS_DIR/emit-detail-${shard}.json"
-      ./scripts/emit/run.sh --skip-build --max="$EMIT_CHUNK" --offset="$offset" --concurrency="$EMIT_WORKERS" \
-        --timeout="$EMIT_TIMEOUT_MS" \
-        --json-out="$detail_json" \
-        >"$LOG_DIR/emit/shard-${shard}.log" 2>&1
-      rc="$?"
-      js_p="$(jq -r '.summary.jsPass // 0' "$detail_json" 2>/dev/null || echo 0)"
-      js_t="$(jq -r '.summary.jsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
-      js_s="$(jq -r '.summary.jsSkip // 0' "$detail_json" 2>/dev/null || echo 0)"
-      js_to="$(jq -r '.summary.jsTimeout // 0' "$detail_json" 2>/dev/null || echo 0)"
-      dts_p="$(jq -r '.summary.dtsPass // 0' "$detail_json" 2>/dev/null || echo 0)"
-      dts_t="$(jq -r '.summary.dtsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
-      dts_s="$(jq -r '.summary.dtsSkip // 0' "$detail_json" 2>/dev/null || echo 0)"
-      js_p="$(num_or_zero "$js_p")"
-      js_t="$(num_or_zero "$js_t")"
-      js_s="$(num_or_zero "$js_s")"
-      js_to="$(num_or_zero "$js_to")"
-      dts_p="$(num_or_zero "$dts_p")"
-      dts_t="$(num_or_zero "$dts_t")"
-      dts_s="$(num_or_zero "$dts_s")"
-      printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"js_skipped":%s,"js_timeouts":%s,"dts_passed":%s,"dts_total":%s,"dts_skipped":%s}\n' \
-        "$shard" "$rc" "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" \
-        > "$METRICS_DIR/emit-shard-${shard}.json"
-      if [[ "$rc" -ne 0 ]]; then
-        show_log_tail "$LOG_DIR/emit/shard-${shard}.log"
-      fi
-      echo "EMIT_SHARD shard=${shard} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t} skip=${dts_s}"
-      exit 0
-    ) &
-  done
-  wait
-}
-
-aggregate_emit() {
-  ci_section "Aggregate emit"
-  local js_passed=0 js_total=0 js_skipped=0 js_timeouts=0 dts_passed=0 dts_total=0 dts_skipped=0 shard_count=0
-  for f in "$METRICS_DIR"/emit-shard-*.json; do
-    [[ -f "$f" ]] || continue
-    js_passed=$((js_passed + $(jq -r '.js_passed' "$f")))
-    js_total=$((js_total + $(jq -r '.js_total' "$f")))
-    js_skipped=$((js_skipped + $(jq -r '.js_skipped // 0' "$f")))
-    js_timeouts=$((js_timeouts + $(jq -r '.js_timeouts // 0' "$f")))
-    dts_passed=$((dts_passed + $(jq -r '.dts_passed' "$f")))
-    dts_total=$((dts_total + $(jq -r '.dts_total' "$f")))
-    dts_skipped=$((dts_skipped + $(jq -r '.dts_skipped // 0' "$f")))
-    shard_count=$((shard_count + 1))
-  done
-
-  echo "Emit shards: ${shard_count}/${SHARD_COUNT}"
-  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} (skip=${dts_skipped})"
-
-  if [[ "$shard_count" -lt "$SHARD_COUNT" || "$js_total" -eq 0 ]]; then
-    echo "error: emit shard coverage is not trustworthy" >&2
-    show_log_tails "$LOG_DIR/emit"
-    return 1
-  fi
-
-  write_emit_metric "$METRICS_DIR/emit.json" \
-    "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
-    "$dts_passed" "$dts_total" "$dts_skipped"
-
-  base_js="$(jq -r '.summary.jsPass // 0' scripts/emit/emit-snapshot.json)"
-  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
-  base_dts="$(cap_positive_baseline "$base_dts" "$TSZ_CI_DTS_ACCEPTED_FLOOR")"
-  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
-    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
-    show_log_tails "$LOG_DIR/emit"
-    return 1
-  fi
-  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
-    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
-    show_log_tails "$LOG_DIR/emit"
-    return 1
-  fi
-  publish_latest_metric emit "$METRICS_DIR/emit.json"
-}
-
-run_fourslash_shards() {
-  ci_section "Fourslash shards"
-  mkdir -p "$LOG_DIR/fourslash"
-  echo "Fourslash shard config: shards=${SHARD_COUNT} workers_per_shard=${FOURSLASH_WORKERS}"
-
-  for shard in $(seq 0 $((SHARD_COUNT - 1))); do
-    (
-      set +e
-      detail_json="$METRICS_DIR/fourslash-detail-${shard}.json"
-      ./scripts/fourslash/run-fourslash.sh \
-        --skip-cargo-build \
-        --skip-ts-build \
-        --shard="${shard}/${SHARD_COUNT}" \
-        --workers="$FOURSLASH_WORKERS" --memory-limit=512 \
-        --json-out="$detail_json" \
-        >"$LOG_DIR/fourslash/shard-${shard}.log" 2>&1
-      rc="$?"
-      results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard}.log" | tail -1 || true)"
-      passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
-      total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
-      passed="$(num_or_zero "$passed")"
-      total="$(num_or_zero "$total")"
-      printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s}\n' "$shard" "$rc" "$passed" "$total" \
-        > "$METRICS_DIR/fourslash-shard-${shard}.json"
-      if [[ "$rc" -ne 0 ]]; then
-        show_log_tail "$LOG_DIR/fourslash/shard-${shard}.log"
-      fi
-      echo "FOURSLASH_SHARD shard=${shard} rc=${rc} passed=${passed} total=${total}"
-      exit 0
-    ) &
-  done
-  wait
-}
-
-aggregate_fourslash() {
-  ci_section "Aggregate fourslash"
-  local total_passed=0 total_tests=0 shard_count=0
-  for f in "$METRICS_DIR"/fourslash-shard-*.json; do
-    [[ -f "$f" ]] || continue
-    total_passed=$((total_passed + $(jq -r '.passed' "$f")))
-    total_tests=$((total_tests + $(jq -r '.total' "$f")))
-    shard_count=$((shard_count + 1))
-  done
-
-  echo "Fourslash shards: ${shard_count}/${SHARD_COUNT}"
-  echo "Fourslash aggregate: ${total_passed}/${total_tests}"
-
-  if [[ "$shard_count" -lt "$SHARD_COUNT" || "$total_tests" -eq 0 ]]; then
-    echo "error: fourslash shard coverage is not trustworthy" >&2
-    show_log_tails "$LOG_DIR/fourslash"
-    return 1
-  fi
-
-  baseline="$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)"
-  if [[ "$baseline" -gt 0 ]]; then
-    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
-    floor=$((baseline - tolerance))
-    if [[ "$total_passed" -lt "$floor" ]]; then
-      echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
-      show_log_tails "$LOG_DIR/fourslash"
-      return 1
-    fi
-  fi
-  local pass_rate
-  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
-  jq -n \
-    --arg suite "fourslash" \
-    --arg pass_rate "$pass_rate" \
-    --argjson passed "$total_passed" \
-    --argjson total "$total_tests" \
-    --argjson shards "$shard_count" \
-    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
-    > "$METRICS_DIR/fourslash.json"
-  publish_latest_metric fourslash "$METRICS_DIR/fourslash.json"
-}
-
 run_dist_binaries() {
   ci_section "Build dist-fast binaries"
   ci_report_memory "dist-binaries"
@@ -1317,12 +1107,6 @@ show_sccache_stats() {
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
   fi
-}
-
-run_unit_archive_only() {
-  ci_section "Build unit test archive"
-  timed build_unit_test_archive build_unit_test_archive
-  show_sccache_stats
 }
 
 run_node_harness_prep() {
@@ -1338,26 +1122,6 @@ run_lsp_e2e_smoke() {
     return 1
   fi
   node scripts/lsp/e2e-smoke.mjs "$bin"
-}
-
-run_build() {
-  ci_section "Build dist-fast binaries (upload for parallel jobs)"
-  timed build_test_binaries build_test_binaries
-  timed build_unit_test_archive build_unit_test_archive
-  # Seed scripts/node_modules so save_caches can cache it for all parallel shard jobs.
-  # Shards all start simultaneously after build completes, so if build doesn't seed it,
-  # every shard misses the cache and reinstalls npm packages independently.
-  ci_section "Seed scripts node_modules for parallel job cache"
-  if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
-    if command -v npm >/dev/null 2>&1; then
-      (cd scripts && npm install --silent --include=dev)
-    else
-      echo "warn: npm not found in build image; skipping scripts/node_modules seed (shards will reinstall on cache-miss)" >&2
-    fi
-  else
-    echo "scripts/node_modules already present (cache hit)"
-  fi
-  show_sccache_stats
 }
 
 suite_needs_typescript_source() {
@@ -1389,22 +1153,13 @@ run_common_setup() {
   fi
 }
 
-run_all_suites() {
-  timed run_lint run_lint
-  timed run_unit_tests run_unit_tests
-  timed build_test_binaries build_test_binaries
-  timed build_wasm build_wasm
-  timed build_wasm_web build_wasm_web
-  timed prep_node_artifacts prep_node_artifacts
-  timed run_conformance run_conformance
-  timed run_emit_shards run_emit_shards
-  timed aggregate_emit aggregate_emit
-  timed run_fourslash_shards run_fourslash_shards
-  timed aggregate_fourslash aggregate_fourslash
-}
-
 main() {
-  local suite="${1:-${TSZ_CI_SUITE:-all}}"
+  local suite="${1:-${TSZ_CI_SUITE:-}}"
+
+  if [[ -z "$suite" ]]; then
+    echo "usage: $0 $(ci_suite_usage full)" >&2
+    return 2
+  fi
 
   if ! ci_suite_is_known full "$suite"; then
     echo "error: unknown CI suite '${suite}'" >&2
@@ -1415,17 +1170,8 @@ main() {
   run_common_setup "$suite"
 
   case "$suite" in
-    all|full)
-      run_all_suites
-      ;;
-    build)
-      run_build
-      ;;
     dist-binaries)
       run_dist_binaries
-      ;;
-    unit-archive)
-      run_unit_archive_only
       ;;
     node-harness-prep)
       run_node_harness_prep
@@ -1439,19 +1185,8 @@ main() {
     checker-integration)
       timed run_checker_integration_tests run_checker_integration_tests
       ;;
-    unit-shard)
-      timed run_unit_shard run_unit_shard
-      ;;
     lsp-e2e)
       timed run_lsp_e2e_smoke run_lsp_e2e_smoke
-      ;;
-    wasm)
-      timed build_wasm build_wasm
-      show_sccache_stats
-      ;;
-    wasm-web)
-      timed build_wasm_web build_wasm_web
-      show_sccache_stats
       ;;
     wasm-all)
       timed build_wasm_all build_wasm_all
@@ -1464,25 +1199,10 @@ main() {
     conformance-aggregate)
       timed run_conformance_aggregate run_conformance_aggregate
       ;;
-    emit)
-      timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
-      timed run_emit_shards run_emit_shards
-      timed aggregate_emit aggregate_emit
-      ;;
-    fourslash)
-      timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
-      timed run_fourslash_shards run_fourslash_shards
-      timed aggregate_fourslash aggregate_fourslash
-      ;;
     emit-shard)
       timed build_test_binaries build_test_binaries
       timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_emit_shard run_emit_shard
-      ;;
-    emit-aggregate)
-      timed run_emit_aggregate run_emit_aggregate
       ;;
     fourslash-shard)
       timed build_test_binaries build_test_binaries
