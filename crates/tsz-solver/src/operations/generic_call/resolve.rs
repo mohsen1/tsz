@@ -701,7 +701,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ) && with_resolve_visited(|visited| {
                     self.type_contains_placeholder(return_type_with_placeholders, &var_map, visited)
                 });
-                if return_is_union_with_placeholder {
+                // Construct signatures whose declared parameters reference
+                // NONE of the signature's type parameters also use the
+                // reversed (tsc) direction: `new C(...)` with a contextual
+                // instance type runs
+                // inferTypes(contextualType, instanceTypeWithPlaceholders), so
+                // structural matching (heritage members, same-base nested
+                // applications) records CANDIDATES for the class type
+                // parameters. The original direction only produces upper
+                // bounds, leaving parameters that appear solely in member
+                // signatures unconstrained — they then fall back to
+                // constraint/`unknown` even though the contextual type
+                // determines them (e.g. `class Impl<A,B> implements I<A,B>`
+                // with a non-generic constructor, returned where `I<A,B>` is
+                // expected). When any parameter mentions a type parameter
+                // (placeholder instantiation changed it, e.g. React's
+                // `new (props: P) => Component<P, S>`), argument inference
+                // owns those variables and the original direction is kept.
+                let constructor_params_lack_type_params =
+                    func.is_constructor
+                        && func.params.iter().zip(instantiated_params.iter()).all(
+                            |(original, instantiated)| original.type_id == instantiated.type_id,
+                        );
+                if return_is_union_with_placeholder || constructor_params_lack_type_params {
                     self.constrain_types(
                         &mut infer_ctx,
                         &var_map,
