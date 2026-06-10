@@ -223,12 +223,28 @@ fn recursive_static_class_expression_keeps_placeholder_static_member() {
         .and_then(|expr_idx| arena.get_identifier_at(expr_idx))
         .map(|ident| ident.escaped_text.clone());
 
+    // The anonymous class inherits the static `D` from `C`. Historically the
+    // recursive window collapsed `D` to an `any` placeholder; since the
+    // foreign-window cache fix, the post-window recomputation resolves `D` to
+    // the real (constructable) static member type, matching tsc where
+    // `new C.D.D()` is valid. Pin: `D` is present and is either the legacy
+    // `any` placeholder or a constructable type — never ERROR or a
+    // non-constructable shape.
+    let inherited_d = callable
+        .properties
+        .iter()
+        .find(|prop| types.resolve_atom(prop.name) == "D")
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected recursive static class expression to inherit static D; base={base_name:?}, properties={property_names:#?}, callable={callable:#?}"
+            )
+        });
+    let d_is_constructable = get_callable_shape(&types, inherited_d.type_id)
+        .is_some_and(|shape| !shape.construct_signatures.is_empty());
     assert!(
-        callable
-            .properties
-            .iter()
-            .any(|prop| types.resolve_atom(prop.name) == "D" && prop.type_id == TypeId::ANY),
-        "Expected recursive static class expression to preserve inherited D: any placeholder; base={base_name:?}, properties={property_names:#?}, callable={callable:#?}"
+        inherited_d.type_id == TypeId::ANY || d_is_constructable,
+        "Expected inherited D to be `any` or a constructable type; got {:?}; base={base_name:?}, properties={property_names:#?}",
+        inherited_d.type_id
     );
 }
 
