@@ -1161,3 +1161,219 @@ function init(hooks: Hooks): void {
          TS2322; got: {codes:?}"
     );
 }
+
+// =========================================================================
+// TS5097/TS2846 for re-export and import-equals module specifiers
+//
+// tsc's `resolveExternalModule` anchors its TypeScript-extension specifier
+// diagnostics on `findAncestor(location, isImportDeclaration)?.importClause
+// || findAncestor(location, or(isImportEqualsDeclaration,
+// isExportDeclaration))`, so `export ... from "./x.ts"` and
+// `import x = require("./x.ts")` report TS5097 exactly like
+// `import ... from "./x.ts"` (and `.d.ts` specifiers report TS2846).
+// Statement-level type-only forms are exempt; specifier-level `{ type x }`
+// modifiers are not. Verified against tsc 5.5.4.
+// =========================================================================
+
+fn ts5097_matrix_compile(base: &Path, entry_source: &str, extra_options: &str) -> Vec<u32> {
+    write_file(
+        &base.join("tsconfig.json"),
+        &format!(
+            r#"{{
+              "compilerOptions": {{
+                "module": "esnext",
+                "moduleResolution": "bundler",
+                "noEmit": true{extra_options}
+              }},
+              "include": ["**/*"]
+            }}"#
+        ),
+    );
+    write_file(&base.join("pieces.ts"), "export const rook = 1;\n");
+    write_file(&base.join("board.ts"), entry_source);
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    result.diagnostics.iter().map(|d| d.code).collect()
+}
+
+#[test]
+fn export_from_ts_extension_reports_ts5097_per_reexport_form() {
+    let temp = TempDir::new().expect("temp dir");
+    let codes = ts5097_matrix_compile(
+        temp.path.as_path(),
+        "export { rook } from './pieces.ts';\n\
+         export * from './pieces.ts';\n\
+         export * as squares from './pieces.ts';\n",
+        "",
+    );
+    assert_eq!(
+        codes,
+        vec![5097, 5097, 5097],
+        "named, star, and namespace re-exports of a .ts specifier must each \
+         report TS5097, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_type_from_ts_extension_is_exempt_but_specifier_type_modifier_is_not() {
+    let temp = TempDir::new().expect("temp dir");
+    let codes = ts5097_matrix_compile(
+        temp.path.as_path(),
+        "export type { rook } from './pieces.ts';\n\
+         export { type rook as rookT } from './pieces.ts';\n",
+        "",
+    );
+    // tsc exempts statement-level `export type ... from`, but the
+    // specifier-level `{ type x }` modifier does NOT suppress TS5097.
+    assert_eq!(
+        codes,
+        vec![5097],
+        "`export type {{ }} from` must be exempt while `export {{ type x }} from` \
+         still reports TS5097, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_from_ts_extension_allowed_with_allow_importing_ts_extensions() {
+    let temp = TempDir::new().expect("temp dir");
+    let codes = ts5097_matrix_compile(
+        temp.path.as_path(),
+        "export { rook } from './pieces.ts';\nexport * from './pieces.ts';\n",
+        ",\n\"allowImportingTsExtensions\": true",
+    );
+    assert!(
+        codes.is_empty(),
+        "allowImportingTsExtensions must silence TS5097 for re-exports, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_from_extensionless_specifier_reports_nothing() {
+    let temp = TempDir::new().expect("temp dir");
+    let codes = ts5097_matrix_compile(
+        temp.path.as_path(),
+        "export { rook } from './pieces';\nexport * from './pieces';\n",
+        "",
+    );
+    assert!(
+        codes.is_empty(),
+        "extensionless re-export specifiers are the no-diagnostic control, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_from_tsx_extension_reports_ts5097_with_tsx_text() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "jsx": "preserve",
+            "noEmit": true
+          },
+          "include": ["**/*"]
+        }"#,
+    );
+    write_file(&base.join("widget.tsx"), "export const gizmo = 2;\n");
+    write_file(
+        &base.join("panel.ts"),
+        "export { gizmo } from './widget.tsx';\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![5097], "got: {codes:?}");
+    assert!(
+        result.diagnostics[0].message_text.contains("'.tsx'"),
+        "TS5097 must name the .tsx extension, got: {}",
+        result.diagnostics[0].message_text
+    );
+}
+
+#[test]
+fn export_from_dts_extension_reports_ts2846_not_ts5097() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "include": ["**/*"]
+        }"#,
+    );
+    write_file(
+        &base.join("shapes.d.ts"),
+        "export declare const circle: number;\n",
+    );
+    write_file(
+        &base.join("canvas.ts"),
+        "export { circle } from './shapes.d.ts';\nexport type { circle as circleT } from './shapes.d.ts';\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    // The non-type-only re-export reports TS2846; `export type ... from` is
+    // exempt; TS5097 never applies to declaration-file specifiers.
+    assert_eq!(
+        codes,
+        vec![2846],
+        ".d.ts re-export must report TS2846 (and only for the non-type-only \
+         form), got: {codes:?}"
+    );
+}
+
+#[test]
+fn import_equals_require_ts_extension_reports_ts5097() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "noEmit": true
+          },
+          "include": ["**/*"]
+        }"#,
+    );
+    write_file(&base.join("gear.ts"), "export const cog = 3;\n");
+    write_file(
+        &base.join("machine.ts"),
+        "import gears = require('./gear.ts');\nimport type gearsT = require('./gear.ts');\nexport const spin = gears.cog;\nexport type SpinT = typeof gearsT.cog;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![5097],
+        "`import x = require('./y.ts')` must report TS5097 once (type-only \
+         form exempt), got: {codes:?}"
+    );
+}
+
+#[test]
+fn import_control_ts_extension_still_reports_ts5097() {
+    let temp = TempDir::new().expect("temp dir");
+    let codes = ts5097_matrix_compile(
+        temp.path.as_path(),
+        "import { rook } from './pieces.ts';\nexport const r = rook;\n",
+        "",
+    );
+    assert_eq!(
+        codes,
+        vec![5097],
+        "plain import of a .ts specifier remains the working control, got: {codes:?}"
+    );
+}

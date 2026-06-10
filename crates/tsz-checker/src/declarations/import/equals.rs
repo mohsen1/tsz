@@ -18,6 +18,27 @@ enum TypeOnlyKind {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Source span `(pos, length)` of the module-specifier string literal in
+    /// an `import x = require("...")` declaration.
+    ///
+    /// The parser stores either the string literal directly or a recovered
+    /// `require(...)` call expression; for the latter, the span points at the
+    /// first argument (the literal), matching where tsc anchors the
+    /// TS2846/TS5097 extension diagnostics.
+    fn require_specifier_span(&self, idx: NodeIndex) -> Option<(u32, u32)> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::StringLiteral as u16 {
+            return Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.ctx.arena.get_call_expr(node)?;
+        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
+        let arg_node = self.ctx.arena.get(first_arg)?;
+        Some((arg_node.pos, arg_node.end.saturating_sub(arg_node.pos)))
+    }
+
     /// TS2300: `export default N` inside an ambient external module conflicts
     /// with a sibling type-only namespace declaration named `N`.
     ///
@@ -234,6 +255,30 @@ impl<'a> CheckerState<'a> {
         // When in a wrong context (inside block/function), skip module resolution
         // errors. The grammar error (TS1232) is the primary diagnostic.
         let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
+
+        // TS2846/TS5097: `import x = require("./y.ts")` follows the same
+        // TypeScript-extension module-specifier rule as `import ... from` —
+        // tsc's `resolveExternalModule` anchors the check on
+        // `findAncestor(location, isImportEqualsDeclaration)`. The type-only
+        // form `import type x = require(...)` is exempt.
+        if !in_wrong_context
+            && let Some(require_specifier) = require_module_specifier.clone()
+            && let Some((spec_start, spec_length)) =
+                self.require_specifier_span(import.module_specifier)
+        {
+            let request_resolution_mode = self.ctx.resolution_mode_for_request(
+                crate::context::ResolutionRequestKind::CjsRequire,
+                None,
+            );
+            self.check_module_specifier_ts_extension(
+                &require_specifier,
+                spec_start,
+                spec_length,
+                import.is_type_only,
+                request_resolution_mode,
+            );
+        }
+
         if require_module_specifier.is_some()
             && self.ctx.arena.get(import.module_specifier).is_some()
         {
