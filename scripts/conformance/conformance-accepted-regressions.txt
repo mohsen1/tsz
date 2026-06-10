@@ -68,18 +68,6 @@
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-# The three entries below regressed in PR #13151 (early partial ctor publication,
-# sha 4f0397c7c001b1b4bf37006b5dadc3a9a48cd0d8, CI run 27277214405).  The early
-# partial ctor change (fix defect 1/2/3 in the structural rule) affects class
-# constructor resolution windows; these tests exercise class expressions,
-# async/this narrowing, and private-name methods inside class scopes — areas
-# that intersect with the resolution-window caching skip path.  A direct binary
-# comparison (tsz on the bare file) produced output matching tsc, so the
-# regression is option-sensitive or emit-path-specific and requires a targeted
-# follow-up.  Remove once the exact divergence is isolated and fixed.
-TypeScript/tests/cases/compiler/defaultDeclarationEmitNamedCorrectly.ts
-TypeScript/tests/cases/conformance/async/es2017/await_incorrectThisType.ts
-TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodClassExpression.ts
 # intersectionsOfLargeUnions.ts: PARTIAL PROGRESS. The IndexAccess structural
 # comparison fix (this PR) resolves the TS2536 unit-test cases, but the full
 # conformance test still has unlisted failures at this point. The conformance
