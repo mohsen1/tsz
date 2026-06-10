@@ -946,24 +946,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // `(x?: T)` and `(x?: T | undefined)` compare as equivalent.
                 let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
                 if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
-                    // Trace: Parameter type mismatch
-                    if let Some(tracer) = &mut self.tracer
-                        && !tracer.on_mismatch_dyn(
-                            crate::diagnostics::SubtypeFailureReason::ParameterTypeMismatch {
-                                param_index: i,
-                                source_param: s_effective,
-                                target_param: t_effective,
-                                // Tracer emission is the fast-path; the
-                                // inner reason isn't computed here to
-                                // avoid recursive explain on every
-                                // failed subtype check. Callers that
-                                // need it use the explain path.
-                                inner_reason: None,
-                            },
-                        )
-                    {
-                        return SubtypeResult::False;
-                    }
                     return SubtypeResult::False;
                 }
             }

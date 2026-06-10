@@ -55,7 +55,7 @@ use std::hash::Hash;
 pub enum RecursionProfile {
     /// Subtype checking: deep structural comparison of recursive types.
     ///
-    /// Used by `SubtypeChecker` and `SubtypeTracer`.
+    /// Used by `SubtypeChecker`.
     /// Needs the deepest depth limit because structural comparison of
     /// recursive types can legitimately nest deeply before a cycle is found.
     ///

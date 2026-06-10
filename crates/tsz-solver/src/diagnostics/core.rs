@@ -1,82 +1,12 @@
 //! Core implementation for solver diagnostics.
 //!
-//! Contains tracer pattern, failure reasons, lazy diagnostics, diagnostic codes,
+//! Contains failure reasons, lazy diagnostics, diagnostic codes,
 //! and core diagnostic data types. Re-exported from the parent `diagnostics` module.
 
 use crate::types::{TypeId, Visibility};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
-
-// =============================================================================
-// Tracer Pattern: Zero-Cost Diagnostic Abstraction
-// =============================================================================
-
-/// A trait for tracing subtype check failures.
-///
-/// This trait enables the same subtype checking logic to be used for both
-/// fast boolean checks and detailed diagnostics.
-///
-/// The key insight is that failure reasons are constructed lazily via a closure,
-/// so fast-path implementations can skip the allocation entirely while diagnostic
-/// implementations collect detailed information.
-///
-/// # Example
-///
-/// ```text
-/// fn check_subtype_with_tracer<T: SubtypeTracer>(
-///     source: TypeId,
-///     target: TypeId,
-///     tracer: &mut T,
-/// ) -> bool {
-///     if source == target {
-///         return true;
-///     }
-///     tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch { source, target })
-/// }
-/// ```
-pub trait SubtypeTracer {
-    /// Called when a subtype mismatch is detected.
-    ///
-    /// The `reason` closure is only called if the tracer needs to collect
-    /// the failure reason, allowing fast-path implementations to skip
-    /// allocation entirely.
-    ///
-    /// # Returns
-    ///
-    /// - `true` if checking should continue (for collecting more nested failures)
-    /// - `false` if checking should stop immediately (fast path)
-    ///
-    /// # Type Parameters
-    ///
-    /// The `reason` parameter is a closure that constructs the failure reason.
-    /// It's wrapped in `FnOnce` so it's only called when needed.
-    fn on_mismatch(&mut self, reason: impl FnOnce() -> SubtypeFailureReason) -> bool;
-}
-
-/// Object-safe version of `SubtypeTracer` for dynamic dispatch.
-///
-/// This trait is dyn-compatible and can be used as `&mut dyn DynSubtypeTracer`.
-/// It has a simpler signature that takes the reason directly rather than a closure.
-pub trait DynSubtypeTracer {
-    /// Called when a subtype mismatch is detected.
-    ///
-    /// Unlike `SubtypeTracer::on_mismatch`, this takes the reason directly
-    /// rather than a closure. This makes it object-safe (dyn-compatible).
-    ///
-    /// # Returns
-    ///
-    /// - `true` if checking should continue (for collecting more nested failures)
-    /// - `false` if checking should stop immediately (fast path)
-    fn on_mismatch_dyn(&mut self, reason: SubtypeFailureReason) -> bool;
-}
-
-/// Blanket implementation for all `SubtypeTracer` types.
-impl<T: SubtypeTracer> DynSubtypeTracer for T {
-    fn on_mismatch_dyn(&mut self, reason: SubtypeFailureReason) -> bool {
-        self.on_mismatch(|| reason)
-    }
-}
 
 /// Detailed reason for a subtype check failure.
 ///
