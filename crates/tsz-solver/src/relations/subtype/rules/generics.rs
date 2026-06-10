@@ -645,17 +645,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(s_app.base)?;
 
-        // Conditional type aliases always require structural expansion with
-        // recursion-identity tracking (tsc's `getRecursionIdentity` mechanism).
-        // tsc does not compute variance for conditional types; it always expands
-        // them structurally. Using variance here causes a direct arg-level
-        // comparison (e.g., `number <: string` → False) for deeply nested
-        // recursive conditional aliases where tsc's recursion-identity bailout
-        // would produce `Ternary.Maybe` (assume compatible) instead.
-        if self.is_conditional_alias_base_inline(s_app.base) {
-            return None;
-        }
-
         // An indexed-access type alias (`Static<T,P> = (T & {params:P})['static']`)
         // is transparent and has no sound declared variance: comparing its raw
         // arguments here lets nested same-base applications hit the coinductive
