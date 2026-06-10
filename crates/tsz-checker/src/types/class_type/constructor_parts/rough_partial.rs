@@ -171,9 +171,54 @@ impl<'a> CheckerState<'a> {
         sigs
     }
 
-    /// Publish a partial constructor type under the class's symbol(s) so
-    /// re-entrant value-position lookups of the class observe a callable
-    /// with the correct construct-signature arity.
+    /// Collect the names of all static members declared on the class, used
+    /// to seed partial constructor types with `any`-typed placeholders for
+    /// not-yet-processed members.
+    pub(super) fn collect_static_member_names(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<tsz_common::interner::Atom> {
+        let mut names: Vec<tsz_common::interner::Atom> =
+            Vec::with_capacity(class.members.nodes.len());
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let name_opt = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_property_decl(member_node)
+                    .filter(|p| self.has_static_modifier(&p.modifiers))
+                    .and_then(|p| self.get_property_name_resolved(p.name)),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(member_node)
+                    .filter(|m| self.has_static_modifier(&m.modifiers))
+                    .and_then(|m| self.get_property_name_resolved(m.name)),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(member_node)
+                        .filter(|a| self.has_static_modifier(&a.modifiers))
+                        .and_then(|a| self.get_property_name_resolved(a.name))
+                }
+                _ => None,
+            };
+            if let Some(name) = name_opt {
+                let atom = self.ctx.types.intern_string(&name);
+                names.push(atom);
+            }
+        }
+        names
+    }
+
+    /// Publish a partial constructor type for the class's symbol(s) into the
+    /// window-scoped map consulted only by value-position fallbacks, so
+    /// re-entrant value lookups of the class observe a callable with the
+    /// correct construct-signature arity. Type-position lookups (which must
+    /// keep seeing the `Lazy` placeholder) are unaffected.
     pub(super) fn publish_partial_ctor_symbol_types(
         &mut self,
         current_sym: Option<SymbolId>,
@@ -181,30 +226,28 @@ impl<'a> CheckerState<'a> {
         partial_ctor: TypeId,
     ) {
         if let Some(sym_id) = current_sym {
-            self.ctx.symbol_types.insert(sym_id, partial_ctor);
+            self.ctx
+                .window_partial_ctor_types
+                .insert(sym_id, partial_ctor);
         }
         if let Some(name_sym) = class_name_sym {
-            self.ctx.symbol_types.insert(name_sym, partial_ctor);
+            self.ctx
+                .window_partial_ctor_types
+                .insert(name_sym, partial_ctor);
         }
     }
 
-    /// Restore a symbol-type entry that was temporarily replaced by a
-    /// published partial constructor type.
-    pub(super) fn restore_published_symbol_type(
+    /// Close the publication window for the class's symbol(s).
+    pub(super) fn unpublish_partial_ctor_symbol_types(
         &mut self,
-        sym: Option<SymbolId>,
-        prev: Option<TypeId>,
+        current_sym: Option<SymbolId>,
+        class_name_sym: Option<SymbolId>,
     ) {
-        let Some(sym_id) = sym else {
-            return;
-        };
-        match prev {
-            Some(prev_type) => {
-                self.ctx.symbol_types.insert(sym_id, prev_type);
-            }
-            None => {
-                self.ctx.symbol_types.remove(&sym_id);
-            }
+        if let Some(sym_id) = current_sym {
+            self.ctx.window_partial_ctor_types.remove(&sym_id);
+        }
+        if let Some(name_sym) = class_name_sym {
+            self.ctx.window_partial_ctor_types.remove(&name_sym);
         }
     }
 }

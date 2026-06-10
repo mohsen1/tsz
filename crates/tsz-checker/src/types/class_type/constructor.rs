@@ -112,6 +112,30 @@ impl<'a> CheckerState<'a> {
                 {
                     return fallback;
                 }
+                // Window-scoped partial published at the start of the outer
+                // computation: carries the correct construct-signature arity
+                // for value-position consumers.
+                // Serve the window-scoped partial only to heritage `extends`
+                // base-constructor lookups: a ctor-less subclass resolving its
+                // inherited construct signatures while this class is
+                // mid-resolution observes the real parameter arity instead of
+                // opaque ANY (false TS2554). Other re-entrant chains (e.g.
+                // type-annotation resolution inside the same window) keep the
+                // historical ANY fallback below — the partial constructor
+                // must not stand in for the class's full value/instance type.
+                // Serve the window-scoped partial to chains nested inside a
+                // FOREIGN class's resolution window (multiple constructor
+                // windows open): a ctor-less subclass resolving its inherited
+                // construct signatures mid-resolution observes the real
+                // parameter arity instead of opaque ANY (false TS2554).
+                // Self-window re-entries with no other window open keep the
+                // historical ANY fallback below — the partial must not stand
+                // in for the class's full value/instance type.
+                if self.ctx.class_constructor_resolution_set.len() > 1
+                    && let Some(&window_partial) = self.ctx.window_partial_ctor_types.get(&sym_id)
+                {
+                    return window_partial;
+                }
                 return TypeId::ANY;
             }
         } else {
@@ -312,38 +336,7 @@ impl<'a> CheckerState<'a> {
         // members as `any`-typed placeholders. Without this, references like
         // `Class.laterMember` inside an earlier static initializer would get a
         // false TS2339 instead of resolving to `any`.
-        let mut all_static_member_names: Vec<Atom> = Vec::with_capacity(member_count);
-        for &member_idx in &class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            let name_opt = match member_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_property_decl(member_node)
-                    .filter(|p| self.has_static_modifier(&p.modifiers))
-                    .and_then(|p| self.get_property_name_resolved(p.name)),
-                k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_method_decl(member_node)
-                    .filter(|m| self.has_static_modifier(&m.modifiers))
-                    .and_then(|m| self.get_property_name_resolved(m.name)),
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    self.ctx
-                        .arena
-                        .get_accessor(member_node)
-                        .filter(|a| self.has_static_modifier(&a.modifiers))
-                        .and_then(|a| self.get_property_name_resolved(a.name))
-                }
-                _ => None,
-            };
-            if let Some(name) = name_opt {
-                let atom = self.ctx.types.intern_string(&name);
-                all_static_member_names.push(atom);
-            }
-        }
+        let all_static_member_names = self.collect_static_member_names(class);
 
         // Self-referential instance type for rough construct-signature return
         // types (`Application(Lazy(ClassDef), [T...])`); preserves class
@@ -365,31 +358,26 @@ impl<'a> CheckerState<'a> {
             self.early_rough_construct_signatures(class, rough_sig_return_type, &class_type_params);
 
         // Publish a partial constructor type for the duration of this
-        // computation so re-entrant value-position lookups of this class (the
-        // identifier resolver's `ctor_already_resolving` path) see a callable
-        // carrying the correct construct-signature arity instead of degrading
-        // to `any`. Restored at the end of this function; the final
-        // constructor type is cached by the caller.
-        let prev_published_sym_type =
-            current_sym.and_then(|s| self.ctx.symbol_types.get(&s).copied());
-        let prev_published_name_sym_type =
-            class_name_sym.and_then(|s| self.ctx.symbol_types.get(&s).copied());
-        {
-            let early_partial_ctor =
-                self.build_partial_static_constructor_type(StaticMemberBuildData {
-                    current_sym,
-                    properties: &properties,
-                    methods: &methods,
-                    accessors: &accessors,
-                    static_string_index: &static_string_index,
-                    static_number_index: &static_number_index,
-                    extra_property: None,
-                    inherited_static_props: &inherited_static_props,
-                    all_static_member_names: &all_static_member_names,
-                    construct_signatures: &rough_construct_signatures,
-                });
-            self.publish_partial_ctor_symbol_types(current_sym, class_name_sym, early_partial_ctor);
-        }
+        // computation so re-entrant value-position lookups of this class see
+        // a callable carrying the correct construct-signature arity instead
+        // of degrading to `any`. The publication lives in the dedicated
+        // window map (NOT in `symbol_types`) so type-position circular
+        // lookups keep observing the `Lazy` placeholder. Unpublished at the
+        // end of this function; the final type is cached by the caller.
+        let early_partial_ctor =
+            self.build_partial_static_constructor_type(StaticMemberBuildData {
+                current_sym,
+                properties: &properties,
+                methods: &methods,
+                accessors: &accessors,
+                static_string_index: &static_string_index,
+                static_number_index: &static_number_index,
+                extra_property: None,
+                inherited_static_props: &inherited_static_props,
+                all_static_member_names: &all_static_member_names,
+                construct_signatures: &rough_construct_signatures,
+            });
+        self.publish_partial_ctor_symbol_types(current_sym, class_name_sym, early_partial_ctor);
 
         // Pre-compute a rough partial instance type from declared (annotated) non-static
         // instance properties. Used as the return type of rough construct signatures so
@@ -563,19 +551,30 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        // When no self-referential instance type was available (anonymous
-        // class with no symbol), patch the provisional `any` return type on
-        // the early rough construct signatures with the rough instance type
-        // computed above, then republish the partial constructor type. Static
-        // methods need `this` to be constructable so that `return this` from
-        // a static method makes the return type constructable (prevents false
-        // TS2351), and the rough instance return type lets generic inference
-        // match construct-signature constraints (e.g.,
-        // `make<P>(x: { new(): { props: P } })`).
-        if rough_self_instance_ref.is_none() {
-            for sig in &mut rough_construct_signatures {
-                sig.return_type = rough_instance_return_type;
+        // Patch the rough construct-signature return type now that the rough
+        // instance type is available, then republish the partial constructor
+        // type. The return type combines BOTH views: the self-referential
+        // `Application(Lazy(C), [T...])` reference, so `new C(...)` inside
+        // C's own static initializers relates to an annotated `C<U>` return
+        // by identity (no false TS2739/TS2740); and the structural rough
+        // instance snapshot, so generic inference can match construct
+        // constraints (`make<P>(x: { new(): { props: P } })` infers `P`) and
+        // `return this` from static methods stays constructable (TS2351).
+        let patched_return_type = match rough_self_instance_ref {
+            Some(self_ref)
+                if rough_instance_return_type != TypeId::ANY
+                    && rough_instance_return_type != TypeId::ERROR =>
+            {
+                factory.intersection2(self_ref, rough_instance_return_type)
             }
+            Some(self_ref) => self_ref,
+            None => rough_instance_return_type,
+        };
+        for sig in &mut rough_construct_signatures {
+            sig.return_type = patched_return_type;
+        }
+        let rough_construct_signatures = rough_construct_signatures;
+        {
             let refreshed_partial_ctor =
                 self.build_partial_static_constructor_type(StaticMemberBuildData {
                     current_sym,
@@ -595,7 +594,6 @@ impl<'a> CheckerState<'a> {
                 refreshed_partial_ctor,
             );
         }
-        let rough_construct_signatures = rough_construct_signatures;
 
         // Process all static class members
         for &member_idx in &class.members.nodes {
@@ -1711,10 +1709,29 @@ impl<'a> CheckerState<'a> {
                     .class_constructor_resolution_set
                     .contains(&base_sym_id)
                 {
+                    // The base class is mid-resolution. Prefer a callable
+                    // partial from `symbol_types` (static-property
+                    // processing), then the window-scoped published partial
+                    // (carries the base's construct-signature arity), then
+                    // whatever `symbol_types` holds.
                     self.ctx
                         .symbol_types
                         .get(&base_sym_id)
                         .copied()
+                        .filter(|&cached| {
+                            crate::query_boundaries::common::callable_shape_for_type(
+                                self.ctx.types,
+                                cached,
+                            )
+                            .is_some()
+                        })
+                        .or_else(|| {
+                            self.ctx
+                                .window_partial_ctor_types
+                                .get(&base_sym_id)
+                                .copied()
+                        })
+                        .or_else(|| self.ctx.symbol_types.get(&base_sym_id).copied())
                         .unwrap_or_else(|| {
                             self.get_class_constructor_type(base_class_idx, base_class)
                         })
@@ -1945,11 +1962,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.abstract_constructor_types.insert(constructor_type);
         }
 
-        // Restore the symbol-type entries that were temporarily replaced by
-        // the published partial constructor type. The final constructor type
-        // is cached by the caller and by `compute_type_of_symbol`.
-        self.restore_published_symbol_type(current_sym, prev_published_sym_type);
-        self.restore_published_symbol_type(class_name_sym, prev_published_name_sym_type);
+        // Close the window-scoped partial-constructor publication. The final
+        // constructor type is cached by the caller and by
+        // `compute_type_of_symbol`.
+        self.unpublish_partial_ctor_symbol_types(current_sym, class_name_sym);
 
         // Mixin pattern: when a class extends a type-parameter-typed base
         // (e.g., `class extends base` where `base: T extends Constructor<{}>`),

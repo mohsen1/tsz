@@ -1640,6 +1640,12 @@ impl<'a> CheckerState<'a> {
                         // The callable_shape guard prevents returning the Lazy placeholder
                         // that symbol_types holds before the partial ctor is installed.
                         partial
+                    } else if let Some(&window_partial) =
+                        self.ctx.window_partial_ctor_types.get(&sym_id)
+                    {
+                        // Window-scoped partial ctor (value-position only): nested
+                        // computations see the real construct arity, not ANY (TS2554).
+                        window_partial
                     } else {
                         // The constructor type is actively being resolved and no
                         // cached or partial callable value is available. Returning the

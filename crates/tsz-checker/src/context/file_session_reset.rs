@@ -208,6 +208,7 @@ impl<'a> CheckerContext<'a> {
         self.checked_classes.clear();
         self.class_instance_resolution_set.clear();
         self.class_constructor_resolution_set.clear();
+        self.window_partial_ctor_types.clear();
         self.circular_class_symbols.clear();
         self.inheritance_graph.clear();
 
