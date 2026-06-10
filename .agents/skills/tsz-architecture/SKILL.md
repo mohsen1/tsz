@@ -52,4 +52,4 @@ python3 scripts/arch/test_arch_guard.py
 Use targeted `cargo nextest run`; wrap heavy runs with `scripts/safe-run.sh`.
 
 PR notes: structural rule, owner layer, adjacent matrix, guard/tests, temporary
-debt/removal condition, `AgentName`.
+debt/removal condition.

@@ -1556,7 +1556,7 @@ jobs:
               "|---|---:|---:|---:|---:|---|",
               table,
               "",
-              "AgentName: github-actions-bench-alert",
+              "Provenance: cloud / bot / github-actions-bench-alert",
             ].join("\n");
 
             const query = encodeURIComponent(`repo:${repo} is:issue is:open in:title "${title}"`);

@@ -1,32 +1,11 @@
 # TSZ Roadmap
 
-Date: 2026-06-04
+Date: 2026-06-10
 
 Status: single living roadmap. Keep durable architecture contracts in
-`docs/architecture/`, behavior specs in `docs/specs/`, product docs in
-`docs/site/`, and current execution strategy here. Do not use this file for
-routine PR status. Update it only for durable changes to public metrics, release
-gates, sequencing, architecture direction, active priorities, or assumptions
-future work would otherwise inherit incorrectly.
-
-## Plan Document Map
-
-`ROADMAP.md` owns sequencing, active priorities, release gates, and the current
-definition of progress. Other documents in `docs/plan/` are appendices under
-this roadmap; they may add durable contracts and deeper technical detail, but
-they do not promote their topic into active top-line work by themselves.
-
-| Document | Role |
-| --- | --- |
-| `docs/plan/PERFORMANCE_PLAN.md` | Performance measurement and cache/residency review contract for Phase 2 and Track 10. |
-| `docs/plan/LSP_ROADMAP.md` | LSP/WASM appendix. LSP remains low-bandwidth until project-corpus and compiler-service gates are met. |
-| `docs/plan/SOUND_MODE.md` | Sound Mode product/implementation appendix. Sound Mode is not on the active compatibility critical path unless explicitly assigned. |
-| `docs/plan/agents/` | Multi-computer launch control: editable per-session goals, ownership labels, and worktree/disk hygiene. |
-
-Do not recreate dated claim files or side-roadmaps for routine status. If a
-plan appendix accumulates branch-local status, prune it back to durable rules
-and move the status to the owning issue, draft PR body, PR comment, or CI
-artifact.
+`docs/architecture/`, behavior specs in `docs/specs/`, and product docs in
+`docs/site/`. Do not use this file for routine PR status; update it only when
+a goal, gate, or metric durably changes.
 
 ## North Star
 
@@ -35,672 +14,150 @@ tsz must become a real-project-compatible TypeScript compiler:
 > Same project result as `tsc`, substantially faster when it succeeds, with
 > clear failure categorization when it does not.
 
-The immediate project risk is no longer raw feature count. tsz is weak under
-advanced TypeScript composition: recursive conditionals, mapped/key-remapped
-types, template literals, `infer`, indexed access, contextual generic
-instantiation, flow narrowing, relation variance, and cross-file lib/module
-identity. These are semantic-substrate problems, so the roadmap is organized
-as campaigns instead of isolated conformance picks.
+## The Four Goals
 
-## Current Public Metrics
+All active work serves exactly one of these goals. Every PR names its goal in
+the PR body (`Goal: green | fast | grow | hold`).
 
-Sources: checked-in conformance artifacts, `scripts/conformance/query-conformance.py
---dashboard` (accepted-regression count refreshed on 2026-06-07),
-`scripts/emit/query-emit.py --families`, live GitHub orientation on 2026-06-04,
-`scripts/bench/project-row-summary.mjs`, public README metrics, and
-`scripts/emit/audit-output-surgery.py`.
-Release planning uses exact artifact numerators and denominators; stale detail
-artifacts are triage inputs only, not current public truth.
+### 1. Green — compile every benchmark project correctly
 
-| Surface | Current |
-| --- | ---: |
-| Diagnostic conformance | checked detail is `100.0%` exact (`12,585 / 12,585`) |
-| Accepted-regression strictness | `14` listed tests in `conformance-accepted-regressions.txt`; the dashboard remains exact, but strictness debt must be justified or paid down before treating the runway as retired |
-| JavaScript emit | `100.0%` exact (`13,530 / 13,530`) in README/public aggregate and checked detail |
-| Declaration emit | `100.0%` exact (`1,669 / 1,669`) in README/public aggregate and checked detail |
-| Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
-| Open bug issues | `68` open `bug` issues in live GitHub orientation (point-in-time count; drifts daily) |
-| Output-surgery audit | passing: `0` unallowlisted calls, `0` stale allowlist entries, `0` allowlisted calls |
+Every required benchmark row exits with the same result as `tsc` under the
+accepted diagnostic policy.
 
-Conformance remains a hard regression gate. It is no longer the sole readiness
-signal. The primary readiness signal for this phase is whether tsz can
-successfully check real projects that `tsc` accepts. Rounded percentages are
-communication aids only; release planning uses exact numerators, denominators,
-and failure-family counts.
+- Source of truth: `node scripts/bench/project-row-summary.mjs --markdown`
+  plus completed benchmark/compile-guard artifacts. Stale artifacts are triage
+  input, not status.
+- Row states: Green (same result as `tsc`), Yellow (exits, diagnostics
+  differ), Red (crash/error/OOM/timeout), Gray (fixture/artifact missing).
+- Required rows: utility-types, rxjs, Kysely, Zod, ts-toolbelt, type-fest,
+  ts-essentials, generated Vite app, generated Next app, large-ts-repo, and
+  full Next.js when enabled.
+- Every red/yellow row names its first blocker: exit class, first diagnostic
+  deltas grouped by subsystem, owning semantic operation, and phase reached
+  (parse, bind, check, emit).
 
-The exact conformance snapshot does not by itself mean the conformance runway
-is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
-remains a separate gate-strictness artifact and must be kept empty or
-explicitly justified by current CI evidence before agents treat conformance
-cleanup as complete. It currently lists `14` accepted-regression entries even
-though the dashboard is exact, so the strictness gate is non-empty and each
-entry should be paid down or re-justified in follow-up PRs. A checked-in detail
-snapshot that no longer lists these tests as failures is not enough to retire
-entries; removal must be backed by exact-head aggregate CI showing the tests no
-longer appear in the shard failure set.
+### 2. Fast — beat tsgo on every green row
 
-## Evidence From Current Audit
+Speed is a goal only where correctness is already proven.
 
-This section is intentionally short and current. Replace it when a fresher audit
-changes the picture.
+- Target: every eligible green timed row at least `2x` faster than `tsgo`;
+  the canonical `*.tsgo-winners.json` artifact must show zero
+  `two_x_target.target_gaps`.
+- Performance PRs record: row or benchmark family, before/after command, wall
+  time, peak RSS when residency changes, diagnostic status before/after, and
+  the cache-key or semantic-identity invariant protected.
+- A faster red row is not a win; name the remaining correctness blocker.
+- Red rows whose first blocker is runtime/OOM/timeout/residency take
+  performance work before they are green.
 
-1. Active PR state is intentionally a live query, not a copied roadmap metric.
-   Every launch should inspect open PRs, draft/WIP state, stacked children, and
-   canonical `agent:*` label hygiene with `gh pr list` plus
-   `scripts/agents/ensure-agent-labels.sh --audit`; this plan should not
-   preserve static PR queue inventories.
-2. Multi-computer coordination is now explicit. Eleven canonical ownership labels
-   exist: `agent:M1-A`, `agent:M1-B`, `agent:M1-Opus`, `agent:M4-A`,
-   `agent:M4-B`, `agent:M4-Opus`, `agent:Studio-A`, `agent:Studio-B`,
-   `agent:Studio-C`, `agent:Studio-Opus`, plus the PR-management/review lane
-   `agent:Studio-manager`. For launch work, apply `agent:*` labels to PRs
-   first; issues are context until the open PR runway is drained. A labelled PR
-   has exactly one next-step owner. `Studio-manager` manages PRs, submits
-   reviews, queues eligible work, and prevents duplicate ownership. Claude Code
-   and other runner-backed agents are valid contributors inside these lanes,
-   but generated runner names such as `agent:claude-sonnet-*`, `agent:dreamy-*`,
-   machine/model aliases, and typo labels such as `agnet:*` are not ownership
-   lanes.
-3. Open issue language is concentrated around recursive conditionals, mapped
-   and indexed access, inference/session state, unique-symbol identity,
-   module/lib identity, relation false positives, and benchmark-project
-   reductions. These line up with the project-corpus blockers; they are not a
-   random tail of conformance trivia.
-4. The benchmark harness now has enough structure to be the main readiness
-   signal: `scripts/bench/bench-vs-tsgo.sh` validates fixtures with `tsc`,
-   checks `tsz --noEmit -p`, classifies exit status, can capture project peak
-   RSS, and feeds website compatibility rows through
-   `crates/tsz-website/src/_data/benchmark_data.js`. Timing is meaningful only
-   after the row is green or the blocker is explicitly runtime/residency.
-5. The latest exact project corpus status must come from a completed benchmark
-   artifact, compile-guard artifact, or focused project run before it is treated
-   as public truth. `scripts/bench/project-rows.mjs` is now the single row
-   metadata source, and `node scripts/bench/project-row-summary.mjs --markdown`
-   should show every compatibility row consistent across benchmark, guard,
-   fixture, and corpus surfaces.
-6. The next-launch goal is end-state oriented: conformance strictness, emit
-   parity, bug closure, green project rows, and `2x` timing wins over `tsgo`.
-   Architecture cleanup is part of that goal only when it ratchets a measured
-   boundary counter down or unblocks one of those gates.
-7. Emit remains a release-gate tail and a real architecture risk: the
-   README/public aggregate and checked detail agree at exact JavaScript emit
-   `13,530 / 13,530`, and declaration emit is exact at `1,669 / 1,669`.
-   DTS still needs to move away from late semantic discovery
-   during printing toward a precomputed declaration/public-API summary.
-8. Output-surgery audit is passing with no allowlist pressure: the current audit
-   reports `0` unallowlisted calls, `0` stale allowlist entries, and `0`
-   allowlisted calls. Studio emit work should keep it there; any cap increase
-   must name an owner, removal condition, and counter update.
-9. Conformance is no longer the dominant progress signal but it remains a hard
-   regression gate. The current diagnostic gap is zero tests; broad
-   checker/solver changes must preserve that floor while moving project rows
-   from red/yellow to green.
-10. The design response is **not** an architecture-first pause. Purpose-specific
-   normalization, inference sessions, key-space algebra, diagnostic-capable
-   relation results, solver-owned flow predicates, identity/provenance queries,
-   and cache-key contracts should be introduced as just-in-time project
-   compatibility enablers. Broad speed tuning waits until project rows are green
-   or blocked by runtime/OOM/timeout.
+### 3. Grow — prove general readiness with more real projects
 
-## Coordination Model
+Add real-world projects to the corpus to show tsz approaches general use
+while staying fast and accurate.
 
-GitHub is the coordination surface.
+- A new row counts toward Grow only when it reaches Green, and stays counted
+  only while it holds Fast once timed.
+- `scripts/bench/project-rows.mjs` is the single row metadata source;
+  `node scripts/bench/validate-project-metadata.mjs` must pass when rows
+  change.
+- Prefer projects that exercise new surface (frameworks, monorepos, codegen
+  output, large graphs) over near-duplicates of existing rows.
 
-1. Pick a stable `AgentName` and include it in every PR body and substantive PR
-   comment. If a runner such as Claude Code generates its own model/session
-   nickname, treat that as runner metadata unless it was explicitly assigned as
-   the canonical lane.
-2. Check open draft PRs and recent merged PRs for overlap before starting.
-3. A GitHub issue is optional. A draft PR with a clear title/body is enough to
-   claim active work.
-4. Open a draft PR early, even if it is initially empty or docs-only. Use the
-   draft PR body to record scope, invariants, risks, and verification.
-5. Do not create claim documents under `docs/plan/claims`; that system has been
-   removed.
-6. Long-running branches must periodically merge `main` and fix conflicts in
-   their own PRs.
-7. Agents coordinate through PR comments, review comments, and PR descriptions.
-   Address other agents by `AgentName` when coordination matters.
-8. Use only canonical ownership labels from `docs/plan/agents/README.md`.
-   Replace generated runner labels or `agnet:*` typos with the correct lane
-   before marking a PR ready or queueing it with
-   `gh pr merge <pr> --match-head-commit <sha>`.
-9. Never merge work that is still draft, labeled `WIP`, titled with `[WIP]`, or
-   described as not ready.
-10. Treat `ready` plus a `WIP` label as WIP. Remove the label before merge.
-11. When ready, remove `WIP` labeling/title text, update the PR body with final
-   scope and verification, mark ready, and let heavy CI run.
-12. If a track is abandoned, close the draft PR with the reason and any useful
-    findings.
-13. For the multi-computer launch, sessions read their editable goal files from
-    `docs/plan/agents/<AgentName>.md`. Each goal file is a remote-control
-    surface for that lane; update it when lane ownership or next steps change
-    durably enough that future sessions need to inherit the change.
-14. Worktree reuse is preferred. The TypeScript submodule and Cargo build
-    caches are expensive to recreate, so agents should reuse inactive sibling
-    worktrees, use `scripts/setup/link-ts-submodule.sh` in worktrees, and clean
-    with cache-preserving scripts before creating new worktrees.
-15. The `Studio-manager` lane is intentionally ongoing. It manages open PRs for
-    roadmap fit, architecture boundaries, parity risk, duplicate work, tests,
-    queue readiness, and submitted reviews; when no PR needs action, it waits
-    and refreshes instead of marking the goal complete.
-16. Every launch starts by inspecting live PRs. If a lane still owns open PRs,
-    land, close, or clearly hand them off before claiming issue backlog. If the
-    PR runway is empty, issues become intake context and should be clustered
-    into early draft PRs by structural invariant.
+### 4. Hold — never regress the parity floor
 
-Draft PR body shape:
+Conformance, emit, and language-service parity are regression gates, not
+active campaigns.
 
-```markdown
-## Agent
-AgentName: <stable-name>
+- Diagnostic conformance: exact `12,585 / 12,585`.
+- JavaScript emit: exact `13,530 / 13,530`. Declaration emit: exact
+  `1,669 / 1,669`.
+- Fourslash: `6,558 / 6,562` today; the remaining 4 are Hold work.
+- `scripts/conformance/conformance-accepted-regressions.txt` stays empty or
+  every entry carries fresh exact-head CI evidence. Currently `14` entries:
+  pay down or re-justify; removal requires exact-head aggregate CI showing the
+  test out of the shard failure set.
+- Output-surgery audit stays at zero unallowlisted calls and zero allowlist
+  entries.
 
-## Track
-<Track 1-10 and PR type: benchmark blocker | semantic campaign | emit/dts | refactor>
+## How To Pick Work
 
-## Invariant
-When <structural condition>, `tsc` <does X>; this PR makes tsz do X through
-<owning layer>.
+1. Red or yellow required rows (Green) — the row's first blocker is the work
+   item.
+2. `two_x_target.target_gaps` entries (Fast).
+3. Open `bug` / `false-positive` / `tech-debt` issues that block one of the
+   four goals. Tech debt lives in issues, not in this file; an issue is worth
+   doing when it names the goal it unblocks or the boundary counter it
+   ratchets down.
+4. New corpus candidates (Grow) once required rows are green.
 
-## Scope
-- <files/systems expected to change>
+Cluster issues by structural invariant rather than starting one branch per
+issue. The reported repro is one witness, not the scope.
 
-## Verification
-- <targeted local commands or CI gates>
+## Standing Rules
 
-## Coordination Notes
-- <overlap, dependencies, follow-ups>
-```
+These survive any goal reshuffle:
 
-## Work Intake Rules
+1. **Parity over convenience.** If an observed behavior is a definite tsc
+   bug, file it with the `TypeScript bug` label; do not patch away from
+   parity.
+2. **One invariant per PR.** State the structural rule: when <structural
+   condition>, `tsc` does X; tsz does X through <owning layer>. Behavior
+   fixes need adjacent cases: renamed binders, alias/wrapper/nesting, generic
+   and concrete forms, positive and negative.
+3. **Symptom-patch freeze.** No diagnostic decisions from file names, source
+   text snippets, rendered type strings, or single test names. Existing
+   fingerprint/source-text rewrites are finite migration debt: remove one,
+   route around one, or ledger the shortcut with owner and removal condition.
+4. **Owner layers.** Type semantics live in solver or a solver-backed query
+   boundary; emit owns output, never semantic validation; relation failures
+   route through the shared assignability gateway.
+5. **Cache/order honesty.** Cache-enabled and cache-disabled runs agree;
+   reordered declarations produce stable diagnostics; `T` not assignable to
+   `T` is a cache/keying bug until proven otherwise.
+6. **Local verification.** Never run full conformance/emit/fourslash locally;
+   use narrow filters and `cargo nextest run`; ready-review CI owns broad
+   suites. Wrap heavy commands in `scripts/safe-run.sh`.
 
-Every non-trivial PR declares exactly one type:
+## Coordination
 
-1. **Benchmark blocker**: names the project and before/after failure class.
-2. **Semantic campaign**: names the invariant and owning layer.
-3. **Emit/DTS parity**: names the baseline family and confirms no checker
-   regression.
-4. **Refactor only**: proves behavior unchanged and names the future campaign it
-   enables.
+GitHub is the coordination surface. There are no ownership lanes, no manager,
+and no reviewer role.
 
-For checker/solver fixes, the PR body must include:
+1. Every PR body carries `Goal:`, `## Verification`, and a `## Provenance`
+   block (`Machine:`, `Assistant:`, `Model:`, `Effort:`). CI enforces this.
+2. The PR author lands their own PR: when exact-head `CI Summary` passes,
+   queue with `gh pr merge <pr> --match-head-commit <sha>`.
+3. Land-and-continue: do not idle-wait on CI. Push, start the next task, and
+   return to queue the merge when checks resolve.
+4. Check open PRs and recent merges for overlap before starting. A draft PR
+   with a clear body claims active work; drain owned PRs before unrelated new
+   work.
+5. Never merge WIP: draft state, `WIP` label, `[WIP]` title, or a body that
+   says not ready. Adding WIP state requires a comment with reason, blocker,
+   and next action.
+6. Long-running branches periodically merge `main` in their own PRs.
 
-1. Structural rule, not one-test symptom.
-2. Owning layer: solver/query boundary/checker orchestration.
-3. Adjacent-case matrix when behavior changes.
-4. Cache-enabled/cache-disabled or order-independence plan when the bug touches
-   generic instantiation, aliases, globals, or relation/evaluation caches.
-5. Project-corpus smoke plan when the subsystem affects any required benchmark
-   row.
+## Plan Appendices
 
-For emit/DTS fixes, the PR body must include:
-
-1. Failure family: JS transform family or DTS nameability/portability/JSDoc/type
-   display family.
-2. Output layer: direct AST print, lowering directive, IR plan, declaration
-   summary, or parser recovery fact.
-3. Why the fix does not add semantic validation or late semantic discovery in
-   emitter code.
-4. Baseline-style verification plan; fragment `contains` tests are smoke tests,
-   not proof of parity.
-
-Symptom-patch freeze:
-
-1. No new diagnostic decisions from file names, source text snippets, rendered
-   type strings, or single conformance test names.
-2. Existing `rewrite_*_fingerprints` and source-text/display-string decisions
-   are finite migration debt. New work should remove one, route around one
-   through a structural query, or explicitly list the temporary shortcut in the
-   PR body with owner and removal condition.
-3. Query-boundary modules may expose domain classifiers. They should not become
-   broad re-export barrels for checker-local semantic traversal.
-
-## Bug Triage Contract
-
-"All bugs fixed" means every open `bug`, `false-positive`, `false-negative`,
-`accepted-regression`, and release-gate issue is in one of these states:
-
-1. fixed by a merged PR,
-2. closed as duplicate or superseded with successor evidence,
-3. proven upstream TypeScript behavior and tracked as a `TypeScript bug`,
-4. explicitly non-release with a signed rationale, or
-5. owned by an active draft PR whose body names the structural invariant,
-   owning lane, verification, and next step.
-
-Issue-level `WIP` has the same coordination meaning as PR-level `WIP`: it must
-carry a signed owner comment with current blocker or active work and next
-owner/action. Do not use issue `WIP` as a parking label.
-
-## Phase 0: Stabilize The Runway
-
-Near-term priority order:
-
-1. Inspect live active PRs and either land, close, or clearly hand them off.
-   Remove stale `WIP` labels before any ready merge. Apply `agent:*` labels so
-   every active item has at most one next-step owner.
-2. Make the project-corpus dashboard authoritative before judging speed. Every
-   red/yellow row should name the semantic operation that owns the first
-   blocker, the phase reached, and whether the failure is diagnostic,
-   crash/OOM/timeout, fixture, emit, or runner.
-3. Keep `scripts/bench/project-rows.mjs` as the single project-row metadata
-   source. `node scripts/bench/project-row-summary.mjs --markdown` and
-   `node scripts/bench/validate-project-metadata.mjs` should pass before
-   project-corpus truth is cited.
-4. Fold substrate refactors into bug closure. A semantic bug may add a
-   normalization query, inference-session boundary, key-space helper,
-   `RelationDecision` path, flow predicate, identity query, or cache-key
-   contract only when the reported family needs that substrate.
-5. Freeze new symptom patches and start burning down existing fingerprint/source
-   text/rendered-type rewrites.
-6. Stop starting broad DTS cleanup unless it removes an emitter boundary
-   violation, reduces ambient state, improves a release gate, or unblocks a
-   named failure family.
-7. Convert noisy planning state into draft PRs, PR comments, and this roadmap
-   only when the update is durable enough to justify the shared-file conflict
-   risk.
-8. Add reduced benchmark failures to targeted tests as they are understood.
-9. Keep broad display-provenance polish, generalized query-engine refactors,
-   major incremental/perf rewrites, and LSP/WASM expansion on the back burner
-   unless they unblock a named project row or release gate.
-
-## Phase 1: Project Corpus Gate
-
-All benchmark projects must pass before broad performance tuning becomes the
-main workstream. The benchmark dashboard must distinguish correctness from
-speed.
-
-| Status | Meaning |
+| Document | Role |
 | --- | --- |
-| Green | tsz and `tsc` both exit successfully with accepted diagnostic policy |
-| Yellow | tsz exits but diagnostics differ |
-| Red | tsz crashes, errors, OOMs, or times out |
-| Gray | fixture or artifact is missing/incomplete |
-
-Required project rows:
-
-| Project | Current Strategic Read | Primary Owner Track | Exit Target |
-| --- | --- | --- | --- |
-| utility-types | baseline utility mapped/conditional surface | Tracks 1, 2, 5 | exit success |
-| rxjs | observable/subject generics, module identity, generated config pressure | Tracks 1, 3, 7, 10 | exit success |
-| Kysely | contextual generics, guards, indexed/property access | Tracks 1, 3, 5, 6 | exit success |
-| Zod | recursive conditionals, object guards, class/generic identity | Tracks 1, 2, 4, 6, 7 | exit success |
-| ts-toolbelt | recursive type evaluation pressure | Tracks 1, 2, 3 | exit success |
-| type-fest | broad mapped/conditional/key-space utility surface | Tracks 1, 2, 5 | exit success |
-| ts-essentials | utility types plus recursive JSON shapes | Tracks 1, 2, 5 | exit success |
-| generated Vite app | generated app dependency/config sanity | Tracks 1, 7, 9 | exit success |
-| generated Next app | app-router dependency/config sanity | Tracks 1, 7, 9 | exit success |
-| large-ts-repo | residency/runtime/project graph stress | Tracks 1, 7, 10 | exit success without OOM/timeout |
-| Next.js full project | module graph plus generated app dependencies | Tracks 1, 7, 9, 10 | recorded green/yellow/red when enabled |
-
-For every project row, capture:
-
-1. exit code,
-2. timeout/OOM/crash/diagnostic mismatch,
-3. diagnostic status and first 20 diagnostic deltas grouped by subsystem,
-4. JavaScript emit status when emit is in scope,
-5. declaration emit status when DTS is in scope,
-6. known checker/solver/emit/DTS blockers,
-7. peak memory if measured,
-8. number of files reached if available,
-9. last successful phase: parse, bind, check, emit.
-
-Speed is a secondary column until the row is green or explicitly blocked by
-runtime/residency. Do not present a faster red project as a win without also
-naming the remaining correctness blocker. Once a row is green and timed, it is
-not done for the next launch until the `*.tsgo-winners.json` `two_x_target`
-summary shows the row at or above `2x` faster than `tsgo`, or a fresh issue
-owns the gap.
-
-## Phase 2: Performance Tuning Gate
-
-Performance tuning starts after the required project rows are green, except for
-PRs that directly fix a red row whose first blocker is runtime, OOM, timeout, or
-residency. The next launch's performance target is not a mean-speed headline:
-eligible green rows must have zero `two_x_target.target_gaps` in the canonical
-`*.tsgo-winners.json` artifact before the `2x faster than tsgo` gate is
-claimed.
-
-Performance work must record:
-
-1. project row or benchmark family,
-2. before/after command,
-3. wall time when the row is green,
-4. peak RSS or physical footprint when residency changes,
-5. diagnostic status before and after,
-6. cache/counter deltas when the change is counter-driven,
-7. semantic identity, cache-key, or invalidation invariant protected by the
-   change.
-
-Broad performance rewrites are not readiness work unless they move a green row
-toward the `2x` target or move a red runtime/residency row toward green.
-
-## Architecture Health Metrics
-
-Track these as counters or periodic audit bullets. They are more useful than
-subjective "cleanup" language.
-
-1. `CheckerContext` field count, currently pinned at `245` (bumped for the
-   `deferred_flow_env_writes` mirror-replay queue in #13036), plus the number of
-   checker `source_text.contains` / file-name / rendered-message
-   diagnostic decisions.
-2. Number of post-check `rewrite_*_fingerprints` passes still active.
-3. Direct `is_assignable_to` call sites on `TS2322`/`TS2345`/`TS2416` paths
-   that need both relation result and failure reason.
-4. Checker modules consuming broad traversal primitives instead of
-   domain-specific query-boundary classifiers.
-5. Direct `TypeData` pattern matching outside solver/query-boundary internals.
-6. Actual-lib alias admissions and allowlists that should become stable lib
-   identity queries.
-7. Emitter/DTS direct solver imports, direct type evaluation during printing,
-   and `TypeData`/`lookup()` guardrail exceptions. The current direct
-   `tsz_solver` import guard outside solver/checker is pinned at `36`; reduce
-   it through focused compiler-service/front-door PRs instead of broad cleanup,
-   or justify any cap bump in the same PR.
-8. `Printer` and `DeclarationEmitter` ambient state fields, especially fields
-   added for one transform or one baseline family.
-9. Emitter/DTS tests that assert fragments instead of exact output or structured
-   plan/summary facts.
-
-## Ten Project-First Tracks
-
-These tracks keep the ten-lane concurrency model while making benchmark-project
-success the phase boundary. Each PR should state one invariant, name the project
-row or failure family it moves, and avoid duplicating another active draft PR.
-
-### Track 1: Project Corpus Dashboard And Fixture Truth
-
-Scope: project benchmark harness, CI project compile guard, public benchmark
-reporting, fixture metadata, `tsc` oracle comparison, diagnostic-delta
-extraction, reduction queue, and bug-family intake.
-
-Core invariant: correctness status is reported separately from speed; no speed
-headline is meaningful for a project until the row is green or the blocker is
-explicitly runtime/residency.
-
-Acceptance:
-
-1. Dashboard rows exist for every required project in Phase 1, including
-   generated app fixtures and full Next.js when enabled.
-2. Failed rows include exit class, first diagnostic deltas, owner subsystem,
-   phase reached, files reached when available, and peak RSS when measured.
-3. `bench-vs-tsgo.sh` and `project-compile-guard.sh` cannot silently drift on
-   fixture refs, config shape, or inclusion policy.
-4. Benchmark reductions become owning-crate tests when root cause is known.
-5. Every PR that claims project-corpus impact names the row and bug family it
-   moves.
-
-### Track 2: Type Evaluation And Purpose-Specific Normalization
-
-Scope: conditional types, mapped types, template literal types, `infer`,
-distributivity, key remapping, indexed access, utility types, intrinsics, and
-recursive evaluation that block project rows.
-
-Core invariant: deferred type operations are evaluated through solver-owned,
-purpose-specific queries with memoization keyed by expression identity,
-substitution environment, compatibility mode, normalization purpose, and
-recursion/fuel state. There is no universal eager normal form.
-
-Acceptance:
-
-1. Reduced failures from ts-toolbelt, type-fest, ts-essentials, Kysely, Zod,
-   utility-types, and generated apps move into focused tests.
-2. Deferred/unresolved conditionals are represented explicitly rather than
-   erased to `any` or `error`.
-3. Checker-local evaluation shortcuts trend down.
-4. Callers name why they normalize: relation input, property lookup, inference
-   source/target, diagnostic display, or flow narrowing.
-
-### Track 3: Inference Sessions, Instantiation, And Cache Contracts
-
-Scope: generic call inference, constructor inference, overload inference,
-contextual typing, class/mixin instantiation, `this` substitution, stale aliases,
-and relation/evaluation/inference cache keys.
-
-Core invariant: generic inference is a bounded solver-owned transaction:
-collect constraints, solve by priority, commit substitutions, then discard
-session state. Cache keys include every input that can change the answer:
-substitution environment, relation/variance mode, compatibility mode, lib/module
-context, fresh-literal state, `this` type, and relevant flow/request context.
-
-Acceptance:
-
-1. Cache-enabled and cache-disabled modes agree on targeted semantic tests.
-2. Reordered declarations/files produce stable diagnostics.
-3. Self-contradictory errors such as `T` not assignable to `T` are treated as
-   cache/keying bugs until proven otherwise.
-4. Same-checker-context repeated generic calls cannot leak inference state into
-   later calls.
-5. Instantiation cache comments, stats, and production behavior agree.
-
-### Track 4: Relations, Variance, Call Signatures, And Class Compatibility
-
-Scope: assignability, function parameter variance, callable interfaces, overload
-implementation compatibility, `call`/`apply`/`bind`, method bivariance
-exceptions, abstract construct signatures, class/`this`/accessor/super/mixin
-compatibility, freshness/excess-property policy, and weak type detection.
-
-Core invariant: `TS2322`, `TS2345`, `TS2394`, `TS2416`, and related relation
-paths flow through one assignability/relation gateway: relation -> structured
-reason -> diagnostic rendering. Class-like compatibility is a typed
-compatibility surface, not accidental object-shape comparison.
-
-Acceptance:
-
-1. Variance mode is explicit in relation context.
-2. Bivariant and `any` propagation exceptions live in compatibility policy, not
-   scattered call-site flags.
-3. Callable interface assignment does not fall back to property comparison when
-   `tsc` would compare signatures.
-4. Relation paths that need relation plus failure reason use
-   `RelationRequest`/`RelationOutcome` or a narrower diagnostic-capable wrapper,
-   not raw boolean assignability followed by local semantic post-checks.
-5. Accessor pairs, receiver `this`, constructor abstraction, and class
-   static/instance sides are handled by class-aware relation helpers.
-
-### Track 5: Key-Space, Indexed Access, And Property Semantics
-
-Scope: `keyof`, indexed access, property lookup, index signatures, mapped-key
-remapping, template literal pattern keys, numeric/string key compatibility,
-symbol and unique-symbol keys, well-known symbols, excess-property
-classification, and readonly/optional property metadata.
-
-Core invariant: property identity is modeled as a solver-owned key space, not as
-ad-hoc strings. `keyof`, `T[K]`, mapped projection, index signatures, relation
-property comparison, and diagnostics ask the same key-space/query helpers.
-
-Acceptance:
-
-1. TS7053/TS2536/TS2353-style paths share key-space queries instead of
-   duplicating string/number/symbol logic.
-2. Template literal pattern keys and numeric-string compatibility are structural
-   facts, not rendered-string checks.
-3. Query-boundary property classification avoids owned `String` maps on hot
-   semantic paths when atoms/symbols/key-space handles are available.
-4. Key-space query results are interned or otherwise identity-cheap enough for
-   relation/property hot paths.
-
-### Track 6: Flow Graph And Solver-Owned Narrowing Predicates
-
-Scope: discriminated unions, destructured discriminants, user-defined
-predicates, `in` narrowing, optional/truthiness narrowing, array/object guards,
-exhaustive switch behavior, and alias-aware flow facts.
-
-Core invariant: checker supplies flow facts and locations; solver-owned
-narrowing predicates compute semantic narrowed types without leaking branch
-state or creating a second evaluator in checker flow code.
-
-Acceptance:
-
-1. Kysely/Zod guard reductions pass.
-2. Destructured discriminant and mapped-union `in` narrowing cases pass.
-3. Nested narrowing cannot corrupt outer flow state.
-4. Predicate application is cacheable by input type, predicate payload,
-   compiler flags, and resolver generation.
-
-### Track 7: Symbol, Lib, Module, And Stable Identity
-
-Scope: `import()` types, namespace/enum merging, module augmentations, DOM/lib
-globals, symbol keys, global declarations, alias owners, `DefId` mapping,
-class static/instance identity, enum value/namespace identity, display
-provenance handles, and cross-file stable identity.
-
-Core invariant: the same semantic entity has one identity across files/libs and
-is referenced through stable binder/solver IDs, not recovered from syntax or
-string names in hot paths.
-
-Acceptance:
-
-1. Lib selection and global scope construction are explicit and reproducible.
-2. `import("./x").T` works inside conditional/keyof/Parameters/ReturnType-style
-   contexts.
-3. Unresolved identifiers do not silently become `any` unless `tsc` would do so.
-4. Actual-lib alias admissions such as utility aliases and iterator/Intl rows
-   are treated as transitional; stable lib identity queries replace allowlists.
-5. Display provenance is a structured side channel over stable identity, not a
-   semantic decision based on rendered type strings.
-
-### Track 8: Diagnostics, Display, Parser Options, And Feature Gates
-
-Scope: diagnostic code/position/priority, type display provenance, parser
-recovery facts, compiler-option and language-version gates, decorators,
-auto-accessors, top-level await, global declaration restrictions, and
-syntax-only validation that should not depend on relation machinery.
-
-Core invariant: diagnostics render from structured semantic or syntax facts.
-Syntax/option gates are checker validation over AST/binder facts; semantic
-diagnostics are downstream of solver/query-boundary reasons; neither path uses
-source-text snippets or rendered type strings as semantic input.
-
-Acceptance:
-
-1. Wrong-code/wrong-position diagnostics move behind structured reason or
-   syntax-gate helpers.
-2. Type display fixes consume display provenance and visibility facts rather
-   than changing semantic types for presentation.
-3. Option-gate diagnostics are tested under both allowed and disallowed
-   compiler options.
-4. Parser recovery facts are explicit inputs to diagnostics/emit when needed;
-   consumers do not infer malformed syntax behavior by scanning substrings.
-
-### Track 9: Emit/DTS Parity Recovery And Consumers
-
-Scope: JavaScript emit, declaration emit, transform planning, declaration
-summary boundaries, emit failure-family reporting, and LSP/WASM consumption of
-compiler outputs.
-
-Core invariant: emit, DTS, LSP, and WASM consume compiler outputs and semantic
-views; they do not own type algorithms or rederive checker/solver facts.
-
-Subtracks:
-
-1. **JS transform plan graph**: lowering produces ordered per-file/per-node
-   transform actions; complex transforms converge on IR or structured output
-   plans instead of hidden `Printer` state.
-2. **Declaration summary boundary**: binder/checker/solver produce a
-   `DeclarationSummary`/`PublicApiSummary` with exported declarations,
-   nameability, import dependencies, portability diagnostics, inferred
-   declaration display requests, and JSDoc-derived facts.
-3. **Emit failure-family dashboard**: JS/DTS pass counts, timeout count, and top
-   families are visible; every emit PR names the family it moves.
-4. **Emitter state and guardrail burn-down**: remove `TypeData`/`lookup()`
-   guardrail exceptions, reduce broad ambient fields, and retire text-based
-   import/type usage heuristics except for explicitly structured parser-recovery
-   facts.
-
-Acceptance:
-
-1. JS emit fixes are tied to transform families and either reduce a family count
-   or unblock a named transform-plan migration.
-2. DTS fixes consume documented semantic summaries instead of broad reach-through
-   into solver internals or fresh type evaluation during printing.
-3. Emit/DTS work may consume dedicated launch bandwidth while JS/DTS are below
-   `100%`, but each PR must reduce a named family, remove output-layer debt, or
-   unblock the declaration/transform summary boundary.
-4. LSP/WASM paths converge on one compiler service front door and consume
-   semantic views rather than matching raw `TypeData`.
-5. Source-text recovery moves toward parser-provided facts; emitter code should
-   not infer malformed syntax behavior by scanning substrings.
-
-### Track 10: Guardrails, Tooling, Residency, And Performance Readiness
-
-Scope: architecture guardrails, checker field/state metrics, query-boundary
-quarantine helpers, fingerprint/source-text/rendered-type rewrites, large-repo
-memory/runtime, stable skeleton indexes, bounded file-session reuse, arena
-residency, project graph reuse, cache/order test harnesses, and performance
-counters.
-
-Core invariant: performance work must preserve semantic identity and
-correctness. Large-project speed comes from stable semantic facts, bounded
-residency, explicit request scopes, and measurable caches, not from
-checker-local semantic shortcuts. Refactors reduce semantic paths, remove
-boundary exceptions, or make invariants measurable.
-
-Acceptance:
-
-1. Guardrails catch forbidden checker/solver/emitter boundary drift.
-2. Post-check `rewrite_*_fingerprints`, source-text decisions, file-name
-   decisions, and rendered-type semantic decisions trend down.
-3. Query-boundary modules expose domain classifiers rather than broad traversal
-   barrels.
-4. All required project rows exit successfully before broad speed work becomes
-   the main workstream.
-5. Runtime/OOM/timeout red rows may receive performance work before green status
-   when the PR states the residency/runtime invariant and diagnostic status.
-6. Cross-file lookups increasingly answer from skeleton/stable indexes.
-7. Cache/residency changes include before/after measurements when practical.
-8. Lib/interface reuse proves semantic identity and type-parameter preservation;
-   rejected missing-interface lib probes should not become name-only allowlists.
-9. Test harnesses make cache-disabled and order-randomized checks easy to run.
-10. Docs stay concise and do not recreate claim-file bookkeeping. `_PLAN` and
-   companion roadmap documents stay appendices under this file and should be
-   pruned when they start carrying dated run logs or branch-local status.
-
-## Local Verification Rules
-
-1. Never run full conformance, emit, or fourslash suites locally.
-2. Use `cargo nextest run` instead of `cargo test`.
-3. Run local commands only when they answer a specific debugging question.
-4. Wrap full-suite or memory-intensive commands with `scripts/safe-run.sh`.
-5. Draft PR CI runs light gates; ready-for-review CI runs heavy gates.
-6. Do not wait idle for CI. Push, record the run URL if useful, and move to
-   non-overlapping work.
+| `docs/plan/PERFORMANCE_PLAN.md` | Measurement and cache/residency review contract for Fast. |
+| `docs/plan/LSP_ROADMAP.md` | LSP/WASM appendix; low-bandwidth until Green/Fast gates are met. |
+| `docs/plan/SOUND_MODE.md` | Sound Mode appendix; not on the active critical path unless assigned. |
+
+Appendices add durable contracts and detail; they do not promote their topic
+into top-line work by themselves, and they must not accumulate dated run logs
+or branch-local status.
 
 ## Definition Of Done
 
-This roadmap is succeeding when:
+The roadmap is succeeding when:
 
-1. Diagnostic conformance stays exact at `12,582 / 12,582`; rounded `100.0%`
-   is not treated as sufficient if exact counts or accepted-regression gates
-   drift.
-2. JavaScript emit reaches exact `13,530 / 13,530` and declaration emit reaches
-   exact `1,669 / 1,669`, or the roadmap names the remaining blocked families.
-3. Fourslash reaches exact `6,562 / 6,562`, or the roadmap names the remaining
-   blocked cases.
-4. Required benchmark project rows are green: utility-types, rxjs, Kysely, Zod,
-   ts-toolbelt, type-fest, ts-essentials, generated Vite app, generated Next
-   app, and large-ts-repo. Full Next.js has a recorded green/yellow/red status
-   when enabled.
-5. Red/yellow project rows, when any remain, name exit class, first diagnostic
-   deltas, owner family, phase reached, known blockers, and measured RSS when
-   relevant.
-6. Broad performance tuning starts only after required rows are green, except
-   for PRs whose first blocker is runtime, OOM, timeout, or residency; green
-   timed rows are not complete until `two_x_target.target_gaps` is zero.
-7. Performance PRs record diagnostic status before/after along with wall time,
-   RSS, cache/counter deltas, and the semantic identity or cache-key invariant
-   being protected.
-8. Cache-enabled/cache-disabled diagnostics agree on targeted advanced-type and
-   project-corpus checks.
-9. `TS2322`/`TS2345`/property/call failures route through shared relation and
-   query-boundary paths.
-10. Checker-local type semantics and direct solver-internal pattern matching
-   trend down.
-11. Fingerprint/source-text/rendered-type rewrites trend down and no new ones
-   are added without an explicit temporary-shortcut ledger entry.
-12. Emit/DTS work reduces named failure families while moving toward
-   `EmitPlan`/`DeclarationSummary` boundaries, not merely helper splitting.
-13. Output-surgery, source-text recovery, and emitter/DTS reach-through
-   guardrails do not regress and ratchet down when touched.
-14. GitHub draft PRs, comments, `agent:*` labels, and
-   `docs/plan/agents/<AgentName>.md` files are sufficient to understand active
-   ownership; no claim-doc system reappears.
+1. Every required benchmark row is Green (Goal 1).
+2. Every eligible green timed row shows zero `two_x_target.target_gaps`
+   (Goal 2).
+3. The corpus has grown beyond the required rows with new Green + Fast
+   real-world projects (Goal 3).
+4. Conformance, JS emit, DTS emit hold exact; fourslash reaches
+   `6,562 / 6,562`; accepted regressions are empty or freshly evidenced;
+   output-surgery audit stays clean (Goal 4).

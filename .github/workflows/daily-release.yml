@@ -190,10 +190,10 @@ jobs:
           git push -u origin "${branch_with_date}"
 
           body=$(cat <<EOF
-          AgentName: tsz-release-bot
+          Daily automated release PR.
 
-          ## Track
-          Release
+          ## Goal
+          Goal: hold
 
           ## Invariant
           Daily automated release of \`try-tsz\` to npm. Bumps the workspace
@@ -215,10 +215,6 @@ jobs:
 
           No semantic, build, or script changes.
 
-          ## Project Corpus Impact
-          - Row: n/a
-          - Bug family: n/a
-
           ## Verification
           - Cargo.toml occurrence count of \`${CURRENT}\` before vs. \`${NEXT}\`
             after must match (enforced by the workflow).
@@ -230,6 +226,12 @@ jobs:
             \`v${NEXT}\` and dispatches \`release.yml\` and \`npm-publish.yml\`.
           - To skip a day's release, close this PR; the next scheduled run
             opens a new one with the next patch.
+
+          ## Provenance
+          Machine: cloud
+          Assistant: bot
+          Model: github-actions
+          Effort: low
           EOF
           )
           gh pr create \

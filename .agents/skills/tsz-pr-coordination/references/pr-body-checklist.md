@@ -4,18 +4,19 @@ Use this checklist before creating or materially updating a TSZ PR.
 
 ## Required Sections
 
-- `AgentName`: stable identity, usually a canonical lane name when assigned.
-- `Track`: roadmap track and PR type, such as refactor-only, semantic campaign,
-  emit/DTS parity, benchmark blocker, or tooling/guardrail.
-- `Invariant`: structural rule for behavior work; iteration bottleneck and
-  affected surface for process work.
-- `Scope`: concrete files or systems touched.
-- `Project Corpus Impact`: always present. Use `Row: n/a`, `Bug family: n/a`,
-  and a concrete evidence line for docs, skills, or harness-only work.
-- `Verification`: targeted local commands and CI expectation.
-- `Coordination Notes`: overlap checks, dependency branches, WIP state,
-  follow-ups, signed handoff facts, and whether the PR is ready for a manager or
-  queue-owner agent to review.
+- `Goal: <green|fast|grow|hold>`: the one roadmap goal the PR serves: `green`
+  (benchmark rows compile like `tsc`), `fast` (green rows >=2x faster than
+  `tsgo`), `grow` (new corpus projects), or `hold` (conformance/JS emit/DTS/
+  fourslash parity floor).
+- `## Verification`: targeted local commands and CI expectation.
+- `## Provenance`: actual runtime values, with exactly these line formats:
+  - `Machine: <m1|m4|studio|cloud|hostname>`
+  - `Assistant: <claude-code|codex|bot>`
+  - `Model: <model id, e.g. claude-opus-4-8>`
+  - `Effort: <low|medium|high|max>`
+
+Report which computer, which assistant, which model, and what effort level you
+actually ran with; do not invent nicknames.
 
 ## Body Validation
 
@@ -26,19 +27,17 @@ gh pr view <number> --json body
 ```
 
 Confirm the remote body includes all required sections after GitHub stores it.
-If `project-corpus-pr-body` fails, fix the body before rerunning jobs.
+If `pr-body-gate` fails, fix the body before rerunning jobs.
 
-## Good Evidence Lines
+## Good Verification Lines
 
-- `docs-only`
-- `agent-skill-only`
-- `test-harness-only`
+- `cargo nextest run -p tsz-checker <filter>`
+- `./scripts/conformance/conformance.sh run --filter "<name>" --verbose`
+- `docs-only; lint and pr-body-gate suffice`
 - `CI script only; no compiler behavior path`
-- `project row: utility-types; diagnostic false-positive family`
 
-## Bad Evidence Lines
+## Bad Verification Lines
 
-- blank `Evidence:`
-- `n/a` with no explanation
+- blank `## Verification` section
 - stale commands from a previous head
 - broad claims such as `tests pass` without naming the command or CI gate

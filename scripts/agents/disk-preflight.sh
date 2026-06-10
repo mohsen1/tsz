@@ -7,9 +7,11 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: scripts/agents/disk-preflight.sh [--json-report PATH] [AgentName]
+usage: scripts/agents/disk-preflight.sh [--json-report PATH] [label]
 
 Runs compact checks only. It does not delete files or create worktrees.
+The optional label is free-form and only echoed back in the report (for
+example a machine name such as m1, m4, studio, or cloud).
 
 With --json-report PATH, also write a machine-readable preflight report.
 USAGE
@@ -52,11 +54,6 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
-
-case "$AGENT" in
-  unknown|M1-A|M1-B|M1-D|M1-Opus|M4-A|M4-B|M4-C|M4-Opus|Studio-A|Studio-B|Studio-C|Studio-Opus|Studio-manager) ;;
-  *) echo "unknown AgentName: $AGENT" >&2; exit 1 ;;
-esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 GIT_HEAD="$(git -C "$ROOT" rev-parse HEAD)"

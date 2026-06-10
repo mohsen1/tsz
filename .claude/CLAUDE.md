@@ -81,37 +81,36 @@ Hard rules:
 - Avoid broad recursive `du` output unless exact ownership is needed.
 
 ## GitHub And PR Coordination
-- Use `gh`.
-- Stable `AgentName` is required in PR bodies, issues, and substantive
-  comments.
-- Canonical ownership labels are only those in `docs/plan/agents/README.md`.
-  Do not create generated runner labels or typo labels.
+- Use `gh`. There are no ownership lanes, no manager, and no reviewer role.
+- Every PR serves one of the four roadmap goals: `green` (benchmark rows
+  compile like `tsc`), `fast` (green rows 2x faster than `tsgo`), `grow`
+  (new corpus projects), `hold` (conformance/emit/fourslash parity floor).
+- The `pr-body-gate` CI job greps the remote body for exact field formats;
+  match them or the job fails. Required lines, each with a non-empty value:
+  - `Goal: <green|fast|grow|hold>`
+  - A `## Provenance` block with `Machine: <m1|m4|studio|cloud|hostname>`,
+    `Assistant: <claude-code|codex>`, `Model: <model id>`, and
+    `Effort: <low|medium|high|max>`. Report your actual runtime values; do
+    not invent stable nicknames.
+- PR bodies also include a `## Verification` section with the targeted
+  commands or CI gates that prove the change.
 - Do not add `[codex]` to PR titles.
-- PR bodies must include: `AgentName`, `Track`, `Invariant`, `Scope`,
-  `Project Corpus Impact`, `Verification`, and `Coordination Notes`.
-- The `project-corpus-pr-body` CI job greps the remote body for exact field
-  formats; match them or the job fails:
-  - Always include a plain signature line `AgentName: <stable agent name>`
-    (no Markdown heading, value must be non-empty).
-  - When the PR touches semantic, benchmark, or dashboard paths
-    (`crates/tsz-*`, `crates/tsz-website`, `scripts/{bench,ci,conformance,emit,fourslash}`,
-    `.github/workflows/{bench,ci}.yml`), the body must also contain the literal
-    heading `## Project Corpus Impact` followed by `- Row: <project row or n/a>`
-    and `- Bug family: <family or n/a>` lines, each with a non-empty value.
-  - Docs/skill/harness-only PRs still need `AgentName:`; use `Row: n/a` and
-    `Bug family: n/a` with a concrete evidence line when those paths change.
 - Verify remote PR bodies after create/material edit:
   `gh pr view <n> --json body`.
-- Drain owned PRs before starting unrelated work. Do not park stale draft PRs.
+- Land-and-continue: do not idle-wait on a PR's running CI. Push, start the
+  next task immediately, and return to queue the merge when its exact-head
+  `CI Summary` passes (or fix it if red). Drain owned PRs before starting
+  unrelated work; do not park stale draft PRs.
 - Never merge WIP: draft, `WIP` label, `[WIP]` title, or body/branch says WIP.
-- Adding WIP/draft state requires an immediate signed comment with reason,
-  blocker/current work, next owner/action, and verification already run.
+- Adding WIP/draft state requires an immediate comment with reason,
+  blocker/current work, next action, and verification already run; include
+  your `Machine:`/`Assistant:` provenance line in the comment.
 - Close PRs/issues only when merged, user-requested, exact duplicate, or fully
   superseded with evidence and preserved findings.
-- Ready PRs land through GitHub's native merge queue. After exact-head
-  PR-head checks pass and you reviewed the latest head, queue with
-  `gh pr merge <pr> --match-head-commit <sha>` only if you own the PR and it
-  is not WIP/draft/blocked. Do not use auto-merge as a watcher.
+- The PR author lands their own PR through GitHub's native merge queue. After
+  exact-head PR-head checks pass and you reviewed the latest head, queue with
+  `gh pr merge <pr> --match-head-commit <sha>` if it is not
+  WIP/draft/blocked. Do not use auto-merge as a watcher.
 - Native `merge_group` CI owns queued-merge summary validation after enqueue.
 
 ## Repo Skills

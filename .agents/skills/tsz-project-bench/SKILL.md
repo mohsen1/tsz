@@ -46,6 +46,6 @@ TSZ_PROJECT_COMPILE_FILTER="<row>" TSZ_PROJECT_COMPILE_SET=required scripts/ci/p
 TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 TSZ_PROJECT_COMPILE_SET=all scripts/ci/project-compile-guard.sh
 ```
 
-PR notes: row, before/after failure class, first broken phase, owner layer,
-fixture metadata changes, whether timing is meaningful, commands/CI links,
-`AgentName`.
+PR notes: goal (`green`, `fast`, or `grow`), row, before/after failure class,
+first broken phase, owner layer, fixture metadata changes, whether timing is
+meaningful, commands/CI links.
