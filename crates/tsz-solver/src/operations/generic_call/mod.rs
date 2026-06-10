@@ -158,6 +158,14 @@ fn constraint_is_primitive_type_inner(
     match interner.lookup(type_id) {
         // Literal unions and `keyof T` constraints preserve fresh literal candidates.
         Some(TypeData::Literal(_) | TypeData::KeyOf(_)) => true,
+        // A type parameter whose own constraint is primitive (e.g. the `T` in
+        // `U extends [T, ...T[]]` with `T extends string`) preserves literal
+        // inferences: tsc keeps the literal element types of `U`. The element
+        // appears here as the call-local placeholder, which carries the
+        // original constraint in its `TypeParamInfo`.
+        Some(TypeData::TypeParameter(info)) => info.constraint.is_some_and(|constraint| {
+            constraint_is_primitive_type_inner(interner, resolver, constraint, depth + 1)
+        }),
         Some(TypeData::Conditional(conditional_id)) => {
             conditional_infer_constraint_preserves_literals(
                 interner,
@@ -179,6 +187,14 @@ fn constraint_is_primitive_type_inner(
             members
                 .iter()
                 .any(|&m| constraint_is_primitive_type_inner(interner, resolver, m, depth + 1))
+        }
+        // Variadic-tuple constraints `[T, ...T[]]` and array constraints carry
+        // the primitive-constrained parameter in their element/rest types.
+        Some(TypeData::Tuple(list_id)) => interner.tuple_list(list_id).iter().any(|element| {
+            constraint_is_primitive_type_inner(interner, resolver, element.type_id, depth + 1)
+        }),
+        Some(TypeData::Array(element) | TypeData::ReadonlyType(element)) => {
+            constraint_is_primitive_type_inner(interner, resolver, element, depth + 1)
         }
         _ => false,
     }

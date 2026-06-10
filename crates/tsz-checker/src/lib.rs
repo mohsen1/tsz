@@ -1311,6 +1311,9 @@ mod unique_symbol_assignment_ts2322_tests;
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]
 mod variadic_tuple_alias_display_tests;
 #[cfg(test)]
+#[path = "tests/variadic_tuple_constraint_literal_preservation_tests.rs"]
+mod variadic_tuple_constraint_literal_preservation_tests;
+#[cfg(test)]
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;
 #[cfg(test)]

@@ -1043,6 +1043,14 @@ impl<'a> InferenceContext<'a> {
     /// T's declared constraint is an index-signature object, not itself primitive,
     /// but *contains* U which IS primitive-constrained. When this holds, literal
     /// string values in the object's properties must not be widened during inference.
+    ///
+    /// It also handles variadic-tuple constraints such as
+    ///   `arrayToEnum<T extends string, U extends [T, ...T[]]>(items: U): { [k in U[number]]: k }`
+    /// where `U`'s declared constraint is the tuple `[T, ...T[]]` and `T` carries
+    /// the primitive constraint. tsc preserves the literal element types inferred
+    /// for `U`; without recursing through the tuple/array element types we widen
+    /// them to `string`, which collapses `{ [k in U[number]]: k }` to a string
+    /// index signature (the zod `ZodIssueCode` family).
     fn constraint_contains_type_param_with_primitive_constraint(
         &self,
         type_id: TypeId,
@@ -1097,6 +1105,25 @@ impl<'a> InferenceContext<'a> {
                     return true;
                 }
                 false
+            }
+            // A tuple constraint such as `U extends [T, ...T[]]` (where
+            // `T extends string`) carries the primitive-constrained type
+            // parameter in its element/rest types. tsc preserves literal
+            // inferences for `U` against such a constraint (the tuple element
+            // context implies literals), so recurse through the element types.
+            Some(TypeData::Tuple(list_id)) => {
+                let elements = self.interner.tuple_list(list_id).to_vec();
+                elements.iter().any(|element| {
+                    self.constraint_contains_type_param_with_primitive_constraint(
+                        element.type_id,
+                        depth + 1,
+                    )
+                })
+            }
+            // `...T[]` rest elements (and plain array constraints) wrap the
+            // primitive-constrained parameter in an array; follow the element.
+            Some(TypeData::Array(element)) => {
+                self.constraint_contains_type_param_with_primitive_constraint(element, depth + 1)
             }
             _ => false,
         }
