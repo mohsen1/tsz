@@ -34,9 +34,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // is only available on `CheckerState`).  The actual indexed-access
         // return type is computed by the solver via `evaluated_indexed_type`,
         // independently of this object.
-        let Some(exports) = symbol.exports.as_ref() else {
-            return None;
-        };
+        let exports = symbol.exports.as_ref()?;
         let factory = self.ctx.types.factory();
         let props: Vec<tsz_solver::PropertyInfo> = exports
             .iter()
