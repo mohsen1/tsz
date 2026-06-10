@@ -17,6 +17,9 @@ use super::can_skip_base_instantiation;
 #[path = "constructor_parts/helpers.rs"]
 mod helpers;
 
+#[path = "constructor_parts/rough_partial.rs"]
+mod rough_partial;
+
 struct MethodAggregate {
     overload_signatures: Vec<CallSignature>,
     impl_signatures: Vec<CallSignature>,
@@ -135,6 +138,15 @@ impl<'a> CheckerState<'a> {
             self.ctx.class_constructor_resolution_set.remove(&sym_id);
         }
 
+        // When this computation ran nested inside ANOTHER class's constructor
+        // resolution window (e.g., resolving a method return annotation
+        // `Sub<this>` while computing the base class's type), heritage and
+        // member lookups against the mid-resolution class observe partial
+        // information (rough construct signatures, degraded instance shapes).
+        // Such results must not persist past the window: skip the permanent
+        // caches so the next clean touch recomputes from complete information.
+        let nested_in_foreign_class_window = !self.ctx.class_constructor_resolution_set.is_empty();
+
         // Cache all terminal outcomes (including ERROR) so repeated constructor
         // type queries can short-circuit pathological inheritance recursion.
         // NOTE: Evaluate can_use_cache AFTER removing from resolution set,
@@ -143,6 +155,7 @@ impl<'a> CheckerState<'a> {
         // never cached.
         let can_use_cache = apply_module_augmentations
             && request.is_empty()
+            && !nested_in_foreign_class_window
             && current_sym
                 .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
                 .unwrap_or(true);
@@ -159,9 +172,14 @@ impl<'a> CheckerState<'a> {
         // leak into later property reads (e.g., `instance.method` -> `(...args) => any`).
         // Once constructor resolution is complete, refresh the instance cache in
         // normal mode so downstream reads observe the stabilized instance shape.
+        // When nested inside a foreign class's resolution window, only drop the
+        // provisional instance type — recomputing here would still observe the
+        // mid-resolution foreign class and re-cache a degraded shape.
         if apply_module_augmentations && did_insert && !had_instance_cache {
             self.ctx.class_instance_type_cache.remove(&class_idx);
-            let _ = self.get_class_instance_type(class_idx, class);
+            if !nested_in_foreign_class_window {
+                let _ = self.get_class_instance_type(class_idx, class);
+            }
         }
 
         // Register constructor type -> DefId(ClassConstructor) so the formatter
@@ -325,6 +343,52 @@ impl<'a> CheckerState<'a> {
                 let atom = self.ctx.types.intern_string(&name);
                 all_static_member_names.push(atom);
             }
+        }
+
+        // Self-referential instance type for rough construct-signature return
+        // types (`Application(Lazy(ClassDef), [T...])`); preserves class
+        // identity for `new C(...)` typed against the partial constructor.
+        let rough_self_instance_ref =
+            self.rough_self_instance_reference(current_sym, &class_type_params);
+
+        // Pre-compute rough construct signatures EARLY — before the rough instance
+        // scan below. The rough instance scan resolves method/property type
+        // annotations, which can recursively compute a *subclass*'s
+        // constructor type (e.g., a method returning `Sub<this>` where
+        // `Sub extends ThisClass` has no own constructor). That nested
+        // computation inherits construct signatures from this class; publishing a
+        // partial constructor type carrying the correct parameter arity (below)
+        // keeps the nested class from degrading to the default zero-parameter
+        // construct signature (false TS2554 at `new Sub(...)` sites).
+        let rough_sig_return_type = rough_self_instance_ref.unwrap_or(TypeId::ANY);
+        let mut rough_construct_signatures =
+            self.early_rough_construct_signatures(class, rough_sig_return_type, &class_type_params);
+
+        // Publish a partial constructor type for the duration of this
+        // computation so re-entrant value-position lookups of this class (the
+        // identifier resolver's `ctor_already_resolving` path) see a callable
+        // carrying the correct construct-signature arity instead of degrading
+        // to `any`. Restored at the end of this function; the final
+        // constructor type is cached by the caller.
+        let prev_published_sym_type =
+            current_sym.and_then(|s| self.ctx.symbol_types.get(&s).copied());
+        let prev_published_name_sym_type =
+            class_name_sym.and_then(|s| self.ctx.symbol_types.get(&s).copied());
+        {
+            let early_partial_ctor =
+                self.build_partial_static_constructor_type(StaticMemberBuildData {
+                    current_sym,
+                    properties: &properties,
+                    methods: &methods,
+                    accessors: &accessors,
+                    static_string_index: &static_string_index,
+                    static_number_index: &static_number_index,
+                    extra_property: None,
+                    inherited_static_props: &inherited_static_props,
+                    all_static_member_names: &all_static_member_names,
+                    construct_signatures: &rough_construct_signatures,
+                });
+            self.publish_partial_ctor_symbol_types(current_sym, class_name_sym, early_partial_ctor);
         }
 
         // Pre-compute a rough partial instance type from declared (annotated) non-static
@@ -499,125 +563,39 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        // Pre-compute rough construct signatures for the partial static constructor type.
-        // Static methods need `this` to be constructable so that `return this` from a
-        // static method makes the return type constructable (prevents false TS2351).
-        // The return type uses a rough partial instance type (from declared instance
-        // properties) so that type inference can match construct-signature constraints.
-        let rough_construct_signatures = {
-            let mut has_ctor_overloads = false;
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind == syntax_kind_ext::CONSTRUCTOR
-                    && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
-                    && ctor.body.is_none()
-                {
-                    has_ctor_overloads = true;
-                    break;
-                }
+        // When no self-referential instance type was available (anonymous
+        // class with no symbol), patch the provisional `any` return type on
+        // the early rough construct signatures with the rough instance type
+        // computed above, then republish the partial constructor type. Static
+        // methods need `this` to be constructable so that `return this` from
+        // a static method makes the return type constructable (prevents false
+        // TS2351), and the rough instance return type lets generic inference
+        // match construct-signature constraints (e.g.,
+        // `make<P>(x: { new(): { props: P } })`).
+        if rough_self_instance_ref.is_none() {
+            for sig in &mut rough_construct_signatures {
+                sig.return_type = rough_instance_return_type;
             }
-            let mut sigs = Vec::with_capacity(4);
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
-                    continue;
-                }
-                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
-                    continue;
-                };
-                if has_ctor_overloads {
-                    if ctor.body.is_none() {
-                        sigs.push(self.call_signature_from_constructor(
-                            ctor,
-                            member_idx,
-                            rough_instance_return_type,
-                            &class_type_params,
-                        ));
-                    }
-                } else {
-                    sigs.push(self.call_signature_from_constructor(
-                        ctor,
-                        member_idx,
-                        rough_instance_return_type,
-                        &class_type_params,
-                    ));
-                    break;
-                }
-            }
-            if sigs.is_empty() {
-                // No own constructor — try to inherit construct signatures from
-                // the base class so that the partial constructor type used by
-                // static-property initializers (`new Derived(...)` inside
-                // Derived's `static create = ...`) reflects the base's arity
-                // instead of the default 0-arg fallback. This is a rough
-                // approximation: we don't yet have a substitution for the
-                // class's type arguments, so the inherited sigs may reference
-                // base type parameters. For arity checking inside static
-                // initializers that's fine — the precise instantiation runs
-                // during the outer `get_class_constructor_type_inner` call.
-                let inherited_rough_sigs: Option<Vec<CallSignature>> = (|| {
-                    let heritage_clauses = class.heritage_clauses.as_ref()?;
-                    for &clause_idx in &heritage_clauses.nodes {
-                        let clause_node = self.ctx.arena.get(clause_idx)?;
-                        let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
-                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                            continue;
-                        }
-                        let &type_idx = heritage.types.nodes.first()?;
-                        let type_node = self.ctx.arena.get(type_idx)?;
-                        let (expr_idx, type_arguments) = if let Some(expr_type_args) =
-                            self.ctx.arena.get_expr_type_args(type_node)
-                        {
-                            (
-                                expr_type_args.expression,
-                                expr_type_args.type_arguments.as_ref(),
-                            )
-                        } else {
-                            (type_idx, None)
-                        };
-                        let base_constructor_type =
-                            self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
-                        let base_sigs =
-                            construct_signatures_for_type(self.ctx.types, base_constructor_type)?;
-                        if base_sigs.is_empty() {
-                            return None;
-                        }
-                        return Some(
-                            base_sigs
-                                .iter()
-                                .map(|sig| CallSignature {
-                                    type_params: class_type_params.clone(),
-                                    params: sig.params.clone(),
-                                    this_type: sig.this_type,
-                                    return_type: rough_instance_return_type,
-                                    type_predicate: sig.type_predicate,
-                                    is_method: false,
-                                })
-                                .collect(),
-                        );
-                    }
-                    None
-                })();
-                if let Some(inherited) = inherited_rough_sigs {
-                    sigs = inherited;
-                } else {
-                    // Default construct signature (like the default constructor)
-                    sigs.push(CallSignature {
-                        type_params: class_type_params.clone(),
-                        params: Vec::new(),
-                        this_type: None,
-                        return_type: rough_instance_return_type,
-                        type_predicate: None,
-                        is_method: false,
-                    });
-                }
-            }
-            sigs
-        };
+            let refreshed_partial_ctor =
+                self.build_partial_static_constructor_type(StaticMemberBuildData {
+                    current_sym,
+                    properties: &properties,
+                    methods: &methods,
+                    accessors: &accessors,
+                    static_string_index: &static_string_index,
+                    static_number_index: &static_number_index,
+                    extra_property: None,
+                    inherited_static_props: &inherited_static_props,
+                    all_static_member_names: &all_static_member_names,
+                    construct_signatures: &rough_construct_signatures,
+                });
+            self.publish_partial_ctor_symbol_types(
+                current_sym,
+                class_name_sym,
+                refreshed_partial_ctor,
+            );
+        }
+        let rough_construct_signatures = rough_construct_signatures;
 
         // Process all static class members
         for &member_idx in &class.members.nodes {
@@ -1966,6 +1944,12 @@ impl<'a> CheckerState<'a> {
         if is_abstract_class {
             self.ctx.abstract_constructor_types.insert(constructor_type);
         }
+
+        // Restore the symbol-type entries that were temporarily replaced by
+        // the published partial constructor type. The final constructor type
+        // is cached by the caller and by `compute_type_of_symbol`.
+        self.restore_published_symbol_type(current_sym, prev_published_sym_type);
+        self.restore_published_symbol_type(class_name_sym, prev_published_name_sym_type);
 
         // Mixin pattern: when a class extends a type-parameter-typed base
         // (e.g., `class extends base` where `base: T extends Constructor<{}>`),
