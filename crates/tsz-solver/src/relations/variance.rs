@@ -39,7 +39,7 @@ use crate::types::{
 use crate::visitor::lazy_def_id;
 use crate::visitors::visitor::TypeVisitor;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -132,34 +132,46 @@ pub fn compute_actual_type_param_variances_with_resolver(
 /// generic-alias-heavy projects.
 ///
 /// This helper computes the mask **using the supplied resolver** (never the
-/// query database's own resolver, which may not see local alias bodies) but
-/// threads the session-level variance cache exposed by [`QueryDatabase`] into
-/// the [`VarianceComputer`] so that *every* `DefId` resolved at a context-free
-/// top-level entry — both the queried def and any nested generic reached
-/// through `visit_application` whose own walk starts with an empty active-def
-/// set — is read from / written to one persistent map. The cache key is the
-/// `DefId` alone: the stored value is the declared-variance mask, identical to
-/// what the uncached call would return, so consulting/populating the cache
-/// cannot change any diagnostic.
+/// query database's own resolver, which may not see local alias bodies) and
+/// wires two persistent tiers into the [`VarianceComputer`]:
 ///
-/// ## Soundness gate (the empty-active-def entry rule)
+/// 1. the universe-shared interner store (`TypeDatabase::shared_def_variance`),
+///    reachable from every relation/evaluation path including those without a
+///    `QueryDatabase`, shared across files and child checkers; and
+/// 2. the per-checker session cache exposed by [`QueryDatabase`], kept for the
+///    query database's own resolver paths.
+///
+/// ## Soundness gates (canonical masks and resolution fingerprints)
 ///
 /// A [`VarianceComputer`] tracks `active_defs` to truncate cyclic
 /// self-references (returning the "independent" placeholder mask). The mask a
-/// `DefId` produces is therefore a pure function of its resolved body **only
-/// when its `compute_def_variances` walk begins with no other def already on the
-/// recursion stack**: if an outer def is active, a back-edge into it would be
-/// truncated, yielding a context-dependent mask. The visitor-level nesting
-/// counters (`mapped_depth`, `method_bivariant_depth`, `inside_unreliable`,
-/// `bound_type_params`) never cross a `compute_def_variances` boundary — each
-/// nested def starts fresh visitors at base context — so an empty `active_defs`
-/// at entry is the exact, complete condition for context-freedom.
+/// nested `DefId` produces mid-walk is a pure function of its resolved body
+/// **only when its subtree never back-edged into a def that was already on the
+/// recursion stack below its own frame**: such a back-edge would be truncated
+/// at the ancestor instead of at the def itself, yielding a context-dependent
+/// (provisional) mask. The visitor-level nesting counters (`mapped_depth`,
+/// `method_bivariant_depth`, `inside_unreliable`, `bound_type_params`) never
+/// cross a `compute_def_variances` boundary — each nested def starts fresh
+/// visitors at base context — so in-flight def dependency is the exact
+/// condition for context sensitivity.
 ///
-/// The cache is consulted and populated **only** for `compute_def_variances`
-/// calls observed with an empty `active_defs` set at entry. The handful of
-/// genuinely context-sensitive defs (those reached only through a nested
-/// application while an outer def is active) never satisfy this gate and are
-/// never cached, so they recompute on every reference exactly as before.
+/// The computer therefore tracks, per def frame, the minimum stack depth of
+/// any in-flight dependency observed in its subtree (including dependencies
+/// inherited by consuming a provisional per-walk cache entry). A frame whose
+/// subtree minimum is not below its own depth produced the same mask a fresh
+/// top-level query would produce — canonical — and is promoted regardless of
+/// nesting depth. Provisional (cycle-tentative) masks are never promoted;
+/// they stay in the per-walk map exactly as before.
+///
+/// Resolver dependence is handled by a resolution-failure fingerprint: each
+/// frame records the defs whose params/body/lazy resolution failed in its
+/// subtree. A canonical mask is stored in the shared tier together with that
+/// fingerprint, and a consumer replays it only after validating that every
+/// fingerprint def still fails to resolve under its own resolver — under that
+/// condition the stored mask is exactly what the consumer's fresh walk would
+/// compute. Walks that hit non-fingerprintable gaps (failed `SymbolRef`
+/// resolution, session-cache masks of unknown cleanliness) are opaque and
+/// never reach the shared tier.
 ///
 /// Only fully-resolved (`Some`) results are memoized. A `None` (unresolved or
 /// non-generic) result is not cached, so a later reference made after the
@@ -187,17 +199,76 @@ fn variance_cache_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_VARIANCE_CACHE").is_err())
 }
 
+/// One per-walk memo entry for a def's computed variance mask.
+///
+/// `dep` is the canonicality witness: `None` means the mask is canonical —
+/// identical to what a fresh top-level query for the def would produce (its
+/// walk never depended on a def that was in-flight below its own frame).
+/// `Some((depth, def))` records the shallowest in-flight dependency observed
+/// when the mask was computed: the def at stack `depth` whose truncation made
+/// this mask provisional. Consumers re-validate the witness against the
+/// current stack and inherit the taint (see `compute_def_variances`).
+struct DefVarianceEntry {
+    result: Option<Arc<[Variance]>>,
+    dep: Option<(usize, DefId)>,
+    /// Resolution-failure fingerprint: the defs whose lazy resolution failed
+    /// during this mask's computation. Consuming the entry replays these into
+    /// the consumer's frame so ancestors inherit the fingerprint. `None`
+    /// means no fingerprintable gaps.
+    gaps: Option<Arc<[DefId]>>,
+    /// Opaque resolver-dependence witness: `true` when the mask's computation
+    /// hit a gap that cannot be expressed as a def fingerprint (failed
+    /// `SymbolRef` resolution, a per-checker session-cache mask of unknown
+    /// cleanliness, or a fingerprint overflow). Consuming such an entry makes
+    /// the consumer opaque too, so it must not reach the universe-shared
+    /// store.
+    opaque: bool,
+}
+
+/// Maximum number of distinct failed defs a shared-store fingerprint may
+/// carry. Each fingerprint def costs one `resolve_lazy` probe per store read;
+/// walks with more distinct failures than this are treated as opaque
+/// (per-walk reuse only).
+const MAX_GAP_FINGERPRINT: usize = 16;
+
 struct VarianceComputer<'a> {
     db: &'a dyn TypeDatabase,
     resolver: &'a dyn TypeResolver,
     use_declared_variance: bool,
-    active_defs: FxHashSet<DefId>,
-    cached_def_variances: FxHashMap<DefId, Option<Arc<[Variance]>>>,
+    /// In-flight defs on the recursion stack, mapped to their stack depth.
+    active_defs: FxHashMap<DefId, usize>,
+    /// Stack-ordered in-flight defs (`depth -> DefId`), parallel to
+    /// `active_defs`. Used to re-validate provisional-entry dependency
+    /// witnesses against the current stack.
+    active_stack: Vec<DefId>,
+    cached_def_variances: FxHashMap<DefId, DefVarianceEntry>,
+    /// Minimum stack depth of any in-flight dependency observed since the
+    /// current frame was entered (`usize::MAX` = none). A frame whose subtree
+    /// minimum stays at or above its own depth produced a canonical mask.
+    min_inflight_dep: usize,
+    /// Append-only log of fingerprintable resolution gaps observed during this
+    /// computer's walks: defs whose params/body/lazy resolution failed. A
+    /// frame's gap fingerprint is the slice appended while it was open
+    /// (children's gaps stay in the log, so ancestors inherit them). Masks
+    /// are pure functions of (def structure, failure set): they may be
+    /// promoted to the universe-shared interner store together with their
+    /// fingerprint, and replayed by any consumer whose resolver still fails
+    /// the same defs.
+    gap_log: Vec<DefId>,
+    /// Monotonic count of non-fingerprintable gaps (failed `SymbolRef`
+    /// resolutions, per-checker session-cache masks of unknown cleanliness).
+    /// A frame that observed one is opaque and never reaches the shared store.
+    opaque_gaps: u64,
+    /// Whether canonical, resolution-clean masks may be read from / written to
+    /// the universe-shared interner store (`TypeDatabase::shared_def_variance`).
+    /// Only set for `use_declared_variance` computers (the store holds declared
+    /// masks, so the `new_actual` computer must never touch it) and disabled by
+    /// the `TSZ_DISABLE_VARIANCE_CACHE` kill switch.
+    use_shared_store: bool,
     /// Optional session-persistent declared-variance cache.
     ///
     /// When present, `compute_def_variances` reads from and writes to this map
-    /// for every def whose walk begins with an empty `active_defs` set (the
-    /// context-free top-level entry — see
+    /// for every def whose mask is canonical (see
     /// [`compute_type_param_variances_with_resolver_cached`]). Only wired in for
     /// `use_declared_variance` computers: the map stores declared masks, so the
     /// `new_actual` computer must never touch it.
@@ -210,8 +281,13 @@ impl<'a> VarianceComputer<'a> {
             db,
             resolver,
             use_declared_variance: true,
-            active_defs: FxHashSet::default(),
+            active_defs: FxHashMap::default(),
+            active_stack: Vec::new(),
             cached_def_variances: FxHashMap::default(),
+            min_inflight_dep: usize::MAX,
+            gap_log: Vec::new(),
+            opaque_gaps: 0,
+            use_shared_store: variance_cache_enabled(),
             session_cache: None,
         }
     }
@@ -221,8 +297,13 @@ impl<'a> VarianceComputer<'a> {
             db,
             resolver,
             use_declared_variance: false,
-            active_defs: FxHashSet::default(),
+            active_defs: FxHashMap::default(),
+            active_stack: Vec::new(),
             cached_def_variances: FxHashMap::default(),
+            min_inflight_dep: usize::MAX,
+            gap_log: Vec::new(),
+            opaque_gaps: 0,
+            use_shared_store: false,
             session_cache: None,
         }
     }
@@ -239,27 +320,32 @@ impl<'a> VarianceComputer<'a> {
             return Some(declared);
         }
 
-        if let Some(cached) = self.cached_def_variances.get(&def_id) {
-            return cached.clone();
+        if let Some(entry) = self.cached_def_variances.get(&def_id) {
+            // Inherit the canonicality witness: consuming a provisional mask
+            // makes the consumer's mask provisional too. Re-validate the
+            // witness against the current stack — if the recorded in-flight
+            // frame is still active at the same depth, the dependency is live
+            // at that depth; otherwise the entry was computed against a frame
+            // that has since completed, so any frame consuming it now (other
+            // than the always-canonical walk root) diverges from a fresh
+            // computation and must not be promoted (depth 0 taints every
+            // nested frame).
+            if let Some((depth, dep_def)) = entry.dep {
+                let live = self.active_stack.get(depth) == Some(&dep_def);
+                let observed = if live { depth } else { 0 };
+                self.min_inflight_dep = self.min_inflight_dep.min(observed);
+            }
+            if entry.opaque {
+                self.opaque_gaps += 1;
+            }
+            let (result, gaps) = (entry.result.clone(), entry.gaps.clone());
+            if let Some(gaps) = gaps {
+                self.gap_log.extend_from_slice(&gaps);
+            }
+            return result;
         }
 
-        // Context-free top-level entry: no other def is on the recursion stack,
-        // so the mask this walk produces is a pure function of the resolved
-        // body and is safe to share project-wide. Consult the session cache
-        // before doing any work. The visitor-level nesting counters never cross
-        // this boundary, so an empty `active_defs` is the exact gate (see
-        // `compute_type_param_variances_with_resolver_cached`).
-        let context_free_entry = self.active_defs.is_empty();
-        if context_free_entry
-            && let Some(qdb) = self.session_cache
-            && let Some(cached) = qdb.get_cached_type_param_variance(def_id)
-        {
-            self.cached_def_variances
-                .insert(def_id, Some(cached.clone()));
-            return Some(cached);
-        }
-
-        if !self.active_defs.insert(def_id) {
+        if let Some(&depth) = self.active_defs.get(&def_id) {
             // Recursive self-reference: return independent (empty) variance for
             // each type parameter. This tells visit_application to skip the
             // recursive arguments entirely, so only non-recursive appearances of
@@ -267,9 +353,69 @@ impl<'a> VarianceComputer<'a> {
             // behavior of returning None which caused NEEDS_STRUCTURAL_FALLBACK
             // to be set, incorrectly forcing structural comparison for types like
             // Promise<T> that are clearly covariant from their direct usages.
+            //
+            // The truncated frame is an in-flight dependency of the current
+            // subtree: record its depth for the canonicality gate.
+            self.min_inflight_dep = self.min_inflight_dep.min(depth);
             let params = self.resolver.get_lazy_type_params(def_id);
             return params.map(|p| Arc::from(vec![Variance::empty(); p.len()]));
         }
+
+        // The def is not in-flight, so a universe-shared mask is a candidate.
+        // Stored masks are canonical and carry their resolution-failure
+        // fingerprint; the mask equals what a fresh top-level query would
+        // compute under any resolver that fails the same defs. Validate the
+        // fingerprint against the current resolver, replay it into the
+        // current frame on success, and recompute on mismatch.
+        if self.use_shared_store
+            && let Some((mask, gaps)) = self.db.shared_def_variance(def_id)
+        {
+            let valid = gaps
+                .iter()
+                .all(|d| self.resolver.resolve_lazy(*d, self.db).is_none());
+            if valid {
+                self.gap_log.extend_from_slice(&gaps);
+                let gaps = if gaps.is_empty() { None } else { Some(gaps) };
+                self.cached_def_variances.insert(
+                    def_id,
+                    DefVarianceEntry {
+                        result: Some(mask.clone()),
+                        dep: None,
+                        gaps,
+                        opaque: false,
+                    },
+                );
+                return Some(mask);
+            }
+        }
+
+        // Per-checker session mask: canonical (safe to replay at any nesting
+        // depth for this checker) but of unknown resolver-cleanliness, so
+        // consuming it counts as a resolution gap — the consumer's mask stays
+        // out of the universe-shared store.
+        if let Some(qdb) = self.session_cache
+            && let Some(cached) = qdb.get_cached_type_param_variance(def_id)
+        {
+            self.opaque_gaps += 1;
+            self.cached_def_variances.insert(
+                def_id,
+                DefVarianceEntry {
+                    result: Some(cached.clone()),
+                    dep: None,
+                    gaps: None,
+                    opaque: true,
+                },
+            );
+            return Some(cached);
+        }
+
+        let my_depth = self.active_stack.len();
+        self.active_defs.insert(def_id, my_depth);
+        self.active_stack.push(def_id);
+        let saved_min = self.min_inflight_dep;
+        self.min_inflight_dep = usize::MAX;
+        let gap_log_at_entry = self.gap_log.len();
+        let opaque_at_entry = self.opaque_gaps;
 
         let result: Option<Arc<[Variance]>> = (|| {
             let params = self.resolver.get_lazy_type_params(def_id)?;
@@ -285,22 +431,93 @@ impl<'a> VarianceComputer<'a> {
             Some(Arc::from(variances))
         })();
 
-        self.active_defs.remove(&def_id);
+        // A `None` result means params or body did not resolve (or the def is
+        // non-generic) — resolver-dependent territory either way. Record the
+        // def itself as a fingerprintable gap: the parent's mask is valid for
+        // any resolver under which this def still does not resolve.
+        if result.is_none() {
+            self.gap_log.push(def_id);
+        }
 
-        // Promote to the session cache only when this walk was a context-free
-        // top-level entry (empty `active_defs` at entry) and produced a fully
-        // resolved mask. A `None` (unresolved/non-generic) is not cached so a
-        // later reference after the body resolves still recomputes. The stored
-        // mask equals the uncached result, so replaying it cannot change a
-        // diagnostic.
-        if context_free_entry
+        self.active_stack.pop();
+        self.active_defs.remove(&def_id);
+        let subtree_min = self.min_inflight_dep;
+        // Canonical iff the subtree never depended on a frame strictly below
+        // this one. Back-edges to this frame itself (`subtree_min == my_depth`)
+        // are the deterministic self-truncation a fresh top-level query would
+        // also perform, so they do not make the mask provisional. The walk
+        // root (`my_depth == 0`) is canonical by definition: it IS a fresh
+        // top-level query.
+        let canonical = subtree_min >= my_depth;
+        // Dependencies on frames below this one remain in-flight dependencies
+        // of the parent; those resolved at or within this frame do not.
+        self.min_inflight_dep = saved_min.min(if subtree_min < my_depth {
+            subtree_min
+        } else {
+            usize::MAX
+        });
+
+        let opaque = self.opaque_gaps != opaque_at_entry;
+        // Deduplicated resolution-failure fingerprint of this frame's subtree
+        // (children's gaps stay in the log, so this slice includes them).
+        let mut fingerprint: smallvec::SmallVec<[DefId; 4]> = smallvec::SmallVec::new();
+        for d in &self.gap_log[gap_log_at_entry..] {
+            if !fingerprint.contains(d) {
+                fingerprint.push(*d);
+            }
+        }
+        let fingerprint_overflow = fingerprint.len() > MAX_GAP_FINGERPRINT;
+
+        // Promote to the session cache only canonical, fully resolved masks.
+        // A `None` (unresolved/non-generic) is not cached so a later reference
+        // after the body resolves still recomputes. The stored mask equals
+        // what a fresh uncached top-level query would return, so replaying it
+        // cannot change a diagnostic.
+        if canonical
             && let Some(qdb) = self.session_cache
             && let Some(variances) = result.as_ref()
         {
             qdb.insert_type_param_variance(def_id, variances.clone());
         }
 
-        self.cached_def_variances.insert(def_id, result.clone());
+        // Promote to the universe-shared interner store only canonical,
+        // non-opaque masks, together with their resolution-failure
+        // fingerprint. The stored value is a pure function of (def structure,
+        // failure set): consumers validate the fingerprint against their own
+        // resolver before replaying, so the cache is cross-checker
+        // deterministic.
+        let shared_gaps: Option<Arc<[DefId]>> = if fingerprint.is_empty() {
+            None
+        } else {
+            Some(Arc::from(fingerprint.as_slice()))
+        };
+        if canonical
+            && !opaque
+            && !fingerprint_overflow
+            && self.use_shared_store
+            && let Some(variances) = result.as_ref()
+        {
+            self.db.insert_shared_def_variance(
+                def_id,
+                variances.clone(),
+                shared_gaps.clone().unwrap_or_else(|| Arc::from([])),
+            );
+        }
+
+        let dep = if canonical {
+            None
+        } else {
+            Some((subtree_min, self.active_stack[subtree_min]))
+        };
+        self.cached_def_variances.insert(
+            def_id,
+            DefVarianceEntry {
+                result: result.clone(),
+                dep,
+                gaps: shared_gaps,
+                opaque: opaque || fingerprint_overflow,
+            },
+        );
         result
     }
 }
@@ -769,6 +986,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         {
             let current_polarity = self.get_current_polarity();
             self.visit_with_polarity(resolved, current_polarity);
+        } else {
+            // Unresolved lazy reference: record the def in the frame's
+            // resolution-failure fingerprint. The resulting mask is valid for
+            // any resolver under which this def still does not resolve.
+            self.computer.gap_log.push(def_id);
         }
     }
 
@@ -798,6 +1020,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         {
             let current_polarity = self.get_current_polarity();
             self.visit_with_polarity(resolved, current_polarity);
+        } else {
+            // Unresolved symbol reference: resolver-dependent and not
+            // expressible as a def fingerprint — keep the resulting mask out
+            // of the shared store.
+            self.computer.opaque_gaps += 1;
         }
     }
 

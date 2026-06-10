@@ -473,15 +473,15 @@ jobs:
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
-  project-corpus-pr-body:
-    name: project-corpus-pr-body
+  pr-body-gate:
+    name: pr-body-gate
     needs: gate
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Require project corpus impact fields for semantic PRs
+      - name: Require goal and provenance fields in the PR body
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -490,60 +490,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          changed_paths=""
-          page=1
-          while :; do
-            page_paths=$(gh api \
-              "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}" \
-              --jq '.[] | (.filename, (.previous_filename // empty))' \
-              2>/dev/null || true)
-            if [[ -z "$page_paths" ]]; then break; fi
-            changed_paths+="${page_paths}"$'\n'
-            count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
-            if [[ "$count" -lt 100 ]]; then break; fi
-            page=$((page + 1))
-            if [[ "$page" -gt 30 ]]; then break; fi
-          done
-
           node scripts/ci/check-pr-ready-state.mjs
 
           body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
-          if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
-            echo "Ready PRs must include a plain AgentName signature in the PR body."
-            echo "Missing field:"
-            echo "  AgentName: <stable agent name>"
-            exit 1
-          fi
-
-          semantic_paths=$(printf '%s\n' "$changed_paths" \
-            | grep -E '^(crates/(tsz-(binder|checker|cli|core|emitter|lsp|parser|scanner|solver|transforms)|tsz-website)/|scripts/(bench|ci|conformance|emit|fourslash)/|\.github/workflows/bench\.yml|\.github/workflows/ci\.yml)' \
-            || true)
-          if [[ -z "$semantic_paths" ]]; then
-            echo "Agent metadata is present. No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
-            exit 0
-          fi
 
           missing=()
-          if ! grep -Eq '^##[[:space:]]+Project Corpus Impact[[:space:]]*$' <<<"$body"; then
-            missing+=("## Project Corpus Impact")
+          if ! grep -Eq '^[[:space:]]*Goal:[[:space:]]*(green|fast|grow|hold)[[:space:]]*$' <<<"$body"; then
+            missing+=("Goal: <green|fast|grow|hold>")
           fi
-          if ! grep -Eq '^[[:space:]]*-[[:space:]]*Row:[[:space:]]*[^[:space:]]+' <<<"$body"; then
-            missing+=("- Row: <project row or n/a>")
+          if ! grep -Eq '^[[:space:]]*Machine:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            missing+=("Machine: <m1|m4|studio|cloud|hostname>")
           fi
-          if ! grep -Eq '^[[:space:]]*-[[:space:]]*Bug family:[[:space:]]*[^[:space:]]+' <<<"$body"; then
-            missing+=("- Bug family: <family or n/a>")
+          if ! grep -Eq '^[[:space:]]*Assistant:[[:space:]]*(claude-code|codex|bot)[[:space:]]*$' <<<"$body"; then
+            missing+=("Assistant: <claude-code|codex|bot>")
+          fi
+          if ! grep -Eq '^[[:space:]]*Model:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            missing+=("Model: <model id>")
+          fi
+          if ! grep -Eq '^[[:space:]]*Effort:[[:space:]]*(low|medium|high|max)[[:space:]]*$' <<<"$body"; then
+            missing+=("Effort: <low|medium|high|max>")
           fi
 
           if [[ "${#missing[@]}" -gt 0 ]]; then
-            echo "Semantic/project-corpus-affecting PRs must keep Track 1 impact metadata in the PR body."
-            echo "Changed paths requiring the metadata:"
-            printf '  %s\n' $(printf '%s\n' "$semantic_paths" | sort -u)
-            echo "Missing fields:"
+            echo "Ready PRs must declare a goal and provenance in the PR body."
+            echo "Missing or malformed fields:"
             printf '  %s\n' "${missing[@]}"
+            echo "See .github/pull_request_template.md for the expected shape."
             exit 1
           fi
 
-          echo "Agent and project corpus impact metadata are present."
+          echo "Goal and provenance metadata are present."
 
   project-row-drift:
     name: project-row-drift
@@ -1300,7 +1276,7 @@ jobs:
       - lint
       - cargo-shear
       - cargo-deny
-      - project-corpus-pr-body
+      - pr-body-gate
       - dist-binaries
       - lsp-e2e
       - project-compile-guard
@@ -1349,9 +1325,9 @@ jobs:
               print(f"gate did not pass: {gate_result}")
               sys.exit(1)
 
-          pr_body = needs.get("project-corpus-pr-body")
+          pr_body = needs.get("pr-body-gate")
           if pr_body and pr_body.get("result") not in ("success", "skipped"):
-              print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
+              print(f"pr-body-gate did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
           def github_json(path):

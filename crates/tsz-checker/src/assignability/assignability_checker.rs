@@ -1285,7 +1285,17 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         source_arg,
                     )
-                    .is_some_and(|atom| self.ctx.types.resolve_atom_ref(atom).contains('.'))
+                    .is_some_and(|atom| {
+                        let path = self.ctx.types.resolve_atom_ref(atom);
+                        // Each dot is one recursive nesting level in a
+                        // path-splitting conditional alias.  tsc's
+                        // `getRecursionIdentity` mechanism assumes compatible
+                        // (`Ternary.Maybe`) at depth ≥ 4 path segments (3 dots).
+                        // Suppress only when the path is deep enough for that
+                        // bailout; shallower paths reach the leaf and must
+                        // produce TS2322 on a genuine mismatch.
+                        path.chars().filter(|&c| c == '.').count() >= 3
+                    })
             })
     }
 

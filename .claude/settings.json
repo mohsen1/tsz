@@ -78,7 +78,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'TSZ startup: run tsz-worktree-intake, then scripts/agents/show-goal.sh <AgentName> when a lane goal applies.'"
+            "command": "echo 'TSZ startup: run tsz-worktree-intake; read docs/plan/ROADMAP.md for the four goals (green, fast, grow, hold).'"
           }
         ]
       }

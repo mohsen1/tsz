@@ -28,6 +28,11 @@ use std::sync::{
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
+/// A universe-shared variance result: the def's variance mask plus the
+/// resolution-gap fingerprint (defs whose resolution failed during the walk)
+/// that gates replaying it under a different resolver.
+pub type SharedDefVariance = (Arc<[crate::types::Variance]>, Arc<[DefId]>);
+
 mod cache;
 mod display;
 mod storage;
@@ -247,6 +252,20 @@ pub struct TypeInterner {
     /// with more than `MAX_REPRESENTABLE_TUPLE_LENGTH` elements. The checker reads
     /// and clears this to emit TS2799 instead of TS2589.
     pub(super) tuple_too_large: AtomicBool,
+    /// Universe-wide declared-variance masks for generic definitions.
+    ///
+    /// Keyed by `DefId`; the value is `(mask, gap_defs)`. Populated by the
+    /// variance computer (`relations/variance.rs`) only with canonical masks
+    /// (the walk never depended on an in-flight def below its own frame).
+    /// `gap_defs` is the walk's resolution-failure fingerprint: the set of
+    /// `DefId`s whose lazy resolution failed during the walk. A mask is a
+    /// pure function of (def structure, failure set): a consumer may replay
+    /// it iff every fingerprint def still fails to resolve under the
+    /// consumer's resolver — validated on read. Masks therefore live on the
+    /// interner — the one shared type universe — instead of any per-checker
+    /// `QueryCache`, and survive across files and child checkers. Values hold
+    /// no `TypeId`s, only `Variance` bitmasks and `DefId`s.
+    pub(super) def_variance_masks: DashMap<DefId, SharedDefVariance, FxBuildHasher>,
     /// Global evaluation fuel counter.
     ///
     /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
@@ -364,9 +383,41 @@ impl TypeInterner {
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             tuple_too_large: AtomicBool::new(false),
+            def_variance_masks: DashMap::with_hasher(FxBuildHasher),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
+    }
+
+    /// Read a universe-shared variance mask for a generic definition.
+    ///
+    /// Returns `(mask, gap_defs)`. Only canonical masks are stored, together
+    /// with their resolution-failure fingerprint (see `def_variance_masks`);
+    /// callers must validate the fingerprint against their resolver before
+    /// replaying the mask.
+    #[inline]
+    pub fn shared_def_variance(&self, def_id: DefId) -> Option<SharedDefVariance> {
+        self.def_variance_masks
+            .get(&def_id)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Store a universe-shared variance mask for a generic definition with
+    /// its resolution-failure fingerprint.
+    ///
+    /// Callers must only insert canonical masks whose every resolution gap is
+    /// listed in `gaps`. First write wins, keeping replays deterministic
+    /// within a session.
+    #[inline]
+    pub fn insert_shared_def_variance(
+        &self,
+        def_id: DefId,
+        mask: Arc<[crate::types::Variance]>,
+        gaps: Arc<[DefId]>,
+    ) {
+        self.def_variance_masks
+            .entry(def_id)
+            .or_insert((mask, gaps));
     }
 
     #[inline]

@@ -3,3 +3,4 @@
 
 mod core;
 mod declaration_emit;
+mod declaration_emit_symbol_access;

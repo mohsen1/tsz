@@ -48,4 +48,4 @@ need owning-crate tests.
 
 Accepted-regression drift: verify shard artifacts, update the accepted file
 only to match observed failing set, link/file issues for new accepts, and
-comment with numbers plus `AgentName`.
+comment with numbers plus a provenance line.

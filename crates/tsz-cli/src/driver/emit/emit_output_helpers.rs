@@ -153,26 +153,19 @@ pub(super) fn resolve_declaration_reference_path_file(
 }
 
 pub(super) fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
-    // Deduplicate by exact key first, then by location for TS2883 (checker and
-    // emitter both walk non-portable references; keep only the first per site).
+    // Exact dedup within emitter diagnostics: remove complete duplicates before
+    // these are combined with checker diagnostics in core_diagnostics.
     let mut exact_seen: FxHashSet<(u32, String, u32, u32, String)> = FxHashSet::default();
-    let mut ts2883_locations: FxHashSet<(String, u32, u32)> = FxHashSet::default();
     diagnostics
         .into_iter()
         .filter(|d| {
-            if !exact_seen.insert((
+            exact_seen.insert((
                 d.code,
                 d.file.clone(),
                 d.start,
                 d.length,
                 d.message_text.clone(),
-            )) {
-                return false;
-            }
-            if d.code == 2883 {
-                return ts2883_locations.insert((d.file.clone(), d.start, d.length));
-            }
-            true
+            ))
         })
         .collect()
 }

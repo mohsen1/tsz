@@ -227,43 +227,30 @@ impl<'a> CheckerState<'a> {
                             let expr_type = self.get_type_of_node(export_data.expression);
                             // TS2883: The inferred type of 'default' cannot be
                             // named without a reference to an external package.
+                            // For call expressions (including Object.assign),
+                            // statement_callback_bridge handles TS2883 authoritatively.
                             if !export_data.is_export_equals
                                 && self.ctx.emit_declarations()
                                 && !self.ctx.is_declaration_file()
                             {
-                                let resolved_type = self.resolve_lazy_type(expr_type);
-                                let object_assign_reference = self
-                                    .first_non_portable_object_assign_object_literal_reference(
-                                        export_data.expression,
-                                    );
-                                let diagnostic_node = if object_assign_reference.is_some() {
-                                    stmt_idx
-                                } else {
-                                    export_data.expression
-                                };
                                 let expression_is_call =
                                     self.ctx.arena.get(export_data.expression).is_some_and(
                                         |node| node.kind == syntax_kind_ext::CALL_EXPRESSION,
                                     );
-                                let inferred_reference = (!expression_is_call)
-                                    .then(|| {
-                                        self.first_non_portable_type_reference(expr_type).or_else(
-                                            || {
-                                                self.first_non_portable_type_reference(
-                                                    resolved_type,
-                                                )
-                                            },
-                                        )
-                                    })
-                                    .flatten();
-                                if let Some((from_path, type_name)) =
-                                    object_assign_reference.or(inferred_reference)
-                                {
-                                    self.error_at_node_msg(
-                                        diagnostic_node,
-                                        crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
-                                        &["default", &from_path, &type_name],
-                                    );
+                                if !expression_is_call {
+                                    let resolved_type = self.resolve_lazy_type(expr_type);
+                                    let inferred_reference = self
+                                        .first_non_portable_type_reference(expr_type)
+                                        .or_else(|| {
+                                            self.first_non_portable_type_reference(resolved_type)
+                                        });
+                                    if let Some((from_path, type_name)) = inferred_reference {
+                                        self.error_at_node_msg(
+                                            export_data.expression,
+                                            crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
+                                            &["default", &from_path, &type_name],
+                                        );
+                                    }
                                 }
                             }
                         }
