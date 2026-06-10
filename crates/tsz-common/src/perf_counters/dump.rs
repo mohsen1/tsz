@@ -29,6 +29,7 @@ impl PerfCounters {
              cache hits (lib)           {:>12}\n  \
              cache hits (cross-file)    {:>12}\n  \
              misses (full work)         {:>12}\n  \
+             full-work sentinel results {:>12}\n  \
              max recursion depth        {:>12}\n  \
              xfile type-params hits     {:>12}\n  \
              xfile type-params misses   {:>12}\n\
@@ -77,6 +78,7 @@ impl PerfCounters {
             snap.delegate.cache_hits_lib,
             snap.delegate.cache_hits_cross_file,
             snap.delegate.misses,
+            snap.delegate.full_work_sentinel_results,
             snap.delegate.max_recursion_depth,
             snap.delegate.cross_file_type_params_cache_hits,
             snap.delegate.cross_file_type_params_cache_misses,
@@ -129,6 +131,7 @@ impl PerfCounters {
             + &Self::dump_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues(
                 &snap.compute_type_of_symbol_interface_simple_object_type_reference_reject_residues,
             )
+            + &Self::dump_cross_file_cache_miss_causes(&snap.cross_file_cache_miss_causes)
             + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
@@ -379,6 +382,24 @@ impl PerfCounters {
                 row.property.as_deref().unwrap_or("<unknown>"),
                 row.count,
             ));
+        }
+        out
+    }
+
+    /// Why canonical cross-file query bucket reads returned `None` (see
+    /// `CrossFileCacheMissCause`). `bucket_empty` is the expected first-miss
+    /// case; a large `sentinel_error_unknown` count means completed
+    /// `ERROR`/`UNKNOWN` answers are being recomputed instead of replayed.
+    fn dump_cross_file_cache_miss_causes(causes: &[NamedCount]) -> String {
+        let total: u64 = causes.iter().map(|c| c.count).sum();
+        if total == 0 {
+            return String::new();
+        }
+        let mut out = String::from("\nCross-file query bucket miss causes:\n");
+        for cause in causes {
+            if cause.count > 0 {
+                out.push_str(&format!("  {:<28} {:>12}\n", cause.name, cause.count));
+            }
         }
         out
     }

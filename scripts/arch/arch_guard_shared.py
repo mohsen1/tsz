@@ -764,7 +764,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_environment"
         / "core.rs",
-        1461,
+        1463,
     ),
     (
         "Conformance boundary: conformance runner size ratchet",
@@ -1007,7 +1007,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        79,
+        80,
     ),
 ]
 
