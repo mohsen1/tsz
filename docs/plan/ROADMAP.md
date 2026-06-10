@@ -29,12 +29,28 @@ accepted diagnostic policy.
   input, not status.
 - Row states: Green (same result as `tsc`), Yellow (exits, diagnostics
   differ), Red (crash/error/OOM/timeout), Gray (fixture/artifact missing).
-- Required rows: utility-types, rxjs, Kysely, Zod, ts-toolbelt, type-fest,
-  ts-essentials, generated Vite app, generated Next app, large-ts-repo, and
-  full Next.js when enabled.
 - Every red/yellow row names its first blocker: exit class, first diagnostic
   deltas grouped by subsystem, owning semantic operation, and phase reached
   (parse, bind, check, emit).
+
+Required project rows:
+
+| Project | Exit Target |
+| --- | --- |
+| utility-types | exit success |
+| rxjs | exit success |
+| Kysely | exit success |
+| Zod | exit success |
+| ts-toolbelt | exit success |
+| type-fest | exit success |
+| ts-essentials | exit success |
+| generated Vite app | exit success |
+| generated Next app | exit success |
+| large-ts-repo | exit success without OOM/timeout |
+| Next.js full project | recorded green/yellow/red when enabled |
+
+`scripts/bench/test-project-rows.mjs` keeps this table in sync with the
+benchmark row metadata; change both together.
 
 ### 2. Fast — beat tsgo on every green row
 
