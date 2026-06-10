@@ -1,7 +1,7 @@
 use super::super::Printer;
 use tsz_parser::parser::node::{LoopData, Node};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
 struct RecoveredTypedForBodyCall {
     keyword: String,
@@ -231,12 +231,12 @@ fn parse_single_identifier_call(text: &str) -> Option<(&str, &str)> {
     }
 }
 
-const fn is_identifier_start(ch: char) -> bool {
-    ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
+fn is_identifier_start(ch: char) -> bool {
+    is_ecmascript_identifier_start(ch)
 }
 
-const fn is_identifier_part(ch: char) -> bool {
-    is_identifier_start(ch) || ch.is_ascii_digit()
+fn is_identifier_part(ch: char) -> bool {
+    is_ecmascript_identifier_part(ch)
 }
 
 fn is_keyword_followed_by(text: &str, first: &str, second: &str) -> bool {
@@ -347,6 +347,24 @@ mod tests {
         assert!(
             output.contains("for (var x;;) {"),
             "Valid `for` loops should continue through the normal printer path.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn typed_for_body_call_recovery_accepts_unicode_identifiers() {
+        // `é` (U+00E9) and `日` (U+65E5) are valid ECMAScript identifier-start
+        // characters; the recovery must treat them as identifier chars, not bail
+        // out with an ASCII-only check.
+        let output = emit_es5("for (let r\u{00e9}sum\u{00e9}: Type) { donn\u{00e9}es(r\u{00e9}sum\u{00e9}); }");
+        assert!(
+            output.contains("r\u{00e9}sum\u{00e9}"),
+            "Unicode binding identifier should be preserved in recovery.\nOutput:\n{output}"
+        );
+
+        let output2 = emit_es5("for (let \u{65e5}\u{672c}\u{8a9e}: T) { \u{51e6}\u{7406}(\u{65e5}\u{672c}\u{8a9e}); }");
+        assert!(
+            output2.contains("\u{65e5}\u{672c}\u{8a9e}"),
+            "CJK binding identifier should be preserved in recovery.\nOutput:\n{output2}"
         );
     }
 }
