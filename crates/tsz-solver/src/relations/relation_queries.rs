@@ -763,10 +763,10 @@ pub fn check_application_variance<R: TypeResolver>(
     // short-circuit the per-alias depth counter and produce false TS2322
     // errors for deeply-recursive conditional aliases like
     // `PathRecord<"a.b.c.d", V>` where tsc returns `Ternary.Maybe` instead.
-    if let Some(body) = resolver.get_def_raw_body(def_id, db) {
-        if matches!(db.lookup(body), Some(TypeData::Conditional(_))) {
-            return None;
-        }
+    if let Some(body) = resolver.get_def_raw_body(def_id, db)
+        && matches!(db.lookup(body), Some(TypeData::Conditional(_)))
+    {
+        return None;
     }
 
     let variances = resolver.get_type_param_variance(def_id).or_else(|| {
