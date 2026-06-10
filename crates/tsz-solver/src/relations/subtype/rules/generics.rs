@@ -386,6 +386,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             if let Some(def_id) = def_id {
                 let variances = self.resolve_application_variances(def_id);
+                tracing::trace!(
+                    ?def_id,
+                    ?variances,
+                    s_args = ?s_app.args,
+                    t_args = ?t_app.args,
+                    "app-vs-app variance fast path"
+                );
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
                     if variances.len() == s_app.args.len() {
@@ -526,9 +533,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let visiting_rev = self.def_guard.is_visiting(&(def_pair.1, def_pair.0));
             // Check for cycles before expansion
             if visiting || visiting_rev {
-                return if self
-                    .application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app)
-                {
+                let unsound =
+                    self.application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app);
+                tracing::trace!(
+                    ?def_pair,
+                    unsound,
+                    s_args = ?s_app.args,
+                    t_args = ?t_app.args,
+                    "app-vs-app def-pair cycle"
+                );
+                return if unsound {
                     SubtypeResult::False
                 } else {
                     self.cycle_result()
