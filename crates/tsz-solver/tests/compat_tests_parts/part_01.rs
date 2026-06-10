@@ -127,7 +127,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
 }
 
 #[test]
-fn test_split_accessor_rejects_wider_setter_in_target() {
+fn test_split_accessor_allows_wider_setter_in_target() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -164,7 +164,10 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         single_quoted_name: false,
     }]);
 
-    assert!(!checker.is_assignable(source, target));
+    // PARITY: tsc relates properties through their *read* types only; a
+    // target with a wider setter (split accessor) does not block
+    // assignability. Writes are validated at the actual write site.
+    assert!(checker.is_assignable(source, target));
 }
 
 #[test]

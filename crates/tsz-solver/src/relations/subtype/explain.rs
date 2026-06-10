@@ -1536,7 +1536,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         property_name: t_prop.name,
                     });
                 }
-                if !t_prop.readonly
+                // Sound Mode only: tsc never relates split-accessor write
+                // types (mirrors the gate in check_property_types).
+                if self.check_split_accessor_writes
+                    && !t_prop.readonly
                     && !sp.readonly
                     && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {
@@ -1794,7 +1797,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         property_name: t_prop.name,
                     });
                 }
-                if !t_prop.readonly
+                // Sound Mode only: tsc never relates split-accessor write
+                // types (mirrors the gate in check_property_types).
+                if self.check_split_accessor_writes
+                    && !t_prop.readonly
                     && !sp.readonly
                     && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {

@@ -1894,9 +1894,12 @@ fn subtype_cache_split_accessor_variance_matches_uncached_property_policy() {
         wide_to_narrow_uncached,
         "split accessor with a wider write type should satisfy a uniform property target",
     );
+    // PARITY: tsc relates properties through their *read* types only, so the
+    // reverse direction is also related; write types are Sound Mode-only.
+    // This test's subject is cache-slot agreement, not the relation value.
     assert!(
-        !narrow_to_wide_uncached,
-        "uniform property write type should not satisfy a wider split-accessor target",
+        narrow_to_wide_uncached,
+        "uniform property should satisfy a wider split-accessor target (read types match)",
     );
 
     let wide_to_narrow_cached =

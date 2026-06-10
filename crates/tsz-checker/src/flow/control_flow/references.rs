@@ -526,7 +526,17 @@ impl<'a> FlowAnalyzer<'a> {
             if access.question_dot_token {
                 return None;
             }
-            let name = self.literal_atom_from_node_or_type(access.name_or_argument)?;
+            let name = self.literal_atom_from_node_or_type(access.name_or_argument);
+            tracing::trace!(
+                ?idx,
+                key = ?access.name_or_argument,
+                resolved = ?name,
+                key_type = ?self
+                    .node_types
+                    .and_then(|nt| nt.get(&access.name_or_argument.0).copied()),
+                "element-access property_reference key resolution"
+            );
+            let name = name?;
             return Some((access.expression, name));
         }
 
@@ -574,6 +584,16 @@ impl<'a> FlowAnalyzer<'a> {
 
         let node_types = self.node_types?;
         let type_id = *node_types.get(&idx.0)?;
+        // Well-known symbol keys (e.g. `Symbol.iterator in x`): members keyed
+        // by a built-in `Symbol.*` unique symbol are stored under the
+        // "[Symbol.<name>]" member name — the same syntax-derived convention
+        // computed property declarations use — not the generic
+        // "__unique_<id>" name that `literal_property_name` derives. Without
+        // this mapping, `in`-narrowing fails to match any union constituent
+        // and the guard degrades to `T & Record<__unique_N, unknown>`.
+        if let Some(atom) = self.well_known_symbol_member_atom(idx, type_id) {
+            return Some((atom, false));
+        }
         if let Some(atom) = crate::query_boundaries::type_computation::access::literal_property_name(
             self.interner,
             type_id,
@@ -585,6 +605,40 @@ impl<'a> FlowAnalyzer<'a> {
             LiteralValueKind::Number(value) => Some((self.atom_from_numeric_value(value), true)),
             LiteralValueKind::None => None,
         }
+    }
+
+    /// Member-name atom for a well-known unique-symbol key written as
+    /// `Symbol.<name>` (`Symbol.iterator`, `Symbol.asyncIterator`, …).
+    ///
+    /// Class/interface members keyed by these well-known symbols are stored
+    /// under "[Symbol.<name>]" — the same syntax-derived convention used when
+    /// the member declaration's computed property name is resolved (see
+    /// `types/type_node_property_names.rs`). The key expression must actually
+    /// carry a `unique symbol` type so a user-defined `Symbol` object with
+    /// ordinary members does not alias the well-known names.
+    fn well_known_symbol_member_atom(
+        &self,
+        idx: NodeIndex,
+        type_id: tsz_solver::TypeId,
+    ) -> Option<Atom> {
+        crate::query_boundaries::common::unique_symbol_ref(
+            self.interner.as_type_database(),
+            type_id,
+        )?;
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(node)?;
+        let base_node = self.arena.get(access.expression)?;
+        let base_ident = self.arena.get_identifier(base_node)?;
+        if base_ident.escaped_text != "Symbol" {
+            return None;
+        }
+        let name_node = self.arena.get(access.name_or_argument)?;
+        let ident = self.arena.get_identifier(name_node)?;
+        let name = format!("[Symbol.{}]", ident.escaped_text);
+        Some(self.interner.intern_string(&name))
     }
 
     pub(crate) fn literal_number_from_node_or_type(&self, idx: NodeIndex) -> Option<f64> {
