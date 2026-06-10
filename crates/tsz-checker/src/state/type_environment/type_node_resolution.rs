@@ -464,6 +464,11 @@ impl<'a> CheckerState<'a> {
             return self.get_type_from_type_reference(idx);
         }
 
+        // Pre-warm namespace-qualified interface types before entering the &self lowering pass.
+        // When `import * as L` is used only in type positions, `symbol_types[L.Foo]` stays unset;
+        // `ensure_type_alias_resolved_inner` then bails at the TYPE_ALIAS guard for interfaces,
+        // leaving an orphan `Lazy(DefId)` (refs #12951).
+        self.pre_warm_namespace_qualified_interface_types(idx);
         // For other type nodes, delegate to TypeNodeChecker
         let mut checker = crate::TypeNodeChecker::new(&mut self.ctx);
         let result = checker.check(idx);
@@ -1073,6 +1078,141 @@ impl<'a> CheckerState<'a> {
         } else {
             self.error_property_not_exist_on_global_this(name, error_node, base_display);
             TypeId::ERROR
+        }
+    }
+
+    /// Collect `(sym_id, target_file_idx)` pairs for namespace-qualified
+    /// interface/class symbols in the subtree rooted at `root` that are not yet
+    /// in `symbol_types`.
+    ///
+    /// Only handles two-level qualified names (`L.Name` where `L` is a star
+    /// namespace import).  Deeper nesting (`L.NS.Name`) is skipped.
+    fn collect_namespace_qualified_interface_syms(
+        &self,
+        root: NodeIndex,
+    ) -> Vec<(SymbolId, usize)> {
+        use tsz_parser::parser::node::NodeAccess;
+
+        let mut result = Vec::new();
+        let mut stack = vec![root];
+        let mut visited = FxHashSet::default();
+
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() || !visited.insert(idx) {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                stack.extend(self.ctx.arena.get_children(idx));
+                continue;
+            }
+            let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                continue;
+            };
+            let Some(qn_node) = self.ctx.arena.get(type_ref.type_name) else {
+                continue;
+            };
+            if qn_node.kind != syntax_kind_ext::QUALIFIED_NAME {
+                continue;
+            }
+            let Some(qn) = self.ctx.arena.get_qualified_name(qn_node) else {
+                continue;
+            };
+            // Only handle L.Name — left must be a plain identifier, not another qualified name
+            let Some(left_ident) = self.ctx.arena.get_identifier_at(qn.left) else {
+                continue;
+            };
+            let left_name = left_ident.escaped_text.as_str();
+            let Some(right_ident) = self.ctx.arena.get_identifier_at(qn.right) else {
+                continue;
+            };
+            let right_name = right_ident.escaped_text.as_str();
+
+            let Some(ns_sym_id) = self.ctx.binder.file_locals.get(left_name) else {
+                continue;
+            };
+            let Some(ns_symbol) = self.ctx.binder.get_symbol(ns_sym_id) else {
+                continue;
+            };
+            // Must be a star namespace import: `import * as L from "..."`
+            if !ns_symbol.has_any_flags(symbol_flags::ALIAS)
+                || ns_symbol.import_name.as_deref() != Some("*")
+            {
+                continue;
+            }
+            let Some(module_name) = ns_symbol.import_module.as_deref() else {
+                continue;
+            };
+
+            let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+            else {
+                continue;
+            };
+            let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
+                continue;
+            };
+            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+            let target_file_name = target_arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str());
+
+            let member = target_file_name
+                .and_then(|fn_| {
+                    target_binder
+                        .resolve_import_with_reexports_type_only(fn_, right_name)
+                        .map(|(sym_id, _)| sym_id)
+                })
+                .or_else(|| {
+                    target_binder
+                        .resolve_import_with_reexports_type_only(module_name, right_name)
+                        .map(|(sym_id, _)| sym_id)
+                });
+
+            let Some(member_sym_id) = member else {
+                continue;
+            };
+            let Some(member_symbol) = target_binder.get_symbol(member_sym_id) else {
+                continue;
+            };
+            if member_symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::CLASS)
+                && !self.ctx.symbol_types.contains_key(&member_sym_id)
+            {
+                result.push((member_sym_id, target_idx));
+            }
+        }
+        result
+    }
+
+    /// Pre-warm `symbol_types` for namespace-qualified interface/class types in
+    /// the subtree rooted at `root`.
+    ///
+    /// When `import * as L from "..."` is used only in type positions, the
+    /// namespace object type is never eagerly built, leaving
+    /// `symbol_types[L.Validator]` unset.  Later,
+    /// `ensure_type_alias_resolved_inner` bails at the `TYPE_ALIAS` guard for
+    /// interface symbols, so the `DefId` body is never registered — an orphan
+    /// `Lazy(DefId)` causes conditional key-filter mapped types to collapse to
+    /// `never` (refs #12951).
+    ///
+    /// Calling this before `TypeNodeChecker::new` ensures the interface type is
+    /// in `symbol_types` so the existing guard in
+    /// `ensure_type_alias_resolved_inner` can register the `DefId` body.
+    fn pre_warm_namespace_qualified_interface_types(&mut self, root: NodeIndex) {
+        let to_warm = self.collect_namespace_qualified_interface_syms(root);
+        for (sym_id, target_idx) in to_warm {
+            self.ctx.register_symbol_file_target(sym_id, target_idx);
+            let type_id = self.get_type_of_symbol(sym_id);
+            // Cross-file interface symbols are cached in `cache_cross_file_symbol_type`,
+            // not in `symbol_types`. `ensure_type_alias_resolved_inner` checks
+            // `symbol_types` to register the `DefId` body, so explicitly populate it.
+            if type_id != TypeId::ERROR && type_id != TypeId::UNKNOWN {
+                self.ctx.symbol_types.insert(sym_id, type_id);
+            }
         }
     }
 }

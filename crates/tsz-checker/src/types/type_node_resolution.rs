@@ -259,6 +259,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                         .map(|(sym_id, _)| sym_id)
                                 })
                         })
+                })
+                .or_else(|| {
+                    // Star namespace import (`import * as L from "m"`): the
+                    // namespace alias has no populated `exports` map, so all
+                    // prior branches miss.  Resolve `segment` directly from
+                    // the target module's binder (refs #12951).
+                    if symbol.import_name.as_deref() != Some("*") {
+                        return None;
+                    }
+                    let module = symbol.import_module.as_deref()?;
+                    let target_idx = self
+                        .ctx
+                        .resolve_import_target_from_file(self.ctx.current_file_idx, module)?;
+                    let target_binder = self.ctx.get_binder_for_file(target_idx)?;
+                    let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                    let file_name = target_arena
+                        .source_files
+                        .first()
+                        .map(|sf| sf.file_name.as_str());
+                    file_name
+                        .and_then(|fn_| target_binder.resolve_import_with_reexports(fn_, segment))
+                        .or_else(|| target_binder.resolve_import_with_reexports(module, segment))
                 })?;
         }
 
@@ -317,6 +339,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .members
                         .as_ref()
                         .and_then(|members| members.get(segment))
+                })
+                .or_else(|| {
+                    // Star namespace import (`import * as L from "m"`): the namespace
+                    // object is not materialised until runtime, so the ALIAS symbol has
+                    // no `exports` map.  Look up `segment` directly in the target
+                    // module's binder using the declared module specifier (refs #12951).
+                    if symbol.import_name.as_deref() != Some("*") {
+                        return None;
+                    }
+                    let module = symbol.import_module.as_deref()?;
+                    let target_idx = self
+                        .ctx
+                        .resolve_import_target_from_file(self.ctx.current_file_idx, module)?;
+                    let target_binder = self.ctx.get_binder_for_file(target_idx)?;
+                    let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                    let file_name = target_arena
+                        .source_files
+                        .first()
+                        .map(|sf| sf.file_name.as_str());
+                    file_name
+                        .and_then(|fn_| target_binder.resolve_import_with_reexports(fn_, segment))
+                        .or_else(|| target_binder.resolve_import_with_reexports(module, segment))
                 })?;
         }
 
