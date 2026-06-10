@@ -757,8 +757,18 @@ fn test_index_access_mapped_with_intersection_index() {
     );
 }
 
+/// tsc parity (`substituteIndexedMappedType`): indexing a generic mapped type
+/// `{ [K in keyof T]: F(K) }` by its own still-generic constraint `keyof T`
+/// substitutes the constraint for the binder, producing `F(keyof T)` — the
+/// whole key space collapses into a single substitution. This is the
+/// documented `tsc` behavior for generic `T` (per-key expansion only happens
+/// for concrete, literal-enumerable key spaces) and is why `KeysMatching`
+/// style utilities see `T[keyof T] extends string ? keyof T : never` in
+/// generic contexts. This test previously pinned the opposite (a fresh
+/// `K extends keyof T` binder kept in the template), which broke identity
+/// with the simplified form `tsc` compares against.
 #[test]
-fn test_index_access_mapped_keyof_preserves_per_key_template_relation() {
+fn test_index_access_mapped_keyof_substitutes_constraint_for_binder() {
     let interner = TypeInterner::new();
 
     let t_param = TypeParamInfo {
@@ -804,32 +814,12 @@ fn test_index_access_mapped_keyof_preserves_per_key_template_relation() {
         false_type: TypeId::NEVER,
         is_distributive: false,
     });
-    assert_ne!(
+    assert_eq!(
         result, collapsed,
-        "mapped[keyof T] should not collapse the whole key space into a single substitution"
+        "mapped[keyof T] with a generic constraint must substitute the constraint for the \
+         binder (tsc `substituteIndexedMappedType` parity): expected \
+         `T[keyof T] extends string ? keyof T : never`"
     );
-
-    match interner.lookup(result) {
-        Some(TypeData::Conditional(cond_id)) => {
-            let cond = interner.conditional_type(cond_id);
-            match (
-                interner.lookup(cond.check_type),
-                interner.lookup(cond.true_type),
-            ) {
-                (
-                    Some(TypeData::IndexAccess(object_type, key_type)),
-                    Some(TypeData::TypeParameter(_)),
-                ) => {
-                    assert_eq!(object_type, t_type);
-                    assert_eq!(key_type, cond.true_type);
-                }
-                other => panic!(
-                    "Expected per-key conditional to keep a single key parameter, got {other:?}"
-                ),
-            }
-        }
-        other => panic!("Expected deferred conditional result, got {other:?}"),
-    }
 }
 
 #[test]
