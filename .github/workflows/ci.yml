@@ -1073,11 +1073,11 @@ jobs:
               "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
               2>/dev/null || echo '{}')
             count=$(echo "$api_response" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
-print(c)
-" 2>/dev/null || echo 0)
+          import sys, json
+          data = json.load(sys.stdin)
+          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
+          print(c)
+          " 2>/dev/null || echo 0)
             echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
             if [ "${count}" -ge "${EXPECTED}" ]; then
               echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
@@ -1091,13 +1091,13 @@ print(c)
               "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
               2>/dev/null || echo '{}')
             shard_summary=$(echo "$jobs_response" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
-done = [j for j in jobs if j.get('status') == 'completed']
-failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
-print(f'done={len(done)} failed={len(failed)} names={failed}')
-" 2>/dev/null || echo 'done=0 failed=0 names=[]')
+          import sys, json
+          data = json.load(sys.stdin)
+          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
+          done = [j for j in jobs if j.get('status') == 'completed']
+          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
+          print(f'done={len(done)} failed={len(failed)} names={failed}')
+          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
             echo "  shard jobs: ${shard_summary}"
             # If all shards are done and we still don't have all artifacts, a shard
             # failed without uploading (infra kill). Stop waiting and let the
