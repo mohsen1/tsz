@@ -1184,6 +1184,16 @@
                         } else {
                             crate::query_boundaries::common::TypeSubstitution::new()
                         };
+                    trace!(
+                        contextual_type = ?contextual_type.map(|t| t.0),
+                        return_type = shape.return_type.0,
+                        substitution = ?single_pass_return_context_substitution
+                            .map()
+                            .iter()
+                            .map(|(name, ty)| (self.ctx.types.resolve_atom(*name), ty.0))
+                            .collect::<Vec<_>>(),
+                        "Single-pass return-context substitution"
+                    );
                     let needs_refresh = args.iter().enumerate().any(|(i, &arg)| {
                         self.argument_needs_refresh_for_contextual_call(
                             arg,
@@ -1325,6 +1335,14 @@
                                     )
                                 })
                                 .collect();
+                            trace!(
+                                param_types = ?shape.params.iter().map(|p| p.type_id.0).collect::<Vec<_>>(),
+                                refreshed_contextual_types = ?refreshed_contextual_types
+                                    .iter()
+                                    .map(|t| t.map(|t| t.0))
+                                    .collect::<Vec<_>>(),
+                                "Single-pass refresh contextual types"
+                            );
                             let mut refreshed_args = self.collect_call_argument_types_with_context(
                                 args,
                                 |i, _arg_count| {

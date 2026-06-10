@@ -109,6 +109,106 @@ const WithNode: WithNodeFactory = freeze({
     );
 }
 
+/// The operation-node witness: an OUTER generic identity-wrapper call whose
+/// object-literal argument has a non-context-sensitive method (all params
+/// annotated) with a nested generic call in its body. The outer call's
+/// return-context substitution pins the wrapper's type parameter to the
+/// contextual factory type, and that concrete contextual must survive into the
+/// literal's method body so the inner wrapper sees `Readonly<XNode>` and keeps
+/// the literal discriminant.
+#[test]
+fn outer_generic_call_with_annotated_method_preserves_literal() {
+    assert_no_widening_false_positive(
+        &[(
+            "outer.ts",
+            r#"
+function deepFreeze<TObj>(entity: TObj): Readonly<TObj> { return entity; }
+interface LimitNode { readonly kind: "LimitNode"; readonly max: number; }
+interface LimitNodeFactory { create(max: number): Readonly<LimitNode>; }
+const LimitNode: LimitNodeFactory = deepFreeze({
+    create(max: number) {
+        return deepFreeze({ kind: "LimitNode", max });
+    },
+});
+"#,
+        )],
+        "outer generic call with annotated method",
+    );
+}
+
+/// Same outer-call shape with an explicit type argument on the inner wrapper:
+/// the explicit instantiation already provides the contextual pin, and the
+/// outer refresh must not disturb it.
+#[test]
+fn outer_generic_call_with_explicit_inner_type_argument_preserves_literal() {
+    assert_no_widening_false_positive(
+        &[(
+            "explicit.ts",
+            r#"
+function wrapValue<Z>(value: Z): Readonly<Z> { return value; }
+interface AlterNode { readonly kind: "AlterNode"; readonly size: number; }
+interface AlterNodeFactory { create(size: number): Readonly<AlterNode>; }
+const AlterNode: AlterNodeFactory = wrapValue({
+    create(size: number) {
+        return wrapValue<AlterNode>({ kind: "AlterNode", size });
+    },
+});
+"#,
+        )],
+        "outer generic call with explicit inner type argument",
+    );
+}
+
+/// Same outer-call shape where the method return type is annotated: the
+/// annotation supplies the inner contextual return directly and the outer
+/// refresh must keep it intact.
+#[test]
+fn outer_generic_call_with_annotated_method_return_preserves_literal() {
+    assert_no_widening_false_positive(
+        &[(
+            "annotated-return.ts",
+            r#"
+function sealItem<Q>(input: Q): Readonly<Q> { return input; }
+interface UniqueNode { readonly kind: "UniqueNode"; readonly width: number; }
+interface UniqueNodeFactory { build(width: number): Readonly<UniqueNode>; }
+const UniqueNode: UniqueNodeFactory = sealItem({
+    build(width: number): Readonly<UniqueNode> {
+        return sealItem({ kind: "UniqueNode", width });
+    },
+});
+"#,
+        )],
+        "outer generic call with annotated method return",
+    );
+}
+
+/// Negative for the outer-call shape: a wrong literal discriminant in the
+/// nested wrapper must still produce `TS2322`. The concrete contextual pin
+/// must not silence real mismatches.
+#[test]
+fn outer_generic_call_still_reports_wrong_literal_kind() {
+    let wrong = r#"
+function grabAll<R>(obj: R): Readonly<R> { return obj; }
+interface MergeNode { readonly kind: "MergeNode"; readonly span: number; }
+interface MergeNodeFactory { create(span: number): Readonly<MergeNode>; }
+const MergeNode: MergeNodeFactory = grabAll({
+    create(span: number) {
+        return grabAll({ kind: "Wrong", span });
+    },
+});
+"#;
+    let files = vec![("merge-node.ts", wrong)];
+    let diags = check(&files, "merge-node.ts");
+    assert!(
+        codes(&diags).contains(&2322),
+        "expected TS2322 for the wrong literal discriminant through the outer call, got: {:#?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Negative: a factory whose `create` returns the *wrong* literal discriminant
 /// must still report `TS2322`. The literal pinning must not erase real
 /// mismatches by widening both sides.
