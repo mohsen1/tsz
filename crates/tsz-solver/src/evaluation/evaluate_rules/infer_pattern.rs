@@ -59,6 +59,18 @@ thread_local! {
 /// wrappers do.
 const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
 
+/// Per-walk state for [`TypeEvaluator::type_contains_infer`].
+///
+/// `visited` maps a node to whether its subtree walk *completed* (`true`) or
+/// is still in progress (`false`). Re-entering an in-progress node is a cycle
+/// and sets `tainted`, which blocks persisting provisional answers to the
+/// project-wide `eval_contains_infer_cache`.
+#[derive(Default)]
+struct InferContainsWalk {
+    visited: FxHashMap<TypeId, bool>,
+    tainted: bool,
+}
+
 /// RAII guard for [`INFER_MATCH_EXPANSION_DEPTH`].
 ///
 /// `enter` returns `None` when the budget is exhausted (the caller must then
@@ -124,7 +136,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Terminal kinds that the recursive walker treats as not-containing-
         // infer (see `type_contains_infer_inner`'s leaf arm). Skipping the
         // visited-set allocation for these types eliminates the per-call
-        // `FxHashSet::default()` for a large fraction of conditional-type
+        // `FxHashMap::default()` for a large fraction of conditional-type
         // evaluation calls — `extends_type` is frequently `Lazy(DefId)` for
         // generic interface references like `Promise<T>` before evaluation.
         if matches!(
@@ -142,28 +154,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         ) {
             return false;
         }
-        let mut visited = FxHashSet::default();
-        self.type_contains_infer_inner_with_key(type_id, key, &mut visited)
+        // Project-wide memo: the answer is immutable per `TypeId` within one
+        // interner. Recursive conditional/application evaluation re-asks this
+        // for the same (often very large) pattern and extends types.
+        if let Some(cached) = self.interner().eval_contains_infer_cached(type_id) {
+            return cached;
+        }
+        let mut walk = InferContainsWalk::default();
+        let result = self.type_contains_infer_inner_with_key(type_id, key, &mut walk);
+        if result {
+            // A found `Infer` is a definite fact for the root regardless of
+            // any in-flight cycle node; intermediate nodes were abandoned by
+            // the short-circuit and stay uncached.
+            self.interner().set_eval_contains_infer_cache(type_id, true);
+        } else if !walk.tainted {
+            // A fully-explored `false` walk finalizes every visited node:
+            // each subtree was exhaustively walked and contains no `Infer`.
+            for (&node, &done) in &walk.visited {
+                if done {
+                    self.interner().set_eval_contains_infer_cache(node, false);
+                }
+            }
+        }
+        result
     }
 
-    fn type_contains_infer_inner(&self, type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
+    fn type_contains_infer_inner(&self, type_id: TypeId, walk: &mut InferContainsWalk) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
-        if !visited.insert(type_id) {
-            return false;
+        if let Some(cached) = self.interner().eval_contains_infer_cached(type_id) {
+            return cached;
+        }
+        match walk.visited.entry(type_id) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                // Re-entering an in-progress node is a cycle: the provisional
+                // `false` answer must not be persisted by any ancestor.
+                if !entry.get() {
+                    walk.tainted = true;
+                }
+                return false;
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(false);
+            }
         }
 
         let Some(key) = self.interner().lookup(type_id) else {
             return false;
         };
 
-        self.match_contains_infer(type_id, key, visited)
+        let result = self.match_contains_infer(type_id, key, walk);
+        if !result {
+            walk.visited.insert(type_id, true);
+        }
+        result
     }
 
     /// Walk one already-fetched `TypeData` for the contains-infer check.
     ///
-    /// Splitting the walk from the `lookup`/`visited.insert` bookkeeping
+    /// Splitting the walk from the `lookup`/`visited` bookkeeping
     /// lets `type_contains_infer` reuse a `TypeData` it already fetched
     /// for the entry-point fast paths, without performing a second
     /// interner lookup.
@@ -171,19 +221,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         type_id: TypeId,
         key: TypeData,
-        visited: &mut FxHashSet<TypeId>,
+        walk: &mut InferContainsWalk,
     ) -> bool {
-        if !visited.insert(type_id) {
-            return false;
+        match walk.visited.entry(type_id) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                if !entry.get() {
+                    walk.tainted = true;
+                }
+                return false;
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(false);
+            }
         }
-        self.match_contains_infer(type_id, key, visited)
+        let result = self.match_contains_infer(type_id, key, walk);
+        if !result {
+            walk.visited.insert(type_id, true);
+        }
+        result
     }
 
     fn match_contains_infer(
         &self,
         _type_id: TypeId,
         key: TypeData,
-        visited: &mut FxHashSet<TypeId>,
+        visited: &mut InferContainsWalk,
     ) -> bool {
         match key {
             TypeData::Infer(_) => true,

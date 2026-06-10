@@ -260,6 +260,8 @@ impl<'a> CheckerContext<'a> {
             global_declared_modules: None,
             global_expando_index: None,
             global_module_augmentations_index: None,
+            global_scope_conflict_candidates: std::cell::OnceCell::new(),
+            effective_jsx_mode_cache: std::cell::Cell::new(None),
             global_augmentation_targets_index: None,
             global_module_binder_index: None,
             global_arena_index: None,

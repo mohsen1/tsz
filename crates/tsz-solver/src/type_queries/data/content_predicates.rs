@@ -658,12 +658,22 @@ pub fn contains_generic_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeI
         ) => return false,
         _ => {}
     }
-    contains_type_matching(db, type_id, |key| {
+    // The depth-limited walk always starts from a fresh recursion guard, so
+    // the answer is a pure function of the root `TypeId`. Display-alias
+    // bookkeeping and assignability gates re-ask this for the same
+    // application args after every evaluation; memoize the root result
+    // project-wide.
+    if let Some(cached) = db.contains_generic_params_root_cached(type_id) {
+        return cached;
+    }
+    let result = contains_type_matching(db, type_id, |key| {
         matches!(
             key,
             TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::BoundParameter(_)
         )
-    })
+    });
+    db.set_contains_generic_params_root_cache(type_id, result);
+    result
 }
 
 /// Check if a type is directly an `Infer` type (not recursive).

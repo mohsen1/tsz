@@ -9,10 +9,23 @@ use tsz_common::Atom;
 use super::predicate_pool::with_predicate_buffers;
 
 /// Check if a type contains any type parameters.
+///
+/// The depth-limited walk always starts from a fresh recursion guard, so the
+/// answer is a pure function of the root `TypeId`. Recursive conditional
+/// evaluation re-asks this for the same check/extends roots constantly, so the
+/// root result is memoized project-wide on the interner.
 pub fn contains_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_matching(types, type_id, |key| {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    if let Some(cached) = types.contains_param_or_infer_root_cached(type_id) {
+        return cached;
+    }
+    let result = contains_type_matching(types, type_id, |key| {
         matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
-    })
+    });
+    types.set_contains_param_or_infer_root_cache(type_id, result);
+    result
 }
 
 /// Check if a type contains free type parameters, excluding those bound by

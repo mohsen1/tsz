@@ -313,6 +313,24 @@ pub struct DefinitionStore {
     /// fresh `Vec` for every checker while preserving generation-based invalidation.
     symbol_mappings_snapshot: Mutex<Option<(u64, SymbolMappingsSnapshot)>>,
 
+    /// Append-only insertion log mirroring `symbol_only_index`.
+    ///
+    /// `symbol_only_index` is first-wins (`entry().or_insert()`), so the
+    /// sequence of successful inserts reproduces the map's content exactly.
+    /// `all_symbol_mappings_snapshot` snapshots this log with one `memcpy`
+    /// instead of re-iterating the whole `DashMap` every time the store
+    /// generation changes (which happens between every checked file).
+    symbol_mappings_log: Mutex<Vec<(u32, DefId)>>,
+
+    /// Length-keyed snapshot of `symbol_mappings_log`.
+    symbol_mappings_log_snapshot: Mutex<Option<(usize, SymbolMappingsSnapshot)>>,
+
+    /// Set when `symbol_only_index` diverges from the insert log (entry
+    /// removal or `clear`). Once set, `all_symbol_mappings_snapshot` falls
+    /// back to the legacy generation-keyed `DashMap` collection permanently
+    /// for this store.
+    symbol_mappings_log_invalid: std::sync::atomic::AtomicBool,
+
     /// Reverse index: body `TypeId` -> `DefId` for non-generic type aliases.
     ///
     /// Populated by `set_body` when the definition is a `TypeAlias` with no type
@@ -598,6 +616,9 @@ impl DefinitionStore {
                 Default::default(),
             ),
             symbol_mappings_snapshot: Mutex::new(None),
+            symbol_mappings_log: Mutex::new(Vec::new()),
+            symbol_mappings_log_snapshot: Mutex::new(None),
+            symbol_mappings_log_invalid: std::sync::atomic::AtomicBool::new(false),
             body_to_alias: DefDashMap::default(),
             computed_alias_bodies: DefDashSet::default(),
             directly_named_alias_bodies: DefDashSet::default(),
@@ -649,6 +670,29 @@ impl DefinitionStore {
         self.generation.load(Ordering::Relaxed)
     }
 
+    /// First-wins insert into `symbol_only_index` that mirrors successful
+    /// inserts into the append-only `symbol_mappings_log`.
+    fn insert_symbol_only_mapping(&self, symbol_id: u32, def_id: DefId) {
+        use dashmap::mapref::entry::Entry;
+        match self.symbol_only_index.entry(symbol_id) {
+            Entry::Vacant(vacant) => {
+                vacant.insert(def_id);
+                self.symbol_mappings_log
+                    .lock()
+                    .expect("symbol mappings log lock poisoned")
+                    .push((symbol_id, def_id));
+            }
+            Entry::Occupied(_) => {}
+        }
+    }
+
+    /// Mark the symbol-mappings insert log as diverged from
+    /// `symbol_only_index` (an entry was removed or the index was cleared).
+    fn invalidate_symbol_mappings_log(&self) {
+        self.symbol_mappings_log_invalid
+            .store(true, Ordering::Relaxed);
+    }
+
     /// Register a new definition and return its `DefId`.
     pub fn register(&self, info: DefinitionInfo) -> DefId {
         let id = self.allocate();
@@ -662,7 +706,7 @@ impl DefinitionStore {
         // Populate symbol_only_index if a symbol_id is present.
         // Uses entry API to keep the *first* registered DefId (stable identity).
         if let Some(sym_id) = info.symbol_id {
-            self.symbol_only_index.entry(sym_id).or_insert(id);
+            self.insert_symbol_only_mapping(sym_id, id);
         }
 
         // Populate body_to_alias for non-generic type aliases with a body.
@@ -700,7 +744,7 @@ impl DefinitionStore {
     pub fn register_symbol_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
         self.register_symbol_file_mapping(symbol_id, file_idx, def_id);
         // Also maintain the file-agnostic index (keeps the first registered DefId).
-        self.symbol_only_index.entry(symbol_id).or_insert(def_id);
+        self.insert_symbol_only_mapping(symbol_id, def_id);
         self.bump_generation();
     }
 
@@ -1041,6 +1085,7 @@ impl DefinitionStore {
         self.type_param_for_decl_node.clear();
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
+        self.invalidate_symbol_mappings_log();
         self.body_to_alias.clear();
         self.computed_alias_bodies.clear();
         self.directly_named_alias_bodies.clear();
@@ -1280,6 +1325,31 @@ impl DefinitionStore {
     /// mutates the store while we are collecting, we retry so the cached generation
     /// cannot point at a partially stale snapshot.
     pub fn all_symbol_mappings_snapshot(&self) -> SymbolMappingsSnapshot {
+        // Fast path: while `symbol_only_index` has only ever grown through
+        // first-wins inserts, the append-only log reproduces its content
+        // exactly and a length-keyed snapshot is one `memcpy` instead of a
+        // full `DashMap` iteration. The store generation changes between
+        // every checked file, so the legacy generation-keyed cache below
+        // misses on essentially every per-file warm.
+        if !self.symbol_mappings_log_invalid.load(Ordering::Relaxed) {
+            let log = self
+                .symbol_mappings_log
+                .lock()
+                .expect("symbol mappings log lock poisoned");
+            let mut cached = self
+                .symbol_mappings_log_snapshot
+                .lock()
+                .expect("symbol mappings log snapshot lock poisoned");
+            if let Some((cached_len, snapshot)) = cached.as_ref()
+                && *cached_len == log.len()
+            {
+                return Arc::clone(snapshot);
+            }
+            let snapshot: SymbolMappingsSnapshot = log.as_slice().into();
+            *cached = Some((log.len(), Arc::clone(&snapshot)));
+            return snapshot;
+        }
+
         loop {
             let generation_before = self.generation();
             if let Some(snapshot) = self.cached_symbol_mappings_snapshot(generation_before) {
@@ -1488,6 +1558,7 @@ impl DefinitionStore {
                     {
                         drop(entry);
                         self.symbol_only_index.remove(&sym_id);
+                        self.invalidate_symbol_mappings_log();
                     }
                 }
 
@@ -1952,7 +2023,7 @@ impl DefinitionStore {
             store.definitions.insert(def_id, info);
         }
         for (symbol_id, def_id) in symbol_only_index {
-            store.symbol_only_index.insert(symbol_id, def_id);
+            store.insert_symbol_only_mapping(symbol_id, def_id);
         }
         for ((symbol_id, file_id), def_id) in symbol_def_index_entries {
             store.symbol_def_index.insert((symbol_id, file_id), def_id);

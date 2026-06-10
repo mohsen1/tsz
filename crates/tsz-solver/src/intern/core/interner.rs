@@ -166,6 +166,26 @@ pub struct TypeInterner {
     /// The answer is immutable per `TypeId` and avoids repeated subtree walks
     /// on dense recursive mapped/conditional/index-access expansions.
     pub(crate) contains_conditional_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Root-result cache for the depth-limited
+    /// `visitor_predicates::contains_type_parameters` walk
+    /// (`TypeParameter | Infer` predicate). The walk always starts from a
+    /// fresh guard, so the answer is a pure function of the root `TypeId`
+    /// and can be shared project-wide. Recursive conditional evaluation
+    /// re-asks this for the same check/extends roots constantly.
+    pub(crate) contains_param_or_infer_root_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Root-result cache for the depth-limited
+    /// `contains_generic_type_parameters_db` walk
+    /// (`TypeParameter | Infer | BoundParameter` predicate). Same purity
+    /// argument as `contains_param_or_infer_root_cache`; display-alias
+    /// bookkeeping re-asks this for the same application args after every
+    /// evaluation.
+    pub(crate) contains_generic_params_root_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Per-node cache for the evaluator's `type_contains_infer` walk.
+    /// That walk differs from `contains_infer_types_db` (it descends
+    /// `Application` bases and matches only structural `Infer` nodes), so it
+    /// gets its own slot. Entries are only written for fully-explored
+    /// (cycle-untainted) subtrees; the answer is immutable per `TypeId`.
+    pub(crate) eval_contains_infer_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -311,6 +331,12 @@ pub struct TypePredicateCacheStatistics {
     pub contains_resolver_dependent_cache_entries: usize,
     /// Number of memoized conditional-type containment predicate results.
     pub contains_conditional_cache_entries: usize,
+    /// Number of memoized depth-limited param-or-infer root walk results.
+    pub contains_param_or_infer_root_cache_entries: usize,
+    /// Number of memoized depth-limited generic-params root walk results.
+    pub contains_generic_params_root_cache_entries: usize,
+    /// Number of memoized evaluator `type_contains_infer` walk results.
+    pub eval_contains_infer_cache_entries: usize,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -337,6 +363,13 @@ impl TypeInterner {
                 .len(),
             contains_resolver_dependent_cache_entries: self.contains_resolver_dependent_cache.len(),
             contains_conditional_cache_entries: self.contains_conditional_cache.len(),
+            contains_param_or_infer_root_cache_entries: self
+                .contains_param_or_infer_root_cache
+                .len(),
+            contains_generic_params_root_cache_entries: self
+                .contains_generic_params_root_cache
+                .len(),
+            eval_contains_infer_cache_entries: self.eval_contains_infer_cache.len(),
         }
     }
 
@@ -370,6 +403,9 @@ impl TypeInterner {
             contains_unresolved_application_cache: DashMap::with_hasher(FxBuildHasher),
             contains_resolver_dependent_cache: DashMap::with_hasher(FxBuildHasher),
             contains_conditional_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_param_or_infer_root_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_generic_params_root_cache: DashMap::with_hasher(FxBuildHasher),
+            eval_contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),

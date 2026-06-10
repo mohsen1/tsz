@@ -239,12 +239,23 @@ impl<'a> CheckerState<'a> {
 
     /// Return the effective JSX mode for the current file, taking the
     /// `@jsxRuntime` pragma into account.
+    ///
+    /// The result is a pure function of the current file's source text and
+    /// the compiler options, so it is memoized per file index — consumers
+    /// (unused-import checks, duplicate-identifier JSX conflicts, JSX
+    /// resolution) otherwise re-scan the whole source per call.
     pub(crate) fn effective_jsx_mode(&self) -> tsz_common::checker_options::JsxMode {
         use tsz_common::checker_options::JsxMode;
+        let file_idx = self.ctx.current_file_idx;
+        if let Some((cached_idx, mode)) = self.ctx.effective_jsx_mode_cache.get()
+            && cached_idx == file_idx
+        {
+            return mode;
+        }
         let pragma = self
             .current_jsx_source_text()
             .and_then(extract_jsx_runtime_pragma);
-        match pragma {
+        let mode = match pragma {
             Some("classic") => JsxMode::React,
             Some("automatic") => {
                 if self.ctx.compiler_options.jsx_mode == JsxMode::ReactJsxDev {
@@ -254,7 +265,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => self.ctx.compiler_options.jsx_mode,
-        }
+        };
+        self.ctx
+            .effective_jsx_mode_cache
+            .set(Some((file_idx, mode)));
+        mode
     }
 
     fn should_prefer_jsx_import_source_anchor(

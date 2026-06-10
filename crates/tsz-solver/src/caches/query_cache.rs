@@ -892,6 +892,32 @@ impl TypePredicateCache for QueryCache<'_> {
         self.interner
             .set_contains_conditional_cache(type_id, result);
     }
+
+    fn contains_param_or_infer_root_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_param_or_infer_root_cached(type_id)
+    }
+
+    fn set_contains_param_or_infer_root_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_param_or_infer_root_cache(type_id, result);
+    }
+
+    fn contains_generic_params_root_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_generic_params_root_cached(type_id)
+    }
+
+    fn set_contains_generic_params_root_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_generic_params_root_cache(type_id, result);
+    }
+
+    fn eval_contains_infer_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.eval_contains_infer_cached(type_id)
+    }
+
+    fn set_eval_contains_infer_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_eval_contains_infer_cache(type_id, result);
+    }
 }
 
 impl TypeTupleLimitSignal for QueryCache<'_> {

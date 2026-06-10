@@ -1542,6 +1542,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // O(members.len()) allocations for large union distributions.
         let mut memo = FxHashMap::default();
 
+        // PERF: A branch that never references the distribution variable
+        // substitutes to itself for every member, so gate the per-member
+        // rewrite on one containment walk per branch instead of N full
+        // substitution walks. `contains_type_by_id` traverses a superset of
+        // the substitution walk's children (it also descends `Mapped` and
+        // type-parameter internals), so a `false` answer here is always safe
+        // to skip on.
+        let branch_references_check = |evaluator: &Self, branch: TypeId| {
+            branch == original_check_type
+                || crate::visitor::contains_type_by_id(
+                    evaluator.interner(),
+                    branch,
+                    original_check_type,
+                )
+        };
+        let extends_needs_subst = branch_references_check(self, extends_type);
+        let true_needs_subst = branch_references_check(self, true_type);
+        let false_needs_subst = branch_references_check(self, false_type);
+
         for &member in members {
             // Check if depth was exceeded during previous iterations
             if self.is_depth_exceeded() {
@@ -1551,15 +1570,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Substitute the specific member if true_type or false_type references the original check_type
             // This handles cases like: NonNullable<T> = T extends null ? never : T
             // When T = A | B, we need (A extends null ? never : A) | (B extends null ? never : B)
-            memo.clear();
-            let substituted_extends_type =
-                self.substitute_exact_type(extends_type, original_check_type, member, &mut memo);
-            memo.clear();
-            let substituted_true_type =
-                self.substitute_exact_type(true_type, original_check_type, member, &mut memo);
-            memo.clear();
-            let substituted_false_type =
-                self.substitute_exact_type(false_type, original_check_type, member, &mut memo);
+            let substituted_extends_type = if extends_needs_subst {
+                memo.clear();
+                self.substitute_exact_type(extends_type, original_check_type, member, &mut memo)
+            } else {
+                extends_type
+            };
+            let substituted_true_type = if true_needs_subst {
+                memo.clear();
+                self.substitute_exact_type(true_type, original_check_type, member, &mut memo)
+            } else {
+                true_type
+            };
+            let substituted_false_type = if false_needs_subst {
+                memo.clear();
+                self.substitute_exact_type(false_type, original_check_type, member, &mut memo)
+            } else {
+                false_type
+            };
 
             // Create conditional for this union member
             let member_cond = ConditionalType {

@@ -955,65 +955,91 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
 
+        // One pass per checker: collect the (file_idx, statement) pairs that
+        // can contribute global-scope conflicts (`export as namespace X` or
+        // `declare global { … }`). The candidate test is name-independent and
+        // a pure superset of the per-name logic below, so iterating only the
+        // candidates yields exactly the declarations the full walk produced,
+        // in the same (file, statement) order.
+        let candidates = self.ctx.global_scope_conflict_candidates.get_or_init(|| {
+            let mut out = Vec::new();
+            for (file_idx, arena) in all_arenas.iter().enumerate() {
+                let Some(source_file_node) = arena.source_files.first() else {
+                    continue;
+                };
+                for &stmt_idx in &source_file_node.statements.nodes {
+                    let Some(stmt_node) = arena.get(stmt_idx) else {
+                        continue;
+                    };
+                    match stmt_node.kind {
+                        syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
+                            out.push((file_idx, stmt_idx));
+                        }
+                        syntax_kind_ext::MODULE_DECLARATION => {
+                            let is_global = stmt_node.is_global_augmentation()
+                                || arena
+                                    .get_module(stmt_node)
+                                    .and_then(|m| arena.get(m.name))
+                                    .and_then(|n| arena.get_identifier(n))
+                                    .is_some_and(|ident| ident.escaped_text == "global");
+                            if is_global {
+                                out.push((file_idx, stmt_idx));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            out
+        });
+
         let mut declarations = Vec::new();
 
-        for (file_idx, arena) in all_arenas.iter().enumerate() {
+        for &(file_idx, stmt_idx) in candidates {
             if file_idx == self.ctx.current_file_idx {
                 continue;
             }
-
-            let Some(source_file_node) = arena.source_files.first() else {
+            let Some(arena) = all_arenas.get(file_idx) else {
+                continue;
+            };
+            let Some(stmt_node) = arena.get(stmt_idx) else {
                 continue;
             };
 
-            for &stmt_idx in &source_file_node.statements.nodes {
-                let Some(stmt_node) = arena.get(stmt_idx) else {
+            // Check for `export as namespace X` (UMD namespace export)
+            if stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
+                if let Some(export) = arena.get_export_decl(stmt_node)
+                    && let Some(ident) = arena.get_identifier_at(export.export_clause)
+                    && ident.escaped_text == name
+                {
+                    // Assign flags directly — declaration_symbol_flags cannot
+                    // resolve the identifier to its NAMESPACE_EXPORT_DECLARATION
+                    // parent because that kind isn't in resolve_duplicate_decl_node.
+                    let flags = symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS;
+                    declarations.push((
+                        export.export_clause,
+                        flags,
+                        false,
+                        true,
+                        DuplicateDeclarationOrigin::GlobalScopeConflict,
+                    ));
+                }
+                continue;
+            }
+
+            // `declare global { ... }` containing variable declarations
+            // (candidate list already verified the global-augmentation shape)
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                let Some(module) = arena.get_module(stmt_node) else {
                     continue;
                 };
-
-                // Check for `export as namespace X` (UMD namespace export)
-                if stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
-                    if let Some(export) = arena.get_export_decl(stmt_node)
-                        && let Some(ident) = arena.get_identifier_at(export.export_clause)
-                        && ident.escaped_text == name
-                    {
-                        // Assign flags directly — declaration_symbol_flags cannot
-                        // resolve the identifier to its NAMESPACE_EXPORT_DECLARATION
-                        // parent because that kind isn't in resolve_duplicate_decl_node.
-                        let flags = symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS;
-                        declarations.push((
-                            export.export_clause,
-                            flags,
-                            false,
-                            true,
-                            DuplicateDeclarationOrigin::GlobalScopeConflict,
-                        ));
-                    }
-                    continue;
-                }
-
-                // Check for `declare global { ... }` containing variable declarations
-                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    let is_global = stmt_node.is_global_augmentation()
-                        || arena
-                            .get_module(stmt_node)
-                            .and_then(|m| arena.get(m.name))
-                            .and_then(|n| arena.get_identifier(n))
-                            .is_some_and(|ident| ident.escaped_text == "global");
-                    if !is_global {
-                        continue;
-                    }
-                    let Some(module) = arena.get_module(stmt_node) else {
-                        continue;
-                    };
-                    // Scan the body for variable declarations matching `name`
-                    self.scan_global_block_for_variable(
-                        arena.as_ref(),
-                        module.body,
-                        name,
-                        &mut declarations,
-                    );
-                }
+                // Scan the body for variable declarations matching `name`
+                self.scan_global_block_for_variable(
+                    arena.as_ref(),
+                    module.body,
+                    name,
+                    &mut declarations,
+                );
             }
         }
 

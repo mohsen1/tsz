@@ -1681,6 +1681,12 @@ impl TypeInterner {
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
         size += self.contains_conditional_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.contains_param_or_infer_root_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.contains_generic_params_root_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.eval_contains_infer_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
         // alloc_order is now stored per-shard alongside index_to_key (4 bytes per type)
         size += type_count * 4;
         size += self.display_properties.len()
