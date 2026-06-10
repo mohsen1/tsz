@@ -27,7 +27,7 @@ use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::file_extensions::{
-    JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
+    JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_default_lib_file, is_json_file,
 };
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use super::emit::{
@@ -899,7 +899,7 @@ fn build_file_infos(
             // `Library file`. Default-target libs (`lib.es2018.full.d.ts`)
             // get the precise reason; explicit `--lib`/reference-pulled libs
             // fall through to the generic LibFile.
-            else if is_lib_file(&source.path) {
+            else if is_default_lib_file(&source.path) {
                 if is_default_lib_for_target(&source.path, target) {
                     reasons.push(FileInclusionReason::DefaultLibrary(target_display.clone()));
                 } else {
@@ -964,16 +964,6 @@ fn is_default_lib_for_target(path: &Path, target: ScriptTarget) -> bool {
         f if f == format!("lib.{target_name}.full.d.ts")
             || f == format!("lib.{target_name}.d.ts")
     )
-}
-
-/// Check if a file is a TypeScript library file
-fn is_lib_file(path: &Path) -> bool {
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    (file_name.starts_with("lib.") && file_name.ends_with(".d.ts"))
-        || path
-            .to_string_lossy()
-            .contains("/node_modules/@typescript/lib-")
 }
 
 fn resolve_effective_lib_paths(

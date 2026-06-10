@@ -43,6 +43,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use tsz_common::file_extensions::is_default_lib_file;
 
 use crate::driver::CompilationResult;
 
@@ -200,7 +201,7 @@ fn count_root_files(result: &CompilationResult) -> u64 {
     result
         .files_read
         .iter()
-        .filter(|p| !path_is_lib_file(p))
+        .filter(|p| !is_default_lib_file(p))
         .count() as u64
 }
 
@@ -208,19 +209,8 @@ fn count_lib_files(result: &CompilationResult) -> u64 {
     result
         .files_read
         .iter()
-        .filter(|p| path_is_lib_file(p))
+        .filter(|p| is_default_lib_file(p))
         .count() as u64
-}
-
-/// Mirror of `driver::core::is_lib_file` — kept local to avoid widening that
-/// helper's visibility for a perf-only path.
-fn path_is_lib_file(path: &Path) -> bool {
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let starts_lib = file_name.starts_with("lib.") && file_name.ends_with(".d.ts");
-    let from_at_typescript = path
-        .to_string_lossy()
-        .contains("/node_modules/@typescript/lib-");
-    starts_lib || from_at_typescript
 }
 
 /// Read peak resident-set size on Unix via `/proc/self/status` (Linux) or
