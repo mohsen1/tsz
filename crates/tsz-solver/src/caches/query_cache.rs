@@ -1110,6 +1110,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.type_application(id)
     }
 
+    fn shared_def_variance(&self, def_id: DefId) -> Option<(Arc<[Variance]>, Arc<[DefId]>)> {
+        self.interner.shared_def_variance(def_id)
+    }
+
+    fn insert_shared_def_variance(&self, def_id: DefId, mask: Arc<[Variance]>, gaps: Arc<[DefId]>) {
+        self.interner.insert_shared_def_variance(def_id, mask, gaps);
+    }
+
     fn literal_string(&self, value: &str) -> TypeId {
         self.interner.literal_string(value)
     }

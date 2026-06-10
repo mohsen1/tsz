@@ -1143,6 +1143,20 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
+    fn get_def_raw_body(
+        &self,
+        def_id: DefId,
+        _interner: &dyn TypeDatabase,
+    ) -> Option<tsz_solver::TypeId> {
+        // Try direct lookup first, then fall back to the symbol-index redirection
+        // for raw SymbolId-based DefIds (created via interner.reference(SymbolRef(sym_id))),
+        // mirroring the same fallback in TypeEnvironment::resolve_lazy.
+        self.definition_store.get_body(def_id).or_else(|| {
+            let real_def = self.definition_store.find_def_by_symbol(def_id.0)?;
+            self.definition_store.get_body(real_def)
+        })
+    }
+
     fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
         self.definition_store.get_name(def_id)
     }
