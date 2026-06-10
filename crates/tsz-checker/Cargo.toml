@@ -1745,5 +1745,9 @@ name = "deeply_nested_mapped_types_tests"
 path = "tests/deeply_nested_mapped_types_tests.rs"
 
 [[test]]
+name = "mapped_indexed_constraint_substitution_tests"
+path = "tests/mapped_indexed_constraint_substitution_tests.rs"
+
+[[test]]
 name = "implements_type_param_generation_identity_tests"
 path = "tests/implements_type_param_generation_identity_tests.rs"
