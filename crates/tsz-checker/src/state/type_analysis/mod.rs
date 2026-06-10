@@ -15,6 +15,7 @@ mod core;
 mod core_type_query;
 pub(crate) mod cross_file;
 mod cross_file_alias_cycle;
+mod cross_file_alias_shortcut;
 mod cross_file_cache;
 mod cross_file_delegation;
 pub(crate) mod cross_file_direct;

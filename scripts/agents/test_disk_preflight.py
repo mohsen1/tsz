@@ -53,7 +53,7 @@ class DiskPreflightTests(unittest.TestCase):
             **(env_overrides or {}),
         }
         return subprocess.run(
-            ["bash", str(fake_script), "Studio-manager", *extra_args],
+            ["bash", str(fake_script), "studio", *extra_args],
             cwd=fake_repo,
             env=env,
             check=True,
@@ -75,7 +75,7 @@ class DiskPreflightTests(unittest.TestCase):
 
             result = self.run_preflight(fake_repo, fake_script)
 
-            self.assertIn("agent=Studio-manager", result.stdout)
+            self.assertIn("agent=studio", result.stdout)
             self.assertIn("git_detached=false", result.stdout)
             self.assertIn("typescript=populated-local-submodule", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
@@ -112,11 +112,11 @@ class DiskPreflightTests(unittest.TestCase):
             )
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
-            self.assertIn("agent=Studio-manager", result.stdout)
+            self.assertIn("agent=studio", result.stdout)
             self.assertTrue(report["ok"])
             self.assertEqual("pass", report["status"])
             self.assertEqual("pass", report["disk_preflight_status"])
-            self.assertEqual("Studio-manager", report["agent"])
+            self.assertEqual("studio", report["agent"])
             self.assertEqual(str(fake_repo), report["repo"])
             self.assertEqual(
                 self.run_git(["rev-parse", "HEAD"], fake_repo).stdout.strip(),
@@ -291,22 +291,21 @@ class DiskPreflightTests(unittest.TestCase):
                 result.stdout,
             )
 
-    def test_unknown_agent_fails_before_preflight(self):
+    def test_free_form_label_is_echoed(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             temp_root = pathlib.Path(temp_dir).resolve()
             fake_repo, fake_script = self.make_fake_repo(temp_root)
 
             result = subprocess.run(
-                ["bash", str(fake_script), "Dreamy-F"],
+                ["bash", str(fake_script), "studio"],
                 cwd=fake_repo,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
 
-            self.assertEqual(1, result.returncode)
-            self.assertIn("unknown AgentName: Dreamy-F", result.stderr)
-            self.assertEqual("", result.stdout)
+            self.assertEqual(0, result.returncode)
+            self.assertIn("agent=studio", result.stdout)
 
     def test_json_report_requires_path(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:

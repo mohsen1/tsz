@@ -18,14 +18,11 @@
 //! conditional condition (`extends V<any>` vs `extends object`) so the rule is
 //! exercised structurally rather than for one fixture.
 //!
-//! Known remaining limitation (kept as an `#[ignore]` witness): when the
-//! generic interface is referenced through a *namespace* import inside a
-//! generic alias body (`import * as L; W[K] extends L.Validator<any>`), the
-//! reference lowers to an opaque `Lazy(DefId)` whose body is never registered
-//! for that synthesized `DefId` (the def carries no name/kind), so even the
-//! outer evaluator cannot resolve it and the key filter still collapses. That
-//! is a distinct cross-file interface body-registration gap in the binder /
-//! checker `DefId` plumbing, tracked under #12951.
+//! The matrix also covers the *namespace* import variant
+//! (`import * as L; W[K] extends L.Validator<any>`): a pre-warm pass in
+//! `get_type_from_type_node` populates `symbol_types` for the interface before
+//! `TypeNodeChecker` descends, so `ensure_type_alias_resolved_inner` can
+//! register the `DefId` body (refs #12951).
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_multi_file_with_global_index;
@@ -174,16 +171,7 @@ fn same_file_interface_filter_unaffected() {
 }
 
 #[test]
-#[ignore = "refs #12951: a namespace-qualified cross-file generic interface \
-            (`import * as L; L.Validator<any>`) used inside a generic alias body \
-            lowers to an orphan `Lazy(DefId)` with no registered body/name; even \
-            the outer evaluator cannot resolve it, so the key filter still \
-            collapses to `never`. Needs cross-file interface body registration in \
-            the binder/checker `DefId` plumbing (separate from the instantiator \
-            deferral fixed here)."]
-fn namespace_import_distributive_filter_known_limitation() {
-    // Witness for the remaining root cause. Unignore once the namespace-member
-    // interface `DefId` resolves to its body on the evaluator path.
+fn namespace_import_distributive_filter() {
     assert_filtered_keys_preserved(
         &format!(
             r#"
@@ -196,6 +184,25 @@ fn namespace_import_distributive_filter_known_limitation() {
         ),
         "export interface Validator<T> { (props: object): null; tag?: T; }",
         "namespace-import",
+    );
+}
+
+#[test]
+fn namespace_import_class_filter() {
+    // Validates the `symbol_flags::CLASS` branch of `collect_namespace_qualified_interface_syms`:
+    // a star-namespace-imported class must be pre-warmed the same way as an interface.
+    assert_filtered_keys_preserved(
+        &format!(
+            r#"
+            import * as L from "./lib";
+            type Conc = {{ array: L.Validator<number>; bool: L.Validator<boolean> }};
+            type RK<W> = {{ [K in keyof W]-?: W[K] extends L.Validator<any> ? K : never }}[keyof W];
+            type R = RK<Conc>;
+            {PROBE_TAIL}
+            "#
+        ),
+        "export class Validator<T> { tag?: T; }",
+        "namespace-import-class",
     );
 }
 

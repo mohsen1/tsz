@@ -73,12 +73,15 @@ fn identifier_rejects_leading_punctuation() {
 }
 
 #[test]
-fn identifier_accepts_unicode_alphabetic() {
-    // `is_alphabetic` accepts Unicode letters, matching `\p{Alpha}`.
+fn identifier_accepts_unicode_ecmascript_identifiers() {
+    // ECMAScript XID_Start / XID_Continue: letters, CJK, accented chars.
     assert!(is_valid_identifier_name("naïve"));
     assert!(is_valid_identifier_name("π"));
     assert!(is_valid_identifier_name("Ω"));
     assert!(is_valid_identifier_name("café"));
+    // CJK property names — previously rejected by ASCII-only copies.
+    assert!(is_valid_identifier_name("日本語"));
+    assert!(is_valid_identifier_name("中文"));
 }
 
 #[test]

@@ -1179,6 +1179,9 @@ mod rest_parameter_relation_routing_arch_tests;
 #[path = "tests/return_context_promise_identity_tests.rs"]
 mod return_context_promise_identity_tests;
 #[cfg(test)]
+#[path = "tests/return_context_type_param_shadowing_tests.rs"]
+mod return_context_type_param_shadowing_tests;
+#[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
 #[cfg(test)]
@@ -1283,6 +1286,9 @@ mod type_predicate_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/typeof_class_name_structural_lookup_arch_tests.rs"]
 mod typeof_class_name_structural_lookup_arch_tests;
+#[cfg(test)]
+#[path = "tests/typeof_const_spread_index_access_tests.rs"]
+mod typeof_const_spread_index_access_tests;
 #[cfg(test)]
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;

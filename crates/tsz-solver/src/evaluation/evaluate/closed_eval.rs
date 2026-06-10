@@ -84,10 +84,59 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         for (node, node_result) in entries {
             if self.is_closed_cacheable_kind(node)
                 && !crate::type_queries::is_substitution_dependent_type(self.interner, node)
+                && !self.has_unresolvable_type_query_operand(node)
             {
                 self.interner
                     .insert_closed_eval_cache(node, no_unchecked, node_result);
             }
+        }
+    }
+
+    /// Whether an `IndexAccess`/`KeyOf` entry's operand chain reaches a
+    /// `TypeQuery` (`typeof X`) the current resolver cannot resolve yet.
+    ///
+    /// A `TypeQuery` operand resolves through mutable checker state
+    /// (`symbol_types` fills in as declarations are checked), so an evaluation
+    /// that ran before `X`'s value type was computed produces a deferred
+    /// identity result. Committing that deferral would permanently shadow the
+    /// resolvable answer for every later evaluator — e.g. `(typeof C)[number]`
+    /// where `const C = [...A, 'z'] as const` is lowered through a type alias
+    /// before `C`'s initializer is typed (kysely `BINARY_OPERATORS` family).
+    ///
+    /// This is a *write-side* gate only. Reads stay permissive: a stored value
+    /// was produced by an authoritative run that could resolve the query, so
+    /// serving it to a resolver that currently cannot is strictly better than
+    /// a miss.
+    fn has_unresolvable_type_query_operand(&self, type_id: TypeId) -> bool {
+        let operand = match self.interner.lookup(type_id) {
+            Some(TypeData::IndexAccess(obj, _) | TypeData::KeyOf(obj)) => obj,
+            _ => return false,
+        };
+        self.operand_chain_has_unresolvable_type_query(operand, 0)
+    }
+
+    /// Recursive helper for [`Self::has_unresolvable_type_query_operand`]:
+    /// walk nested `IndexAccess`/`KeyOf` operands and resolved `TypeQuery`
+    /// bodies looking for a query the resolver cannot answer. The depth bound
+    /// guards against pathological self-referential `typeof` chains.
+    fn operand_chain_has_unresolvable_type_query(&self, obj: TypeId, depth: u32) -> bool {
+        const MAX_OPERAND_CHAIN_DEPTH: u32 = 16;
+        if depth >= MAX_OPERAND_CHAIN_DEPTH {
+            return true;
+        }
+        match self.interner.lookup(obj) {
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                match self.resolver.resolve_type_query(sym_ref, self.interner) {
+                    Some(body) if body != obj => {
+                        self.operand_chain_has_unresolvable_type_query(body, depth + 1)
+                    }
+                    _ => true,
+                }
+            }
+            Some(TypeData::IndexAccess(inner, _) | TypeData::KeyOf(inner)) => {
+                self.operand_chain_has_unresolvable_type_query(inner, depth + 1)
+            }
+            _ => false,
         }
     }
 

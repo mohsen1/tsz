@@ -15,7 +15,7 @@ tests. Mark the PR ready for review when it should run the heavy suites:
 WASM, conformance, emit, fourslash, and snapshot gates.
 
 When a ready PR's exact head has passed the PR-head gates (`CI Summary`,
-and any review/body checks), the merge manager
+and any review/body checks), the PR author
 queues it with GitHub's native merge queue
 (`gh pr merge <pr> --match-head-commit <sha>`). The native queue creates a
 `merge_group` run that keeps the required queue summary check on the synthetic
@@ -67,19 +67,22 @@ python3 scripts/conformance/query-conformance.py --dashboard
 6. **Verify narrowly** — run only targeted local checks needed for debugging
 7. **Push updates to the draft PR** — let CI run build, lint, and unit tests; do not wait idle
 8. **Mark ready for review** — triggers conformance, emit, fourslash, WASM, and snapshot gates
-9. **Hand off to the merge queue** — after exact-head PR-head gates pass,
-   the manager queues the PR with
+9. **Land your own PR** — after exact-head PR-head gates pass,
+   queue the PR yourself with
    `gh pr merge <pr> --match-head-commit <sha>`; native queue admission and
    summary validation run through the `merge_group` CI event
 
-Include your stable `AgentName` in every PR body and substantive PR comment.
-Use the draft PR body for scope, invariants, findings, verification, and
-coordination notes.
+Every PR body must include a `Goal: <green|fast|grow|hold>` line, a
+`## Verification` section, and a `## Provenance` block with `Machine:`,
+`Assistant:`, `Model:`, and `Effort:` lines reporting your actual runtime
+values; the `pr-body-gate` CI job enforces these. Use the draft PR body for
+scope, invariants, findings, and verification.
 
-When adding or re-adding WIP state, leave a PR comment with `AgentName:`, the
-reason WIP state changed, the current blocker or work, and the next owner or
-action. If the advisory WIP-state report flags a missing comment, repair it by
-adding that comment; no code change is required.
+When adding or re-adding WIP state, leave a PR comment with the reason WIP
+state changed, the current blocker or work, and the next action, signed with
+a provenance line (e.g. `Machine: studio`). If the advisory WIP-state report
+flags a missing comment, repair it by adding that comment; no code change is
+required.
 
 ```bash
 # Run a specific test when debugging the root cause
