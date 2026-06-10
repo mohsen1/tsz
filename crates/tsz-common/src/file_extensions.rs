@@ -177,7 +177,7 @@ pub fn is_ts_file(path: &Path) -> bool {
 /// Matches:
 /// - Any file whose name starts with `lib.` and ends with `.d.ts`
 ///   (e.g. `lib.es5.d.ts`, `lib.esnext.full.d.ts`).
-/// - Files inside an `@typescript/lib-*` node_modules package
+/// - Files inside an `@typescript/lib-*` `node_modules` package
 ///   (the split-per-lib distribution used by bundlers).
 ///
 /// Case-sensitive. Use [`is_default_lib_file_name`] when you only have
