@@ -1,32 +1,26 @@
 #!/usr/bin/env bash
 
 _TSZ_CI_GITHUB_SUITES=(
-  build
   dist-binaries
-  unit-archive
   node-harness-prep
   lint
   unit
-  checker-integration
-  unit-shard
   lsp-e2e
-  wasm
-  wasm-web
   wasm-all
   conformance
   conformance-aggregate
-  emit
   emit-shard
-  emit-aggregate
-  fourslash
   fourslash-shard
   fourslash-aggregate
 )
 
+_TSZ_CI_DIRECT_SUITES=(
+  checker-integration
+)
+
 _TSZ_CI_FULL_SUITES=(
-  all
-  full
   "${_TSZ_CI_GITHUB_SUITES[@]}"
+  "${_TSZ_CI_DIRECT_SUITES[@]}"
 )
 
 _TSZ_CI_CACHE_SUITES=(
@@ -78,21 +72,15 @@ ci_suite_is_known() {
 
 ci_suite_needs_group() {
   local suite="$1" group="$2"
-  case "$suite" in
-    all|full)
-      return 0
-      ;;
-  esac
-
   case "$group" in
     lint)
       [[ "$suite" == "lint" ]]
       ;;
     unit)
-      [[ "$suite" == "unit" || "$suite" == "checker-integration" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
+      [[ "$suite" == "unit" || "$suite" == "checker-integration" ]]
       ;;
     wasm)
-      [[ "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" ]]
+      [[ "$suite" == "wasm-all" ]]
       ;;
     node)
       [[ "$suite" == "lint" || "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
@@ -108,7 +96,7 @@ ci_suite_needs_group() {
 
 ci_suite_needs_rust_compile() {
   case "$1" in
-    all|full|bench|build|lint|unit|checker-integration|wasm|wasm-web|wasm-all|dist-binaries|unit-archive)
+    all|full|bench|lint|unit|checker-integration|wasm-all|dist-binaries)
       return 0
       ;;
     *)
@@ -143,12 +131,12 @@ ci_suite_caches() {
       # It does not read the TypeScript corpus or install npm packages.
       echo "cargo-home"
       ;;
-    build|unit|checker-integration)
+    unit|checker-integration)
       # Full local build/unit flows may run tests that reference
       # TypeScript/src/lib and tests/cases at runtime.
       echo "cargo-home typescript-source"
       ;;
-    dist-binaries|unit-archive)
+    dist-binaries)
       # Rust compile/archive only; downstream suites restore corpus or
       # harness state when they actually need it.
       echo "cargo-home"
@@ -158,13 +146,9 @@ ci_suite_caches() {
       # and uses npm's cache for pinned tsgo/tsc installs.
       echo "cargo-home typescript-source npm"
       ;;
-    wasm|wasm-web|wasm-all)
+    wasm-all)
       # wasm-pack installs the matching wasm-bindgen CLI on demand.
       echo "cargo-home typescript-source wasm-pack-cache"
-      ;;
-    unit-shard)
-      # Downloads the nextest archive directly from GCS.
-      echo ""
       ;;
     lsp-e2e)
       # Reuses the dist-fast `tsz-lsp` binary artifact and a Node protocol
@@ -176,13 +160,9 @@ ci_suite_caches() {
       # from TypeScript source. No npm/harness restore needed.
       echo "typescript-source dist-fast-commit"
       ;;
-    conformance-aggregate|emit-aggregate|fourslash-aggregate)
+    conformance-aggregate|fourslash-aggregate)
       # Aggregates only download per-shard JSONs from GCS.
       echo ""
-      ;;
-    emit|fourslash)
-      # Full Node-driven test run: TypeScript source + harness + tsz binary.
-      echo "typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
       ;;
     emit-shard)
       # Shards get Node runtime artifacts and tsz via CI artifacts, so only
@@ -214,13 +194,10 @@ ci_suite_target_caches() {
     all|full)
       echo "cargo-target-deps cargo-target-unit cargo-target-wasm"
       ;;
-    build)
-      echo "cargo-target-deps cargo-target-unit"
-      ;;
     dist-binaries)
       echo "cargo-target-deps"
       ;;
-    unit-archive|unit|checker-integration)
+    unit|checker-integration)
       echo "cargo-target-unit"
       ;;
     lint)
@@ -228,7 +205,7 @@ ci_suite_target_caches() {
       # sccache handles cross-commit lint reuse.
       echo ""
       ;;
-    wasm|wasm-web|wasm-all)
+    wasm-all)
       echo "cargo-target-wasm"
       ;;
     *)

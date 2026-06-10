@@ -993,7 +993,7 @@ jobs:
     # Conformance shards consume the dist-fast binaries artifact and run the
     # tsz-conformance harness; they do not need unit's test outputs. Each
     # shard runs on its own self-hosted 8-vCPU runner, so concurrent fanout
-    # does not compete with the unit-archive compile for rustc capacity.
+    # does not compete with Rust build/test jobs for rustc capacity.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'

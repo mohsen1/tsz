@@ -50,7 +50,7 @@ default_cargo_build_jobs() {
   cpu_jobs="$HOST_CPUS"
   mem_mb="$(host_memory_mb)"
   case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
-    unit|checker-integration|unit-archive|unit-shard)
+    unit|checker-integration)
       # Force `CARGO_BUILD_JOBS=1` on unit. Observed RSS-per-rustc on this
       # workspace's lib-test compiles (notably tsz-checker, tsz-emitter,
       # tsz-solver, tsz-core lib-test) now exceeds 16 GiB per process during

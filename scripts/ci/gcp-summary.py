@@ -350,7 +350,7 @@ def main() -> int:
     lines: list[str] = []
     append_env(lines, args.suite, args.exit_code)
 
-    if args.suite in {"emit", "emit-shard", "emit-aggregate"}:
+    if args.suite == "emit-shard":
         emit_summary(metrics_dir, logs_dir, lines)
     elif args.suite == "fourslash":
         fourslash_summary(metrics_dir, logs_dir, lines)
