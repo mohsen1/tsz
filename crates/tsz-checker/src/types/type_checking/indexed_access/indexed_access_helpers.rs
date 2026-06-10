@@ -1278,6 +1278,13 @@ impl<'a> CheckerState<'a> {
             // Instead, exploit the keyof contravariance: `keyof A ≤ keyof B` iff `B ≤ A`
             // (B is assignable to A). Extract A from the constraint (`keyof A` → A) and
             // check `is_assignable_to(B, A)` directly on the object types.
+            //
+            // Fire TS2536 only when we can *prove* the key spaces differ. The proof
+            // requires both the constraint operand and the indexed object to be named
+            // Lazy aliases with distinct DefIds. For Application types, inline object
+            // types, and conditional types — where `lazy_def_id` returns `None` — we
+            // cannot prove a difference, so we default to suppressing the error.
+            let mut provably_different_named_type = false;
             for current_object in [object_type, object_type_for_check] {
                 if crate::query_boundaries::common::is_type_parameter_like(
                     self.ctx.types,
@@ -1329,6 +1336,11 @@ impl<'a> CheckerState<'a> {
                     {
                         return false;
                     }
+                    // Both are named Lazy aliases with DIFFERENT DefIds (fast-path 2 didn't
+                    // fire). This is the only case where we can prove distinct key spaces.
+                    if constraint_def.is_some() && current_def.is_some() {
+                        provably_different_named_type = true;
+                    }
                 } else {
                     // Non-keyof constraint (e.g. `string`, `number`): compare the
                     // constraint directly against `keyof B`. This path is rare; the
@@ -1340,7 +1352,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            return true;
+            return provably_different_named_type;
         };
 
         for current_object in [object_type, object_type_for_check] {
