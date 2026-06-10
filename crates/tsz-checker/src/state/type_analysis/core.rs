@@ -828,17 +828,31 @@ impl<'a> CheckerState<'a> {
     /// refinement pass can install a constrained variant when the user
     /// wrote `T extends C`.
     ///
-    /// For type parameters that have no `DefId` registration (class, method,
-    /// and interface type parameters are not emitted into `semantic_defs` by
-    /// the binder), a secondary node-keyed cache (`type_param_node_cache`) is
-    /// consulted. Without it, `get_class_instance_type_inner` and the outer
-    /// `check_class_declaration` each call `push_type_parameters` independently,
-    /// producing different `TypeIds` for the same `T`. That discrepancy causes
+    /// A secondary node-keyed cache (`type_param_node_cache`, multi-entry per
+    /// `(name_node, info)`) is consulted for every declaration — both for type
+    /// parameters with no `DefId` registration (class, method, and interface
+    /// type parameters are not emitted into `semantic_defs` by the binder) and
+    /// as a backstop for the def-keyed slot. Without it,
+    /// `get_class_instance_type_inner` and the outer `check_class_declaration`
+    /// each call `push_type_parameters` independently, producing different
+    /// `TypeIds` for the same `T`. That discrepancy causes
     /// `MappedType.constraint = KeyOf(T_id_instance)` to differ from
     /// `K.constraint = KeyOf(T_id_check)`, silently defeating
     /// `type_param_constraint_matches` in the solver's `visit_mapped` and
     /// producing a false TS2349 on `this.map[key]()` patterns.
-    fn intern_type_param_for_decl(
+    ///
+    /// The def-keyed `find_type_param_for_def` slot is single-entry and
+    /// overwritten on every mint, so the two-phase push pattern
+    /// (pass 1 unconstrained, pass 2 constrained refinement) ping-pongs it:
+    /// each later pass-1 lookup misses the registered constrained variant and
+    /// would mint a fresh id, then the constrained lookup misses the fresh
+    /// unconstrained one, and so on. Consulting the node-keyed cache even when
+    /// a `DefId` registration exists keeps one canonical `TypeId` per
+    /// `(declaration, info)` pair, so an `implements` clause's type arguments
+    /// and a member annotation lowered under `push_enclosing_type_parameters`
+    /// agree on the same `TypeId` for the same declared parameter (false
+    /// `TS2416` on `kysely`-style generic-alias parameter annotations, #13044).
+    pub(crate) fn intern_type_param_for_decl(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
         info: tsz_solver::TypeParamInfo,
@@ -859,18 +873,16 @@ impl<'a> CheckerState<'a> {
             }
         });
 
-        // Fallback: for type params with no DefId (class/method/interface type params
-        // omitted from semantic_defs), use the node-keyed cache so repeated
-        // push_type_parameters calls for the same declaration converge on the same TypeId.
+        // Node-keyed fallback: consult the `(name_node, info)` cache for every
+        // declaration (not just DefId-less ones). The def-keyed slot above is
+        // single-entry, so the unconstrained/constrained two-phase push pattern
+        // ping-pongs it; this multi-entry cache keeps one canonical `TypeId`
+        // per `(declaration, info)` pair across all scope-push paths.
         let cached = cached.or_else(|| {
-            if registered_def.is_none() {
-                self.ctx
-                    .type_param_node_cache
-                    .get(&(name_node.0, info))
-                    .copied()
-            } else {
-                None
-            }
+            self.ctx
+                .type_param_node_cache
+                .get(&(name_node.0, info))
+                .copied()
         });
 
         let type_id = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
@@ -882,13 +894,12 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_param_for_def(def_id, type_id);
-        } else {
-            // Keep the node-keyed cache up to date so the next push_type_parameters
-            // call for this same declaration returns the same TypeId.
-            self.ctx
-                .type_param_node_cache
-                .insert((name_node.0, info), type_id);
         }
+        // Keep the node-keyed cache up to date so the next push_type_parameters
+        // call for this same declaration returns the same TypeId.
+        self.ctx
+            .type_param_node_cache
+            .insert((name_node.0, info), type_id);
 
         type_id
     }
