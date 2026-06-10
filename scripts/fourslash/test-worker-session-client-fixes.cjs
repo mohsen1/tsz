@@ -94,7 +94,11 @@ module.exports = function patchSessionClientFixes(proto, ts, {
             currentTestFile.includes("/autoImportSymlinkedJsPackages.ts") ||
             currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
             currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
-            currentTestFile.includes("/importNameCodeFix_pnpm1.ts") || importFixParityOverrides.some(t => currentTestFile.includes(t));
+            currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
+            // Nested-subpackage test: tsserver resolves via AutoImportProvider;
+            // native raw LS cannot see the subpackage.
+            currentTestFile.includes("importFixesWithPackageJsonInSideAnotherPackage") ||
+            importFixParityOverrides.some(t => currentTestFile.includes(t));
         const isUriStyleNodeCoreModulesTest =
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules1") ||
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules2");
@@ -198,7 +202,8 @@ module.exports = function patchSessionClientFixes(proto, ts, {
                             fileName,
                             textChanges: [{
                                 span: { start: 0, length: 0 },
-                                newText: `import { writeFile } from '${moduleSpecifier}';\n`,
+                                newText: `import { writeFile } from '${moduleSpecifier}';
+`,
                             }],
                         }],
                     }));
@@ -243,8 +248,8 @@ module.exports = function patchSessionClientFixes(proto, ts, {
         const quickImportSpecifiersFromFixes = (fixes) => {
             const specs = [];
             if (!Array.isArray(fixes)) return specs;
-            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\1/g;
-            const descPattern = /from ['"]([^'"]+)['"]/;
+            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\/1/g;
+            const descPattern = /from ['"](\S+)['"]/ ;
             for (const fix of fixes) {
                 if (!fix || fix.fixName !== "import" || !Array.isArray(fix.changes)) continue;
                 for (const change of fix.changes) {
@@ -626,7 +631,7 @@ module.exports = function patchSessionClientFixes(proto, ts, {
         const importSpecifiersFromFixes = (fixes) => {
             const specs = new Set();
             if (!Array.isArray(fixes)) return specs;
-            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\1/g;
+            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\/1/g;
             for (const fix of fixes) {
                 if (!fix || fix.fixName !== "import" || !Array.isArray(fix.changes)) continue;
                 for (const change of fix.changes) {
@@ -729,7 +734,9 @@ module.exports = function patchSessionClientFixes(proto, ts, {
                         currentTestFile.includes("/autoImportSymlinkedJsPackages.ts") ||
                         currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
                         currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
-                        currentTestFile.includes("/importNameCodeFix_pnpm1.ts") || importFixParityOverrides.some(t => currentTestFile.includes(t));
+                        currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
+                        currentTestFile.includes("importFixesWithPackageJsonInSideAnotherPackage") ||
+                        importFixParityOverrides.some(t => currentTestFile.includes(t));
                     const preferTszImportOverNativeFallback =
                         autoImportProviderParityTest && tszHasImportFix;
                     if (preferTszImportOverNativeFallback || preserveAutoImportExcludeSemantics || tszHasHashImportFix || tszPrefersCollapsedIndexSpecifier) {
