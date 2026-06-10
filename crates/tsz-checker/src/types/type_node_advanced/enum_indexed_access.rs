@@ -20,7 +20,46 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return None;
         }
 
-        self.ctx.enum_namespace_types.get(&sym_id).copied()
+        if let Some(&ns_type) = self.ctx.enum_namespace_types.get(&sym_id) {
+            return Some(ns_type);
+        }
+
+        // Cache miss: the enum namespace type hasn't been computed yet (it is
+        // populated lazily when `get_type_of_symbol` runs for the enum, which
+        // happens after this type-node check for inline `(typeof Enum)["K"]`
+        // expressions). Build a minimal property-existence object from the
+        // binder's export table so that the TS2339 key check below can verify
+        // whether the key actually exists on the enum namespace without
+        // requiring the full `merge_namespace_exports_into_object` path (which
+        // is only available on `CheckerState`).  The actual indexed-access
+        // return type is computed by the solver via `evaluated_indexed_type`,
+        // independently of this object.
+        let Some(exports) = symbol.exports.as_ref() else {
+            return None;
+        };
+        let factory = self.ctx.types.factory();
+        let props: Vec<tsz_solver::PropertyInfo> = exports
+            .iter()
+            .map(|(name, _)| {
+                let name_atom = self.ctx.types.intern_string(name);
+                tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id: tsz_solver::TypeId::ANY,
+                    write_type: tsz_solver::TypeId::ANY,
+                    optional: false,
+                    readonly: true,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: tsz_common::Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                }
+            })
+            .collect();
+        Some(factory.object(props))
     }
 
     fn type_surface_is_type_query_alias(&self, type_id: TypeId) -> bool {
