@@ -1,7 +1,7 @@
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node_flags};
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ForOfUsingInfo {
@@ -969,17 +969,18 @@ pub(crate) fn first_await_default_param_name(
 
 /// Check whether `name` is a valid JavaScript identifier name.
 ///
-/// Returns `true` if `name` starts with `_`, `$`, or an alphabetic char
-/// and continues with `_`, `$`, or alphanumeric chars.
+/// Uses the ECMAScript Unicode identifier tables from the scanner so that
+/// Unicode property names (e.g. `café`, `日本語`) are correctly accepted
+/// without quoting, matching tsc behavior.
 pub(crate) fn is_valid_identifier_name(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    if !(first == '_' || first == '$' || first.is_alphabetic()) {
+    if !is_ecmascript_identifier_start(first) {
         return false;
     }
-    chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
+    chars.all(is_ecmascript_identifier_part)
 }
 
 /// Extract a property key from an AST node, using `convert_computed` to transform

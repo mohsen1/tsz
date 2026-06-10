@@ -17,7 +17,7 @@ use tsz_binder::symbol_flags;
 use tsz_common::position::{Position, Range};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeIndex, modifier_flags, syntax_kind_ext};
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
 impl<'a> RenameProvider<'a> {
     // -----------------------------------------------------------------------
@@ -829,14 +829,12 @@ impl<'a> RenameProvider<'a> {
 // Free-standing helpers
 // ---------------------------------------------------------------------------
 
-/// Check if a character can start an identifier.
 fn is_identifier_start(ch: char) -> bool {
-    ch == '$' || ch == '_' || ch.is_alphabetic()
+    is_ecmascript_identifier_start(ch)
 }
 
-/// Check if a character can be part of an identifier.
 fn is_identifier_part(ch: char) -> bool {
-    ch == '$' || ch == '_' || ch.is_alphanumeric()
+    is_ecmascript_identifier_part(ch)
 }
 
 fn is_valid_private_identifier(name: &str) -> bool {
