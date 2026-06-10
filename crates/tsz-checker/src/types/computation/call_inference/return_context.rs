@@ -25,7 +25,8 @@ impl<'a> CheckerState<'a> {
                 if tracked_type_params.contains(&tp.name)
                     && target != TypeId::UNKNOWN
                     && target != TypeId::ERROR
-                    && !self.target_contains_blocking_return_context_type_params(
+                    && !self.return_context_binding_target_blocked(
+                        referenced,
                         target,
                         tracked_type_params,
                     )
@@ -66,7 +67,8 @@ impl<'a> CheckerState<'a> {
                 && tracked_type_params.contains(&tp.name)
                 && target != TypeId::UNKNOWN
                 && target != TypeId::ERROR
-                && !self.target_contains_blocking_return_context_type_params(
+                && !self.return_context_binding_target_blocked(
+                    indexed_object,
                     target,
                     tracked_type_params,
                 )

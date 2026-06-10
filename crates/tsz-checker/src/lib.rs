@@ -1176,6 +1176,9 @@ mod rest_parameter_relation_routing_arch_tests;
 #[path = "tests/return_context_promise_identity_tests.rs"]
 mod return_context_promise_identity_tests;
 #[cfg(test)]
+#[path = "tests/return_context_type_param_shadowing_tests.rs"]
+mod return_context_type_param_shadowing_tests;
+#[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
 #[cfg(test)]

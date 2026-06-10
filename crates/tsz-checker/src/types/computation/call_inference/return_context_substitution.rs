@@ -30,6 +30,49 @@ struct ReturnContextShapeSubstitutionRequest<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Whether binding the tracked type parameter `source_tp` to `target`
+    /// must be refused during return-context substitution.
+    ///
+    /// `tsc` identifies type parameters by symbol, never by name. When the
+    /// contextual target is a *bare* type parameter from an enclosing
+    /// declaration that merely shares the callee parameter's name (for
+    /// example `async execute<T>(..): Promise<T>` returning
+    /// `provide<T>(..)`), the binding callee-`T` := enclosing-`T` is
+    /// legitimate and must not be refused. The previous name-keyed check
+    /// refused it and let a later structural walk bind the parameter to an
+    /// unrelated lib signature type parameter instead (for example
+    /// `Promise.then`'s `TResult2`), yielding
+    /// `Type 'Promise<TResult2>' is not assignable to type 'T'`.
+    ///
+    /// Composite targets that mention a tracked name (for example
+    /// `ReadonlyArray<T>`) keep the conservative name-keyed blocking: the
+    /// return-context substitution is merged with priority over
+    /// argument-driven inference, so admitting composite bindings here can
+    /// override correct argument inference (`freeze([arg])` against a
+    /// contextual `ReadonlyArray<T>`).
+    pub(super) fn return_context_binding_target_blocked(
+        &self,
+        source_tp: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<Atom>,
+    ) -> bool {
+        if common::contains_infer_types(self.ctx.types, target) {
+            return true;
+        }
+        // Fast path: no same-named mention at all means no possible
+        // self-reference.
+        if !common::references_any_type_param_named(self.ctx.types, target, tracked_type_params) {
+            return false;
+        }
+        if common::type_param_info(self.ctx.types, target).is_some() {
+            // A bare type parameter target blocks only when it is the very
+            // parameter being bound (identity), not a same-named parameter
+            // from another declaration scope.
+            return self.contains_type_parameter_identity_shallow(target, source_tp);
+        }
+        true
+    }
+
     fn array_or_number_index_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
         if let Some(elem) = common::array_element_type(self.ctx.types, type_id) {
             return Some(elem);
@@ -152,8 +195,7 @@ impl<'a> CheckerState<'a> {
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
-            && !self
-                .target_contains_blocking_return_context_type_params(target, tracked_type_params)
+            && !self.return_context_binding_target_blocked(source, target, tracked_type_params)
         {
             if substitution.get(tp.name).is_none() {
                 substitution.insert(tp.name, target);
@@ -232,7 +274,8 @@ impl<'a> CheckerState<'a> {
                         && substitution.get(tp.name).is_none()
                         && target_member != TypeId::UNKNOWN
                         && target_member != TypeId::ERROR
-                        && !self.target_contains_blocking_return_context_type_params(
+                        && !self.return_context_binding_target_blocked(
+                            source_member,
                             target_member,
                             tracked_type_params,
                         )
