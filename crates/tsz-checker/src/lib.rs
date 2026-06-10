@@ -681,6 +681,9 @@ mod contextual_typing_tests;
 #[path = "../tests/cross_file_class_merge_tests.rs"]
 mod cross_file_class_merge_tests;
 #[cfg(test)]
+#[path = "tests/cross_file_generic_alias_union_implements_tests.rs"]
+mod cross_file_generic_alias_union_implements_tests;
+#[cfg(test)]
 #[path = "tests/cross_file_interface_property_access_tests.rs"]
 mod cross_file_interface_property_access_tests;
 #[cfg(test)]
