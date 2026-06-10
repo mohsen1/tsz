@@ -5,6 +5,7 @@
 
 use tsz_binder::{SymbolArena, SymbolId};
 use tsz_common::interner::Atom;
+use tsz_common::source_map::escape_js_string;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::construction::TypeInterner;
 
@@ -308,32 +309,11 @@ impl<'a> TypePrinter<'a> {
 mod symbol_resolution;
 mod type_printing;
 
-/// Escape a cooked string value for embedding in a double-quoted string literal.
-///
-/// The solver stores "cooked" (unescaped) text for string literals. When
-/// writing strings back into `.d.ts` output we must re-escape characters
-/// that cannot appear raw inside double-quoted string literals.
-fn escape_string_for_double_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// Quote a property name with the appropriate quote style.
 /// tsc uses double quotes for numeric-like strings (e.g. "-1", "0")
 /// and for other non-identifier names.
 fn quote_property_name(name: &str) -> String {
-    format!("\"{}\"", escape_string_for_double_quote(name))
+    format!("\"{}\"", escape_js_string(name, '"'))
 }
 
 fn quote_property_name_single(name: &str) -> String {

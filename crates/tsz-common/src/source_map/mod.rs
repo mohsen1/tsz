@@ -555,12 +555,14 @@ pub fn escape_js_string(s: &str, quote: char) -> String {
     let bytes = s.as_bytes();
     let quote_byte = quote as u8;
 
-    // Fast path check using SIMD
+    // Fast path: return early when there is nothing to escape.
+    // All five special bytes (\, quote, \n, \r, \t, \0) must be absent.
     let has_backslash = memchr::memchr(b'\\', bytes).is_some();
     let has_quote = memchr::memchr(quote_byte, bytes).is_some();
-    let has_newline = memchr::memchr2(b'\n', b'\r', bytes).is_some();
+    let has_newline_or_cr = memchr::memchr2(b'\n', b'\r', bytes).is_some();
+    let has_tab_or_null = memchr::memchr2(b'\t', b'\0', bytes).is_some();
 
-    if !has_backslash && !has_quote && !has_newline {
+    if !has_backslash && !has_quote && !has_newline_or_cr && !has_tab_or_null {
         return s.to_string();
     }
 
