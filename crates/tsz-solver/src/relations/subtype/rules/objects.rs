@@ -514,32 +514,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if target.visibility != Visibility::Public {
             if !self.nominal_member_origin_ok(source.parent_id, target.parent_id, target.visibility)
             {
-                // Trace: Property nominal mismatch
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(
-                        crate::diagnostics::SubtypeFailureReason::PropertyNominalMismatch {
-                            property_name: source.name,
-                        },
-                    )
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
         } else if source.visibility != Visibility::Public {
             // Cannot assign private/protected source to public target
-            // Trace: Property visibility mismatch
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(
-                    crate::diagnostics::SubtypeFailureReason::PropertyVisibilityMismatch {
-                        property_name: source.name,
-                        source_visibility: source.visibility,
-                        target_visibility: target.visibility,
-                    },
-                )
-            {
-                return SubtypeResult::False;
-            }
             return SubtypeResult::False;
         }
 
@@ -609,15 +587,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // types already failed, that type-incompatibility reason takes precedence
         // (matching tsc), so return it unchanged instead of overwriting it.
         if result.is_true() && source.optional && !target.optional {
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(
-                    crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
-                        property_name: source.name,
-                    },
-                )
-            {
-                return SubtypeResult::False;
-            }
             return SubtypeResult::False;
         }
         result

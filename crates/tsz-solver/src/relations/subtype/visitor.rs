@@ -6,7 +6,6 @@
 
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
-use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult};
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, ConditionalTypeId, FunctionShapeId,
@@ -217,15 +216,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 SubtypeResult::False
             };
         }
-        // Trace: Literal doesn't match target
-        if let Some(tracer) = &mut self.checker.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::LiteralTypeMismatch {
-                source_type: self.source,
-                target_type: self.target,
-            })
-        {
-            return SubtypeResult::False;
-        }
         SubtypeResult::False
     }
 
@@ -241,15 +231,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .check_array_interface_subtype(element_type, self.target)
             {
                 return result;
-            }
-            // Trace: Array source doesn't match non-array target
-            if let Some(tracer) = &mut self.checker.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: self.source,
-                    target_type: self.target,
-                })
-            {
-                return SubtypeResult::False;
             }
             SubtypeResult::False
         }
@@ -284,15 +265,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 return SubtypeResult::True;
             }
 
-            // Trace: Tuple source doesn't match non-tuple/non-array target
-            if let Some(tracer) = &mut self.checker.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: self.source,
-                    target_type: self.target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             SubtypeResult::False
         }
     }
@@ -302,15 +274,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         let member_list = self.checker.interner.type_list(TypeListId(list_id));
         for &member in member_list.iter() {
             if !self.checker.check_subtype(member, self.target).is_true() {
-                // Trace: No union member matches target
-                if let Some(tracer) = &mut self.checker.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
-                        source_type: self.source,
-                        target_union_members: vec![self.target],
-                    })
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
         }
@@ -517,15 +480,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
         }
 
-        // Trace: No intersection member matches target
-        if let Some(tracer) = &mut self.checker.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoIntersectionMemberMatches {
-                source_type: self.source,
-                target_type: self.target,
-            })
-        {
-            return SubtypeResult::False;
-        }
         SubtypeResult::False
     }
 
@@ -706,15 +660,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 Some(self.target),
             )
         } else {
-            // Trace: Object source doesn't match non-object target
-            if let Some(tracer) = &mut self.checker.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: self.source,
-                    target_type: self.target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             SubtypeResult::False
         }
     }
@@ -756,15 +701,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 self.target,
             )
         } else {
-            // Trace: ObjectWithIndex source doesn't match non-object target
-            if let Some(tracer) = &mut self.checker.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: self.source,
-                    target_type: self.target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             SubtypeResult::False
         }
     }
@@ -789,15 +725,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // Avoid expanding and comparing every `Function` interface member.
             SubtypeResult::True
         } else {
-            // Trace: Function source doesn't match non-function target
-            if let Some(tracer) = &mut self.checker.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: self.source,
-                    target_type: self.target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             SubtypeResult::False
         }
     }
@@ -868,15 +795,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 Some(self.target),
             )
         } else {
-            // Trace: Callable source doesn't match non-callable/non-object target
-            if let Some(tracer) = &mut self.checker.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: self.source,
-                    target_type: self.target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             SubtypeResult::False
         }
     }
@@ -936,22 +854,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .checker
                 .index_accesses_have_distinct_type_param_keys(key_type, t_idx)
             {
-                // Surface tsc's full TS2322 + TS5075 chain via a dedicated
-                // failure reason. Falls back to the generic TypeMismatch
-                // shape when the target key is not a type parameter we
-                // can carry constraint info for.
-                let reason = self
-                    .checker
-                    .index_access_distinct_type_param_keys_failure_reason(key_type, t_idx)
-                    .unwrap_or(SubtypeFailureReason::TypeMismatch {
-                        source_type: self.source,
-                        target_type: self.target,
-                    });
-                if let Some(tracer) = &mut self.checker.tracer
-                    && !tracer.on_mismatch_dyn(reason)
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
 
@@ -983,14 +885,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // If target is not an IndexAccess, we cannot prove subtyping.
         // Note: If S[I] could have been simplified to a concrete type that matches the target,
         // evaluate_type() in the caller (check_subtype) would have already handled it.
-        if let Some(tracer) = &mut self.checker.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                source_type: self.source,
-                target_type: self.target,
-            })
-        {
-            return SubtypeResult::False;
-        }
         SubtypeResult::False
     }
     fn visit_template_literal(&mut self, template_id: u32) -> Self::Output {
@@ -1025,15 +919,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .check_template_assignable_to_template(s_id, t_template_id);
         }
 
-        // Trace: Template literal doesn't match target
-        if let Some(tracer) = &mut self.checker.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                source_type: self.source,
-                target_type: self.target,
-            })
-        {
-            return SubtypeResult::False;
-        }
         SubtypeResult::False
     }
     fn visit_type_query(&mut self, symbol_ref: u32) -> Self::Output {
@@ -1112,15 +997,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             return SubtypeResult::True;
         }
 
-        // Trace: keyof doesn't match target
-        if let Some(tracer) = &mut self.checker.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                source_type: self.source,
-                target_type: self.target,
-            })
-        {
-            return SubtypeResult::False;
-        }
         SubtypeResult::False
     }
     fn visit_this_type(&mut self) -> Self::Output {
@@ -1145,14 +1021,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // In most cases, check_subtype_inner's apparent_primitive_shape_for_type
         // would have resolved 'this' to its containing class/interface.
         // If that didn't happen or didn't result in 'True', we return False.
-        if let Some(tracer) = &mut self.checker.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                source_type: self.source,
-                target_type: self.target,
-            })
-        {
-            return SubtypeResult::False;
-        }
         SubtypeResult::False
     }
     fn visit_infer(&mut self, param_info: &TypeParamInfo) -> Self::Output {
@@ -1180,15 +1048,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             return SubtypeResult::True;
         }
 
-        // Trace: unique symbol doesn't match target
-        if let Some(tracer) = &mut self.checker.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                source_type: self.source,
-                target_type: self.target,
-            })
-        {
-            return SubtypeResult::False;
-        }
         SubtypeResult::False
     }
     fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {

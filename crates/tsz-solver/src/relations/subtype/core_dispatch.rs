@@ -134,14 +134,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     {
                         return SubtypeResult::True;
                     }
-                    if let Some(tracer) = &mut self.tracer
-                        && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                            source_type: source,
-                            target_type: target,
-                        })
-                    {
-                        return SubtypeResult::False;
-                    }
                     return SubtypeResult::False;
                 }
                 let result = self.check_object_with_index_subtype(
@@ -238,15 +230,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let member_list = self.interner.type_list(members);
             for &member in member_list.iter() {
                 if !self.check_subtype(member, target).is_true() {
-                    // Trace: No union member matches target
-                    if let Some(tracer) = &mut self.tracer
-                        && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
-                            source_type: source,
-                            target_union_members: vec![target],
-                        })
-                    {
-                        return SubtypeResult::False;
-                    }
                     return SubtypeResult::False;
                 }
             }
@@ -500,15 +483,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
-            // Trace: Source is not a subtype of any union member
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
-                    source_type: source,
-                    target_union_members: member_list.iter().copied().collect(),
-                })
-            {
-                return SubtypeResult::False;
-            }
             return SubtypeResult::False;
         }
 
@@ -631,27 +605,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(members) = intersection_list_id(self.interner, target) {
             let member_list = self.interner.type_list(members);
 
-            // Keep diagnostic precision when collecting mismatch reasons via tracer.
-            if self.tracer.is_none() {
-                // Fast path: check the shared intersection merge cache first to
-                // skip the O(N) eligibility scan for repeated constraint checks.
-                let cached = self
-                    .query_db
-                    .and_then(|db| db.lookup_intersection_merge(target));
-                let merged_target = if let Some(cached_result) = cached {
-                    cached_result
-                } else if self.can_use_object_intersection_fast_path(&member_list) {
-                    self.build_object_intersection_target(target)
-                } else {
-                    // Not eligible; cache the negative result to avoid re-scanning.
-                    if let Some(db) = self.query_db {
-                        db.insert_intersection_merge(target, None);
-                    }
-                    None
-                };
-                if let Some(merged) = merged_target {
-                    return self.check_subtype(source, merged);
+            // Fast path: check the shared intersection merge cache first to
+            // skip the O(N) eligibility scan for repeated constraint checks.
+            let cached = self
+                .query_db
+                .and_then(|db| db.lookup_intersection_merge(target));
+            let merged_target = if let Some(cached_result) = cached {
+                cached_result
+            } else if self.can_use_object_intersection_fast_path(&member_list) {
+                self.build_object_intersection_target(target)
+            } else {
+                // Not eligible; cache the negative result to avoid re-scanning.
+                if let Some(db) = self.query_db {
+                    db.insert_intersection_merge(target, None);
                 }
+                None
+            };
+            if let Some(merged) = merged_target {
+                return self.check_subtype(source, merged);
             }
 
             // When checking source <: each intersection member, temporarily disable
@@ -741,15 +712,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Note: When the type parameter is the SOURCE (e.g., T <: string), we check
             // against its constraint. But as TARGET, we return False.
 
-            // Trace: Concrete type not assignable to type parameter
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             return SubtypeResult::False;
         }
 
@@ -796,15 +758,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // (check_generic_index_access_subtype) after the visitor dispatch can
             // resolve the access by distributing over K's constraint literals.
             if index_access_parts(self.interner, target).is_none() {
-                // Trace: Intrinsic type mismatch (boxed primitive check failed)
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
         }
@@ -823,15 +776,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if s_lit == t_lit {
                 return SubtypeResult::True;
             }
-            // Trace: Literal type mismatch
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::LiteralTypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             return SubtypeResult::False;
         }
 
@@ -845,15 +789,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Object) {
             if self.is_object_keyword_type(source) {
                 return SubtypeResult::True;
-            }
-            // Trace: Source is not object-compatible
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
-                return SubtypeResult::False;
             }
             return SubtypeResult::False;
         }
@@ -895,15 +830,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if is_function_structural && source_is_object {
                 // Fall through to structural object-to-object comparison below
             } else {
-                // Trace: Source is not function-compatible
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
         }
@@ -928,14 +854,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
 
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             return SubtypeResult::False;
         }
 
@@ -1355,14 +1273,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 && crate::type_queries::is_literal_enum_member(self.interner, source)
                 && crate::type_queries::is_literal_enum_member(self.interner, target)
             {
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
 
@@ -1382,15 +1292,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             // Different enums are NOT compatible (nominal typing)
-            // Trace: Enum nominal mismatch
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
-                return SubtypeResult::False;
-            }
             return SubtypeResult::False;
         }
 
@@ -1622,14 +1523,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     );
                 }
                 // FunctionShape has no properties - not assignable to non-empty object
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
@@ -1648,14 +1541,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     );
                 }
                 // FunctionShape has no properties - not assignable to non-empty indexed object
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
         }
@@ -1717,15 +1602,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return result;
                 }
-                // Trace: Array/tuple not compatible with object
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
                 return SubtypeResult::False;
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
@@ -1736,34 +1612,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // types with a string index signature requirement, e.g.
                     // `number[] <: { [x: string]: unknown }` is false.
                     if t_shape.string_index.is_some() {
-                        if let Some(tracer) = &mut self.tracer
-                            && !tracer.on_mismatch_dyn(
-                                SubtypeFailureReason::MissingIndexSignature {
-                                    index_kind: "string",
-                                },
-                            )
-                        {
-                            return SubtypeResult::False;
-                        }
                         return SubtypeResult::False;
                     }
                     if let Some(ref num_idx) = t_shape.number_index {
                         let elem_type =
                             array_element_type(self.interner, source).unwrap_or(TypeId::ANY);
                         if !self.check_subtype(elem_type, num_idx.value_type).is_true() {
-                            // Trace: Array element type mismatch with index signature
-                            if let Some(tracer) = &mut self.tracer
-                                && !tracer.on_mismatch_dyn(
-                                    SubtypeFailureReason::IndexSignatureMismatch {
-                                        index_kind: "number",
-                                        source_value_type: elem_type,
-                                        target_value_type: num_idx.value_type,
-                                        nested_reason: None,
-                                    },
-                                )
-                            {
-                                return SubtypeResult::False;
-                            }
                             return SubtypeResult::False;
                         }
                     }
@@ -1793,15 +1647,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                 {
                     return SubtypeResult::True;
-                }
-                // Trace: Array/tuple not compatible with indexed object with non-empty properties
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
                 }
                 return SubtypeResult::False;
             }
@@ -1869,17 +1714,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
             }
-        }
-
-        // Trace: Generic fallback type mismatch (no specific reason matched above)
-        if result == SubtypeResult::False
-            && let Some(tracer) = &mut self.tracer
-            && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            })
-        {
-            return SubtypeResult::False;
         }
 
         result
