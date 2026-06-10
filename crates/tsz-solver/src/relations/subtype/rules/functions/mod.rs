@@ -18,6 +18,7 @@ use crate::types::{
     TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -1108,12 +1109,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             is_method: source.is_method,
         };
 
+        // A constraint that references the signature's own (renamed) type
+        // parameters cannot be enforced as an upper bound during resolution:
+        // the bound still contains an unresolved rename placeholder, so a
+        // perfectly valid inference such as `T := S` for
+        // `<T extends { value: T }>` would be rejected by the literal check
+        // `S <: { value: __infer_src_ctx_0 }`. tsc instead validates the
+        // inferred type against the constraint *instantiated with the
+        // inference mapper* (`instantiateType(constraint, mapper)`); mirror
+        // that by deferring self-referential constraints and checking them
+        // once the full substitution is known (below, before returning).
+        let renamed_param_names: FxHashSet<Atom> = renamed_source
+            .type_params
+            .iter()
+            .map(|tp| tp.name)
+            .collect();
+        let mut deferred_self_referential_constraints: Vec<(Atom, TypeId)> = Vec::new();
         let mut infer_ctx = InferenceContext::new(self.interner);
         for tp in &renamed_source.type_params {
             let var = infer_ctx.fresh_type_param(tp.name, tp.is_const);
             if let Some(constraint) = tp.constraint {
-                infer_ctx.add_upper_bound(var, constraint);
-                infer_ctx.set_declared_constraint(var, constraint);
+                if crate::visitors::visitor_predicates::references_any_type_param_named(
+                    self.interner,
+                    constraint,
+                    &renamed_param_names,
+                ) {
+                    deferred_self_referential_constraints.push((tp.name, constraint));
+                } else {
+                    infer_ctx.add_upper_bound(var, constraint);
+                    infer_ctx.set_declared_constraint(var, constraint);
+                }
             }
         }
 
@@ -1448,6 +1473,45 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 substitution.insert(original_tp.name, resolved_ty);
             } else if !preserve_uninferred_type_param {
                 substitution.insert(original_tp.name, fallback);
+            }
+        }
+
+        // Deferred self-referential constraint validation (see the
+        // registration loop above): check each inferred type against its
+        // declared constraint instantiated with the full inference solution,
+        // mirroring tsc's `instantiateType(constraint, mapper)` check. For
+        // `<T extends { value: T }>` inferred as `T := S` this validates
+        // `S <: { value: S }` instead of the unsatisfiable
+        // `S <: { value: __infer_src_ctx_0 }`.
+        if !deferred_self_referential_constraints.is_empty() {
+            let mut renamed_solution = TypeSubstitution::new();
+            for (original_tp, renamed_tp) in source
+                .type_params
+                .iter()
+                .zip(renamed_source.type_params.iter())
+            {
+                if let Some(resolved) = substitution.get(original_tp.name) {
+                    renamed_solution.insert(renamed_tp.name, resolved);
+                }
+            }
+            for (renamed_name, constraint) in &deferred_self_referential_constraints {
+                let Some(inferred_ty) = renamed_solution.get(*renamed_name) else {
+                    continue;
+                };
+                if inferred_ty.is_any_unknown_or_error() {
+                    continue;
+                }
+                let instantiated_constraint =
+                    instantiate_type(self.interner, *constraint, &renamed_solution);
+                if !self
+                    .check_subtype(inferred_ty, instantiated_constraint)
+                    .is_true()
+                {
+                    return Err(crate::inference::infer::InferenceError::Conflict(
+                        inferred_ty,
+                        instantiated_constraint,
+                    ));
+                }
             }
         }
         Ok(substitution)

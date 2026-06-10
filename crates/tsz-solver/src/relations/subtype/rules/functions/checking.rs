@@ -63,6 +63,48 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         candidate_tp_ids.iter().any(|id| free.contains(id))
     }
 
+    /// `TypeId` candidates that may represent `shape`'s own type parameters
+    /// inside a related signature.
+    ///
+    /// The structural intern of each `TypeParamInfo` covers occurrences that
+    /// were interned through the dedupe table. Declaration-scoped type
+    /// parameters are interned fresh and keep their original `TypeId` through
+    /// instantiation (#13044), so the id that actually occurs free in
+    /// `shape`'s parameter/return positions can differ from that structural
+    /// intern. Within `shape`, a *free* occurrence whose name matches one of
+    /// the shape's own type parameters is bound by that parameter, so its id
+    /// is an equally valid identity handle for it. Collect both so
+    /// identity-sharing recognition works for declaration-scoped parameters
+    /// as well as structurally interned ones.
+    fn own_type_param_identity_ids(&self, shape: &FunctionShape) -> Vec<TypeId> {
+        let mut ids: Vec<TypeId> = shape
+            .type_params
+            .iter()
+            .map(|tp| self.interner.type_param(*tp))
+            .collect();
+        if shape.type_params.is_empty() {
+            return ids;
+        }
+        let free = crate::visitors::visitor_predicates::free_type_parameter_ids_in(
+            self.interner,
+            shape
+                .params
+                .iter()
+                .map(|p| p.type_id)
+                .chain(shape.this_type)
+                .chain(std::iter::once(shape.return_type)),
+        );
+        for id in free {
+            if !ids.contains(&id)
+                && type_param_info(self.interner, id)
+                    .is_some_and(|info| shape.type_params.iter().any(|tp| tp.name == info.name))
+            {
+                ids.push(id);
+            }
+        }
+        ids
+    }
+
     fn check_function_subtype_impl(
         &mut self,
         source: &FunctionShape,
@@ -446,13 +488,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // leave the source parameter free, producing spurious TS2322/TS2345
             // (`'X' is not assignable to 'T'`). Restrict the check to free
             // occurrences so only genuine contextual-seeding shares identity.
-            let source_tp_ids: Vec<TypeId> = source_instantiated
-                .type_params
-                .iter()
-                .map(|tp| self.interner.type_param(*tp))
-                .collect();
+            let source_tp_ids = self.own_type_param_identity_ids(&source_instantiated);
             let target_refs_source_params =
                 self.shape_free_type_params_overlap(&source_tp_ids, &target_instantiated);
+            tracing::trace!(
+                ?source_tp_ids,
+                target_refs_source_params,
+                target_params = ?target_instantiated.params.iter().map(|p| p.type_id).collect::<Vec<_>>(),
+                target_return = ?target_instantiated.return_type,
+                "generic source vs non-generic target: identity-sharing check"
+            );
 
             if target_refs_source_params {
                 // Target references source's type params — they share identity.
@@ -501,11 +546,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // universally quantified target (false TS2416/TS2430).
         if source_instantiated.type_params.is_empty() && !target_instantiated.type_params.is_empty()
         {
-            let target_tp_ids: Vec<TypeId> = target_instantiated
-                .type_params
-                .iter()
-                .map(|tp| self.interner.type_param(*tp))
-                .collect();
+            let target_tp_ids = self.own_type_param_identity_ids(&target_instantiated);
             let source_refs_target_params =
                 self.shape_free_type_params_overlap(&target_tp_ids, &source_instantiated);
 

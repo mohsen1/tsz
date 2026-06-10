@@ -1028,6 +1028,29 @@ const g12: <T extends { value: T }>(x: T) => T = pipe(foo, foo);
 }
 
 #[test]
+fn pipe_preserves_self_constrained_generic_function_result_renamed_binders() {
+    // Same structural rule as `pipe_preserves_self_constrained_generic_function_result`
+    // but with the argument's and the annotation's type parameters named
+    // differently. This pins the identity-aware path: the relation must
+    // validate the inferred type against the self-referential constraint
+    // instantiated with the inference solution, not rely on the two `T`s
+    // colliding into one interned type parameter by name.
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function foo<U extends { value: U }>(x: U): U;
+
+const g10: <Q extends { value: Q }>(x: Q) => Q = pipe(foo);
+const g12: <Q extends { value: Q }>(x: Q) => Q = pipe(foo, foo);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "pipe(foo) should preserve the self-constrained generic signature independent of type-parameter names. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn pipe_preserves_generic_component_hoc_chain() {
     let source = r#"
 declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
