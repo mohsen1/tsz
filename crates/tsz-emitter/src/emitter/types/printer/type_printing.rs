@@ -4,7 +4,7 @@ use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part};
 use tsz_solver::computation::{TypeSubstitution, instantiate_type_cached};
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
@@ -1242,8 +1242,8 @@ impl<'a> TypePrinter<'a> {
         None
     }
 
-    const fn is_identifier_part_for_mapped_as(ch: char) -> bool {
-        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+    fn is_identifier_part_for_mapped_as(ch: char) -> bool {
+        is_ecmascript_identifier_part(ch)
     }
 
     pub(crate) fn print_index_access(&self, container: TypeId, index: TypeId) -> String {

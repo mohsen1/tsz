@@ -9,6 +9,7 @@ use member_filters::{
     OBJECT_PROTOTYPE_ONLY_MEMBERS, dot_access_member_label_is_completion_eligible,
     primitive_member_is_completion_eligible,
 };
+use tsz_scanner::{is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PropertyCompletion {
@@ -1652,10 +1653,10 @@ impl<'a> Completions<'a> {
         let Some(first) = chars.next() else {
             return false;
         };
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        if !is_ecmascript_identifier_start(first) {
             return false;
         }
-        chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        chars.all(is_ecmascript_identifier_part)
     }
 
     /// Find the enclosing object literal expression for a given node.
