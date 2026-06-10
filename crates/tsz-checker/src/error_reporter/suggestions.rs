@@ -1,6 +1,7 @@
 //! Spelling suggestion helpers (Levenshtein distance, property/identifier suggestions).
 
 use crate::state::CheckerState;
+use crate::state_type_analysis::cross_file_direct::is_builtin_lib_file_name;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
@@ -900,12 +901,6 @@ impl<'a> CheckerState<'a> {
         let result = previous[s2_chars.len()];
         (result <= max).then_some(result)
     }
-}
-
-fn is_builtin_lib_file_name(file_name: &str) -> bool {
-    let normalized = file_name.replace('\\', "/");
-    let basename = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
-    basename.starts_with("lib.") && basename.ends_with(".d.ts")
 }
 
 /// Lib versions for the members every integer/float typed array shares
