@@ -522,6 +522,49 @@ function search<Row>() {
     );
 }
 
+/// Structural rule: when two applications of the same conditional alias have
+/// different free type parameters as arguments (`__Awaited<T>` vs
+/// `__Awaited<U>` where T ≠ U), variance correctly rejects the assignment and
+/// TS2322 must fire. The deep-path suppressor (which gates on concrete
+/// string-literal args with ≥3 dots) must NOT suppress this case.
+#[test]
+fn conditional_alias_different_free_type_params_produces_ts2322() {
+    let source = r#"
+type MyAwaited<T> =
+    T extends null | undefined ? T :
+    T extends object & { then(onfulfilled: infer F, ...args: infer _): any } ?
+        F extends ((value: infer V, ...args: infer _) => any) ? MyAwaited<V> : never :
+    T;
+
+function f<T, U>(x: MyAwaited<T>): MyAwaited<U> {
+    return x;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "MyAwaited<T> assigned to MyAwaited<U> with T≠U must produce TS2322. Got: {codes:?}"
+    );
+}
+
+/// Same rule as above with renamed type alias and parameter names to confirm
+/// the fix is structural and not hardcoded to specific identifiers.
+#[test]
+fn recursive_conditional_different_type_params_ts2322_renamed() {
+    let source = r#"
+type Resolved<X> = X extends { value: infer V } ? Resolved<V> : X;
+
+function convert<A, B>(x: Resolved<A>): Resolved<B> {
+    return x;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Resolved<A> assigned to Resolved<B> with A≠B must produce TS2322. Got: {codes:?}"
+    );
+}
+
 /// Same `FindConditions` pattern with renamed type parameters to confirm the
 /// fix is not keyed on specific identifier names.
 #[test]
