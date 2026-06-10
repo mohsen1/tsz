@@ -566,7 +566,17 @@ impl<'a> InferenceContext<'a> {
 
     /// Record the declared `extends` constraint for an inference variable.
     pub fn set_declared_constraint(&mut self, var: InferenceVar, constraint: TypeId) {
-        self.declared_constraints.insert(var, constraint);
+        // Key by the unification root so the lookup in `resolve_with_constraints`
+        // (which reads `declared_constraints.get(&table.find(var))`) finds the
+        // entry even after `var` is unified with another inference variable.
+        // This mirrors `mark_declared_constraint_preserves_literals`, which
+        // already normalises to the root. Without it, a constraint such as
+        // `U extends [T, ...T[]]` (whose var unifies during constraint
+        // strengthening) loses its declared constraint at resolution time and
+        // literal inferences for `U` are widened (the zod `arrayToEnum`/
+        // `ZodIssueCode` family).
+        let root = self.table.find(var);
+        self.declared_constraints.insert(root, constraint);
     }
 
     /// Record that the declared `extends` constraint semantically preserves literals.
