@@ -385,6 +385,35 @@ pub struct AssignabilityQueryOutcome {
 /// `AssignableBivariantCallbacks`) carry structured failure analysis; other
 /// kinds must use [`query_relation_with_overrides`].
 pub fn query_assignability_with_failure_analysis<'a, R, P>(
+    inputs: RelationQueryInputs<'a, R, P>,
+) -> AssignabilityQueryOutcome
+where
+    R: TypeResolver,
+    P: AssignabilityOverrideProvider + ?Sized,
+{
+    query_assignability_inner(inputs, true)
+}
+
+/// Decision-only variant of [`query_assignability_with_failure_analysis`]:
+/// runs the *identical* configured decision pass (same policy, overrides, and
+/// relation caches) but never derives the structured failure analysis.
+///
+/// For callers that consume only the pass/fail bit (constraint-satisfaction
+/// probes and similar), the failure-reason walk (`explain_failure` +
+/// `is_weak_union_violation`) is pure waste — on large type-level programs it
+/// re-traverses the failing relation graph per probe. The returned
+/// `analysis` is always `None`.
+pub fn query_assignability_decision_only<'a, R, P>(
+    inputs: RelationQueryInputs<'a, R, P>,
+) -> AssignabilityQueryOutcome
+where
+    R: TypeResolver,
+    P: AssignabilityOverrideProvider + ?Sized,
+{
+    query_assignability_inner(inputs, false)
+}
+
+fn query_assignability_inner<'a, R, P>(
     RelationQueryInputs {
         interner,
         resolver,
@@ -395,6 +424,7 @@ pub fn query_assignability_with_failure_analysis<'a, R, P>(
         context,
         overrides,
     }: RelationQueryInputs<'a, R, P>,
+    collect_analysis: bool,
 ) -> AssignabilityQueryOutcome
 where
     R: TypeResolver,
@@ -433,7 +463,7 @@ where
     // The failure analysis runs on the same `checker`, so its relation cache is
     // already warm with the decision's sub-results: the structural reason walk
     // observes the identical outcomes the decision did and cannot contradict it.
-    let analysis = (!related).then(|| AssignabilityFailureAnalysis {
+    let analysis = (!related && collect_analysis).then(|| AssignabilityFailureAnalysis {
         weak_union_violation: checker.is_weak_union_violation(source, target),
         failure_reason: checker.explain_failure(source, target),
     });

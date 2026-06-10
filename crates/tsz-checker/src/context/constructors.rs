@@ -167,6 +167,7 @@ impl<'a> CheckerContext<'a> {
             all_parse_error_positions: Vec::new(),
             nullable_type_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
+            diagnostics_discarded: false,
             diagnostic_indices: DiagnosticIndices::default(),
             no_overload_call_nodes: FxHashSet::default(),
             callback_return_type_errors: Vec::new(),
@@ -753,6 +754,11 @@ impl<'a> CheckerContext<'a> {
         // the child's DefId(1) means a different thing than the parent's DefId(1).
         ctx.definition_store = Arc::clone(&parent.definition_store);
         ctx.share_owner_symbol_type_results = parent.share_owner_symbol_type_results;
+
+        // A child of a discarded-diagnostics checker is itself discarded: the
+        // whole delegation subtree's diagnostics are dropped at teardown, so
+        // none of its descendants should pay for diagnostic presentation.
+        ctx.diagnostics_discarded = parent.diagnostics_discarded;
 
         ctx
     }

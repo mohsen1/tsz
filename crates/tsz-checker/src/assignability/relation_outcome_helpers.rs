@@ -278,8 +278,10 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
-    /// Execute a diagnostic-bearing explicit alias constraint relation for raw
-    /// checker types, preserving the canonical explicit-alias request shape.
+    /// Execute an explicit alias constraint relation for raw checker types,
+    /// preserving the canonical explicit-alias request shape. Decision-only:
+    /// the sole consumer reads `outcome.related`, so failure analysis is
+    /// skipped.
     pub(crate) fn explicit_alias_constraint_relation_outcome(
         &mut self,
         source: TypeId,
@@ -289,12 +291,15 @@ impl<'a> CheckerState<'a> {
         let request =
             crate::query_boundaries::assignability::RelationRequest::explicit_alias_constraint(
                 source, target,
-            );
+            )
+            .with_decision_only();
         self.execute_relation_request(&request)
     }
 
-    /// Execute a diagnostic-bearing array-like constraint element relation for
-    /// raw checker types, preserving the canonical array-like request shape.
+    /// Execute an array-like constraint element relation for raw checker
+    /// types, preserving the canonical array-like request shape.
+    /// Decision-only: the sole consumer reads `outcome.related`, so failure
+    /// analysis is skipped.
     pub(crate) fn array_like_constraint_element_relation_outcome(
         &mut self,
         source: TypeId,
@@ -304,7 +309,8 @@ impl<'a> CheckerState<'a> {
         let request =
             crate::query_boundaries::assignability::RelationRequest::array_like_constraint_element(
                 source, target,
-            );
+            )
+            .with_decision_only();
         self.execute_relation_request(&request)
     }
 
@@ -338,8 +344,10 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
-    /// Execute a diagnostic-bearing base-union constraint relation for raw
-    /// checker types, preserving the canonical union-constraint request shape.
+    /// Execute a base-union constraint relation for raw checker types,
+    /// preserving the canonical union-constraint request shape. Decision-only:
+    /// the sole consumer reads `outcome.related`, so failure analysis is
+    /// skipped.
     pub(crate) fn union_constraint_member_relation_outcome(
         &mut self,
         source: TypeId,
@@ -349,7 +357,8 @@ impl<'a> CheckerState<'a> {
         let request =
             crate::query_boundaries::assignability::RelationRequest::union_constraint_member(
                 source, target,
-            );
+            )
+            .with_decision_only();
         self.execute_relation_request(&request)
     }
 

@@ -240,6 +240,12 @@ pub(crate) struct RelationRequest {
     /// to the solver's `AnySourceNotRelated` propagation mode, which also
     /// partitions the relation caches.
     pub overload_subtype_pass: bool,
+    /// The caller consumes only `RelationOutcome::related` (plus the overflow
+    /// flags). The boundary runs the identical decision pass but skips the
+    /// structured failure analysis (`explain_failure`, weak-union detection)
+    /// and property classification, which would otherwise re-traverse the
+    /// failing relation graph just to populate fields the caller drops.
+    pub decision_only: bool,
 }
 
 impl RelationRequest {
@@ -253,6 +259,7 @@ impl RelationRequest {
             source_is_fresh: false,
             allow_erased_generic_signature_retry: false,
             overload_subtype_pass: false,
+            decision_only: false,
         }
     }
 
@@ -730,6 +737,16 @@ impl RelationRequest {
     /// nesting level (tsc `chooseOverload` with `subtypeRelation`).
     pub(crate) const fn with_overload_subtype_pass(mut self) -> Self {
         self.overload_subtype_pass = true;
+        self
+    }
+
+    /// Mark this request as decision-only: the caller reads only
+    /// `RelationOutcome::related` (and the overflow flags), so the boundary
+    /// must not spend time deriving structured failure reasons, weak-union
+    /// detection, or property classification on failure. The decision itself
+    /// is byte-identical to the full request.
+    pub(crate) const fn with_decision_only(mut self) -> Self {
+        self.decision_only = true;
         self
     }
 }

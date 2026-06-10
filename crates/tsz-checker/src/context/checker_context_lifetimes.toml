@@ -108,6 +108,7 @@ destructured_bindings = { lifetime = "FileLocalReset", capability = "FileTypeCac
 next_binding_group_id = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 destructured_binding_sources = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 has_parse_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+diagnostics_discarded = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "construction-time mode flag for transient delegation children whose diagnostics the parent discards; gates presentation-only rendering work" }
 has_syntax_parse_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 syntax_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 has_real_syntax_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
