@@ -267,15 +267,20 @@ pub struct DefinitionStore {
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DefDashMap<TypeId, DefId>,
 
-    /// Forward map: `DefId` -> `TypeId` for type-parameter declarations.
+    /// Shared `(file, type-parameter name node, TypeParamInfo)` -> `TypeId`
+    /// canonical identity map for type-parameter declarations that have no
+    /// `DefId` registration (class, method, and interface type parameters
+    /// are not emitted into `semantic_defs` by the binder).
     ///
-    /// Lets the checker reuse the canonical `TypeId` allocated for a
-    /// type-parameter declaration across reprocessings of the same
-    /// signature. Cross-declaration distinctness is still guaranteed
-    /// by `intern_fresh` because lookups key on the declaration's
-    /// `DefId`, not on `TypeParamInfo` content. See
-    /// `CheckerState::intern_type_param_for_decl` for the rationale.
-    type_param_for_def: DefDashMap<DefId, TypeId>,
+    /// The file component is the interned file-name `Atom` of the arena
+    /// owning the declaration, which makes the arena-local `NodeIndex`
+    /// globally unambiguous. Because this store is shared across parent and
+    /// child checkers (cross-arena delegation), every checker that pushes
+    /// the same declaration converges on one `TypeId`; a per-checker cache
+    /// would let child checkers mint their own fresh ids for the same
+    /// declaration and defeat identity-based relation fast paths
+    /// (`ExpressionBuilder<DB, TB>` vs itself, #13044).
+    type_param_for_decl_node: DefDashMap<(Atom, u32, TypeParamInfo), TypeId>,
 
     /// Authoritative `(SymbolId, file_idx)` -> `DefId` index.
     ///
@@ -586,10 +591,7 @@ impl DefinitionStore {
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             generation: AtomicU64::new(1),
             type_to_def: DefDashMap::default(),
-            type_param_for_def: DefDashMap::with_capacity_and_hasher(
-                id_capacity,
-                Default::default(),
-            ),
+            type_param_for_decl_node: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             symbol_only_index: DefDashMap::with_capacity_and_hasher(
                 id_capacity,
@@ -1036,7 +1038,7 @@ impl DefinitionStore {
     pub fn clear(&self) {
         self.definitions.clear();
         self.type_to_def.clear();
-        self.type_param_for_def.clear();
+        self.type_param_for_decl_node.clear();
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
@@ -1105,27 +1107,42 @@ impl DefinitionStore {
         self.type_to_def.get(&type_id).map(|r| *r)
     }
 
-    /// Look up the canonical `TypeId` previously allocated for a
-    /// type-parameter declaration's `DefId`.
+    /// Look up the canonical `TypeId` for a type-parameter declaration
+    /// identified by its owning file and name-node index (declarations
+    /// without a `DefId` registration).
     ///
-    /// Returns `Some(type_id)` if `register_type_param_for_def` has been
-    /// called for this `DefId`. Callers reuse the returned `TypeId`
-    /// instead of allocating a fresh non-deduped one so that two
-    /// processings of the same declaration produce a single canonical
-    /// type parameter.
-    pub fn find_type_param_for_def(&self, def_id: DefId) -> Option<TypeId> {
-        self.type_param_for_def.get(&def_id).map(|r| *r)
+    /// `file` is the interned file-name `Atom` of the arena owning
+    /// `name_node`; together they form a globally unambiguous declaration
+    /// identity that is stable across parent and child checkers.
+    pub fn find_type_param_for_decl_node(
+        &self,
+        file: Atom,
+        name_node: u32,
+        info: &TypeParamInfo,
+    ) -> Option<TypeId> {
+        self.type_param_for_decl_node
+            .get(&(file, name_node, *info))
+            .map(|r| *r)
     }
 
-    /// Register the canonical `TypeId` for a type-parameter declaration's
-    /// `DefId`.
+    /// Register the canonical `TypeId` for a type-parameter declaration
+    /// identified by `(file, name_node, info)`.
     ///
-    /// Subsequent calls overwrite the previous registration, which lets a
-    /// second-pass constraint refinement replace the first-pass
-    /// unconstrained `TypeId`. The downstream identity then converges on
-    /// the most recent `(name, constraint, default, is_const)` content.
-    pub fn register_type_param_for_def(&self, def_id: DefId, type_id: TypeId) {
-        self.type_param_for_def.insert(def_id, type_id);
+    /// First writer wins: the returned `TypeId` is the canonical one, which
+    /// may differ from `type_id` when another checker registered the same
+    /// declaration first (parallel file checking or cross-arena
+    /// delegation). Callers must adopt the returned id.
+    pub fn register_type_param_for_decl_node(
+        &self,
+        file: Atom,
+        name_node: u32,
+        info: TypeParamInfo,
+        type_id: TypeId,
+    ) -> TypeId {
+        *self
+            .type_param_for_decl_node
+            .entry((file, name_node, info))
+            .or_insert(type_id)
     }
 
     /// Register a mapping from a `Class` `DefId` to its `ClassConstructor` companion `DefId`.
@@ -1477,10 +1494,6 @@ impl DefinitionStore {
                 // Clean up type_to_def (reverse scan is expensive, but invalidation
                 // is rare and bounded by per-file definition count).
                 self.type_to_def.retain(|_, v| *v != *def_id);
-
-                // Clean up the type-parameter canonical cache. Direct
-                // key remove: the map is keyed by `DefId`, no scan needed.
-                self.type_param_for_def.remove(def_id);
 
                 // Clean up body_to_alias.
                 if info.kind == DefKind::TypeAlias
