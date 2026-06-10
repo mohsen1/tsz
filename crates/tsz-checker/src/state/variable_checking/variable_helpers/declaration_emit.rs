@@ -278,6 +278,19 @@ impl<'a> CheckerState<'a> {
                 check_symbol(state, sym_id)
             };
 
+            // Resolves application bases including `UnresolvedTypeName` forms that
+            // survive cross-file alias lowering (e.g. `hoistNonReactStatics.NonReactStatics`).
+            let check_base = |state: &Self, base: TypeId| {
+                let def_id =
+                    crate::query_boundaries::checkers::call::resolve_application_base_def_id(
+                        state.ctx.types,
+                        &state.ctx,
+                        base,
+                    )?;
+                let sym_id = state.ctx.def_to_symbol_id_with_fallback(def_id)?;
+                check_symbol(state, sym_id)
+            };
+
             if let Some(info) = check_def(state, type_id) {
                 return Some(info);
             }
@@ -290,7 +303,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some((base, _)) =
                     crate::query_boundaries::common::application_info(state.ctx.types, alias)
-                    && let Some(info) = check_def(state, base)
+                    && let Some(info) = check_base(state, base)
                 {
                     return Some(info);
                 }
@@ -298,7 +311,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some((base, _)) =
                 crate::query_boundaries::common::application_info(state.ctx.types, type_id)
-                && let Some(info) = check_def(state, base)
+                && let Some(info) = check_base(state, base)
             {
                 return Some(info);
             }
@@ -353,6 +366,25 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if let Some(info) = check_type(self, sig.return_type) {
+                    return Some(info);
+                }
+            }
+        }
+
+        // Check intersection/union direct members in declared order before the
+        // deep collect_referenced_types traversal. This ensures outer named types
+        // (e.g., NonReactStatics<T>) are found before types nested inside their
+        // definitions (e.g., Statics referenced in NonReactStatics's mapped-type body).
+        if let Some(members) = query::intersection_members(self.ctx.types, inferred_type) {
+            for &member in members.iter() {
+                if let Some(info) = check_type(self, member) {
+                    return Some(info);
+                }
+            }
+        }
+        if let Some(members) = query::union_members(self.ctx.types, inferred_type) {
+            for &member in members.iter() {
+                if let Some(info) = check_type(self, member) {
                     return Some(info);
                 }
             }
