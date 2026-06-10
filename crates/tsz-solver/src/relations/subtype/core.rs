@@ -159,6 +159,9 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) def_guard: crate::recursion::RecursionGuard<(DefId, DefId)>,
     /// Per-`DefId` one-sided application expansion depth; see `enter_app_expansion_depth`.
     pub(crate) app_expand_depth: FxHashMap<DefId, u32>,
+    /// Per-`DefId` depth counter for two-sided same-base conditional alias comparisons
+    /// with differing args; see `enter_cond_alias_cmp_depth`.
+    pub(crate) cond_alias_cmp_depth: FxHashMap<DefId, u32>,
     /// Symbol-pair visiting set for Object-level cycle detection.
     /// Catches cycles when comparing evaluated Object types with symbols
     /// (e.g., `Promise<X>` vs `PromiseLike<Y>`) where `DefId` information is lost
@@ -345,6 +348,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             app_expand_depth: FxHashMap::default(),
+            cond_alias_cmp_depth: FxHashMap::default(),
             sym_visiting: FxHashSet::default(),
             strict_function_types: true, // Default to strict (sound) behavior
             allow_void_return: false,
@@ -393,6 +397,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             app_expand_depth: FxHashMap::default(),
+            cond_alias_cmp_depth: FxHashMap::default(),
             sym_visiting: FxHashSet::default(),
             strict_function_types: true,
             allow_void_return: false,

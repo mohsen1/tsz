@@ -584,6 +584,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None
         };
 
+        // Identify same-base conditional alias comparisons with DIFFERING args.
+        // Used below to apply tsc's recursion-identity depth cap (COND_ALIAS_CMP_MAX_DEPTH).
+        let cond_diff_args_def_id: Option<DefId> = if both_same_base_app && !is_cond_same_base_app {
+            if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                if s_app.args != t_app.args && self.is_conditional_alias_base_inline(s_app.base) {
+                    s_def_id
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // =======================================================================
         // Symbol-level cycle detection for cross-context DefId aliasing.
         //
@@ -916,6 +934,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return result;
         }
 
+        // Tracks whether we entered the conditional alias comparison depth counter
+        // below so the corresponding leave is guaranteed at all exit paths.
+        let mut cond_entered_def: Option<DefId> = None;
+
         // =========================================================================
         // Meta-type evaluation (after cycle detection is set up)
         // =========================================================================
@@ -960,6 +982,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return result;
             }
 
+            // tsc recursion-identity bailout for conditional aliases:
+            // when the same conditional alias DefId has been compared with differing
+            // args COND_ALIAS_CMP_MAX_DEPTH times on the live stack, assume related.
+            // Mirrors tsc's `getRecursionIdentity` depth cap for conditional types.
+            if let Some(def) = cond_diff_args_def_id {
+                if !self.enter_cond_alias_cmp_depth(def) {
+                    self.guard.leave(pair);
+                    leave_global!();
+                    return self.cycle_result();
+                }
+                cond_entered_def = Some(def);
+            }
+
             let source_raw = self.evaluate_type(source);
             let target_raw = self.evaluate_type(target);
             let source_eval = self.guard_compound_collapse(source, source_raw);
@@ -980,7 +1015,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         };
 
-        // Cleanup: leave both guards
+        // Cleanup: leave conditional alias depth counter, then both guards.
+        if let Some(cd) = cond_entered_def {
+            self.leave_cond_alias_cmp_depth(cd);
+        }
         if let Some(dp) = def_entered {
             self.def_guard.leave(dp);
         }
@@ -1073,32 +1111,79 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check whether an Application base TypeId belongs to a conditional type alias.
     ///
     /// First checks the pre-populated `conditional_alias_bases` cache (fast path).
-    /// Falls back to resolving the DefId's body when the cache hasn't been populated
-    /// yet (e.g., when the subtype check runs before the alias has been evaluated).
+    /// Falls back to the raw definition-store body for the `DefId`, bypassing the
+    /// full `resolve_lazy` chain which can return a cached `Application` form or a
+    /// self-`Lazy` wrapper for generic type aliases (hiding the real `Conditional`
+    /// body). Only when the raw body is unavailable does this fall back to
+    /// `resolve_lazy`, filtering out self-wrappers there too.
     pub(crate) fn is_conditional_alias_base_inline(&self, base: TypeId) -> bool {
         if self.interner.is_conditional_alias_base(base) {
             return true;
         }
         let Some(def_id) = lazy_def_id(self.interner, base) else {
+            tracing::trace!(
+                base = base.0,
+                "is_conditional_alias_base_inline: no lazy def_id"
+            );
             return false;
         };
-        if !matches!(
-            self.resolver.get_def_kind(def_id),
-            Some(crate::def::DefKind::TypeAlias)
-        ) {
+        let def_kind = self.resolver.get_def_kind(def_id);
+        if !matches!(def_kind, Some(crate::def::DefKind::TypeAlias)) {
+            tracing::trace!(
+                base = base.0,
+                def_id = def_id.0,
+                def_kind = ?def_kind,
+                "is_conditional_alias_base_inline: not TypeAlias"
+            );
             return false;
         }
-        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+
+        // Prefer the raw definition-store body, which always holds the
+        // un-evaluated structural body registered at alias-definition time.
+        // `resolve_lazy` for generic aliases can return a cached `Application`
+        // TypeId (from `symbol_types`) that obscures the real `Conditional` body.
+        let raw_body = self.resolver.get_def_raw_body(def_id, self.interner);
+        let body_opt = raw_body.or_else(|| {
+            let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+            // Filter out self-wrappers: a Lazy(def_id) returned by resolve_lazy
+            // for a TypeAlias means the body wasn't available; treat as unknown.
+            if lazy_def_id(self.interner, body) == Some(def_id) {
+                None
+            } else {
+                Some(body)
+            }
+        });
+
+        let Some(body) = body_opt else {
             // Same undetermined-result event as `resolve_lazy_type`: the
             // conditional-alias-base decision derived from an unresolvable
             // `Lazy` must not poison the subtype cache in the enclosing call.
+            tracing::trace!(
+                base = base.0,
+                def_id = def_id.0,
+                "is_conditional_alias_base_inline: no body found"
+            );
             note_lazy_resolve_failure();
             return false;
         };
-        if matches!(self.interner.lookup(body), Some(TypeData::Conditional(_))) {
+        let body_kind = self.interner.lookup(body);
+        if matches!(body_kind, Some(TypeData::Conditional(_))) {
+            tracing::trace!(
+                base = base.0,
+                def_id = def_id.0,
+                body = body.0,
+                "is_conditional_alias_base_inline: found Conditional body → true"
+            );
             self.interner.mark_conditional_alias_base(base);
             return true;
         }
+        tracing::trace!(
+            base = base.0,
+            def_id = def_id.0,
+            body = body.0,
+            body_kind = ?body_kind,
+            "is_conditional_alias_base_inline: body is not Conditional → false"
+        );
         false
     }
 

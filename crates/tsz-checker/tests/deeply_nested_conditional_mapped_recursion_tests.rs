@@ -188,6 +188,40 @@ const stringRecord: NestedRecord<"a.b", string> = numberRecord;
     );
 }
 
+/// Diagnostic: verifies that 2-segment paths still error (depth check doesn't over-fire).
+#[test]
+fn two_segment_path_still_errors() {
+    let source = r#"
+type PR<Path extends string, Value> = Path extends `${infer Head}.${infer Tail}`
+    ? { [Key in Head]: PR<Tail, Value> }
+    : { [Key in Path]: Value };
+declare const n: PR<"a.b", number>;
+const s: PR<"a.b", string> = n;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "2-segment path SHOULD produce TS2322 (leaf mismatch). Got: {codes:?}"
+    );
+}
+
+/// Diagnostic: verifies that 4-segment paths do not error with depth-3 bailout.
+#[test]
+fn four_segment_path_no_error() {
+    let source = r#"
+type PR<Path extends string, Value> = Path extends `${infer Head}.${infer Tail}`
+    ? { [Key in Head]: PR<Tail, Value> }
+    : { [Key in Path]: Value };
+declare const n: PR<"a.b.c.d", number>;
+const s: PR<"a.b.c.d", string> = n;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "4-segment path should NOT produce TS2322 due to depth-3 bailout. Got: {codes:?}"
+    );
+}
+
 #[test]
 fn deeply_nested_record_conditional_type_assumes_related_after_three_object_hops() {
     let source = r#"

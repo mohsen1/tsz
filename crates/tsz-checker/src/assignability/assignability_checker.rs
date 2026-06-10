@@ -1285,7 +1285,18 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         source_arg,
                     )
-                    .is_some_and(|atom| self.ctx.types.resolve_atom_ref(atom).contains('.'))
+                    .is_some_and(|atom| {
+                        let path = self.ctx.types.resolve_atom_ref(atom);
+                        // Each dot in the path corresponds to one Application
+                        // comparison level during structural expansion.  The
+                        // solver's `cond_alias_cmp_depth` counter bails out at
+                        // `COND_ALIAS_CMP_MAX_DEPTH` (= 3) entered comparisons,
+                        // which requires at least 4 path segments (3 dots).
+                        // Suppress only when the path is deep enough for that
+                        // bailout to actually fire; shallower paths reach the
+                        // leaf and must produce TS2322 on a genuine mismatch.
+                        path.chars().filter(|&c| c == '.').count() >= 3
+                    })
             })
     }
 
