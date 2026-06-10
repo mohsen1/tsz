@@ -372,6 +372,11 @@ export {};
 
 #[test]
 fn ts2411_interface_optional_property_exact_optional_no_undefined_widening() {
+    // With exactOptionalPropertyTypes, `optional?: string` is exactly `string` (the optional
+    // marker is "missing", not `undefined`), so it is assignable to the `string` index type and
+    // tsc reports NO TS2411. Without EOP the same property reads as `string | undefined` and
+    // does conflict — that case is covered by ts2411_interface_optional_property_vs_string_index.
+    // Verified against tsc 6.0.2: `--strict --exactOptionalPropertyTypes` reports no error here.
     let source = r#"
 interface ExactOptional {
     [key: string]: string;
@@ -389,8 +394,8 @@ export {};
         },
     ));
     assert!(
-        diagnostics.iter().any(|d| d.0 == 2411),
-        "Exact optional property types still read optional properties as possibly undefined for index compatibility, got: {diagnostics:?}"
+        !diagnostics.iter().any(|d| d.0 == 2411),
+        "exactOptionalPropertyTypes makes optional?: string exactly string, assignable to the string index — no TS2411 expected, got: {diagnostics:?}"
     );
 }
 
