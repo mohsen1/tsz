@@ -28,6 +28,11 @@ use std::sync::{
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
+/// A universe-shared variance result: the def's variance mask plus the
+/// resolution-gap fingerprint (defs whose resolution failed during the walk)
+/// that gates replaying it under a different resolver.
+pub type SharedDefVariance = (Arc<[crate::types::Variance]>, Arc<[DefId]>);
+
 mod cache;
 mod display;
 mod storage;
@@ -67,24 +72,28 @@ pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 
 /// Maximum number of interned types before the interner returns `TypeId::ERROR`.
 ///
-/// Native and WASM currently share the same 500k policy. The circuit breaker
-/// was introduced with matching values on both cfg branches; there is no
-/// separate native memory budget yet. Keep both constants visible so any future
-/// target-specific change is reviewed explicitly.
-///
 /// Prevents OOM on pathological inputs (e.g., DOM types + module augmentation
 /// that create millions of intermediate types via heritage merging and
 /// function shape instantiation). With roughly 200-300 bytes per interned entry
-/// (DashMap overhead, `Arc`, shapes), 500k types is roughly a 100-150MB
-/// interner budget before fallback.
+/// (DashMap overhead, `Arc`, shapes), 8M types is roughly a 1.6-2.4GB
+/// interner budget before fallback; WASM keeps the historical 500k
+/// (~100-150MB) because the 32-bit heap cannot host a multi-GB interner.
 ///
-/// When the count is exceeded, new non-intrinsic interning poisons the interner
-/// and returns `TypeId::ERROR`. Already-computed ids remain readable for later
-/// diagnostics.
+/// The native value is sized for legitimate large programs, not as a working
+/// budget: a 1.2k-file slice of the `large-ts-repo` benchmark (with aws-sdk
+/// dependency surface) legitimately interns >500k unique types, and the full
+/// 12k-file row needs several million. The old shared 500k cap made the cap a
+/// *semantic* cliff on real projects rather than a pathological-input guard.
+///
+/// When the count is exceeded, new non-intrinsic interning poisons the
+/// interner and returns `TypeId::ERROR`. Already-computed ids remain readable
+/// (`lookup` and existing-key `intern` still succeed) so later diagnostics,
+/// relations, and shared cross-file caches keep working; only *new* type
+/// construction degrades to `ERROR`.
 #[cfg(target_arch = "wasm32")]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
+pub(crate) const MAX_INTERNED_TYPES: usize = 8_000_000;
 
 /// Maximum cumulative evaluation fuel across all `TypeEvaluator` instances.
 ///
@@ -247,6 +256,20 @@ pub struct TypeInterner {
     /// with more than `MAX_REPRESENTABLE_TUPLE_LENGTH` elements. The checker reads
     /// and clears this to emit TS2799 instead of TS2589.
     pub(super) tuple_too_large: AtomicBool,
+    /// Universe-wide declared-variance masks for generic definitions.
+    ///
+    /// Keyed by `DefId`; the value is `(mask, gap_defs)`. Populated by the
+    /// variance computer (`relations/variance.rs`) only with canonical masks
+    /// (the walk never depended on an in-flight def below its own frame).
+    /// `gap_defs` is the walk's resolution-failure fingerprint: the set of
+    /// `DefId`s whose lazy resolution failed during the walk. A mask is a
+    /// pure function of (def structure, failure set): a consumer may replay
+    /// it iff every fingerprint def still fails to resolve under the
+    /// consumer's resolver — validated on read. Masks therefore live on the
+    /// interner — the one shared type universe — instead of any per-checker
+    /// `QueryCache`, and survive across files and child checkers. Values hold
+    /// no `TypeId`s, only `Variance` bitmasks and `DefId`s.
+    pub(super) def_variance_masks: DashMap<DefId, SharedDefVariance, FxBuildHasher>,
     /// Global evaluation fuel counter.
     ///
     /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
@@ -364,9 +387,41 @@ impl TypeInterner {
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             tuple_too_large: AtomicBool::new(false),
+            def_variance_masks: DashMap::with_hasher(FxBuildHasher),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
+    }
+
+    /// Read a universe-shared variance mask for a generic definition.
+    ///
+    /// Returns `(mask, gap_defs)`. Only canonical masks are stored, together
+    /// with their resolution-failure fingerprint (see `def_variance_masks`);
+    /// callers must validate the fingerprint against their resolver before
+    /// replaying the mask.
+    #[inline]
+    pub fn shared_def_variance(&self, def_id: DefId) -> Option<SharedDefVariance> {
+        self.def_variance_masks
+            .get(&def_id)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Store a universe-shared variance mask for a generic definition with
+    /// its resolution-failure fingerprint.
+    ///
+    /// Callers must only insert canonical masks whose every resolution gap is
+    /// listed in `gaps`. First write wins, keeping replays deterministic
+    /// within a session.
+    #[inline]
+    pub fn insert_shared_def_variance(
+        &self,
+        def_id: DefId,
+        mask: Arc<[crate::types::Variance]>,
+        gaps: Arc<[DefId]>,
+    ) {
+        self.def_variance_masks
+            .entry(def_id)
+            .or_insert((mask, gaps));
     }
 
     #[inline]
@@ -781,9 +836,11 @@ impl TypeInterner {
     /// before falling through to the `DashMap` lookup.
     #[inline]
     pub fn intern(&self, key: TypeData) -> TypeId {
-        if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
-            return TypeId::ERROR;
-        }
+        // NOTE: a poisoned interner (type-count limit) is handled in
+        // `intern_slow` *after* the existing-key read paths, so already
+        // interned keys keep resolving to their existing ids. Only new
+        // allocations degrade to `TypeId::ERROR`.
+        //
         // T2.4 instrumentation. Semantics:
         //   intern_calls   = number of non-poisoned `intern()` entries
         //   intern_hits    = returned an existing `TypeId` (intrinsic, TL
@@ -909,18 +966,14 @@ impl TypeInterner {
         hash: u64,
         pc: Option<&'static tsz_common::perf_counters::PerfCounters>,
     ) -> TypeId {
-        // Circuit breaker 1: type count limit. Returning `TypeId::ERROR` here
-        // intentionally does not credit a hit or miss — the residual
-        // `calls - hits - misses` exposes circuit-breaker activations.
-        if self.interned_type_limit_exceeded() {
-            return self.poison_due_to_interned_type_limit();
-        }
-
         let shard_idx = (hash as usize) & (SHARD_COUNT - 1);
         let shard = &self.shards[shard_idx];
         let inner = shard.get_inner();
 
-        // Try to get existing ID (lock-free read)
+        // Try to get existing ID (lock-free read). This runs even when the
+        // interner is poisoned: already-interned keys must keep resolving to
+        // their existing ids so program semantics and shared caches survive
+        // a type-count-limit event (only *new* types degrade to ERROR).
         if let Some(entry) = inner.key_to_index.get(&key) {
             let local_index = *entry.value();
             if let Some(c) = pc {
@@ -928,6 +981,13 @@ impl TypeInterner {
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             return self.make_id(local_index, shard_idx as u32);
+        }
+
+        // Circuit breaker 1: type count limit. Returning `TypeId::ERROR` here
+        // intentionally does not credit a hit or miss — the residual
+        // `calls - hits - misses` exposes circuit-breaker activations.
+        if self.interned_type_limit_exceeded() {
+            return self.poison_due_to_interned_type_limit();
         }
 
         // Allocate new index
@@ -1001,9 +1061,10 @@ impl TypeInterner {
     /// mode) is detected and treated as a miss.
     #[inline]
     pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
-        if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
-            return None;
-        }
+        // Intentionally NOT gated on `poisoned`: already-interned ids must
+        // remain readable after a type-count-limit event so previously
+        // computed program types (and the cross-file caches that hold their
+        // ids) do not collapse to opaque misses. Only new interning degrades.
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);
         }
@@ -1184,6 +1245,18 @@ impl TypeInterner {
     pub fn consume_evaluation_fuel(&self, amount: u32) -> bool {
         let prev = self.evaluation_fuel.fetch_add(amount, Ordering::Relaxed);
         prev.wrapping_add(amount) > MAX_EVALUATION_FUEL
+    }
+
+    /// Reset the global evaluation fuel counter.
+    ///
+    /// Called at the start of each top-level file check session. `tsc` resets
+    /// its `instantiationCount` per checked source element, so the fuel limit
+    /// must bound *per-check* runaway instantiation rather than accumulate
+    /// across the whole program — a cumulative budget starves the tail files
+    /// of any multi-thousand-file program into blanket `TypeId::ERROR`.
+    #[inline]
+    pub fn reset_evaluation_fuel(&self) {
+        self.evaluation_fuel.store(0, Ordering::Relaxed);
     }
 
     /// Check whether global evaluation fuel is exhausted without consuming any.

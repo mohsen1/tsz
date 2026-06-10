@@ -178,6 +178,10 @@ class C {
 
 #[test]
 fn ts2411_exact_optional_property_types_excludes_optional_declared_string() {
+    // With exactOptionalPropertyTypes, `foo?: string` is exactly `string` (no undefined
+    // widening), so it is assignable to the `string` index and produces no TS2411. Only
+    // `bar?: string | undefined`, whose annotation explicitly carries `undefined`, conflicts
+    // with the `string` index type. Verified against tsc 6.0.2.
     let diags = check_with_options(
         r#"
 interface Test {
@@ -207,6 +211,9 @@ interface Test {
 
 #[test]
 fn ts2411_exact_optional_property_types_with_renamed_optional() {
+    // Same rule with different names: `count?: number` is exactly `number` under EOP and
+    // raises no TS2411, while `value?: number | undefined` carries explicit `undefined` and
+    // conflicts with the `number` index type. Verified against tsc 6.0.2.
     let diags = check_with_options(
         r#"
 interface MyMap {

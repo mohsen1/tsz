@@ -13,7 +13,7 @@ the machine is at risk.
 ```bash
 df -h .
 scripts/setup/disk-worktree-guard.sh
-scripts/agents/disk-preflight.sh <AgentName>
+scripts/agents/disk-preflight.sh
 git worktree list
 ```
 

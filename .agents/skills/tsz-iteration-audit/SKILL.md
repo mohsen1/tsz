@@ -48,4 +48,5 @@ For prior evidence, read `references/2026-05-26-findings.md` only when it helps.
 ## PR Shape
 
 Include recurring cost, evidence source, changed skill/script/doc, why compiler
-behavior is unchanged, validation command, and `AgentName`.
+behavior is unchanged, validation command, and the roadmap goal the fix
+unblocks (`Goal: hold` when it protects the parity floor).

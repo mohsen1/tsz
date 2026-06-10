@@ -305,6 +305,22 @@ pub trait TypeResolver {
     ) -> Option<std::sync::Arc<[crate::types::Variance]>> {
         None
     }
+
+    /// Get the raw structural body `TypeId` for a `DefId` directly from the
+    /// definition store, bypassing evaluation caches, instance-type wrappers,
+    /// and self-wrapper deferral logic present in the full `resolve_lazy` chain.
+    ///
+    /// Used by `is_conditional_alias_base_inline` to reliably detect whether a
+    /// generic type alias has a `Conditional` body. `resolve_lazy` for generic
+    /// aliases can return a cached `Application` or self-`Lazy` wrapper from
+    /// `symbol_types`, hiding the real conditional body. This method provides a
+    /// direct view of what was stored at alias-registration time.
+    ///
+    /// Returns `None` by default; implementations backed by a `DefinitionStore`
+    /// should override to call `store.get_body(def_id)`.
+    fn get_def_raw_body(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
 }
 
 /// A no-op resolver that doesn't resolve any references.
@@ -443,6 +459,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         def_id: DefId,
     ) -> Option<std::sync::Arc<[crate::types::Variance]>> {
         (**self).get_type_param_variance(def_id)
+    }
+
+    fn get_def_raw_body(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (**self).get_def_raw_body(def_id, interner)
     }
 }
 
@@ -1343,6 +1363,28 @@ impl TypeResolver for TypeEnvironment {
         self.definition_store
             .as_ref()
             .and_then(|store| store.find_def_for_type(type_id))
+    }
+
+    fn get_def_raw_body(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        // Check the local def_types cache first, then the shared DefinitionStore.
+        // Also handle raw SymbolId-based DefIds (from interner.reference) via the
+        // same symbol-index fallback used in resolve_lazy.
+        self.def_types
+            .get(&def_id.0)
+            .copied()
+            .or_else(|| self.definition_store.as_ref()?.get_body(def_id))
+            .or_else(|| {
+                let store = self.definition_store.as_ref()?;
+                let real_def = self
+                    .symbol_to_def
+                    .get(&def_id.0)
+                    .copied()
+                    .or_else(|| store.find_def_by_symbol(def_id.0))?;
+                self.def_types
+                    .get(&real_def.0)
+                    .copied()
+                    .or_else(|| store.get_body(real_def))
+            })
     }
 }
 

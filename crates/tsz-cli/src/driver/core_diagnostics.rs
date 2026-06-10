@@ -1322,23 +1322,31 @@ pub(super) fn is_declaration_output_path(path: &Path) -> bool {
 pub(super) fn normalize_ts2883_diagnostics_in_place(
     diagnostics: &mut Vec<tsz_common::diagnostics::Diagnostic>,
 ) {
-    use rustc_hash::FxHashSet;
+    // Step 1: Exact dedup — remove diagnostics that are complete duplicates
+    // (same code, file, start, length, and message). This handles pre-existing
+    // duplicate checker emissions (e.g., TS2427 emitted twice per declaration).
     let mut exact_seen: FxHashSet<(u32, String, u32, u32, String)> = FxHashSet::default();
-    let mut ts2883_locations: FxHashSet<(String, u32, u32)> = FxHashSet::default();
     diagnostics.retain(|d| {
-        if !exact_seen.insert((
+        exact_seen.insert((
             d.code,
             d.file.clone(),
             d.start,
             d.length,
             d.message_text.clone(),
-        )) {
-            return false;
-        }
+        ))
+    });
+
+    // Step 2: TS2883 position dedup — the checker and declaration emitter can both
+    // emit TS2883 for the same declaration. Checker diagnostics are sorted to the
+    // front (line 1078 sort runs before emitter diagnostics are appended at 1121),
+    // so "first wins" preserves the checker's canonical message.
+    let mut seen_2883: FxHashSet<(String, u32)> = FxHashSet::default();
+    diagnostics.retain(|d| {
         if d.code == 2883 {
-            return ts2883_locations.insert((d.file.clone(), d.start, d.length));
+            seen_2883.insert((d.file.clone(), d.start))
+        } else {
+            true
         }
-        true
     });
 }
 

@@ -143,6 +143,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .cached_cross_file_symbol_type(target_sym_id, file_idx as u32)
                 })
+                .map(|(cached_type, cached_params)| (cached_type, cached_params.as_ref().clone()))
                 .or_else(|| {
                     let resolved = self.direct_source_file_type_alias_result(
                         target_sym_id,
@@ -208,12 +209,16 @@ impl<'a> CheckerState<'a> {
         symbol_type_cache_from_symbol_arena: bool,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let file_idx = file_idx as u32;
-        if !symbol_type_cache_from_symbol_arena {
-            return self.ctx.cached_cross_file_symbol_type(sym_id, file_idx);
-        }
-
-        self.ctx
-            .cached_stable_source_file_symbol_arena_type(sym_id, file_idx, source_cache_scope)
+        let cached = if symbol_type_cache_from_symbol_arena {
+            self.ctx.cached_stable_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                source_cache_scope,
+            )
+        } else {
+            self.ctx.cached_cross_file_symbol_type(sym_id, file_idx)
+        };
+        cached.map(|(cached_type, cached_params)| (cached_type, cached_params.as_ref().clone()))
     }
 
     pub(super) fn cache_symbol_arena_or_cross_file_symbol_type(

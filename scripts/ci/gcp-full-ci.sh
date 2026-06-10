@@ -414,7 +414,6 @@ run_lint() {
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-project-compile-guard-fingerprint.mjs || return $?
   node scripts/ci/test-project-compile-guard-rss-sentinel.mjs || return $?
-  node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-pr-ready-state.mjs || return $?
   node scripts/ci/test-refresh-green-prs.mjs || return $?

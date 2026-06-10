@@ -1,6 +1,6 @@
 ---
 name: tsz-worktree-intake
-description: Start TSZ work safely in a crowded multi-agent checkout. Use when beginning a TSZ task, resuming a goal, switching or creating branches/worktrees, recovering from a merged or stale branch, checking disk/cache state, reading lane goals, or deciding whether local dirty files belong to the requested work.
+description: Start TSZ work safely in a crowded multi-agent checkout. Use when beginning a TSZ task, resuming a goal, switching or creating branches/worktrees, recovering from a merged or stale branch, checking disk/cache state, picking a roadmap goal, or deciding whether local dirty files belong to the requested work.
 ---
 
 # TSZ Worktree Intake
@@ -12,14 +12,15 @@ Use before non-trivial TSZ work.
 ```bash
 git fetch origin main
 sed -n '1,260p' docs/plan/ROADMAP.md
-scripts/agents/show-goal.sh <AgentName>
 git status --short --branch
-scripts/agents/disk-preflight.sh <AgentName>
+scripts/agents/disk-preflight.sh
 git worktree list
-scripts/agents/list-owned-work.sh <AgentName>
 gh pr list --state open --limit 100 --json number,title,isDraft,headRefName,baseRefName,labels,updatedAt,url
 gh issue list --state open --limit 100 --json number,title,labels,updatedAt,url
 ```
+
+Pick the roadmap goal the work serves (`green`, `fast`, `grow`, or `hold`);
+`docs/plan/ROADMAP.md` is the only planning doc.
 
 If disk is low or worktree reuse is unclear, use `tsz-disk-cache-hygiene`.
 Read `references/common-failure-modes.md` only for stale merged branches, dirty

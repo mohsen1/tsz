@@ -142,7 +142,8 @@ Durable test gaps to keep visible:
 
 ## Coordination Rules
 
-1. Every LSP PR body includes `AgentName`.
+1. Every LSP PR body includes the goal and provenance fields required by
+   the `pr-body-gate` CI job.
 2. Check open PRs and recent merged PRs before starting. Current work belongs in
    GitHub, not in this document.
 3. Do not start broad LSP architecture work unless the activation criteria are

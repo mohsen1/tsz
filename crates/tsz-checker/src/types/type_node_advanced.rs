@@ -429,6 +429,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if use_flow_sensitive_query
             && let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
             && expr_type != TypeId::ERROR
+            // Don't use a cached enum-union type as the result of `typeof EnumDeclaration`.
+            // The flow-sensitive pre-resolution caches the symbol's declared type (the union
+            // 0|1|2|3) under the identifier node, but `typeof EnumName` must resolve to the
+            // namespace type (the object with member properties). Skip the cache so the ENUM
+            // branch below can return the correct TypeQuery instead.
+            && crate::query_boundaries::common::enum_def_id(self.ctx.types, expr_type).is_none()
         {
             if let Some(type_arguments) = &type_arguments {
                 return self
@@ -451,6 +457,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if let Some(escaped_name) = type_only_name {
                 self.emit_type_query_type_only_error(&escaped_name, type_query.expr_name);
                 return TypeId::ERROR;
+            }
+
+            // `typeof EnumDeclaration` must resolve to the enum namespace type (the object
+            // `{ Up: 0, Down: 1, … }`), not to the union type stored in `symbol_types`.
+            // Return the cached namespace type when available, otherwise defer via TypeQuery
+            // so the solver can resolve it on demand. This is separate from enum-member types
+            // (`Direction.Up`) and variables typed as an enum (`x: Direction`), which both
+            // carry the union/literal type and must NOT be intercepted here.
+            if sym_flags & tsz_binder::symbol_flags::ENUM != 0
+                && sym_flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
+            {
+                if let Some(&ns_type) = self.ctx.enum_namespace_types.get(&sym_id) {
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            ns_type,
+                            type_arguments,
+                        );
+                    }
+                    return ns_type;
+                }
+                let factory = self.ctx.types.factory();
+                let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+                if let Some(type_arguments) = &type_arguments {
+                    return self
+                        .apply_instantiation_expression_type_arguments(base, type_arguments);
+                }
+                return base;
             }
 
             if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0

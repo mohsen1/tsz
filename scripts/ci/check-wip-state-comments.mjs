@@ -314,13 +314,13 @@ function commentBody(comment) {
   return comment.body || "";
 }
 
-function commentHasAgentName(comment) {
-  return /^[ \t>*-]*AgentName:[ \t]*\S+/im.test(commentBody(comment));
+function commentHasProvenance(comment) {
+  return /^[ \t>*-]*(?:Provenance|Machine|AgentName):[ \t]*\S+/im.test(commentBody(comment));
 }
 
 function commentIsExplanatory(comment) {
   const body = commentBody(comment);
-  return commentHasAgentName(comment)
+  return commentHasProvenance(comment)
     && /\b(reason|why|because)\b/i.test(body)
     && /\b(blocker|blocked|current work|currently|next work)\b/i.test(body)
     && /\b(next owner|next action|next step|owner|action)\b/i.test(body);
@@ -359,7 +359,7 @@ export function wipStateFindings(pullRequests, options = {}) {
     }
 
     const nearbyComments = commentsInWindow(pr.comments, eventTime(latestEvent), windowHours);
-    const signedComments = nearbyComments.filter(commentHasAgentName);
+    const signedComments = nearbyComments.filter(commentHasProvenance);
     if (nearbyComments.some(commentIsExplanatory)) continue;
 
     findings.push({
@@ -396,8 +396,8 @@ export function formatMarkdownReport(findings, options = {}) {
     return lines.join("\n");
   }
 
-  lines.push("| PR | Title | Event | Event Time | Actor | AgentName Present | Comment Status |");
-  lines.push("|----|-------|-------|------------|-------|-------------------|----------------|");
+  lines.push("| PR | Title | Event | Event Time | Actor | Provenance Present | Comment Status |");
+  lines.push("|----|-------|-------|------------|-------|--------------------|----------------|");
   for (const finding of findings) {
     lines.push(`| ${[
       `#${finding.number}`,
@@ -410,7 +410,7 @@ export function formatMarkdownReport(findings, options = {}) {
     ].join(" | ")} |`);
   }
   lines.push("");
-  lines.push("Repair: add a PR comment with `AgentName:`, the reason WIP state changed, the current blocker/work, and the next owner/action.");
+  lines.push("Repair: add a PR comment with a provenance line (`Machine:` or `Provenance:`), the reason WIP state changed, the current blocker/work, and the next action.");
   return lines.join("\n");
 }
 

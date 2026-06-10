@@ -978,6 +978,9 @@ impl<'a> CheckerState<'a> {
             // already model requester stability; memoizing them here changed
             // elaboration output on the valibot/kysely canaries. In-progress
             // guard returns above never reach this write.
+            if matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+                tsz_common::perf_counters::record_delegate_cross_arena_full_work_sentinel_result();
+            }
             if let Some(file_idx) = memo_file_idx
                 && let Some(fp) = memo_context_fp
                 && matches!(result, TypeId::ERROR | TypeId::UNKNOWN)
@@ -1064,7 +1067,7 @@ impl<'a> CheckerState<'a> {
                 .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
         {
             tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
-            return Some((cached_type, cached_params));
+            return Some((cached_type, cached_params.as_ref().clone()));
         }
 
         // Delegation-tree memo of completed `None`/sentinel outcomes the

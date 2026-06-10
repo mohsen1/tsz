@@ -1,23 +1,15 @@
-## Agent
-AgentName:
+<!-- Describe what and why. For semantic fixes, state the structural rule:
+     when <structural condition>, tsc does X; tsz does X through <owner layer>.
+     Name the benchmark row or failure family when relevant. -->
 
-## Track
-
-## Invariant
-When <structural condition>, `tsc` <does X>; this PR makes tsz do X through <owning layer>.
-
-## Scope
-- n/a
-
-## Project Corpus Impact
-- Row: n/a
-- Bug family: n/a
-- Evidence:
-
-Issue intake fields are coordination context only; every PR still needs this section filled in or explicitly marked `n/a`.
+## Goal
+Goal: <green|fast|grow|hold>
 
 ## Verification
-- n/a
+- <targeted commands or CI gates>
 
-## Coordination Notes
-- n/a
+## Provenance
+Machine: <m1|m4|studio|cloud|hostname>
+Assistant: <claude-code|codex>
+Model: <model id, e.g. claude-opus-4-8>
+Effort: <low|medium|high|max>

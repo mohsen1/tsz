@@ -205,7 +205,10 @@ impl<'a> CheckerContext<'a> {
         file_idx: u32,
         secondary: u32,
         args_hash: u64,
-    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<(
+        tsz_solver::TypeId,
+        std::sync::Arc<Vec<tsz_solver::TypeParamInfo>>,
+    )> {
         if !self.share_owner_symbol_type_results {
             record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
             return None;
@@ -228,6 +231,15 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         if !type_id_is_known_to_db(self.types, cached_type) {
+            tracing::trace!(
+                target: "cross_file_cache",
+                sym_id = sym_id.0,
+                file_idx,
+                secondary,
+                args_hash,
+                type_id = cached_type.0,
+                "symbol bucket entry rejected: TypeId not interned in reader's db"
+            );
             record_cross_file_cache_miss_cause(CrossFileCacheMissCause::TypeIdNotInterned);
             return None;
         }
@@ -246,7 +258,10 @@ impl<'a> CheckerContext<'a> {
         &self,
         sym_id: SymbolId,
         file_idx: u32,
-    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<(
+        tsz_solver::TypeId,
+        std::sync::Arc<Vec<tsz_solver::TypeParamInfo>>,
+    )> {
         self.cached_symbol_type_entry(sym_id, file_idx, 0, 0)
     }
 
@@ -262,7 +277,10 @@ impl<'a> CheckerContext<'a> {
         file_idx: u32,
         scope: u64,
         requester_file_idx: u32,
-    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<(
+        tsz_solver::TypeId,
+        std::sync::Arc<Vec<tsz_solver::TypeParamInfo>>,
+    )> {
         self.cached_symbol_type_entry(
             sym_id,
             file_idx,
@@ -283,7 +301,10 @@ impl<'a> CheckerContext<'a> {
         sym_id: SymbolId,
         file_idx: u32,
         scope: u64,
-    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<(
+        tsz_solver::TypeId,
+        std::sync::Arc<Vec<tsz_solver::TypeParamInfo>>,
+    )> {
         self.cached_symbol_type_entry(sym_id, file_idx, 0, scope)
     }
 
@@ -555,7 +576,10 @@ impl<'a> CheckerContext<'a> {
         &self,
         sym_id: SymbolId,
         file_idx: u32,
-    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<(
+        tsz_solver::TypeId,
+        std::sync::Arc<Vec<tsz_solver::TypeParamInfo>>,
+    )> {
         if !self.share_owner_symbol_type_results {
             record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
             return None;

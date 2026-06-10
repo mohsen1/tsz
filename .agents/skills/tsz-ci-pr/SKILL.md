@@ -10,7 +10,10 @@ Use for PR checks, CI triage, ready state, queue evidence, and landing. Use
 
 ## Rules
 
-- Use `gh`; sign substantive comments with `AgentName`.
+- Use `gh`; sign substantive comments with a provenance line (e.g.
+  `Machine: studio` or `Provenance: studio / claude-code / claude-opus-4-8 /
+  high`).
+- The PR author lands their own PR; never idle-wait on CI between pushes.
 - Never merge draft/WIP PRs (`draft`, `WIP`, `[WIP]`, or body/branch says WIP).
 - Ready PRs run heavy CI. Draft PRs intentionally run light CI.
 - Ready PRs land through GitHub's native merge queue.
@@ -53,5 +56,5 @@ now.
   failures.
 - Docs-only and bench-shell-only paths short-circuit most jobs.
 
-Comment shape: `AgentName`, root cause, files changed, verification/CI URL,
-remaining risk.
+Comment shape: provenance line, root cause, files changed, verification/CI
+URL, remaining risk.
