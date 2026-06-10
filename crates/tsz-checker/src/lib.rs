@@ -1086,6 +1086,9 @@ mod overload_anchor_at_argument_tests;
 #[path = "tests/overload_param_relation_routing_arch_tests.rs"]
 mod overload_param_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/overload_two_pass_any_source_tests.rs"]
+mod overload_two_pass_any_source_tests;
+#[cfg(test)]
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]

@@ -1261,6 +1261,56 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Overload-resolution subtype-pass variant of
+    /// [`Self::call_adapter_compatibility_relation_outcome`]: identical
+    /// relation shape, but an `any` source is not related to concrete targets
+    /// at every nesting level (tsc `chooseOverload` with `subtypeRelation`).
+    pub(crate) fn overload_subtype_pass_compatibility_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::call_adapter_compatibility(
+                source, target,
+            )
+            .with_overload_subtype_pass();
+        self.execute_relation_request(&request)
+    }
+
+    /// Overload-resolution subtype-pass variant of the bivariant-callback
+    /// relation probe used by the call adapter.
+    pub(crate) fn overload_subtype_pass_bivariant_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::bivariant_callbacks(
+            source, target,
+        )
+        .with_overload_subtype_pass();
+        self.execute_relation_request(&request)
+    }
+
+    /// Overload-resolution subtype-pass variant of the strict relation probe
+    /// used by the call adapter.
+    pub(crate) fn overload_subtype_pass_strict_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.is_assignable_to_overload_subtype_pass_strict(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
+
     /// Execute a diagnostic-bearing call-adapter identity fallback relation for
     /// raw checker types, preserving the canonical call-adapter identity shape.
     pub(crate) fn call_adapter_identity_relation_outcome(

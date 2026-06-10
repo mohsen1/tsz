@@ -234,6 +234,12 @@ pub(crate) struct RelationRequest {
     pub source_is_fresh: bool,
     /// Allow targeted erased-signature retry for interface property compatibility.
     pub allow_erased_generic_signature_retry: bool,
+    /// Overload-resolution subtype pass (tsc `chooseOverload` with
+    /// `subtypeRelation`): an `any` source is not related to non-`any`/
+    /// non-`unknown` targets, at every nesting level. The boundary maps this
+    /// to the solver's `AnySourceNotRelated` propagation mode, which also
+    /// partitions the relation caches.
+    pub overload_subtype_pass: bool,
 }
 
 impl RelationRequest {
@@ -246,6 +252,7 @@ impl RelationRequest {
             missing_property_mode: MissingPropertyMode::Report,
             source_is_fresh: false,
             allow_erased_generic_signature_retry: false,
+            overload_subtype_pass: false,
         }
     }
 
@@ -715,6 +722,14 @@ impl RelationRequest {
     /// Allow a failed generic-signature inference to retry with erased signatures.
     pub(crate) const fn with_erased_generic_signature_retry(mut self) -> Self {
         self.allow_erased_generic_signature_retry = true;
+        self
+    }
+
+    /// Run this relation under the overload-resolution subtype pass, where an
+    /// `any` source is not related to non-`any`/`unknown` targets at every
+    /// nesting level (tsc `chooseOverload` with `subtypeRelation`).
+    pub(crate) const fn with_overload_subtype_pass(mut self) -> Self {
+        self.overload_subtype_pass = true;
         self
     }
 }

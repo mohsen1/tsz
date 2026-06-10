@@ -123,7 +123,10 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
-        let mut checker = CheckerCallAssignabilityAdapter { state: self };
+        let mut checker = CheckerCallAssignabilityAdapter {
+            state: self,
+            overload_subtype_pass: false,
+        };
         resolve_call(
             db,
             &mut checker,
@@ -149,7 +152,10 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
-        let mut checker = CheckerCallAssignabilityAdapter { state: self };
+        let mut checker = CheckerCallAssignabilityAdapter {
+            state: self,
+            overload_subtype_pass: false,
+        };
         resolve_call_with_arg_sources(
             db,
             &mut checker,
@@ -203,6 +209,58 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Pass-1 ("subtype pass") variant of
+    /// `resolve_call_with_checker_adapter_maybe_arg_sources` for overload
+    /// resolution: identical argument handling, but the adapter's relation
+    /// probes treat an `any` source as not related to concrete targets at
+    /// every nesting level (tsc `chooseOverload` with `subtypeRelation`).
+    pub(crate) fn resolve_call_with_checker_adapter_subtype_pass(
+        &mut self,
+        func_type: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+        actual_this_type: Option<TypeId>,
+        arg_source_is_type_annotation: &[bool],
+        arg_source_is_readonly_annotation: &[bool],
+    ) -> tsz_solver::operations::CallWithCheckerResult {
+        self.ensure_relation_input_ready(func_type);
+        self.ensure_relation_inputs_ready(arg_types);
+
+        let db = self.ctx.types;
+        let mut checker = CheckerCallAssignabilityAdapter {
+            state: self,
+            overload_subtype_pass: true,
+        };
+        if arg_source_is_type_annotation.iter().any(|&m| m)
+            || arg_source_is_readonly_annotation.iter().any(|&m| m)
+        {
+            resolve_call_with_arg_sources(
+                db,
+                &mut checker,
+                func_type,
+                arg_types,
+                &CallArgSourceOptions {
+                    force_bivariant_callbacks,
+                    contextual_type,
+                    actual_this_type,
+                    arg_source_is_type_annotation,
+                    arg_source_is_readonly_annotation,
+                },
+            )
+        } else {
+            resolve_call(
+                db,
+                &mut checker,
+                func_type,
+                arg_types,
+                force_bivariant_callbacks,
+                contextual_type,
+                actual_this_type,
+            )
+        }
+    }
+
     pub(crate) fn resolve_new_with_checker_adapter(
         &mut self,
         type_id: TypeId,
@@ -214,7 +272,10 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
-        let mut checker = CheckerCallAssignabilityAdapter { state: self };
+        let mut checker = CheckerCallAssignabilityAdapter {
+            state: self,
+            overload_subtype_pass: false,
+        };
         resolve_new(
             db,
             &mut checker,

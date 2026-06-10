@@ -1910,8 +1910,10 @@ fn test_relation_request_override_builders_remain_explicit() {
 /// checker-safe flag surface for request-sensitive relation policy.
 #[test]
 fn test_relation_flags_surface_covers_checker_policy_bits() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    // The flag surface lives in the boundary-owned `cache_key` submodule
+    // (split out of assignability.rs to satisfy the file-size ceiling).
+    let source = fs::read_to_string("src/query_boundaries/assignability/cache_key.rs")
+        .expect("failed to read query_boundaries/assignability/cache_key.rs");
 
     assert!(
         source.contains("pub(crate) struct RelationFlags;"),
@@ -1937,8 +1939,10 @@ fn test_relation_flags_surface_covers_checker_policy_bits() {
 /// `RelationFlags` bit surface, not the legacy cache-key `FLAG_*` protocol.
 #[test]
 fn test_relation_flags_surface_uses_solver_typed_flags() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    // The flag surface lives in the boundary-owned `cache_key` submodule
+    // (split out of assignability.rs to satisfy the file-size ceiling).
+    let source = fs::read_to_string("src/query_boundaries/assignability/cache_key.rs")
+        .expect("failed to read query_boundaries/assignability/cache_key.rs");
 
     assert!(
         source.contains("tsz_solver::RelationFlags::STRICT_NULL_CHECKS"),

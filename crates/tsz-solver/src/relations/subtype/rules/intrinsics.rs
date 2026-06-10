@@ -164,7 +164,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return true;
         }
         if let Some(kind) = intrinsic_kind(self.interner, source) {
-            let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
+            // `source` is the relation source here, so consult the
+            // source-side `any` allowance.
+            let allow_any = self
+                .any_propagation
+                .allows_any_source_at_depth(self.guard.depth());
             return match intrinsic_vs_object_super(kind, IntrinsicObjectKind::ObjectKeyword) {
                 Some(result) => result,
                 // `any` is mode-dependent for the `object` keyword.
@@ -287,7 +291,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// Rule #29: Function intrinsic accepts any callable type as a subtype.
     pub(crate) fn is_callable_type(&mut self, source: TypeId) -> bool {
-        let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
+        // `source` is the relation source (a candidate callable), so consult
+        // the source-side `any` allowance.
+        let allow_any = self
+            .any_propagation
+            .allows_any_source_at_depth(self.guard.depth());
         match source {
             TypeId::ANY if allow_any => return true,
             TypeId::NEVER | TypeId::ERROR | TypeId::FUNCTION => return true,
