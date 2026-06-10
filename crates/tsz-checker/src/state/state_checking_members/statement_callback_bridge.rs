@@ -275,57 +275,6 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     }
                 }
 
-                // TS2883: The inferred type of 'default' cannot be named without
-                // a reference to an external package. Checked for
-                // `export default <expr>` without a JSDoc type annotation.
-                if export_decl.is_default_export
-                    && expected_type.is_none()
-                    && self.ctx.emit_declarations()
-                    && !self.ctx.is_declaration_file()
-                {
-                    let default_clause_is_identifier = self
-                        .ctx
-                        .arena
-                        .get(clause_idx)
-                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
-                    if !default_clause_is_identifier {
-                        // Declaration emit runs the authoritative portability check.
-                        // Skipping the checker precheck here avoids duplicate/over-eager
-                        // TS2883 on default-exported local identifiers.
-                        let expr_type = self.get_type_of_node(clause_idx);
-                        let resolved_type = self.resolve_lazy_type(expr_type);
-                        let object_assign_reference = self
-                            .first_non_portable_object_assign_object_literal_reference(clause_idx);
-                        let diagnostic_node = if object_assign_reference.is_some() {
-                            export_idx
-                        } else {
-                            clause_idx
-                        };
-                        let clause_is_call = self
-                            .ctx
-                            .arena
-                            .get(clause_idx)
-                            .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION);
-                        let inferred_reference = (!clause_is_call)
-                            .then(|| {
-                                self.first_non_portable_type_reference(expr_type)
-                                    .or_else(|| {
-                                        self.first_non_portable_type_reference(resolved_type)
-                                    })
-                            })
-                            .flatten();
-                        if let Some((from_path, type_name)) =
-                            object_assign_reference.or(inferred_reference)
-                        {
-                            self.error_at_node_msg(
-                                diagnostic_node,
-                                crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
-                                &["default", &from_path, &type_name],
-                            );
-                        }
-                    }
-                }
-
                 // CJS+VMS checks for all exports (TS1287/TS1295)
                 // These take priority over ESM-specific VMS checks.
                 // TSC skips these for .d.ts files.
