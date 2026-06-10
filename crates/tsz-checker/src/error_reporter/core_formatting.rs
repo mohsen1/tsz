@@ -197,6 +197,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
+        // Fail-safe work-budget scope for callers that bypass
+        // `format_type_for_diagnostic_role` (issue #13040).
+        let _budget_scope = crate::error_reporter::display_budget::DisplayBudgetScope::enter();
         let format_with_def_store = |state: &Self, type_id: TypeId| {
             let mut formatter =
                 tsz_solver::TypeFormatter::with_symbols(state.ctx.types, &state.ctx.binder.symbols)

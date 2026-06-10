@@ -560,11 +560,9 @@ impl<'a> CheckerState<'a> {
         }
 
         DEPTH.set(depth + 1);
-        // Bound the total work spent normalizing this rendered type. The
-        // recursion below is depth-capped but not breadth-capped: each node
-        // can fan out into freshly interned children (self-expanding generic
-        // applications), so without a work budget normalization is
-        // effectively unbounded (issue #13040).
+        // The recursion below is depth-capped but not breadth-capped: each
+        // node can fan out into freshly interned children, so the work
+        // budget is what bounds it (issue #13040).
         let _budget_scope = crate::error_reporter::display_budget::DisplayBudgetScope::enter();
         let mut visiting = FxHashSet::default();
         let result = self.normalize_assignability_display_type_inner(ty, &mut visiting, 0);
