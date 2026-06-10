@@ -306,6 +306,29 @@ pub struct BinderState {
     pub(crate) scope_stack: Vec<SymbolTable>,
     /// File-level locals (for module resolution)
     pub file_locals: SymbolTable,
+    /// Program-wide global symbols (lib globals plus script-file globals),
+    /// shared across reconstructed binders via the `SymbolTable`'s internal
+    /// `Arc` (O(1) clone).
+    ///
+    /// Per-file checking binders fold these directly into `file_locals`
+    /// (`MergedProgram::build_merged_file_locals`), so this table stays empty
+    /// for them. Cross-file lookup binders keep `file_locals` to per-file
+    /// entries (ownership scans iterate that map), so the explicit
+    /// global-type accessors (`get_global_type`, `get_global_type_with_libs`)
+    /// consult this table after a `file_locals` miss. Without it, a binder
+    /// with `lib_symbols_merged == true` but unhoisted globals silently fails
+    /// to resolve lib globals (e.g. an `extends Error` heritage base) when a
+    /// file's types are computed through cross-arena delegation — making
+    /// check results depend on root-file order.
+    ///
+    /// Scope-chain identifier resolution (`resolve_identifier*`,
+    /// `resolve_name_with_filter`) deliberately does NOT consult this table:
+    /// those walks can run against cross-arena nodes whose declaring-file
+    /// locals are not in this binder's `file_locals`, and a program-global
+    /// hit there would shadow the declaring file's own local (e.g. a user
+    /// `interface EventSource` shadowing DOM's `EventSource`).
+    #[serde(default)]
+    pub program_globals: SymbolTable,
     /// Expando property assignments: maps identifier name → set of property names
     /// that were assigned via `X.prop = value` patterns (single-level property access).
     /// Used to suppress false TS2339 errors on read-side property accesses.

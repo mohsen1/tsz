@@ -923,6 +923,14 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
     binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
+    // Cross-file lookup binders deliberately keep `file_locals` per-file
+    // (ownership scans iterate that map), so carry the hoisted program-wide
+    // globals separately. Without this, a global name (e.g. an
+    // `extends Request` heritage base) silently fails to resolve when a
+    // file's types are computed through cross-arena delegation — making
+    // check results depend on root-file order. `SymbolTable` is internally
+    // `Arc`-backed, so this clone is an O(1) refcount bump.
+    binder.program_globals = program.globals.clone();
 
     binder
 }

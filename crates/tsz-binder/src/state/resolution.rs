@@ -158,6 +158,14 @@ impl BinderState {
                 break 'resolve Some(sym_id);
             }
 
+            // NOTE: scope-chain resolution deliberately does NOT consult
+            // `BinderState::program_globals`. Identifier resolution can run
+            // against cross-arena nodes whose declaring-file locals are not
+            // in this binder's `file_locals`; a program-global hit here would
+            // shadow the declaring file's own local (e.g. a user `interface
+            // EventSource` shadowing DOM's `EventSource`). Only the explicit
+            // global-type accessors (`get_global_type*`) consult that table.
+
             // Chained lookup: check lib binders for global symbols
             // This enables resolving console, Array, Object, etc. from lib.d.ts
             for (i, lib_binder) in self.lib_binders.iter().enumerate() {

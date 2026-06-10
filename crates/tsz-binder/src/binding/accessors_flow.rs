@@ -110,6 +110,14 @@ impl BinderState {
             return Some(sym_id);
         }
 
+        // Cross-file lookup binders keep `file_locals` per-file and carry the
+        // hoisted program-wide globals separately; consult them after the
+        // per-file miss so a lib global resolves the same way it would in a
+        // per-file checking binder.
+        if let Some(sym_id) = self.program_globals.get(name) {
+            return Some(sym_id);
+        }
+
         // Fast path: If lib symbols are merged, they're all in file_locals already
         if self.lib_symbols_merged {
             return None;
@@ -136,6 +144,12 @@ impl BinderState {
     ) -> Option<SymbolId> {
         // First check file_locals (includes merged lib symbols when lib_symbols_merged is true)
         if let Some(sym_id) = self.file_locals.get(name) {
+            return Some(sym_id);
+        }
+
+        // See `get_global_type`: cross-file lookup binders carry hoisted
+        // program-wide globals separately from per-file `file_locals`.
+        if let Some(sym_id) = self.program_globals.get(name) {
             return Some(sym_id);
         }
 
