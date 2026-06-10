@@ -647,6 +647,10 @@ impl<'a> CheckerContext<'a> {
         ctx.symbol_instance_types = parent.symbol_instance_types.clone();
         ctx.enum_namespace_types = parent.enum_namespace_types.clone();
 
+        // Note: the clone shares (does not copy) the embedded session memo of
+        // completed cross-arena delegation results via its internal `Arc`:
+        // child writes must be visible to the parent and to sibling children
+        // within the same file-check session.
         ctx.lib_delegation_cache = parent.lib_delegation_cache.clone();
         // Skip the deep `HashMap::clone` for caches that are empty on the
         // parent: `ctx` was just constructed via `Self::base(...)` so its

@@ -6,9 +6,7 @@ use crate::state_type_analysis::cross_file_direct::is_direct_lowering_source_fil
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_common::perf_counters::{
-    CrossArenaAliasShortcutOutcome, CrossArenaSymbolMissKind, CrossArenaSymbolMissSource,
-};
+use tsz_common::perf_counters::{CrossArenaSymbolMissKind, CrossArenaSymbolMissSource};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -127,236 +125,30 @@ impl<'a> CheckerState<'a> {
         self.get_symbol_globally(sym_id)
     }
 
-    pub(crate) fn try_resolve_cross_arena_named_alias_without_child(
-        &mut self,
-        sym_id: SymbolId,
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        use CrossArenaAliasShortcutOutcome as AliasOutcome;
-
-        let (module_name, import_name, alias_source_file_idx) = {
-            let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
-                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                    AliasOutcome::MissingSymbol,
-                );
-                return None;
-            };
-            if symbol.flags & symbol_flags::ALIAS == 0 {
-                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                    AliasOutcome::NotAlias,
-                );
-                return None;
-            }
-            let Some(module_name) = symbol.import_module.clone() else {
-                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                    AliasOutcome::MissingModule,
-                );
-                return None;
-            };
-            let Some(import_name) = symbol.import_name.clone() else {
-                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                    AliasOutcome::MissingImportName,
-                );
-                return None;
-            };
-            if import_name == "*" {
-                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                    AliasOutcome::NamespaceImport,
-                );
-                return None;
-            }
-            if import_name == "default" {
-                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                    AliasOutcome::DefaultImport,
-                );
-                return None;
-            }
-            let Some(alias_source_file_idx) = (symbol.decl_file_idx != u32::MAX)
-                .then_some(symbol.decl_file_idx as usize)
-                .or_else(|| self.ctx.resolve_symbol_file_index(sym_id))
-            else {
-                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                    AliasOutcome::MissingAliasFile,
-                );
-                return None;
-            };
-            (module_name, import_name, alias_source_file_idx)
-        };
-
-        let alias_cache_file_idx = self
-            .ctx
-            .resolve_symbol_file_index(sym_id)
-            .unwrap_or(alias_source_file_idx);
-        let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
-            &module_name,
-            &import_name,
-            Some(alias_source_file_idx),
-        ) else {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::MissingTarget,
-            );
-            return None;
-        };
-        if target_sym_id == sym_id {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::SelfTarget,
-            );
-            return None;
+    /// Order-independent hash of the in-progress resolution sets a delegated
+    /// computation's cycle detection can observe. Used as the context
+    /// component of the cross-arena sentinel memo key: a completed sentinel
+    /// is replayable only under the identical in-progress context.
+    fn cross_arena_context_fingerprint(&self) -> u64 {
+        #[inline]
+        fn mix(value: u64) -> u64 {
+            // splitmix64 finalizer
+            let mut z = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
         }
-
-        let Some(target_flags) = self
-            .get_cross_file_symbol(target_sym_id)
-            .map(|symbol| symbol.flags)
-        else {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::MissingTargetSymbol,
-            );
-            return None;
-        };
-        if target_flags & symbol_flags::ALIAS != 0 {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::TargetAlias,
-            );
-            return None;
+        let mut acc: u64 = 0;
+        for s in &self.ctx.symbol_resolution_set {
+            acc ^= mix(u64::from(s.0));
         }
-
-        let target_binder = self
-            .ctx
-            .resolve_symbol_file_index(target_sym_id)
-            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
-            .unwrap_or(self.ctx.binder);
-        if self
-            .ctx
-            .alias_partner_for(target_binder, target_sym_id)
-            .is_some()
-        {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::AliasPartner,
-            );
-            return None;
+        for s in &self.ctx.class_instance_resolution_set {
+            acc ^= mix(u64::from(s.0) | (1 << 40));
         }
-
-        let target_is_interface_value_merge = target_flags & symbol_flags::INTERFACE != 0
-            && target_flags & (symbol_flags::VARIABLE | symbol_flags::FUNCTION) != 0;
-        if target_is_interface_value_merge {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::InterfaceValueMerge,
-            );
-            return None;
+        for s in &self.ctx.class_constructor_resolution_set {
+            acc ^= mix(u64::from(s.0) | (1 << 41));
         }
-
-        let target_file_idx = self
-            .ctx
-            .resolve_symbol_file_index(target_sym_id)
-            .or_else(|| {
-                self.ctx
-                    .resolve_import_target_from_file(alias_source_file_idx, &module_name)
-            });
-        if let Some(file_idx) = target_file_idx {
-            self.ctx
-                .register_symbol_file_target(target_sym_id, file_idx);
-        }
-        let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
-            target_file_idx
-                .and_then(|file_idx| {
-                    self.ctx
-                        .cached_cross_file_symbol_type(target_sym_id, file_idx as u32)
-                })
-                .or_else(|| {
-                    let resolved = self.direct_source_file_type_alias_result(
-                        target_sym_id,
-                        target_file_idx,
-                        true,
-                    )?;
-                    if let Some(file_idx) = target_file_idx {
-                        self.ctx.cache_cross_file_symbol_type(
-                            target_sym_id,
-                            file_idx as u32,
-                            resolved.0,
-                            resolved.1.clone(),
-                        );
-                    }
-                    Some(resolved)
-                })
-                .unwrap_or_else(|| {
-                    let resolved = self.type_reference_symbol_type_with_params(target_sym_id);
-                    if let Some(file_idx) = target_file_idx {
-                        self.ctx.cache_cross_file_symbol_type(
-                            target_sym_id,
-                            file_idx as u32,
-                            resolved.0,
-                            resolved.1.clone(),
-                        );
-                    }
-                    resolved
-                })
-        } else {
-            (self.get_type_of_symbol(target_sym_id), Vec::new())
-        };
-        result = self.apply_module_augmentations(&module_name, &import_name, result);
-        if result == TypeId::ERROR {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::ErrorResult,
-            );
-            return None;
-        }
-        if result == TypeId::UNKNOWN {
-            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
-                AliasOutcome::UnknownResult,
-            );
-            return None;
-        }
-
-        self.ctx.symbol_types.insert(sym_id, result);
-        self.ctx.cache_cross_file_symbol_type(
-            sym_id,
-            alias_cache_file_idx as u32,
-            result,
-            params.clone(),
-        );
-        tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);
-
-        Some((result, params))
-    }
-
-    fn cached_symbol_arena_or_cross_file_symbol_type(
-        &self,
-        sym_id: SymbolId,
-        file_idx: usize,
-        source_cache_scope: u64,
-        symbol_type_cache_from_symbol_arena: bool,
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        let file_idx = file_idx as u32;
-        if !symbol_type_cache_from_symbol_arena {
-            return self.ctx.cached_cross_file_symbol_type(sym_id, file_idx);
-        }
-
-        self.ctx
-            .cached_stable_source_file_symbol_arena_type(sym_id, file_idx, source_cache_scope)
-    }
-
-    pub(super) fn cache_symbol_arena_or_cross_file_symbol_type(
-        &self,
-        sym_id: SymbolId,
-        file_idx: usize,
-        source_cache_scope: u64,
-        symbol_type_cache_from_symbol_arena: bool,
-        type_id: TypeId,
-        type_params: Vec<tsz_solver::TypeParamInfo>,
-    ) {
-        let file_idx = file_idx as u32;
-        if !symbol_type_cache_from_symbol_arena {
-            self.ctx
-                .cache_cross_file_symbol_type(sym_id, file_idx, type_id, type_params);
-            return;
-        }
-
-        self.ctx.cache_stable_source_file_symbol_arena_type(
-            sym_id,
-            file_idx,
-            source_cache_scope,
-            type_id,
-            type_params,
-        );
+        acc
     }
 
     /// Delegate symbol resolution to a checker using the correct arena.
@@ -581,6 +373,15 @@ impl<'a> CheckerState<'a> {
             || delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena));
 
         if should_delegate {
+            // Session-memo key: the owner file of the delegated symbol. Uses
+            // the same `(owner_file_idx, raw SymbolId)` key shape as the
+            // canonical DefinitionStore cross-file buckets (the raw id is
+            // interpreted in the owner binder), independent of the stable
+            // shared-cache eligibility gate below.
+            let memo_file_idx = cross_file_idx
+                .or_else(|| delegate_arena.and_then(|arena| self.ctx.get_file_idx_for_arena(arena)))
+                .map(|idx| idx as u32);
+
             let symbol_type_cache_file_idx = self.symbol_arena_symbol_type_cache_file_idx(
                 needs_cross_file_delegation,
                 cross_file_idx,
@@ -609,6 +410,49 @@ impl<'a> CheckerState<'a> {
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
+            // Delegation-tree memo of completed sentinel outcomes the shared
+            // store refuses: replay the first completion instead of
+            // re-running the full child checker per type-reference
+            // occurrence inside this tree (issue #13041). At depth 0 this
+            // call roots a new tree, so stale entries from the previous
+            // tree's in-progress context are dropped first.
+            if !Self::is_in_cross_arena_delegation() {
+                self.ctx
+                    .lib_delegation_cache
+                    .session_memo()
+                    .clear_for_new_delegation_tree();
+            }
+            let memo_context_fp = memo_file_idx
+                .is_some()
+                .then(|| self.cross_arena_context_fingerprint());
+            if let Some(file_idx) = memo_file_idx
+                && let Some(fp) = memo_context_fp
+                && let Some(hit) = self
+                    .ctx
+                    .lib_delegation_cache
+                    .session_memo()
+                    .symbol
+                    .get(&(file_idx, sym_id.0, fp))
+            {
+                let (cached_type, cached_params) = hit.clone();
+                drop(hit);
+                if cached_type != TypeId::ERROR && cached_type != TypeId::UNKNOWN {
+                    self.ctx.symbol_types.insert(sym_id, cached_type);
+                } else if needs_cross_file_delegation {
+                    // Mirror the full-work path's child merge-back: for
+                    // cross-file delegations the child's
+                    // `symbol_types[sym] = ERROR` is merged into the
+                    // requesting checker (`entry_or_insert`), and later
+                    // `get_type_of_symbol` lookups short-circuit on it.
+                    self.ctx.symbol_types.entry_or_insert(sym_id, cached_type);
+                }
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_cross_file
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Some((cached_type, cached_params));
+            }
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
@@ -1126,6 +970,24 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            // Record completed *sentinel* results in the session memo so
+            // repeats within this file-check session replay them instead of
+            // re-running the child checker (issue #13041's livelock was
+            // exclusively repeated identical ERROR completions). Non-sentinel
+            // results stay on the gated shared-store caches above, which
+            // already model requester stability; memoizing them here changed
+            // elaboration output on the valibot/kysely canaries. In-progress
+            // guard returns above never reach this write.
+            if let Some(file_idx) = memo_file_idx
+                && let Some(fp) = memo_context_fp
+                && matches!(result, TypeId::ERROR | TypeId::UNKNOWN)
+            {
+                let memo = self.ctx.lib_delegation_cache.session_memo();
+                memo.symbol
+                    .insert((file_idx, sym_id.0, fp), (result, result_params.clone()));
+                memo.mark_dirty();
+            }
+
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
             return Some((result, result_params));
@@ -1203,6 +1065,33 @@ impl<'a> CheckerState<'a> {
         {
             tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
             return Some((cached_type, cached_params));
+        }
+
+        // Delegation-tree memo of completed `None`/sentinel outcomes the
+        // shared bucket refuses to store (issue #13041: repeated full
+        // child-checker recomputation). Non-sentinel results stay on the
+        // shared bucket above. At depth 0 this call roots a new tree, so
+        // stale entries from the previous tree's context are dropped first.
+        if !Self::is_in_cross_arena_delegation() {
+            self.ctx
+                .lib_delegation_cache
+                .session_memo()
+                .clear_for_new_delegation_tree();
+        }
+        let memo_context_fp = query_file_idx
+            .is_some()
+            .then(|| self.cross_arena_context_fingerprint());
+        if let Some(file_idx) = query_file_idx
+            && let Some(fp) = memo_context_fp
+            && let Some(hit) = self
+                .ctx
+                .lib_delegation_cache
+                .session_memo()
+                .class_instance
+                .get(&(file_idx as u32, sym_id.0, fp))
+        {
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
+            return hit.clone();
         }
 
         if !Self::enter_cross_arena_delegation() {
@@ -1293,6 +1182,23 @@ impl<'a> CheckerState<'a> {
             self.cache_shared_actual_lib_class_delegation(shared_name, *type_id);
         }
 
+        // Record only completed `None`/sentinel outcomes in the session
+        // memo; non-sentinel results already write through to the shared
+        // class-instance bucket above, which models requester stability.
+        // In-progress guard returns above never reach here.
+        let completed_negative = result
+            .as_ref()
+            .is_none_or(|(type_id, _)| matches!(*type_id, TypeId::ERROR | TypeId::UNKNOWN));
+        if completed_negative
+            && let Some(file_idx) = query_file_idx
+            && let Some(fp) = memo_context_fp
+        {
+            let memo = self.ctx.lib_delegation_cache.session_memo();
+            memo.class_instance
+                .insert((file_idx as u32, sym_id.0, fp), result.clone());
+            memo.mark_dirty();
+        }
+
         self.ctx.leave_recursion();
         Self::leave_cross_arena_delegation();
 
@@ -1351,6 +1257,35 @@ impl<'a> CheckerState<'a> {
                 .definition_store
                 .register_type_to_def(cached_type, def_id);
             return Some(cached_type);
+        }
+
+        // Delegation-tree memo of completed `None` (UNKNOWN/ERROR)
+        // child-checker outcomes the shared bucket refuses to store (issue
+        // #13041). Successful results stay on the shared interface bucket
+        // above. At depth 0 this call roots a new tree, so stale entries
+        // from the previous tree's context are dropped first.
+        if !Self::is_in_cross_arena_delegation() {
+            self.ctx
+                .lib_delegation_cache
+                .session_memo()
+                .clear_for_new_delegation_tree();
+        }
+        let memo_context_fp = query_file_idx
+            .is_some()
+            .then(|| self.cross_arena_context_fingerprint());
+        if let Some(file_idx) = query_file_idx
+            && let Some(fp) = memo_context_fp
+            && let Some(hit) = self
+                .ctx
+                .lib_delegation_cache
+                .session_memo()
+                .interface
+                .get(&(file_idx as u32, sym_id.0, fp))
+        {
+            let cached = *hit;
+            drop(hit);
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
+            return cached;
         }
         let delegate_binder = if let Some(file_idx) = delegate_file_idx {
             self.ctx
@@ -1476,7 +1411,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.leave_recursion();
         Self::leave_cross_arena_delegation();
 
-        if result != TypeId::UNKNOWN && result != TypeId::ERROR {
+        let outcome = if result != TypeId::UNKNOWN && result != TypeId::ERROR {
             // Register instance type → DefId so the TypeFormatter can display
             // the interface name (e.g., "Date") instead of the structural form.
             // This mirrors the class registration in symbol_types.rs.
@@ -1491,7 +1426,23 @@ impl<'a> CheckerState<'a> {
             Some(result)
         } else {
             None
+        };
+
+        // Record only the completed-`None` (UNKNOWN/ERROR) child-checker
+        // outcome in the session memo; successful results were written to
+        // the shared interface bucket above. In-progress guard returns
+        // never reach here.
+        if outcome.is_none()
+            && let Some(file_idx) = query_file_idx
+            && let Some(fp) = memo_context_fp
+        {
+            let memo = self.ctx.lib_delegation_cache.session_memo();
+            memo.interface
+                .insert((file_idx as u32, sym_id.0, fp), outcome);
+            memo.mark_dirty();
         }
+
+        outcome
     }
 
     pub(crate) fn delegate_cross_arena_interface_member_simple_type(
