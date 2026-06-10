@@ -1084,6 +1084,38 @@ fn store_union_origin_preserves_source_order_for_number_literal_union() {
 }
 
 #[test]
+fn store_union_origin_preserves_source_order_for_type_parameter_union() {
+    let db = TypeInterner::new();
+
+    let top_name = db.intern_string("Top");
+    let top = db.fresh_type_param(TypeParamInfo::simple(top_name));
+    let u_name = db.intern_string("U");
+    let u = db.fresh_type_param(TypeParamInfo::simple(u_name));
+    let t_name = db.intern_string("T");
+    let t = db.fresh_type_param(TypeParamInfo {
+        name: t_name,
+        constraint: Some(top),
+        default: None,
+        is_const: false,
+    });
+
+    // This mirrors a two-pass type-parameter push: `U` keeps its first-pass
+    // identity, while constrained `T` is allocated later. Canonical sorting
+    // therefore prints `U | T`, even when the source union was `T | U`.
+    let origin = vec![t, u];
+    let union_id = db.union(origin.clone());
+    {
+        let mut fmt = TypeFormatter::new(&db);
+        assert_eq!(fmt.format(union_id), "U | T");
+    }
+
+    db.store_union_origin(union_id, origin);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(union_id), "T | U");
+}
+
+#[test]
 fn formatter_can_ignore_union_origin_for_canonical_number_literal_display() {
     let db = TypeInterner::new();
 

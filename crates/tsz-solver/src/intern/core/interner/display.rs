@@ -246,6 +246,10 @@ impl TypeInterner {
                     current.as_ref(),
                     &origin_members,
                 )
+                || self.union_origin_overrides_canonical_type_param_sort(
+                    current.as_ref(),
+                    &origin_members,
+                )
                 || self.union_origin_overrides_canonical_generic_display_sort(
                     current.as_ref(),
                     &origin_members,
@@ -455,6 +459,37 @@ impl TypeInterner {
         let is_literal = |id| matches!(self.lookup(id), Some(TypeData::Literal(_)));
         (is_keyof(origin[0]) && is_literal(origin[1]))
             || (is_literal(origin[0]) && is_keyof(origin[1]))
+    }
+
+    /// Preserve source-written order for unions that contain type parameters.
+    ///
+    /// Declaration-scoped type parameters are interned fresh, and their
+    /// allocation order can differ from declaration order when a later
+    /// constrained refinement (`T extends U`) replaces the first-pass
+    /// unconstrained placeholder. TypeScript still displays a source union
+    /// such as `T | U` in source order, so when a caller records an origin
+    /// with the same members in a different order, keep that origin for
+    /// diagnostics.
+    fn union_origin_overrides_canonical_type_param_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        origin
+            .iter()
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::TypeParameter(_))))
     }
 
     /// Preserve source-written order for generic display unions whose canonical
