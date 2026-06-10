@@ -103,18 +103,25 @@ impl BinderState {
     /// 1. Local `file_locals` (for user-defined globals or merged lib symbols)
     /// 2. Lib binders (only when `lib_symbols_merged` is false)
     ///
+    /// Resolve a name against the program-wide LIB globals carried by
+    /// cross-file lookup binders (`MergedProgram::lib_globals`).
+    ///
+    /// This is a dedicated accessor, NOT folded into `get_global_type*`:
+    /// many checker paths depend on those returning `None` on a cross-file
+    /// binder (e.g. JSX element-type resolution treats an unresolved global
+    /// as "use the namespace declared by the program's files"); a blanket
+    /// fallback there regresses multi-file JSX programs. Callers that
+    /// specifically resolve declaration heritage bases (`extends Request`)
+    /// through cross-arena delegation chain this explicitly so heritage does
+    /// not depend on root-file order.
+    pub fn program_global_type(&self, name: &str) -> Option<SymbolId> {
+        self.program_globals.get(name)
+    }
+
     /// Returns the `SymbolId` if found, None otherwise.
     pub fn get_global_type(&self, name: &str) -> Option<SymbolId> {
         // First check file_locals (includes merged lib symbols when lib_symbols_merged is true)
         if let Some(sym_id) = self.file_locals.get(name) {
-            return Some(sym_id);
-        }
-
-        // Cross-file lookup binders keep `file_locals` per-file and carry the
-        // hoisted program-wide globals separately; consult them after the
-        // per-file miss so a lib global resolves the same way it would in a
-        // per-file checking binder.
-        if let Some(sym_id) = self.program_globals.get(name) {
             return Some(sym_id);
         }
 
@@ -144,12 +151,6 @@ impl BinderState {
     ) -> Option<SymbolId> {
         // First check file_locals (includes merged lib symbols when lib_symbols_merged is true)
         if let Some(sym_id) = self.file_locals.get(name) {
-            return Some(sym_id);
-        }
-
-        // See `get_global_type`: cross-file lookup binders carry hoisted
-        // program-wide globals separately from per-file `file_locals`.
-        if let Some(sym_id) = self.program_globals.get(name) {
             return Some(sym_id);
         }
 

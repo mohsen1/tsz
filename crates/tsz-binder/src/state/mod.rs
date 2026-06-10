@@ -306,9 +306,14 @@ pub struct BinderState {
     pub(crate) scope_stack: Vec<SymbolTable>,
     /// File-level locals (for module resolution)
     pub file_locals: SymbolTable,
-    /// Program-wide global symbols (lib globals plus script-file globals),
-    /// shared across reconstructed binders via the `SymbolTable`'s internal
-    /// `Arc` (O(1) clone).
+    /// Lib-origin global symbols of the program, shared across reconstructed
+    /// binders via the `SymbolTable`'s internal `Arc` (O(1) clone).
+    ///
+    /// Deliberately lib-only (`MergedProgram::lib_globals`): script-file
+    /// globals (e.g. a program's own `JSX` namespace) must keep resolving
+    /// through the per-file cross-file path with their original symbol
+    /// identity; a program-wide fallback for them shadows/re-identifies those
+    /// declarations and regresses multi-file JSX programs.
     ///
     /// Per-file checking binders fold these directly into `file_locals`
     /// (`MergedProgram::build_merged_file_locals`), so this table stays empty
