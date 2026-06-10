@@ -147,7 +147,11 @@ impl<'a> Printer<'a> {
         })
     }
 
-    fn invalid_let_of_array_for_header(&self, node: &Node, loop_stmt: &LoopData) -> Option<String> {
+    fn invalid_let_of_array_for_header(
+        &self,
+        node: &Node,
+        loop_stmt: &LoopData,
+    ) -> Option<String> {
         if loop_stmt.initializer.is_some()
             || loop_stmt.condition.is_some()
             || loop_stmt.incrementor.is_some()
@@ -352,16 +356,17 @@ mod tests {
 
     #[test]
     fn typed_for_body_call_recovery_accepts_unicode_identifiers() {
-        // `é` (U+00E9) and `日` (U+65E5) are valid ECMAScript identifier-start
-        // characters; the recovery must treat them as identifier chars, not bail
-        // out with an ASCII-only check.
-        let output = emit_es5("for (let r\u{00e9}sum\u{00e9}: Type) { donn\u{00e9}es(r\u{00e9}sum\u{00e9}); }");
+        let output = emit_es5(
+            "for (let r\u{e9}sum\u{e9}: Type) { donn\u{e9}es(r\u{e9}sum\u{e9}); }",
+        );
         assert!(
-            output.contains("r\u{00e9}sum\u{00e9}"),
+            output.contains("r\u{e9}sum\u{e9}"),
             "Unicode binding identifier should be preserved in recovery.\nOutput:\n{output}"
         );
 
-        let output2 = emit_es5("for (let \u{65e5}\u{672c}\u{8a9e}: T) { \u{51e6}\u{7406}(\u{65e5}\u{672c}\u{8a9e}); }");
+        let output2 = emit_es5(
+            "for (let \u{65e5}\u{672c}\u{8a9e}: T) { \u{51e6}\u{7406}(\u{65e5}\u{672c}\u{8a9e}); }",
+        );
         assert!(
             output2.contains("\u{65e5}\u{672c}\u{8a9e}"),
             "CJK binding identifier should be preserved in recovery.\nOutput:\n{output2}"
