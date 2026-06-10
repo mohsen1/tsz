@@ -1271,7 +1271,26 @@ impl<'a> CheckerState<'a> {
         };
 
         for current_object in [object_type, object_type_for_check] {
-            if self.same_key_space_after_evaluation(constraint_target, current_object) {
+            // Compare constraint_target against current_object for structural identity.
+            // When both are IndexAccess types, compare their base and index components
+            // directly rather than by evaluated value: two different `IndexAccess(A, T)` and
+            // `IndexAccess(B, T)` can evaluate to the same union when A and B share identical
+            // property values for T's constrained key range, even though they are different
+            // key-space targets (e.g. `ElementTagNameMap[T]` vs `HTMLElementTagNameMap[T]`).
+            let targets_same_object = match (
+                crate::query_boundaries::common::index_access_types(
+                    self.ctx.types,
+                    constraint_target,
+                ),
+                crate::query_boundaries::common::index_access_types(self.ctx.types, current_object),
+            ) {
+                (Some((ct_base, ct_index)), Some((co_base, co_index))) => {
+                    same_object_key_space(self.ctx.types, ct_base, co_base)
+                        && same_object_key_space(self.ctx.types, ct_index, co_index)
+                }
+                _ => self.same_key_space_after_evaluation(constraint_target, current_object),
+            };
+            if targets_same_object {
                 return false;
             }
             let Some((current_base, current_index)) =
