@@ -126,12 +126,12 @@ enum ReferenceTarget {
 }
 
 /// Invoke `apply` with the binding index of every binding matched by
-/// `target`. Free function (rather than a `UsageScan` method) so callers can
-/// mutate sibling `UsageScan` fields from `apply`.
+/// `target` among the same-named `candidates`. Free function (rather than a
+/// `UsageScan` method) so callers can mutate sibling `UsageScan` fields from
+/// `apply`.
 fn for_each_matching_binding(
     target: ReferenceTarget,
-    name: &str,
-    by_name: &FxHashMap<String, Vec<usize>>,
+    candidates: &[usize],
     bindings: &[Binding],
     mut apply: impl FnMut(usize, &Binding),
 ) {
@@ -140,7 +140,7 @@ fn for_each_matching_binding(
         ReferenceTarget::Binding(idx) => apply(idx, &bindings[idx]),
         ReferenceTarget::AllSameName | ReferenceTarget::SameNameWithUnknownSymbol => {
             let unknown_only = matches!(target, ReferenceTarget::SameNameWithUnknownSymbol);
-            for &idx in by_name.get(name).map_or(&[][..], Vec::as_slice) {
+            for &idx in candidates {
                 if !unknown_only || bindings[idx].symbol.is_none() {
                     apply(idx, &bindings[idx]);
                 }
@@ -253,13 +253,19 @@ impl<'a> UsageScan<'a> {
             return;
         }
         // For `import A = ...` the clause IS the alias identifier node.
+        let Some(name) = self
+            .arena
+            .get_identifier_at(import.import_clause)
+            .map(|ident| ident.escaped_text.clone())
+            .filter(|name| !name.is_empty())
+        else {
+            return;
+        };
         let exported = self
             .arena
             .has_modifier(&import.modifiers, SyntaxKind::ExportKeyword)
             || self.import_equals_is_export_declaration_clause(decl_idx);
-        let Some(binding_idx) = self.add_binding(import.import_clause, exported) else {
-            return;
-        };
+        let binding_idx = self.add_named_binding(import.import_clause, name, exported);
         self.alias_decl_to_binding.insert(decl_idx, binding_idx);
     }
 
@@ -270,14 +276,6 @@ impl<'a> UsageScan<'a> {
             .parent_of(decl_idx)
             .and_then(|p| self.arena.get(p))
             .is_some_and(|p| p.kind == syntax_kind_ext::EXPORT_DECLARATION)
-    }
-
-    fn add_binding(&mut self, name_idx: NodeIndex, exported_import_equals: bool) -> Option<usize> {
-        let name = self.arena.get_identifier_at(name_idx)?.escaped_text.clone();
-        if name.is_empty() {
-            return None;
-        }
-        Some(self.add_named_binding(name_idx, name, exported_import_equals))
     }
 
     fn add_named_binding(
@@ -319,9 +317,12 @@ impl<'a> UsageScan<'a> {
                 continue;
             };
             let name = ident.escaped_text.as_str();
-            if name.is_empty() || !self.by_name.contains_key(name) {
+            if name.is_empty() {
                 continue;
             }
+            let Some(candidates) = self.by_name.get(name) else {
+                continue;
+            };
             // Skip the binding declarations themselves.
             if self.binding_name_nodes.contains(&node_idx) {
                 continue;
@@ -329,25 +330,18 @@ impl<'a> UsageScan<'a> {
             match self.classify_reference(node_idx, name) {
                 ReferencePosition::NotAReference | ReferencePosition::Erased => {}
                 ReferencePosition::Value => {
-                    let target = self.resolve_reference_target(node_idx, name);
+                    let target = self.resolve_reference_target(node_idx, candidates);
                     let value_used = &mut self.value_used;
-                    for_each_matching_binding(
-                        target,
-                        name,
-                        &self.by_name,
-                        &self.bindings,
-                        |_, binding| {
-                            value_used.insert(binding.name_node);
-                        },
-                    );
+                    for_each_matching_binding(target, candidates, &self.bindings, |_, binding| {
+                        value_used.insert(binding.name_node);
+                    });
                 }
                 ReferencePosition::ImportEqualsRhs(alias_decl) => {
-                    let target = self.resolve_reference_target(node_idx, name);
+                    let target = self.resolve_reference_target(node_idx, candidates);
                     let alias_edges = &mut self.alias_edges;
                     for_each_matching_binding(
                         target,
-                        name,
-                        &self.by_name,
+                        candidates,
                         &self.bindings,
                         |binding_idx, _| {
                             alias_edges.push((alias_decl, binding_idx));
@@ -358,12 +352,17 @@ impl<'a> UsageScan<'a> {
         }
     }
 
-    /// Resolve a reference to the binding population it can denote.
+    /// Resolve a reference to the binding population it can denote, among
+    /// the same-named `candidates`.
     ///
     /// Uses shadow-aware scope resolution; when the reference cannot be
     /// resolved (or a binding's own symbol is unknown), same-named bindings
     /// conservatively match so the import is preserved.
-    fn resolve_reference_target(&self, ref_idx: NodeIndex, name: &str) -> ReferenceTarget {
+    fn resolve_reference_target(
+        &self,
+        ref_idx: NodeIndex,
+        candidates: &[usize],
+    ) -> ReferenceTarget {
         // Scope resolution first: `node_symbols` keys *declaration* sites
         // (e.g. `export default expr` maps to the default-export symbol), so
         // it is only a fallback for references the scope walk cannot reach.
@@ -379,11 +378,10 @@ impl<'a> UsageScan<'a> {
                 // The reference resolved to a different symbol (a shadowing
                 // local). Only same-named bindings whose own symbol is
                 // unknown still conservatively match.
-                if self.by_name.get(name).is_some_and(|candidates| {
-                    candidates
-                        .iter()
-                        .any(|&idx| self.bindings[idx].symbol.is_none())
-                }) {
+                if candidates
+                    .iter()
+                    .any(|&idx| self.bindings[idx].symbol.is_none())
+                {
                     ReferenceTarget::SameNameWithUnknownSymbol
                 } else {
                     ReferenceTarget::None
@@ -721,6 +719,9 @@ impl<'a> UsageScan<'a> {
             }
             current = self.arena.parent_of(idx);
         }
+        // Unknown context — including a walk cut short by the step bound —
+        // conservatively counts as a value usage (over-preserve, never elide
+        // a runtime-required import).
         ReferencePosition::Value
     }
 
