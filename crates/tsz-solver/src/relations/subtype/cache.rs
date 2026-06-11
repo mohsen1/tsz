@@ -150,6 +150,20 @@ pub(crate) struct MaybeRelationEntry {
     fuel_band: Option<u32>,
 }
 
+/// Frame-entry snapshot captured by `check_subtype` and consumed by
+/// `finish_relation_frame` at every frame exit: the maybe-stack watermark,
+/// the promotability of this frame's verdicts, whether the budget chain was
+/// pristine at entry (fuel-band honesty), and the cache-poisoning sentinel
+/// counters whose stability gates promotion.
+#[derive(Copy, Clone, Debug)]
+struct RelationFrameSnapshot {
+    maybe_start: usize,
+    frame_promotable: bool,
+    pristine_budget_chain: bool,
+    lazy_failures_at_entry: u64,
+    weak_sensitivity_at_entry: u64,
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a Lazy type resolved to an Enum with the same DefId.
     ///
@@ -505,21 +519,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && self.guard.iterations() == 0
             && crate::recursion::solver_stack_frame_depth() == 0;
 
+        let frame_snapshot = RelationFrameSnapshot {
+            maybe_start,
+            frame_promotable,
+            pristine_budget_chain,
+            lazy_failures_at_entry,
+            weak_sensitivity_at_entry,
+        };
+
         // Helper macro: run the maybe-stack completion protocol for this
         // frame. Must be invoked at every exit taken after `guard.enter`
         // succeeded, after the corresponding `guard.leave`.
         macro_rules! finish_frame {
             ($result:expr) => {
-                self.finish_relation_frame(
-                    $result,
-                    maybe_start,
-                    frame_promotable,
-                    pristine_budget_chain,
-                    lazy_failures_at_entry,
-                    weak_sensitivity_at_entry,
-                    source,
-                    target,
-                );
+                self.finish_relation_frame($result, frame_snapshot, source, target);
             };
         }
 
@@ -1182,24 +1195,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   gated on the unresolved-`Lazy` / weak-type-sensitivity counters
     ///   having been stable across the whole outermost window, the same
     ///   discipline `cache_definitive!` applies to definitive writes.
-    #[allow(clippy::too_many_arguments)]
     fn finish_relation_frame(
         &mut self,
         result: SubtypeResult,
-        maybe_start: usize,
-        frame_promotable: bool,
-        pristine_budget_chain: bool,
-        lazy_failures_at_entry: u64,
-        weak_sensitivity_at_entry: u64,
+        frame: RelationFrameSnapshot,
         source: TypeId,
         target: TypeId,
     ) {
         match result {
             SubtypeResult::False => {
-                self.maybe_keys.truncate(maybe_start);
+                self.maybe_keys.truncate(frame.maybe_start);
             }
             SubtypeResult::CycleDetected => {
-                if frame_promotable {
+                if frame.frame_promotable {
                     self.maybe_keys.push(MaybeRelationEntry {
                         key: self.make_cache_key(source, target),
                         fuel_band: None,
@@ -1207,7 +1215,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
             SubtypeResult::DepthExceeded => {
-                if frame_promotable && pristine_budget_chain {
+                if frame.frame_promotable && frame.pristine_budget_chain {
                     self.maybe_keys.push(MaybeRelationEntry {
                         key: self.make_cache_key(source, target),
                         fuel_band: Some(MAX_GLOBAL_SUBTYPE_FUEL),
@@ -1221,8 +1229,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.guard.depth() == 0 && !self.maybe_keys.is_empty() {
             let entries = std::mem::take(&mut self.maybe_keys);
             if result.is_true()
-                && lazy_resolve_failure_count() == lazy_failures_at_entry
-                && weak_type_sensitivity_count() == weak_sensitivity_at_entry
+                && lazy_resolve_failure_count() == frame.lazy_failures_at_entry
+                && weak_type_sensitivity_count() == frame.weak_sensitivity_at_entry
                 && let Some(db) = self.query_db
             {
                 for entry in entries {
