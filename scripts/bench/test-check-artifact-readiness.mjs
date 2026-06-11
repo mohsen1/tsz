@@ -101,6 +101,7 @@ function makeArtifact(rows, extraMeta = {}) {
 const SAMPLE_MEASUREMENT_PROFILE = {
   mode: "release-pgo",
   tsz_binary_source: "bench-dist",
+  rust_target_cpu: "x86-64-v3",
   profile_guided_optimization: {
     requested: true,
     required: true,
@@ -169,6 +170,7 @@ withTempDir((dir) => {
   assert.match(result.stderr, /Measurement profile.*release-pgo/, "should show measurement profile mode");
   assert.match(result.stderr, /PGO profile.*abcdef123456/, "should show PGO profile fingerprint");
   assert.match(result.stderr, /PGO training.*123456abcdef/, "should show PGO training fingerprint");
+  assert.match(result.stderr, /Binary target CPU.*x86-64-v3/, "should show the binary codegen target CPU");
 });
 console.log("✅ complete all-green artifact exits 0");
 
