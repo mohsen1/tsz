@@ -863,6 +863,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     .get_application_eval_origin(source)
                                     .and_then(|origin| application_id(self.interner, origin))
                             })?;
+                            // Identical argument lists prove nothing here:
+                            // the sides are distinct shapes for a
+                            // non-argument reason (context-dependent
+                            // evaluation of the same application, e.g. under
+                            // exactOptionalPropertyTypes), and only the
+                            // structural comparison can judge that.
+                            {
+                                let s_app = self.interner.type_application(s_app_id);
+                                let t_app = self.interner.type_application(t_app_id);
+                                if s_app.args == t_app.args {
+                                    return None;
+                                }
+                            }
                             let vr = self
                                 .try_same_base_args_identical_or_any(s_app_id, t_app_id)
                                 .or_else(|| self.try_variance_fast_path(s_app_id, t_app_id));

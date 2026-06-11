@@ -159,6 +159,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !args_identical_or_any {
             return None;
         }
+        // The acceptance is justified by an `any` argument silencing the
+        // differing slot. When EVERY pair is identical, the two sides are
+        // structurally distinct for a NON-argument reason (e.g. the same
+        // application evaluated under different checker contexts -
+        // exactOptionalPropertyTypes can legally produce distinct shapes), so
+        // argument reasoning proves nothing; fall through to the structural
+        // comparison, which distinguishes those shapes correctly
+        // (`inferenceExactOptionalProperties2.ts`).
+        let any_pair_differs = s_app
+            .args
+            .iter()
+            .zip(t_app.args.iter())
+            .any(|(&s_arg, &t_arg)| s_arg != t_arg);
+        if !any_pair_differs {
+            return None;
+        }
         let allow_any = self
             .any_propagation
             .allows_any_source_at_depth(self.guard.depth())
