@@ -35,7 +35,13 @@ try {
   );
   process.exit(1);
 }
-const json = JSON.parse(jsonText);
+let json;
+try {
+  json = JSON.parse(jsonText);
+} catch (error) {
+  console.error(`Cannot parse ${inputPath}: ${error.message}`);
+  process.exit(1);
+}
 
 // Build entries sorted by code
 const entries = Object.entries(json)
@@ -132,6 +138,8 @@ const partsDir = join(dataRoot, "parts");
 rmSync(dataRoot, { recursive: true, force: true });
 mkdirSync(partsDir, { recursive: true });
 
+// 650 declarations plus the file header keep each generated part well under
+// the repo's 2000-physical-line shard cap.
 const partChunks = chunks(codeEntries, 650);
 
 for (const [index, chunk] of partChunks.entries()) {

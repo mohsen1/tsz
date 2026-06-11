@@ -264,16 +264,18 @@ fn compare_related_information(
 }
 
 /// Look up a `DiagnosticMessage` (code + category + template) by numeric code.
-/// Uses binary search over the sorted generated table — O(log n).
+/// The generated sections are globally sorted by code with no duplicates
+/// (locked by `generated_table_codes_are_strictly_increasing`), so the only
+/// section that can contain `code` is the first whose last code is >= `code`;
+/// one binary search there decides the lookup — O(log n).
 pub fn lookup_diagnostic(code: u32) -> Option<DiagnosticMessage> {
-    self::data::DIAGNOSTIC_MESSAGE_SECTIONS
+    let section = self::data::DIAGNOSTIC_MESSAGE_SECTIONS
         .iter()
-        .find_map(|section| {
-            section
-                .binary_search_by_key(&code, |m| m.code)
-                .ok()
-                .map(|idx| section[idx])
-        })
+        .find(|section| section.last().is_some_and(|m| m.code >= code))?;
+    section
+        .binary_search_by_key(&code, |m| m.code)
+        .ok()
+        .map(|idx| section[idx])
 }
 
 pub fn get_message_template(code: u32) -> Option<&'static str> {
