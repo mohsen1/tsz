@@ -1113,12 +1113,10 @@ impl<'a> CheckerState<'a> {
             .map(Some)
             .unwrap_or(defaults.allow_unused_labels);
 
-        // Parse @ignoreDeprecations: "5.0" or "6.0" as a string option.
-        // Pragma directives are confined to the first ~32 leading comment
-        // lines (see `parse_test_option_bool`), so a full-source
-        // `to_ascii_lowercase()` was allocating a complete lowercased copy
-        // of every checked file just to scan a region we already iterate.
-        // Reuse the comment-line scan to avoid that O(file_size) allocation.
+        // @ignoreDeprecations: "5.0"/"6.0" carries a version string, and the
+        // flag form also counts as present, so it is a presence check over
+        // the leading comment block rather than a `pragmas` lookup (the
+        // pre-parsed slice only holds key/value directives).
         if Self::source_has_pragma(text, "@ignoredeprecations") {
             opts.ignore_deprecations = true;
         }
@@ -1132,10 +1130,13 @@ impl<'a> CheckerState<'a> {
     fn source_has_pragma(text: &str, lower_pragma: &str) -> bool {
         let name = lower_pragma.strip_prefix('@').unwrap_or(lower_pragma);
         Self::leading_comment_lines(text).any(|line| {
-            tsz_common::test_directives::parse_directive_line(line)
-                .is_some_and(|directive| directive.key_is(name))
-                || tsz_common::test_directives::parse_flag_directive_line(line)
-                    .is_some_and(|flag| flag.eq_ignore_ascii_case(name))
+            // The two forms are mutually exclusive: a key/value match means
+            // the flag parse cannot succeed, so skip it.
+            if let Some(directive) = tsz_common::test_directives::parse_directive_line(line) {
+                return directive.key_is(name);
+            }
+            tsz_common::test_directives::parse_flag_directive_line(line)
+                .is_some_and(|flag| flag.eq_ignore_ascii_case(name))
         })
     }
 
