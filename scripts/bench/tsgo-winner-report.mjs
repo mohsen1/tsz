@@ -36,6 +36,20 @@ const LOSS_CLOSURE_BY_ROW = new Map([
     },
   ],
   [
+    "type-fest-project",
+    {
+      owner: "Track 1/2 recursive utility-type evaluation",
+      operation:
+        "recursive conditional/mapped utility expansion with deep template-literal and tuple manipulation",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --quick --filter '^type-fest-project$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 scripts/safe-run.sh cargo run -q -p tsz-cli --features perf-tools --bin tsz -- --extendedDiagnostics --perf-counters-json <artifact>.type-fest-project.perf.json --noEmit -p .target-bench/external/type-fest/tsconfig.flat.json",
+      issue: 13248,
+      url: "https://github.com/tsz-org/tsz/issues/13248",
+    },
+  ],
+  [
     "ts-toolbelt-project",
     {
       owner: "Track 1/2 recursive type evaluation",
@@ -231,6 +245,19 @@ const LOSS_CLOSURE_BY_ROW = new Map([
         "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-cfa-branches-150>.ts",
       issue: 12271,
       url: "https://github.com/tsz-org/tsz/issues/12271",
+    },
+  ],
+  [
+    "200 union members",
+    {
+      owner: "Track 10 union normalization scale guard",
+      operation: "wide-union normalization, member dedup, and subtype reduction pressure",
+      command:
+        "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^200 union members$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-200-union-members>.ts",
+      issue: 13242,
+      url: "https://github.com/tsz-org/tsz/issues/13242",
     },
   ],
   [

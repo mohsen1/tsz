@@ -37,7 +37,7 @@ const { createTsgoWinnerReport, renderMissingAttributionPlanMarkdown } = await i
     JSON.parse(fs.readFileSync(WEBSITE_BENCH_SNAPSHOT, "utf8")),
     WEBSITE_BENCH_SNAPSHOT,
   );
-  assert.equal(report.two_x_target.rows_below_target, 15);
+  assert.equal(report.two_x_target.rows_below_target, 18);
   assert.equal(
     report.two_x_target.rows_with_attribution_command,
     report.two_x_target.rows_below_target,
