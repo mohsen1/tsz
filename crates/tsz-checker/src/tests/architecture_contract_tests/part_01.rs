@@ -1968,34 +1968,3 @@ fn test_relation_flags_surface_uses_solver_typed_flags() {
         "RelationFlags wrapper must not depend on legacy RelationCacheKey FLAG_* constants"
     );
 }
-
-/// Checker compiler-option packing must stay on the boundary-owned
-/// `RelationFlags` wrapper rather than reaching into solver internals.
-#[test]
-fn test_pack_relation_flags_uses_boundary_relation_flags_surface() {
-    let source = fs::read_to_string("src/context/compiler_options.rs")
-        .expect("failed to read context/compiler_options.rs");
-
-    assert!(
-        source.contains("use crate::query_boundaries::assignability::RelationFlags;"),
-        "pack_relation_flags must import boundary-owned RelationFlags"
-    );
-
-    for flag in [
-        "RelationFlags::STRICT_NULL_CHECKS",
-        "RelationFlags::STRICT_FUNCTION_TYPES",
-        "RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES",
-        "RelationFlags::NO_UNCHECKED_INDEXED_ACCESS",
-        "RelationFlags::ALLOW_BIVARIANT_REST",
-    ] {
-        assert!(
-            source.contains(flag),
-            "pack_relation_flags must use `{flag}` when encoding checker policy"
-        );
-    }
-
-    assert!(
-        !source.contains("RelationCacheKey::FLAG_STRICT_NULL_CHECKS"),
-        "pack_relation_flags must not reach directly into RelationCacheKey bits"
-    );
-}

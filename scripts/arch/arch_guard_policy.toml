@@ -338,6 +338,11 @@ exclude_files = [
 ]
 
 [[pattern_checks]]
+name = "Checker line-cap: include! fragment evasion must not return (#13085)"
+base = "crates/tsz-checker"
+pattern = '\binclude!\s*\('
+
+[[pattern_checks]]
 name = "Checker test boundary: no direct solver internal type inspection in integration tests"
 base = "crates/tsz-checker/tests"
 pattern = '\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b'
