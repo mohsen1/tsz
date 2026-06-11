@@ -1144,35 +1144,41 @@ fn check_call_expression_return_type_portability_skip_when_disabled() {
 // ── TS2883 portability check: symlinked-monorepo nested package ─────
 
 /// Build an empty `DeclarationEmitter` whose only purpose is exercising the
-/// path-shape helpers (`strip_ts_extensions`, `calculate_relative_path`).
+/// path-shape helpers (`strip_module_path_extension`, `calculate_relative_path`).
 fn make_path_only_emitter<'a>(parser: &'a ParserState) -> DeclarationEmitter<'a> {
     DeclarationEmitter::new(&parser.arena)
 }
 
 #[test]
-fn strip_ts_extensions_restores_arbitrary_extension_declaration_user_form() {
+fn strip_module_path_extension_restores_arbitrary_extension_declaration_user_form() {
     let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
-    assert_eq!(emitter.strip_ts_extensions("./foo.d.html.ts"), "./foo.html");
     assert_eq!(
-        emitter.strip_ts_extensions("../styles.d.css.ts"),
+        emitter.strip_module_path_extension("./foo.d.html.ts"),
+        "./foo.html"
+    );
+    assert_eq!(
+        emitter.strip_module_path_extension("../styles.d.css.ts"),
         "../styles.css"
     );
     assert_eq!(
-        emitter.strip_ts_extensions("components/Button.d.svelte.ts"),
+        emitter.strip_module_path_extension("components/Button.d.svelte.ts"),
         "components/Button.svelte"
     );
 }
 
 #[test]
-fn strip_ts_extensions_leaves_regular_ts_js_declaration_shapes_on_normal_path() {
+fn strip_module_path_extension_leaves_regular_ts_js_declaration_shapes_on_normal_path() {
     let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
-    assert_eq!(emitter.strip_ts_extensions("./foo.d.ts"), "./foo");
-    assert_eq!(emitter.strip_ts_extensions("./foo.d.mts"), "./foo");
-    assert_eq!(emitter.strip_ts_extensions("./foo.d.js.ts"), "./foo.d.js");
+    assert_eq!(emitter.strip_module_path_extension("./foo.d.ts"), "./foo");
+    assert_eq!(emitter.strip_module_path_extension("./foo.d.mts"), "./foo");
+    assert_eq!(
+        emitter.strip_module_path_extension("./foo.d.js.ts"),
+        "./foo.d.js"
+    );
 }
 
 #[test]

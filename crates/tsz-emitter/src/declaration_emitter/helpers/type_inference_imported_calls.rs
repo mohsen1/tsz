@@ -249,7 +249,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.types_versions_root_reexport_target(package_root)
             .map(|target| {
                 let target = target.to_string_lossy().replace('\\', "/");
-                let target = self.strip_ts_extensions(&target);
+                let target = self.strip_module_path_extension(&target);
                 target.ends_with(&format!("/{subpath}"))
                     || target.ends_with(&format!("/{subpath}/index"))
             })
