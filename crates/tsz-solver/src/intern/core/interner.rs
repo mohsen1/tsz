@@ -989,8 +989,8 @@ impl TypeInterner {
                     .write()
                     .expect("interner alloc_order lock poisoned")
             });
-            write_id_slot(&mut vec, local_index as usize, key, &TypeData::Error);
-            write_id_slot(&mut ord, local_index as usize, order, &u32::MAX);
+            write_id_slot(&mut vec, local_index as usize, key, || TypeData::Error);
+            write_id_slot(&mut ord, local_index as usize, order, || u32::MAX);
         }
 
         self.make_id(local_index, shard_idx as u32)
@@ -1067,8 +1067,8 @@ impl TypeInterner {
                                 .write()
                                 .expect("interner alloc_order lock poisoned")
                         });
-                    write_id_slot(&mut vec, local_index as usize, key, &TypeData::Error);
-                    write_id_slot(&mut ord, local_index as usize, order, &u32::MAX);
+                    write_id_slot(&mut vec, local_index as usize, key, || TypeData::Error);
+                    write_id_slot(&mut ord, local_index as usize, order, || u32::MAX);
                 }
                 // Publish the index only after its slot is readable so a
                 // concurrent `key_to_index` hit can never observe an

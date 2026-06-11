@@ -171,9 +171,9 @@ mod append_protocol {
         let mut vec: Vec<u32> = Vec::new();
         // A higher id reaches the lock first; lower ids arrive later and
         // must still land in their own slots.
-        write_id_slot(&mut vec, 5, 50, &u32::MAX);
-        write_id_slot(&mut vec, 1, 10, &u32::MAX);
-        write_id_slot(&mut vec, 3, 30, &u32::MAX);
+        write_id_slot(&mut vec, 5, 50, || u32::MAX);
+        write_id_slot(&mut vec, 1, 10, || u32::MAX);
+        write_id_slot(&mut vec, 3, 30, || u32::MAX);
         assert_eq!(vec.len(), 6);
         assert_eq!((vec[1], vec[3], vec[5]), (10, 30, 50));
         // Unwritten gaps hold the placeholder, never another id's data.

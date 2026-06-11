@@ -104,16 +104,26 @@ impl TypeShard {
 /// holds the index from its own `fetch_add`) or belong to ids that lost an
 /// insertion race and are never published, so they are never observed as
 /// long as ids are published only after this write completes.
+///
+/// `placeholder` is invoked only when earlier ids have not written their
+/// slots yet, i.e. only on contended out-of-order arrivals; the common
+/// in-order append pays no placeholder cost.
+#[inline]
 pub(in crate::intern::core) fn write_id_slot<T: Clone>(
     vec: &mut Vec<T>,
     index: usize,
     value: T,
-    placeholder: &T,
+    placeholder: impl FnOnce() -> T,
 ) {
-    if vec.len() <= index {
-        vec.resize(index + 1, placeholder.clone());
+    if vec.len() < index {
+        let fill = placeholder();
+        vec.resize(index, fill);
     }
-    vec[index] = value;
+    if vec.len() == index {
+        vec.push(value);
+    } else {
+        vec[index] = value;
+    }
 }
 
 /// Inner data for `ConcurrentSliceInterner`, lazily initialized.
@@ -188,9 +198,8 @@ where
                     let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
                         inner.items.write().expect("interner items lock poisoned")
                     });
-                    // Gap slots get the pre-seeded empty slice (id 0).
-                    let placeholder = Arc::clone(&vec[0]);
-                    write_id_slot(&mut vec, id as usize, temp_arc, &placeholder);
+                    // Gap slots get an empty slice.
+                    write_id_slot(&mut vec, id as usize, temp_arc, || Arc::from(Vec::new()));
                 }
                 // Publish the id only after its slot is readable so a
                 // concurrent map hit can never observe an unwritten slot.
@@ -284,11 +293,10 @@ where
                     let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
                         inner.items.write().expect("interner items lock poisoned")
                     });
-                    // No cheap empty value exists for arbitrary `T`; gap
-                    // slots get clones of this value's `Arc` and rightful
-                    // owners overwrite their own index.
-                    let placeholder = Arc::clone(&value_arc);
-                    write_id_slot(&mut vec, id as usize, value_arc, &placeholder);
+                    // No empty value exists for arbitrary `T`; gap slots get
+                    // this value's `Arc` and rightful owners overwrite their
+                    // own index.
+                    write_id_slot(&mut vec, id as usize, Arc::clone(&value_arc), || value_arc);
                 }
                 // Publish the id only after its slot is readable so a
                 // concurrent map hit can never observe an unwritten slot.
