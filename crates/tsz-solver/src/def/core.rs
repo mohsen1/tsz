@@ -365,15 +365,25 @@ pub struct DefinitionStore {
     /// matching tsc's collapse of the alias to the error type.
     depth_poisoned_defs: DefDashSet<DefId>,
 
-    /// Mutation-isolation campaign prototype: defs whose shared-store body is
-    /// **published once** — after the first body materialization, later
-    /// publications carrying a *different* body form are dropped instead of
-    /// overwriting (first-writer-wins instead of last-writer-wins). Used to
-    /// measure whether a def class can be pre-materialized and kept immutable
-    /// during per-file checking without diagnostic drift. Populated only when
-    /// the `TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE` experiment is enabled by the
-    /// driver; empty (and skipped via a cheap `is_empty` gate) otherwise.
+    /// Mutation-isolation campaign: defs whose shared-store body is
+    /// **frozen** — after the finalized body materialization
+    /// (heritage-merged + augmented lib interface form), later publications
+    /// carrying a *different* body form are dropped instead of overwriting
+    /// (the shared store stays immutable for the def; per-file checkers keep
+    /// using their own `TypeEnvironment` bodies). Populated by the checker's
+    /// finalized-lib-body registration; empty (and skipped via a cheap
+    /// `is_empty` gate) when freezing is disabled.
     publish_once_defs: DefDashSet<DefId>,
+
+    /// Mutation-isolation campaign experiment
+    /// (`TSZ_EXPERIMENT_LIB_DEF_DEFER_PUBLISH`): defs whose **pre-finalize**
+    /// different-body overwrites are deferred (dropped). The store keeps the
+    /// def's first published form until [`Self::set_body_finalized`]
+    /// overwrites it with the finalized form (which then freezes it via
+    /// `publish_once_defs`). Closes the intermediate-stage publication
+    /// residue (initial -> heritage-merged refinement writes) so the shared
+    /// store only ever observes `first form -> finalized form`.
+    deferred_publish_defs: DefDashSet<DefId>,
 
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
@@ -635,6 +645,7 @@ impl DefinitionStore {
             directly_named_alias_bodies: DefDashSet::default(),
             depth_poisoned_defs: DefDashSet::default(),
             publish_once_defs: DefDashSet::default(),
+            deferred_publish_defs: DefDashSet::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
@@ -892,18 +903,48 @@ impl DefinitionStore {
         body: TypeId,
         params: Option<Vec<TypeParamInfo>>,
     ) {
-        // Mutation-isolation prototype: defs marked publish-once keep their
-        // first published body; a later attempt to overwrite it with a
-        // *different* body form is dropped (the shared store stays immutable
-        // for that def after first materialization). Identical republication
-        // is allowed through (it is a no-op write).
-        let suppressed = !self.publish_once_defs.is_empty()
-            && self.publish_once_defs.contains(&id)
-            && self
-                .definitions
-                .get(&id)
-                .and_then(|entry| entry.body)
-                .is_some_and(|prev| prev != body);
+        self.set_body_with_params_impl(id, body, params, false);
+    }
+
+    /// Publish a definition body through the **finalize entry point**.
+    ///
+    /// Identical to [`Self::set_body_with_params`] except that it bypasses
+    /// the deferred-publication drop (`deferred_publish_defs`): the finalized
+    /// lib-body form must overwrite whatever earlier form the store carries.
+    /// Frozen defs (`publish_once_defs`) still win — once a def's finalized
+    /// body is frozen, later checkers' re-finalizations (checker-relative
+    /// `TypeId`s for the byte-identical semantic form) are dropped.
+    #[track_caller]
+    pub fn set_body_finalized(&self, id: DefId, body: TypeId, params: Option<Vec<TypeParamInfo>>) {
+        self.set_body_with_params_impl(id, body, params, true);
+    }
+
+    #[track_caller]
+    fn set_body_with_params_impl(
+        &self,
+        id: DefId,
+        body: TypeId,
+        params: Option<Vec<TypeParamInfo>>,
+        finalize: bool,
+    ) {
+        // Mutation-isolation: defs frozen after their finalized
+        // materialization keep that body; a later attempt to overwrite it
+        // with a *different* body form is dropped (the shared store stays
+        // immutable for that def). Identical republication is allowed
+        // through (it is a no-op write).
+        let prev_body = self.definitions.get(&id).and_then(|entry| entry.body);
+        let is_different_overwrite = prev_body.is_some_and(|prev| prev != body);
+        let suppressed = is_different_overwrite
+            && !self.publish_once_defs.is_empty()
+            && self.publish_once_defs.contains(&id);
+        // Deferred-publication experiment: pre-finalize different-body
+        // overwrites of marked defs are dropped; only the finalize entry
+        // point may replace the first published form.
+        let deferred = !suppressed
+            && !finalize
+            && is_different_overwrite
+            && !self.deferred_publish_defs.is_empty()
+            && self.deferred_publish_defs.contains(&id);
         // Mutation-isolation campaign census (env-gated, see
         // `publication_census`): classify this publication against the
         // pre-write entry state with caller attribution.
@@ -917,6 +958,8 @@ impl DefinitionStore {
                     (
                         if suppressed {
                             publication_census::PublicationOutcome::SuppressedDifferentBody
+                        } else if deferred {
+                            publication_census::PublicationOutcome::DeferredDifferentBody
                         } else {
                             publication_census::classify(entry.body, body, params_changed, true)
                         },
@@ -934,7 +977,7 @@ impl DefinitionStore {
             };
             publication_census::record_publication(id, kind, name, file_id, body, outcome, caller);
         }
-        if suppressed {
+        if suppressed || deferred {
             return;
         }
         if let Some(mut entry) = self.definitions.get_mut(&id) {
@@ -988,17 +1031,19 @@ impl DefinitionStore {
         }
     }
 
-    /// Mutation-isolation campaign prototype: mark every **interface**
+    /// Mutation-isolation campaign experiment
+    /// (`TSZ_EXPERIMENT_LIB_DEF_DEFER_PUBLISH`): mark every **interface**
     /// definition that does not originate from a program source file (lib
     /// binder symbols carry the binder's "no declaration file" sentinel
-    /// index) as publish-once. After each such def's first body
-    /// materialization, later publications with a different body form are
-    /// dropped, keeping the shared store immutable for the class while
-    /// per-file checkers continue to use their own `TypeEnvironment` bodies.
+    /// index) as deferred-publication. Pre-finalize different-body
+    /// overwrites of such defs are dropped; only
+    /// [`Self::set_body_finalized`] replaces the first published form (and
+    /// the checker freezes the def right after). Per-file checkers continue
+    /// to use their own `TypeEnvironment` bodies for in-flight refinement.
     ///
-    /// Returns the number of definitions marked. Driver-invoked only when the
-    /// `TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE` experiment is enabled.
-    pub fn mark_non_program_interface_defs_publish_once(&self) -> usize {
+    /// Returns the number of definitions marked. Driver-invoked only when
+    /// the experiment is enabled.
+    pub fn mark_non_program_interface_defs_deferred(&self) -> usize {
         /// `tsz_binder` symbols without a program declaration file (every
         /// lib-binder symbol) carry `u32::MAX` as `decl_file_idx`.
         const NON_PROGRAM_FILE_SENTINEL: u32 = u32::MAX;
@@ -1006,17 +1051,17 @@ impl DefinitionStore {
         for entry in &self.definitions {
             let info = entry.value();
             if info.kind == DefKind::Interface && info.file_id == Some(NON_PROGRAM_FILE_SENTINEL) {
-                self.publish_once_defs.insert(*entry.key());
+                self.deferred_publish_defs.insert(*entry.key());
                 marked += 1;
             }
         }
         marked
     }
 
-    /// Mutation-isolation campaign prototype: mark a single def publish-once
-    /// **after** its current body, so the form just published becomes the
-    /// frozen one (used to freeze at the *finalized* lib-body publication
-    /// point rather than at the first partial materialization).
+    /// Mutation-isolation campaign: freeze a single def's shared-store body
+    /// **after** its current (finalized) publication, so the form just
+    /// published becomes the immutable one. Later different-body
+    /// publications are dropped.
     pub fn mark_publish_once(&self, id: DefId) {
         self.publish_once_defs.insert(id);
     }

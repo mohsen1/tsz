@@ -381,28 +381,15 @@ impl<'a> CheckerState<'a> {
         // last-writer-wins in-flight channel the parallel-checking campaign
         // must eliminate). On mismatch, route through the canonical
         // name-keyed lib def resolution instead.
-        let boxed_def_for = |checker: &Self, name: &str, sym_id: tsz_binder::SymbolId| {
-            let def_id = checker.ctx.get_lib_def_id(sym_id);
-            let name_matches = checker
-                .ctx
-                .definition_store
-                .get(def_id)
-                .is_some_and(|info| checker.ctx.types.resolve_atom(info.name) == name);
-            if name_matches {
-                def_id
-            } else {
-                checker.ctx.get_canonical_lib_def_id(name, sym_id)
-            }
-        };
         for &(name, type_opt, kind) in boxed_names {
             let Some(ty) = type_opt else { continue };
             for ctx in self.ctx.lib_contexts.iter() {
                 if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                    boxed_def_entries.push((kind, ty, boxed_def_for(self, name, sym_id)));
+                    boxed_def_entries.push((kind, ty, self.ctx.lib_def_id_verified(name, sym_id)));
                 }
             }
             if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                boxed_def_entries.push((kind, ty, boxed_def_for(self, name, sym_id)));
+                boxed_def_entries.push((kind, ty, self.ctx.lib_def_id_verified(name, sym_id)));
             }
         }
         for &(kind, _ty, def_id) in &boxed_def_entries {
@@ -411,14 +398,18 @@ impl<'a> CheckerState<'a> {
 
         // Register ThisType marker DefIds so ThisTypeMarkerExtractor can identify
         // ThisType<T> applications when the base type is Lazy(DefId).
+        // Name-verified resolution (`lib_def_id_verified`): a raw per-lib
+        // SymbolId collision would register an *unrelated* def as the
+        // ThisType marker (same identity-collision family as the boxed-type
+        // registration fix above).
         for ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = ctx.binder.file_locals.get("ThisType") {
-                let def_id = self.ctx.get_lib_def_id(sym_id);
+                let def_id = self.ctx.lib_def_id_verified("ThisType", sym_id);
                 self.ctx.types.register_this_type_def_id(def_id);
             }
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("ThisType") {
-            let def_id = self.ctx.get_lib_def_id(sym_id);
+            let def_id = self.ctx.lib_def_id_verified("ThisType", sym_id);
             self.ctx.types.register_this_type_def_id(def_id);
         }
 
@@ -525,16 +516,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Name-verified (`lib_def_id_verified`): a raw per-lib SymbolId
+        // collision would mark an unrelated def as the Function interface,
+        // corrupting `T extends Function` constraint checks.
         for ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = ctx.binder.file_locals.get("Function") {
-                let def_id = self.ctx.get_lib_def_id(sym_id);
+                let def_id = self.ctx.lib_def_id_verified("Function", sym_id);
                 self.ctx
                     .types
                     .register_boxed_def_id(IntrinsicKind::Function, def_id);
             }
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("Function") {
-            let def_id = self.ctx.get_lib_def_id(sym_id);
+            let def_id = self.ctx.lib_def_id_verified("Function", sym_id);
             self.ctx
                 .types
                 .register_boxed_def_id(IntrinsicKind::Function, def_id);
