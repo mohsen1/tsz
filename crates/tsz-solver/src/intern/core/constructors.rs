@@ -1477,15 +1477,7 @@ impl TypeInterner {
         // Sort properties by name for consistent hashing
         shape.properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(shape);
-        let id = self.intern(TypeData::ObjectWithIndex(shape_id));
-        // TEMP-TRACE (remove before PR): provenance hunt for w8's TypeId 834.
-        if id.0 == 834 && tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(
-                "TEMP intern object_with_index 834 backtrace:\n{}",
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
-        id
+        self.intern(TypeData::ObjectWithIndex(shape_id))
     }
 
     /// Get the TypeId for an already-interned Object shape.

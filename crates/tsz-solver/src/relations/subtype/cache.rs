@@ -180,17 +180,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         )
         .entered();
 
-        // TEMP-TRACE (remove before PR): log raw TypeData of both sides.
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(
-                src = source.0,
-                tgt = target.0,
-                src_data = ?self.interner.lookup(source),
-                tgt_data = ?self.interner.lookup(target),
-                "check_subtype entry data"
-            );
-        }
-
         // =========================================================================
         // Fast paths (no cycle tracking needed)
         // =========================================================================
@@ -874,24 +863,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     .get_application_eval_origin(source)
                                     .and_then(|origin| application_id(self.interner, origin))
                             })?;
-                            // TEMP-TRACE (remove before PR)
-                            tracing::trace!(
-                                src = source.0,
-                                tgt = target.0,
-                                s_app = ?s_app_id,
-                                t_app = ?t_app_id,
-                                "recovered-target variance attempt"
-                            );
                             let vr = self
                                 .try_same_base_args_identical_or_any(s_app_id, t_app_id)
                                 .or_else(|| self.try_variance_fast_path(s_app_id, t_app_id));
-                            // TEMP-TRACE (remove before PR)
-                            tracing::trace!(
-                                src = source.0,
-                                tgt = target.0,
-                                ?vr,
-                                "recovered-target variance result"
-                            );
                             match vr {
                                 Some(SubtypeResult::True) => Some(SubtypeResult::True),
                                 _ => None,

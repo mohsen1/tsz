@@ -678,64 +678,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         same_definition.then_some(SubtypeResult::True)
     }
 
-    /// Same-base identical-or-`any` argument lawyer shortcut.
-    ///
-    /// Generalizes [`Self::try_same_base_all_any_target_args`] to mixed
-    /// argument lists: when source and target are applications of the SAME
-    /// generic definition with equal arity and every argument pair is either
-    /// the identical `TypeId` or has `any` on at least one side, tsc relates
-    /// the two instantiations (`relateVariances`: an invariant-strength
-    /// per-argument check passes in both directions for `any`, regardless of
-    /// the measured variance and before any structural expansion). This is
-    /// the kysely `ExpressionWrapper<DB, TB, any>` vs
-    /// `ExpressionWrapper<DB, TB, O[K]>` shape, whose deferred-conditional
-    /// members can never relate structurally.
-    ///
-    /// Accept-only by construction (returns `Some(True)` or `None`), so it is
-    /// safe for provenance-recovered application identities. Gated on
-    /// any-propagation being permissive on both sides at the current depth.
-    pub(crate) fn try_same_base_args_identical_or_any(
-        &mut self,
-        s_app_id: TypeApplicationId,
-        t_app_id: TypeApplicationId,
-    ) -> Option<SubtypeResult> {
-        let s_app = self.interner.type_application(s_app_id);
-        let t_app = self.interner.type_application(t_app_id);
-
-        if s_app.args.len() != t_app.args.len() || s_app.args.is_empty() {
-            return None;
-        }
-        let same_definition = s_app.base == t_app.base
-            || matches!(
-                (
-                    crate::visitor::lazy_def_id(self.interner, s_app.base),
-                    crate::visitor::lazy_def_id(self.interner, t_app.base),
-                ),
-                (Some(s_def), Some(t_def)) if self.resolver.defs_are_equivalent(s_def, t_def)
-            );
-        if !same_definition {
-            return None;
-        }
-        let args_identical_or_any = s_app
-            .args
-            .iter()
-            .zip(t_app.args.iter())
-            .all(|(&s_arg, &t_arg)| s_arg == t_arg || s_arg.is_any() || t_arg.is_any());
-        if !args_identical_or_any {
-            return None;
-        }
-        let allow_any = self
-            .any_propagation
-            .allows_any_source_at_depth(self.guard.depth())
-            && self
-                .any_propagation
-                .allows_any_target_at_depth(self.guard.depth());
-        if !allow_any {
-            return None;
-        }
-        Some(SubtypeResult::True)
-    }
-
     /// Pre-evaluation variance fast path for Application types.
     ///
     /// When both source and target are Application types with the same base generic
@@ -757,15 +699,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<SubtypeResult> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
-
-        // TEMP-TRACE (remove before PR)
-        tracing::trace!(
-            s_base = s_app.base.0,
-            t_base = t_app.base.0,
-            s_args = ?s_app.args,
-            t_args = ?t_app.args,
-            "try_variance_fast_path entry"
-        );
 
         // Must be the same base type (same generic definition)
         if s_app.base != t_app.base {
@@ -826,8 +759,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return Some(SubtypeResult::True);
         }
 
-        // TEMP-TRACE (remove before PR)
-        tracing::trace!(?variances, s_args = ?s_args, t_args = ?t_args, "try_variance_fast_path state");
         let variances = variances?;
 
         if variances.len() != s_args.len() {
