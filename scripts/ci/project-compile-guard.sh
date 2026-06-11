@@ -17,6 +17,7 @@ PROJECT_COMPATIBILITY_SUMMARY="${TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY:-$FIX
 RESULT_CACHE_DIR="${TSZ_PROJECT_COMPILE_RESULT_CACHE_DIR:-$FIXTURE_ROOT/.result-cache}"
 FAILURES=0
 LAST_PEAK_RSS_BYTES=0
+LAST_TIMEOUT_CPU_SECONDS=""
 TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=0
 
 fail() {
@@ -66,6 +67,12 @@ validate_project_compatibility_artifact_paths() {
   fi
 }
 
+# Measurement-protocol primitives: binary snapshotting and CPU-share evidence
+# for wall timeouts (issue #13174).
+# shellcheck source=scripts/bench/lib/measure-protocol.sh
+source "$ROOT_DIR/scripts/bench/lib/measure-protocol.sh"
+MIN_CPU_SHARE_PCT="${TSZ_PROJECT_COMPILE_MIN_CPU_SHARE_PCT:-$TSZ_MEASURE_DEFAULT_MIN_CPU_SHARE_PCT}"
+
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$ROOT_DIR/scripts/bench/project-fixtures.sh"
 tsz_sync_project_row_groups
@@ -83,10 +90,25 @@ fi
 # shellcheck source=scripts/ci/lib/project-compile-fingerprint.sh
 source "$ROOT_DIR/scripts/ci/lib/project-compile-fingerprint.sh"
 
-# Compute tsz binary hash once at startup for all per-project fingerprints.
-_TSZ_BINARY_HASH="$(sha256_of_file "$TSZ_BIN")"
-
 mkdir -p "$FIXTURE_ROOT"
+
+# Snapshot the tsz binary to an immutable content-addressed copy and run that
+# copy for every project. TSZ_BIN often points at a live shared build output
+# (dist-fast/tsz) that a sibling session can overwrite mid-run; measuring the
+# live path would attribute a foreign binary's results to this run's binary
+# hash. The snapshot is hash-verified, so _TSZ_BINARY_HASH is the hash of the
+# binary that actually ran. Disable with TSZ_PROJECT_COMPILE_SNAPSHOT_BIN=0
+# when TSZ_BIN is already an immutable path.
+if [[ "${TSZ_PROJECT_COMPILE_SNAPSHOT_BIN:-1}" == "1" ]]; then
+  _snapshot_out="$(tsz_snapshot_binary "$TSZ_BIN" "$FIXTURE_ROOT/.bin-snapshot")" \
+    || fail "could not snapshot tsz binary for measurement: $TSZ_BIN"
+  read -r TSZ_RUN_BIN _TSZ_BINARY_HASH <<< "$_snapshot_out"
+  tsz_prune_binary_snapshots "$TSZ_BIN" "$FIXTURE_ROOT/.bin-snapshot" "$TSZ_RUN_BIN"
+else
+  TSZ_RUN_BIN="$TSZ_BIN"
+  # Compute tsz binary hash once at startup for all per-project fingerprints.
+  _TSZ_BINARY_HASH="$(sha256_of_file "$TSZ_BIN")"
+fi
 mkdir -p "$RESULT_CACHE_DIR"
 validate_project_compatibility_artifact_paths
 rm -f "$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
@@ -100,19 +122,21 @@ run_with_timeout() {
   # Empty (not "0") is the "no positive sample yet" sentinel so the
   # record-time reason logic can distinguish it from a deliberate zero.
   LAST_PEAK_RSS_BYTES=""
+  # CPU seconds the process tree consumed before a wall-timeout kill; empty
+  # when the run did not time out or no sample could be taken. Callers use it
+  # to distinguish CPU-bound timeouts from CPU-contention false timeouts.
+  LAST_TIMEOUT_CPU_SECONDS=""
   "$@" &
   local pid=$!
-  local timeout_file
-  timeout_file="$(mktemp)"
-  rm -f "$timeout_file"
+  # The watchdog writes the pre-kill CPU sample here; the file's existence is
+  # the timed-out marker and its content the contention evidence (#13174).
+  local cpu_time_file
+  cpu_time_file="$(mktemp)"
+  rm -f "$cpu_time_file"
   local rss_file=""
   local rss_monitor_pid=""
-  (
-    sleep "$timeout_secs"
-    touch "$timeout_file"
-    kill -9 "$pid" 2>/dev/null || true
-  ) &
-  local watchdog_pid=$!
+  local watchdog_pid
+  watchdog_pid="$(tsz_start_timeout_watchdog "$timeout_secs" "$pid" "$cpu_time_file")"
   if measure_peak_rss_enabled; then
     rss_file=$(mktemp)
     : > "$rss_file"
@@ -135,10 +159,11 @@ run_with_timeout() {
   wait "$pid" 2>/dev/null || exit_code=$?
 
   local timed_out=0
-  if [ -e "$timeout_file" ]; then
+  if [ -e "$cpu_time_file" ]; then
     timed_out=1
+    LAST_TIMEOUT_CPU_SECONDS="$(cat "$cpu_time_file" 2>/dev/null || true)"
   fi
-  rm -f "$timeout_file"
+  rm -f "$cpu_time_file"
 
   kill "$watchdog_pid" 2>/dev/null || true
   wait "$watchdog_pid" 2>/dev/null || true
@@ -565,18 +590,27 @@ check_project() {
   file_count="$(count_ts_files "$src_dir")"
 
   echo "::group::${name}"
-  echo "Running: $TSZ_BIN --noEmit -p $tsconfig"
-  local rc=0 exit_class="" diagnostic_delta=""
+  echo "Running: $TSZ_RUN_BIN --noEmit -p $tsconfig"
+  local rc=0 exit_class="" diagnostic_delta="" timeout_unmeasured=0
   run_with_timeout "$PROJECT_TIMEOUT" \
     env \
       TSZ_USE_EMBEDDED_LIBS=1 \
       RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}" \
-      "$TSZ_BIN" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
+      "$TSZ_RUN_BIN" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
 
   if [[ "$rc" -ne 0 ]]; then
     FAILURES=$((FAILURES + 1))
     exit_class="$(project_failure_class "$([[ "$rc" -eq 124 ]] && echo "timeout" || echo "nonzero exit")" "$rc")"
     diagnostic_delta="$(diagnostic_lines_from_file "tsz" "$log")"
+    local timeout_note=""
+    if [[ "$rc" -eq 124 ]]; then
+      timeout_note="$(tsz_timeout_contention_note "$PROJECT_TIMEOUT" \
+        "$LAST_TIMEOUT_CPU_SECONDS" "$MIN_CPU_SHARE_PCT")"
+      diagnostic_delta="tsz: ${timeout_note}"$'\n'"$diagnostic_delta"
+      if ! tsz_timeout_is_cpu_bound "$PROJECT_TIMEOUT" "$LAST_TIMEOUT_CPU_SECONDS" "$MIN_CPU_SHARE_PCT"; then
+        timeout_unmeasured=1
+      fi
+    fi
     record_project_compatibility \
       "$name" \
       "$exit_class" \
@@ -590,7 +624,7 @@ check_project() {
       "$src_dir" \
       "$tsc_exit_codes"
     if [[ "$rc" -eq 124 ]]; then
-      echo "error: ${name} timed out after ${PROJECT_TIMEOUT}s" >&2
+      echo "error: ${name} ${timeout_note}" >&2
     else
       echo "error: ${name} failed with exit code ${rc}" >&2
     fi
@@ -605,8 +639,14 @@ check_project() {
     echo "${name} compiled successfully."
     echo "::endgroup::"
   fi
-  [[ -n "$_cache_file" ]] && \
+  # A timeout without confirmed CPU-bound evidence (contention, or no CPU
+  # sample at all) is unmeasured, not a result: caching it would persist a
+  # possibly-false failure for as long as the fingerprint stays stable.
+  if [[ "$timeout_unmeasured" == "1" ]]; then
+    echo "::warning::${name} timeout lacks CPU-bound evidence (contention or missing sample); result not cached"
+  elif [[ -n "$_cache_file" ]]; then
     write_compile_cache "$_fp" "$rc" "$file_count" "$exit_class" "$diagnostic_delta" "$_cache_file"
+  fi
   return 0
 }
 
