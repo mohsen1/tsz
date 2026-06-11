@@ -1071,6 +1071,9 @@ mod object_global_identity_helper_tests;
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
 #[cfg(test)]
+#[path = "tests/object_literal_method_this_parameter_contextual_tests.rs"]
+mod object_literal_method_this_parameter_contextual_tests;
+#[cfg(test)]
 #[path = "tests/object_literal_relation_architecture_tests.rs"]
 mod object_literal_relation_architecture_tests;
 #[cfg(test)]

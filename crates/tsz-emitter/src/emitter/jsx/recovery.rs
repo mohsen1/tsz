@@ -1,5 +1,5 @@
 use super::super::Printer;
-use tsz_common::interner::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -59,7 +59,7 @@ impl<'a> Printer<'a> {
                 self.arena.get_identifier(node_a),
                 self.arena.get_identifier(node_b),
             ) {
-                if id_a.atom != Atom::NONE && id_b.atom != Atom::NONE {
+                if id_a.atom != AstAtom::NONE && id_b.atom != AstAtom::NONE {
                     return id_a.atom == id_b.atom;
                 }
                 return id_a.escaped_text == id_b.escaped_text;

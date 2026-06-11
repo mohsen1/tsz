@@ -2,7 +2,7 @@ use super::*;
 use crate::parser::test_fixture::parse_source;
 use crate::{ParserState, syntax_kind_ext};
 use std::mem::size_of;
-use tsz_common::interner::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::SyntaxKind;
 
 #[test]
@@ -34,7 +34,7 @@ fn test_node_arena_basic() {
         10,
         15,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "hello".to_string(),
             original_text: None,
             type_arguments: None,
@@ -86,7 +86,7 @@ fn test_node_view() {
         10,
         15,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "myVar".to_string(),
             original_text: None,
             type_arguments: None,
@@ -141,7 +141,7 @@ fn test_node_access_trait() {
         10,
         20,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "testVar".to_string(),
             original_text: None,
             type_arguments: None,
@@ -194,7 +194,7 @@ fn test_parent_mapping() {
         0,
         1,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "a".to_string(),
             original_text: None,
             type_arguments: None,
@@ -206,7 +206,7 @@ fn test_parent_mapping() {
         4,
         5,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "b".to_string(),
             original_text: None,
             type_arguments: None,
@@ -320,7 +320,7 @@ fn test_parent_mapping_nested() {
         0,
         1,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "a".to_string(),
             original_text: None,
             type_arguments: None,
@@ -331,7 +331,7 @@ fn test_parent_mapping_nested() {
         4,
         5,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "b".to_string(),
             original_text: None,
             type_arguments: None,
@@ -353,7 +353,7 @@ fn test_parent_mapping_nested() {
         9,
         10,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "c".to_string(),
             original_text: None,
             type_arguments: None,
@@ -422,7 +422,7 @@ fn test_parent_mapping_function() {
         9,
         12,
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: "foo".to_string(),
             original_text: None,
             type_arguments: None,
@@ -580,7 +580,7 @@ fn estimated_size_bytes_grows_with_identifiers() {
             0,
             10,
             IdentifierData {
-                atom: Atom::NONE,
+                atom: AstAtom::NONE,
                 escaped_text: name,
                 original_text: None,
                 type_arguments: None,

@@ -14,7 +14,7 @@ use crate::parser::{
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-use tsz_common::interner::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::keyword_text_len;
 use tsz_scanner::scanner_impl::TokenFlags;
@@ -110,7 +110,7 @@ impl ParserState {
                             start,
                             end,
                             IdentifierData {
-                                atom: Atom::NONE,
+                                atom: AstAtom::NONE,
                                 escaped_text: String::new(),
                                 original_text: None,
                                 type_arguments: None,

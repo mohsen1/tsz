@@ -10,7 +10,7 @@ use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-use tsz_common::interner::{Atom, Interner};
+use tsz_common::interner::{AstAtom, Interner};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 mod identifiers;
@@ -101,7 +101,7 @@ pub struct ScannerSnapshot {
     pub token: SyntaxKind,
     pub token_value: String,
     pub token_flags: u32,
-    pub token_atom: Atom,
+    pub token_atom: AstAtom,
     pub token_invalid_separator_pos: Option<usize>,
     pub token_invalid_separator_is_consecutive: bool,
     pub regex_flag_errors: Vec<RegexFlagError>,
@@ -149,7 +149,7 @@ pub struct ScannerState {
     #[wasm_bindgen(skip)]
     pub interner: Interner,
     /// Interned atom for current identifier token (avoids string comparison)
-    token_atom: Atom,
+    token_atom: AstAtom,
 }
 
 // `#[wasm_bindgen]` forbids `const fn`; suppress the lint for this impl block only.
@@ -183,7 +183,7 @@ impl ScannerState {
             allow_astral_identifier_chars: true,
             skip_trivia,
             interner,
-            token_atom: Atom::NONE,
+            token_atom: AstAtom::NONE,
         }
     }
 
@@ -415,7 +415,7 @@ impl ScannerState {
         self.token_invalid_separator_is_consecutive = false;
         self.regex_flag_errors.clear();
         self.token_value.clear();
-        self.token_atom = Atom::NONE; // Reset atom for non-identifier tokens
+        self.token_atom = AstAtom::NONE; // Reset atom for non-identifier tokens
 
         loop {
             self.token_start = self.pos;
@@ -1087,10 +1087,10 @@ impl ScannerState {
     }
 
     /// Get the interned atom for the current identifier token.
-    /// Returns `Atom::NONE` if the current token is not an identifier.
+    /// Returns `AstAtom::NONE` if the current token is not an identifier.
     /// This enables O(1) string comparison for identifiers.
     #[must_use]
-    pub const fn get_token_atom(&self) -> Atom {
+    pub const fn get_token_atom(&self) -> AstAtom {
         self.token_atom
     }
 
@@ -1195,7 +1195,7 @@ impl ScannerState {
     /// Resolve an atom back to its string value.
     /// Panics if the atom is invalid.
     #[must_use]
-    pub fn resolve_atom(&self, atom: Atom) -> &str {
+    pub fn resolve_atom(&self, atom: AstAtom) -> &str {
         self.interner.resolve(atom)
     }
 
@@ -1225,7 +1225,7 @@ impl ScannerState {
     pub fn get_token_value_ref(&self) -> &str {
         // 1. Fast path: Interned atom (identifiers, keywords)
         // When token_atom is set, we can always resolve from interner
-        if self.token_atom != Atom::NONE {
+        if self.token_atom != AstAtom::NONE {
             return self.interner.resolve(self.token_atom);
         }
 

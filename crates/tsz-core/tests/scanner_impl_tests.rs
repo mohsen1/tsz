@@ -223,7 +223,7 @@ fn test_scan_expression() {
 
 #[test]
 fn test_identifier_interning() {
-    use crate::interner::Atom;
+    use crate::interner::AstAtom;
 
     let mut scanner = ScannerState::new("foo bar foo baz foo".to_string(), true);
 
@@ -231,13 +231,13 @@ fn test_identifier_interning() {
     assert_eq!(scanner.scan(), SyntaxKind::Identifier);
     assert_eq!(scanner.get_token_value(), "foo");
     let foo_atom1 = scanner.get_token_atom();
-    assert_ne!(foo_atom1, Atom::NONE);
+    assert_ne!(foo_atom1, AstAtom::NONE);
 
     // Scan "bar"
     assert_eq!(scanner.scan(), SyntaxKind::Identifier);
     assert_eq!(scanner.get_token_value(), "bar");
     let bar_atom = scanner.get_token_atom();
-    assert_ne!(bar_atom, Atom::NONE);
+    assert_ne!(bar_atom, AstAtom::NONE);
     assert_ne!(bar_atom, foo_atom1); // Different identifier = different atom
 
     // Scan second "foo" - should get same atom
@@ -265,33 +265,33 @@ fn test_identifier_interning() {
 
 #[test]
 fn test_non_identifier_atom_is_none() {
-    use crate::interner::Atom;
+    use crate::interner::AstAtom;
 
     let mut scanner = ScannerState::new("42 + 'hello'".to_string(), true);
 
     // Numeric literal - atom should be NONE
     assert_eq!(scanner.scan(), SyntaxKind::NumericLiteral);
-    assert_eq!(scanner.get_token_atom(), Atom::NONE);
+    assert_eq!(scanner.get_token_atom(), AstAtom::NONE);
 
     // Operator - atom should be NONE
     assert_eq!(scanner.scan(), SyntaxKind::PlusToken);
-    assert_eq!(scanner.get_token_atom(), Atom::NONE);
+    assert_eq!(scanner.get_token_atom(), AstAtom::NONE);
 
     // String literal - atom should be NONE
     assert_eq!(scanner.scan(), SyntaxKind::StringLiteral);
-    assert_eq!(scanner.get_token_atom(), Atom::NONE);
+    assert_eq!(scanner.get_token_atom(), AstAtom::NONE);
 }
 
 #[test]
 fn test_keyword_interning() {
-    use crate::interner::Atom;
+    use crate::interner::AstAtom;
 
     let mut scanner = ScannerState::new("const let var const".to_string(), true);
 
     // Keywords are also interned (but they have their own SyntaxKind)
     assert_eq!(scanner.scan(), SyntaxKind::ConstKeyword);
     let const_atom1 = scanner.get_token_atom();
-    assert_ne!(const_atom1, Atom::NONE);
+    assert_ne!(const_atom1, AstAtom::NONE);
 
     assert_eq!(scanner.scan(), SyntaxKind::LetKeyword);
     let let_atom = scanner.get_token_atom();

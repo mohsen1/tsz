@@ -131,7 +131,7 @@ impl ScannerState {
         self.token_start = self.pos;
         // Clear stale atom from any prior identifier scan so get_token_value_ref()
         // returns the freshly scanned JSX text, not the old interned identifier.
-        self.token_atom = Atom::NONE;
+        self.token_atom = AstAtom::NONE;
 
         if self.pos >= self.end {
             self.token = SyntaxKind::EndOfFileToken;

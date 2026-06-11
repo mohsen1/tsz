@@ -36,7 +36,7 @@ use super::node::{
     ExtendedNodeInfo, IdentifierData, LiteralData, Node, NodeArenaInner, SourceFileData,
 };
 
-use tsz_common::interner::{Atom, Interner};
+use tsz_common::interner::{AstAtom, Interner};
 
 impl NodeArenaInner {
     /// Maximum pre-allocation to avoid capacity overflow in huge files.
@@ -70,7 +70,7 @@ impl NodeArenaInner {
         if !data.escaped_text.is_empty() {
             return &data.escaped_text;
         }
-        if data.atom == Atom::NONE {
+        if data.atom == AstAtom::NONE {
             return &data.escaped_text;
         }
         self.interner.resolve(data.atom)
@@ -402,7 +402,7 @@ mod tests {
         arena.set_interner(Interner::new());
         // Construct an atom that the arena's freshly-created interner does
         // not have — Atom(99_999) is well past any populated index.
-        let stale_atom = Atom(99_999);
+        let stale_atom = AstAtom(99_999);
         assert!(arena.interner().resolve(stale_atom).is_empty());
 
         let data = IdentifierData {
@@ -431,7 +431,11 @@ mod tests {
         let mut arena = NodeArena::new();
         arena.set_interner(Interner::new());
         let atom = arena.interner.intern("canonical_text");
-        assert_ne!(atom, Atom::NONE, "intern result must not be Atom::NONE");
+        assert_ne!(
+            atom,
+            AstAtom::NONE,
+            "intern result must not be AstAtom::NONE"
+        );
 
         let data = IdentifierData {
             atom,

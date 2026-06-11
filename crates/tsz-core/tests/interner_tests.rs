@@ -19,7 +19,7 @@ fn test_intern_basic() {
 fn test_empty_string() {
     let mut interner = Interner::new();
     let empty = interner.intern("");
-    assert_eq!(empty, Atom::NONE);
+    assert_eq!(empty, AstAtom::NONE);
     assert!(empty.is_none());
     assert_eq!(interner.resolve(empty), "");
 }

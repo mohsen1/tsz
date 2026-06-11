@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Once;
-use tsz_common::interner::{Atom, Interner};
+use tsz_common::interner::{AstAtom, Interner};
 use tsz_scanner::SyntaxKind;
 
 include!("core/parse_and_libs.rs");

@@ -2,7 +2,7 @@
 
 use super::state::ParserState;
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
-use tsz_common::interner::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -475,7 +475,7 @@ impl ParserState {
                     q_start,
                     q_end,
                     crate::parser::node::IdentifierData {
-                        atom: Atom::NONE,
+                        atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
                         type_arguments: None,
@@ -526,7 +526,7 @@ impl ParserState {
                     bang_start,
                     bang_end,
                     crate::parser::node::IdentifierData {
-                        atom: tsz_common::interner::Atom::NONE,
+                        atom: tsz_common::interner::AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
                         type_arguments: None,
@@ -581,7 +581,7 @@ impl ParserState {
                 start,
                 end,
                 crate::parser::node::IdentifierData {
-                    atom: tsz_common::interner::Atom::NONE,
+                    atom: tsz_common::interner::AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,
@@ -603,7 +603,7 @@ impl ParserState {
                 start_pos,
                 self.token_pos(),
                 crate::parser::node::IdentifierData {
-                    atom: Atom::NONE,
+                    atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,
@@ -797,7 +797,7 @@ impl ParserState {
                 name_pos,
                 name_pos,
                 crate::parser::node::IdentifierData {
-                    atom: Atom::NONE,
+                    atom: AstAtom::NONE,
                     escaped_text: format!("arg{index}"),
                     original_text: None,
                     type_arguments: None,

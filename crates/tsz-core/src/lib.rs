@@ -9,7 +9,7 @@ pub mod test_fixtures;
 
 // Re-export foundation types from tsz-common workspace crate
 pub use tsz_common::interner;
-pub use tsz_common::interner::{Atom, Interner, ShardedInterner};
+pub use tsz_common::interner::{AstAtom, Atom, Interner, ShardedInterner};
 #[cfg(test)]
 #[path = "../tests/interner_tests.rs"]
 mod interner_tests;
