@@ -275,53 +275,11 @@ pub fn constraint_references_type_param_in_resolution_path(
     type_id: TypeId,
     param_name: Atom,
 ) -> bool {
-    with_predicate_buffers(|visited, stack| {
-        stack.push(type_id);
-        while let Some(current) = stack.pop() {
-            if current.is_intrinsic() || !visited.insert(current) {
-                continue;
-            }
-
-            let Some(data) = types.lookup(current) else {
-                continue;
-            };
-
-            // Found the type parameter we're looking for
-            if matches!(&data, TypeData::TypeParameter(info) if info.name == param_name) {
-                return true;
-            }
-
-            // Follow only resolution-path children (not type reference args)
-            match &data {
-                // Union/intersection: descend into all members
-                TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                    for &member in types.type_list(*list_id).iter() {
-                        stack.push(member);
-                    }
-                }
-                // Mapped type: descend into the constraint (key source) only.
-                // This catches `T extends { [P in T]: number }` (genuinely circular)
-                // while NOT false-positiving on `T extends { [K in keyof T]: V }`
-                // because we don't follow through KeyOf (see below).
-                TypeData::Mapped(mapped_id) => {
-                    let mapped = types.get_mapped(*mapped_id);
-                    stack.push(mapped.constraint);
-                }
-                // Index access: descend into object and index.
-                // Catches `T extends Foo | T["hello"]` (circular through index access).
-                TypeData::IndexAccess(obj, idx) => {
-                    stack.push(*obj);
-                    stack.push(*idx);
-                }
-                // KeyOf, Conditional, and everything else (Application, Object,
-                // Function, Array, Tuple, ReadonlyType, NoInfer, etc.) are opaque
-                // at the constraint-resolution level. `T extends { [K in keyof T]: V }`
-                // is NOT circular in tsc, and neither is `T extends null extends T ? any : never`.
-                _ => {}
-            }
-        }
-        false
-    })
+    resolution_path_contains_matching(
+        types,
+        type_id,
+        |_, data| matches!(data, Some(TypeData::TypeParameter(info)) if info.name == param_name),
+    )
 }
 
 /// Identity-based variant of `constraint_references_type_param_in_resolution_path`.
@@ -331,29 +289,45 @@ pub fn constraint_references_type_param_identity_in_resolution_path(
     type_id: TypeId,
     target: TypeId,
 ) -> bool {
+    resolution_path_contains_matching(types, type_id, |current, _| {
+        type_parameter_identity_matches(def_store, current, target)
+    })
+}
+
+/// Worklist containment check over the constraint-resolution child set:
+/// union/intersection members, the mapped-type `constraint` (key source —
+/// catching `T extends { [P in T]: number }` without false-positiving on
+/// `T extends { [K in keyof T]: V }`, since `KeyOf` is not followed), and
+/// indexed-access operands (`T extends Foo | T["hello"]`). Everything else
+/// (`KeyOf`, `Conditional`, `Application`, `Object`, `Function`, `Array`,
+/// `Tuple`, `ReadonlyType`, `NoInfer`, …) is opaque at the
+/// constraint-resolution level: `T extends Array<T>` is NOT circular.
+///
+/// This child set is deliberately narrower than any [`ChildPolicy`] — it
+/// mimics tsc's `getBaseConstraint` recursion, not structural traversal.
+fn resolution_path_contains_matching(
+    types: &dyn TypeDatabase,
+    root: TypeId,
+    mut node_matches: impl FnMut(TypeId, Option<&TypeData>) -> bool,
+) -> bool {
     with_predicate_buffers(|visited, stack| {
-        stack.push(type_id);
+        stack.push(root);
         while let Some(current) = stack.pop() {
             if current.is_intrinsic() || !visited.insert(current) {
                 continue;
             }
-
-            if type_parameter_identity_matches(def_store, current, target) {
+            let data = types.lookup(current);
+            if node_matches(current, data.as_ref()) {
                 return true;
             }
-
-            let Some(data) = types.lookup(current) else {
-                continue;
-            };
-
             match &data {
-                TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
                     stack.extend(types.type_list(*list_id).iter().copied());
                 }
-                TypeData::Mapped(mapped_id) => {
+                Some(TypeData::Mapped(mapped_id)) => {
                     stack.push(types.get_mapped(*mapped_id).constraint);
                 }
-                TypeData::IndexAccess(obj, idx) => {
+                Some(TypeData::IndexAccess(obj, idx)) => {
                     stack.push(*obj);
                     stack.push(*idx);
                 }
@@ -459,9 +433,10 @@ where
         if !has_policy_children(&key, &self.policy) {
             return false;
         }
-        let result = self.walk_children(type_id, &key);
-        self.memo.insert(type_id, result);
-        result
+        // The root result is not memoized: the checker is dropped on return,
+        // so the write (and, for shallow shapes, the memo's only allocation)
+        // would be dead. Children memoize normally inside `walk_children`.
+        self.walk_children(type_id, &key)
     }
 
     fn check(&mut self, type_id: TypeId) -> bool {
