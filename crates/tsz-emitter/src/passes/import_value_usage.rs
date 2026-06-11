@@ -474,8 +474,8 @@ impl<'a> UsageScan<'a> {
 
     /// Immediate-parent classification: positions where the identifier is a
     /// name being *introduced or labeled* rather than a reference, plus the
-    /// import/export-specific reference shapes.
-    #[allow(clippy::too_many_lines)]
+    /// import/export-specific reference shapes. The two halves cover disjoint
+    /// parent kinds.
     fn classify_by_parent(
         &self,
         ref_idx: NodeIndex,
@@ -483,7 +483,22 @@ impl<'a> UsageScan<'a> {
         parent_kind: u16,
         name: &str,
     ) -> Option<ReferencePosition> {
-        use ReferencePosition::{NotAReference, Value};
+        self.classify_name_position(ref_idx, parent_idx, parent_kind, name)
+            .or_else(|| {
+                self.classify_import_export_position(ref_idx, parent_idx, parent_kind, name)
+            })
+    }
+
+    /// Declaration, member, and access-name positions: places where the
+    /// identifier introduces or labels a name instead of referencing one.
+    fn classify_name_position(
+        &self,
+        ref_idx: NodeIndex,
+        parent_idx: NodeIndex,
+        parent_kind: u16,
+        name: &str,
+    ) -> Option<ReferencePosition> {
+        use ReferencePosition::NotAReference;
         match parent_kind {
             // `obj.prop` — the property name is not a scope reference.
             // (`obj[expr]` element-access arguments ARE references and fall
@@ -588,6 +603,21 @@ impl<'a> UsageScan<'a> {
                 let member = self.arena.get_enum_member_at(parent_idx)?;
                 (member.name == ref_idx).then_some(NotAReference)
             }
+            _ => None,
+        }
+    }
+
+    /// Label, JSX, and import/export-construct positions, including the
+    /// import-equals and export-specifier reference shapes.
+    fn classify_import_export_position(
+        &self,
+        ref_idx: NodeIndex,
+        parent_idx: NodeIndex,
+        parent_kind: u16,
+        name: &str,
+    ) -> Option<ReferencePosition> {
+        use ReferencePosition::{NotAReference, Value};
+        match parent_kind {
             // Statement labels, JSX namespaced/closing-tag names, and the
             // identifiers inside import binding constructs (e.g. the `a` in
             // `import { a as b }`) are never symbol references.
