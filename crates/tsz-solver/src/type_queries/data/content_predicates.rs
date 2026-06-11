@@ -9,7 +9,9 @@ use super::type_id_list::TypeIdList;
 use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
-use crate::visitors::child_policy::{ChildPolicy, try_for_each_child_with_policy};
+use crate::visitors::child_policy::{
+    ChildPolicy, has_policy_children, try_for_each_child_with_policy,
+};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -68,7 +70,7 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
 /// deep walk's per-node answer can be cached project-wide and shared across the
 /// many fresh evaluators created during instantiation. See
 /// [`contains_content_cached`].
-trait ContentPredicate {
+pub(super) trait ContentPredicate {
     /// Whether this node *itself* satisfies the predicate. When `true`, the
     /// walker short-circuits without descending into children.
     fn matches_node(&self, db: &dyn TypeDatabase, key: &TypeData) -> bool;
@@ -78,7 +80,7 @@ trait ContentPredicate {
     fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool);
 }
 
-struct TypeParamPredicate;
+pub(super) struct TypeParamPredicate;
 impl ContentPredicate for TypeParamPredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         matches!(
@@ -97,7 +99,7 @@ impl ContentPredicate for TypeParamPredicate {
     }
 }
 
-struct InferPredicate;
+pub(super) struct InferPredicate;
 impl ContentPredicate for InferPredicate {
     fn matches_node(&self, db: &dyn TypeDatabase, key: &TypeData) -> bool {
         match key {
@@ -117,7 +119,7 @@ impl ContentPredicate for InferPredicate {
     }
 }
 
-struct TypeQueryPredicate;
+pub(super) struct TypeQueryPredicate;
 impl ContentPredicate for TypeQueryPredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         matches!(key, TypeData::TypeQuery(_))
@@ -130,7 +132,7 @@ impl ContentPredicate for TypeQueryPredicate {
     }
 }
 
-struct LazyOrRecursivePredicate;
+pub(super) struct LazyOrRecursivePredicate;
 impl ContentPredicate for LazyOrRecursivePredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_))
@@ -143,7 +145,7 @@ impl ContentPredicate for LazyOrRecursivePredicate {
     }
 }
 
-struct ThisTypePredicate;
+pub(super) struct ThisTypePredicate;
 impl ContentPredicate for ThisTypePredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         matches!(key, TypeData::ThisType)
@@ -163,7 +165,7 @@ pub fn contains_this_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_content_cached(db, type_id, &ThisTypePredicate)
 }
 
-struct SubstitutionDependentPredicate;
+pub(super) struct SubstitutionDependentPredicate;
 impl ContentPredicate for SubstitutionDependentPredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         // Nodes whose evaluation depends on the *substitution environment* (the
@@ -189,7 +191,7 @@ impl ContentPredicate for SubstitutionDependentPredicate {
     }
 }
 
-struct ConditionalPredicate;
+pub(super) struct ConditionalPredicate;
 impl ContentPredicate for ConditionalPredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         matches!(key, TypeData::Conditional(_))
@@ -269,6 +271,21 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
         if let Some(cached) = self.predicate.cached(self.db, type_id) {
             return (cached, false);
         }
+        let Some(key) = self.db.lookup(type_id) else {
+            return (false, false);
+        };
+        // Direct match on the node itself short-circuits: the answer is `true`
+        // and untainted regardless of any child subtree.
+        if self.predicate.matches_node(self.db, &key) {
+            self.predicate.set_cache(self.db, type_id, true);
+            return (true, false);
+        }
+        // Terminal fast path: a node with no children under the walker's
+        // policy cannot match below itself; skip the visiting-set round-trip.
+        if !has_policy_children(&key, &ChildPolicy::CONTENT_PREDICATE) {
+            self.predicate.set_cache(self.db, type_id, false);
+            return (false, false);
+        }
         if !self.visiting.insert(type_id) {
             // Re-entering an in-progress node: this path contributes nothing new
             // (the matching node, if any, is found on the ancestor still being
@@ -276,7 +293,7 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
             // possibly-incomplete answer.
             return (false, true);
         }
-        let result = self.check_key_tracked(type_id);
+        let result = self.walk_children(&key);
         self.visiting.remove(&type_id);
         if !result.1 {
             // Only persist fully-resolved (untainted) subtree results.
@@ -289,21 +306,14 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
         self.check_tracked(type_id).0
     }
 
-    fn check_key_tracked(&mut self, type_id: TypeId) -> (bool, bool) {
-        let Some(key) = self.db.lookup(type_id) else {
-            return (false, false);
-        };
-        // Direct match on the node itself short-circuits: the answer is `true`
-        // and untainted regardless of any child subtree.
-        if self.predicate.matches_node(self.db, &key) {
-            return (true, false);
-        }
-        // Same child set as the generic uncached walker, by construction.
+    /// Walk the node's children under the same child set as the generic
+    /// uncached walker, by construction.
+    fn walk_children(&mut self, key: &TypeData) -> (bool, bool) {
         let db = self.db;
         let mut tainted = false;
-        let found = try_for_each_child_with_policy::<()>(
+        let found = try_for_each_child_with_policy::<(), _>(
             db,
-            &key,
+            key,
             &ChildPolicy::CONTENT_PREDICATE,
             &mut |child| {
                 let (child_found, child_tainted) = self.check_tracked(child);

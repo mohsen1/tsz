@@ -15,7 +15,7 @@
 use std::ops::ControlFlow;
 
 use crate::construction::TypeDatabase;
-use crate::types::{CallSignature, FunctionShape, ObjectShape, ParamInfo, TypeParamInfo};
+use crate::types::{ObjectShape, ParamInfo, TypeParamInfo};
 use crate::{TypeData, TypeId};
 
 /// Which child `TypeId`s a traversal descends into for each `TypeData` variant.
@@ -156,7 +156,18 @@ impl ChildPolicy {
     /// use of the parameter itself.
     pub const ERROR_CONTAINMENT: Self = Self {
         type_param_constraint: false,
+        type_param_default: false,
         ..Self::STRUCTURAL_USES
+    };
+
+    /// Shallow occurrence checks: the full surface, but a bare
+    /// `TypeParameter`/`Infer` is a leaf — its `constraint`/`default` carry
+    /// the parameter's declaration metadata, and descending them turns
+    /// `{ [K in keyof T]: T[K] }`-style self-references into false cycles.
+    pub const SHALLOW: Self = Self {
+        type_param_constraint: false,
+        type_param_default: false,
+        ..Self::FULL
     };
 }
 
@@ -188,14 +199,15 @@ pub const fn has_policy_children(key: &TypeData, policy: &ChildPolicy) -> bool {
     }
 }
 
-fn visit_signature<B>(
+#[inline]
+fn visit_signature<B, F: FnMut(TypeId) -> ControlFlow<B>>(
     policy: &ChildPolicy,
     type_params: &[TypeParamInfo],
     params: &[ParamInfo],
     this_type: Option<TypeId>,
     return_type: TypeId,
     type_predicate: Option<TypeId>,
-    f: &mut dyn FnMut(TypeId) -> ControlFlow<B>,
+    f: &mut F,
 ) -> ControlFlow<B> {
     if policy.skip_generic_signature_bodies && !type_params.is_empty() {
         return ControlFlow::Continue(());
@@ -227,42 +239,11 @@ fn visit_signature<B>(
     ControlFlow::Continue(())
 }
 
-fn visit_function_shape<B>(
-    policy: &ChildPolicy,
-    sig: &FunctionShape,
-    f: &mut dyn FnMut(TypeId) -> ControlFlow<B>,
-) -> ControlFlow<B> {
-    visit_signature(
-        policy,
-        &sig.type_params,
-        &sig.params,
-        sig.this_type,
-        sig.return_type,
-        sig.type_predicate.as_ref().and_then(|p| p.type_id),
-        f,
-    )
-}
-
-fn visit_call_signature<B>(
-    policy: &ChildPolicy,
-    sig: &CallSignature,
-    f: &mut dyn FnMut(TypeId) -> ControlFlow<B>,
-) -> ControlFlow<B> {
-    visit_signature(
-        policy,
-        &sig.type_params,
-        &sig.params,
-        sig.this_type,
-        sig.return_type,
-        sig.type_predicate.as_ref().and_then(|p| p.type_id),
-        f,
-    )
-}
-
-fn visit_object_members<B>(
+#[inline]
+fn visit_object_members<B, F: FnMut(TypeId) -> ControlFlow<B>>(
     policy: &ChildPolicy,
     shape: &ObjectShape,
-    f: &mut dyn FnMut(TypeId) -> ControlFlow<B>,
+    f: &mut F,
 ) -> ControlFlow<B> {
     for prop in &shape.properties {
         f(prop.type_id)?;
@@ -287,11 +268,12 @@ fn visit_object_members<B>(
 ///
 /// This is the single canonical enumeration of the `TypeData` child graph; all
 /// traversal helpers and predicate walkers drive it with their own policy.
-pub fn try_for_each_child_with_policy<B>(
+#[inline]
+pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
     db: &dyn TypeDatabase,
     key: &TypeData,
     policy: &ChildPolicy,
-    f: &mut dyn FnMut(TypeId) -> ControlFlow<B>,
+    f: &mut F,
 ) -> ControlFlow<B> {
     match key {
         // Single nested type
@@ -323,7 +305,15 @@ pub fn try_for_each_child_with_policy<B>(
 
         TypeData::Function(func_id) => {
             let sig = db.function_shape(*func_id);
-            visit_function_shape(policy, &sig, f)
+            visit_signature(
+                policy,
+                &sig.type_params,
+                &sig.params,
+                sig.this_type,
+                sig.return_type,
+                sig.type_predicate.as_ref().and_then(|p| p.type_id),
+                f,
+            )
         }
 
         TypeData::Callable(callable_id) => {
@@ -333,7 +323,15 @@ pub fn try_for_each_child_with_policy<B>(
                 .iter()
                 .chain(callable.construct_signatures.iter())
             {
-                visit_call_signature(policy, sig, f)?;
+                visit_signature(
+                    policy,
+                    &sig.type_params,
+                    &sig.params,
+                    sig.this_type,
+                    sig.return_type,
+                    sig.type_predicate.as_ref().and_then(|p| p.type_id),
+                    f,
+                )?;
             }
             for prop in &callable.properties {
                 f(prop.type_id)?;
@@ -451,9 +449,13 @@ pub fn for_each_child_with_policy<F>(
 ) where
     F: FnMut(TypeId),
 {
-    let _ =
-        try_for_each_child_with_policy::<std::convert::Infallible>(db, key, policy, &mut |child| {
+    let _ = try_for_each_child_with_policy::<std::convert::Infallible, _>(
+        db,
+        key,
+        policy,
+        &mut |child| {
             f(child);
             ControlFlow::Continue(())
-        });
+        },
+    );
 }

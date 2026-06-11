@@ -45,10 +45,7 @@ use crate::{LiteralValue, SymbolRef, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
-// Re-export the canonical policy-parameterized child enumerator
-pub use super::child_policy::{
-    ChildPolicy, for_each_child_with_policy, has_policy_children, try_for_each_child_with_policy,
-};
+use super::child_policy::{ChildPolicy, for_each_child_with_policy, has_policy_children};
 
 // Re-export type data extraction helpers (extracted to visitor_extract.rs)
 pub use super::visitor_extract::*;
@@ -331,7 +328,8 @@ pub trait TypeVisitor: Sized {
 /// the full structural surface visited (application bases, property write
 /// types, index-signature keys, signature `this`/predicate/type-parameter
 /// metadata). Walkers that need a different child set drive
-/// [`try_for_each_child_with_policy`] with their own [`ChildPolicy`].
+/// [`crate::visitors::child_policy::try_for_each_child_with_policy`] with
+/// their own [`ChildPolicy`].
 pub fn for_each_child<F>(db: &dyn TypeDatabase, key: &TypeData, f: F)
 where
     F: FnMut(TypeId),

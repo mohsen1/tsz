@@ -1468,9 +1468,6 @@ fn type_id_list_iter_reports_exact_remaining_len() {
     assert_eq!(it.len(), 0);
 }
 
-use crate::TypeData;
-use crate::visitors::visitor_predicates::contains_type_matching;
-
 /// Corpus of roots covering every `TypeData` variant reachable from test
 /// construction, with predicate-relevant leaves planted at varying depths.
 /// Used to pin the project-cached content walker to the generic uncached
@@ -1593,76 +1590,119 @@ fn content_walk_agreement_corpus(interner: &TypeInterner) -> Vec<TypeId> {
 /// uncached `contains_type_matching` walk must give identical answers: both
 /// are drivers over the same canonical `CONTENT_PREDICATE` child enumeration.
 /// This replaces the old "must mirror `check_key` exactly" comment contract
-/// with an executable check over a generated shape corpus.
+/// with an executable check over a generated shape corpus, driven by the REAL
+/// `ContentPredicate` impls so predicate edits cannot desynchronize the pin.
 #[test]
 fn cached_content_walker_agrees_with_generic_walker_on_corpus() {
+    use super::content_predicates::{
+        ConditionalPredicate, ContentPredicate, InferPredicate, LazyOrRecursivePredicate,
+        SubstitutionDependentPredicate, ThisTypePredicate, TypeQueryPredicate,
+    };
+    use crate::visitors::visitor_predicates::contains_type_matching;
+
     let interner = TypeInterner::new();
     let corpus = content_walk_agreement_corpus(&interner);
     assert!(corpus.len() > 100);
 
+    fn assert_agreement<P: ContentPredicate>(
+        interner: &TypeInterner,
+        corpus: &[TypeId],
+        predicate: &P,
+        cached_query: impl Fn(&TypeInterner, TypeId) -> bool,
+        label: &str,
+    ) {
+        for &root in corpus {
+            let cached = cached_query(interner, root);
+            let generic =
+                contains_type_matching(interner, root, |key| predicate.matches_node(interner, key));
+            assert_eq!(cached, generic, "{label} mismatch on {root:?}");
+        }
+    }
+
+    assert_agreement(
+        &interner,
+        &corpus,
+        &InferPredicate,
+        |i, t| contains_infer_types_db(i, t),
+        "contains_infer",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &TypeQueryPredicate,
+        |i, t| contains_type_query_db(i, t),
+        "contains_type_query",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &LazyOrRecursivePredicate,
+        |i, t| contains_lazy_or_recursive_db(i, t),
+        "contains_lazy_or_recursive",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &ThisTypePredicate,
+        |i, t| contains_this_type_db(i, t),
+        "contains_this",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &ConditionalPredicate,
+        |i, t| contains_conditional_type(i, t),
+        "contains_conditional",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &SubstitutionDependentPredicate,
+        |i, t| is_substitution_dependent_type(i, t),
+        "substitution-dependent",
+    );
+}
+
+/// `has_policy_children` must stay in lockstep with the canonical enumerator:
+/// whenever it reports a node as terminal under a policy, the enumerator must
+/// yield zero children for that node under the same policy. A `false` from
+/// `has_policy_children` while children exist would make walkers silently
+/// skip subtrees behind their memo/terminal fast paths.
+#[test]
+fn has_policy_children_matches_enumerator_on_corpus() {
+    use crate::visitors::child_policy::{
+        ChildPolicy, for_each_child_with_policy, has_policy_children,
+    };
+
+    let interner = TypeInterner::new();
+    let corpus = content_walk_agreement_corpus(&interner);
+    let policies = [
+        ("FULL", ChildPolicy::FULL),
+        ("EVERYTHING", ChildPolicy::EVERYTHING),
+        ("CONTENT_PREDICATE", ChildPolicy::CONTENT_PREDICATE),
+        ("FREE_TYPE_PARAMS", ChildPolicy::FREE_TYPE_PARAMS),
+        ("FREE_INFER", ChildPolicy::FREE_INFER),
+        ("FREE_PARAM_COLLECT", ChildPolicy::FREE_PARAM_COLLECT),
+        ("STRUCTURAL_USES", ChildPolicy::STRUCTURAL_USES),
+        ("ERROR_CONTAINMENT", ChildPolicy::ERROR_CONTAINMENT),
+        ("SHALLOW", ChildPolicy::SHALLOW),
+    ];
     for &root in &corpus {
-        let infer_cached = contains_infer_types_db(&interner, root);
-        let infer_generic = contains_type_matching(&interner, root, |key| match key {
-            TypeData::Infer(_) => true,
-            TypeData::TypeParameter(tp) => {
-                let name = interner.resolve_atom_ref(tp.name);
-                name.starts_with("__infer_") || name.starts_with("__infer_src_")
+        let Some(key) = interner.lookup(root) else {
+            continue;
+        };
+        for (name, policy) in &policies {
+            if has_policy_children(&key, policy) {
+                continue;
             }
-            _ => false,
-        });
-        assert_eq!(
-            infer_cached, infer_generic,
-            "contains_infer mismatch on {root:?}"
-        );
-
-        let query_cached = contains_type_query_db(&interner, root);
-        let query_generic =
-            contains_type_matching(&interner, root, |key| matches!(key, TypeData::TypeQuery(_)));
-        assert_eq!(
-            query_cached, query_generic,
-            "contains_type_query mismatch on {root:?}"
-        );
-
-        let lazy_cached = contains_lazy_or_recursive_db(&interner, root);
-        let lazy_generic = contains_type_matching(&interner, root, |key| {
-            matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_))
-        });
-        assert_eq!(
-            lazy_cached, lazy_generic,
-            "contains_lazy mismatch on {root:?}"
-        );
-
-        let this_cached = contains_this_type_db(&interner, root);
-        let this_generic =
-            contains_type_matching(&interner, root, |key| matches!(key, TypeData::ThisType));
-        assert_eq!(
-            this_cached, this_generic,
-            "contains_this mismatch on {root:?}"
-        );
-
-        let cond_cached = contains_conditional_type(&interner, root);
-        let cond_generic = contains_type_matching(&interner, root, |key| {
-            matches!(key, TypeData::Conditional(_))
-        });
-        assert_eq!(
-            cond_cached, cond_generic,
-            "contains_conditional mismatch on {root:?}"
-        );
-
-        let subst_cached = is_substitution_dependent_type(&interner, root);
-        let subst_generic = contains_type_matching(&interner, root, |key| {
-            matches!(
-                key,
-                TypeData::TypeParameter(_)
-                    | TypeData::Infer(_)
-                    | TypeData::ThisType
-                    | TypeData::BoundParameter(_)
-            )
-        });
-        assert_eq!(
-            subst_cached, subst_generic,
-            "substitution-dependent mismatch on {root:?}"
-        );
+            let mut children = 0usize;
+            for_each_child_with_policy(&interner, &key, policy, |_| children += 1);
+            assert_eq!(
+                children, 0,
+                "has_policy_children claims terminal under {name} but enumerator \
+                 yields {children} children for {root:?}"
+            );
+        }
     }
 }
 

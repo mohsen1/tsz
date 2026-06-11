@@ -404,10 +404,8 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(
             set(predicate_memos),
             {
-                "ContainsTypeChecker",
-                "FreeTypeParamChecker",
-                "FreeInferChecker",
-                "ShallowContainsTypeChecker",
+                "DeepContainsChecker",
+                "FreeTypeParamCollector",
             },
         )
         self.assertFalse(

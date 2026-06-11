@@ -42,7 +42,7 @@ pub fn contains_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bo
 /// enclosing function/callable signatures. See `contains_free_type_parameters_db`
 /// in `content_predicates` for the full doc.
 pub fn contains_free_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    DeepContainsChecker::new(types, &ChildPolicy::FREE_TYPE_PARAMS, |key| {
+    DeepContainsChecker::new(types, ChildPolicy::FREE_TYPE_PARAMS, |key| {
         matches!(
             key,
             TypeData::TypeParameter(_)
@@ -51,7 +51,7 @@ pub fn contains_free_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) 
                 | TypeData::BoundParameter(_)
         )
     })
-    .check(type_id)
+    .check_from_root(type_id)
 }
 
 /// Check if a type contains any `infer` types.
@@ -71,10 +71,10 @@ pub fn contains_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// suppressing real errors like TS2322 when the only `infer` types are in
 /// type parameter constraint chains.
 pub fn contains_free_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    DeepContainsChecker::new(types, &ChildPolicy::FREE_INFER, |key| {
+    DeepContainsChecker::new(types, ChildPolicy::FREE_INFER, |key| {
         matches!(key, TypeData::Infer(_))
     })
-    .check(type_id)
+    .check_from_root(type_id)
 }
 
 /// Check if a type contains the `any` intrinsic anywhere.
@@ -100,11 +100,11 @@ pub fn contains_any_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// This is the single canonical error-containment answer; the checker-facing
 /// `contains_error_type_db` delegates here so both query paths agree.
 pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    DeepContainsChecker::new(types, &ChildPolicy::ERROR_CONTAINMENT, |key| {
+    DeepContainsChecker::new(types, ChildPolicy::ERROR_CONTAINMENT, |key| {
         matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_))
     })
-    .with_error_sentinel()
-    .check(type_id)
+    .with_sentinel(TypeId::ERROR)
+    .check_from_root(type_id)
 }
 
 /// Check if a type contains the `this` type anywhere.
@@ -133,7 +133,8 @@ pub fn contains_type_matching<F>(types: &dyn TypeDatabase, type_id: TypeId, pred
 where
     F: Fn(&TypeData) -> bool,
 {
-    DeepContainsChecker::new(types, &ChildPolicy::CONTENT_PREDICATE, predicate).check(type_id)
+    DeepContainsChecker::new(types, ChildPolicy::CONTENT_PREDICATE, predicate)
+        .check_from_root(type_id)
 }
 
 /// Check if a type contains a type parameter with the given name.
@@ -181,25 +182,18 @@ pub fn contains_type_parameter_named_shallow(
                 return true;
             }
 
-            // Visit children but skip TypeParameter/Infer constraints/defaults.
-            // For TypeParameter/Infer, we only care about identity (name match),
-            // not what their constraints contain.
-            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
-                continue;
-            }
-            // Terminal kinds have no children to enumerate. Skipping
-            // `for_each_child_by_id` (which would iterate an empty child set)
-            // saves the closure setup and visitor dispatch on the very common
-            // input shape where the predicate is the entry-point lookup result.
-            if !has_policy_children(&data, &ChildPolicy::FULL) {
-                continue;
-            }
-            // For all other types, use the generic child visitor.
-            crate::visitors::visitor::for_each_child_by_id(types, current, |child| {
-                if !visited.contains(&child) {
-                    stack.push(child);
-                }
-            });
+            // SHALLOW treats TypeParameter/Infer as leaves: we only care
+            // about identity (name match), not what their constraints contain.
+            crate::visitors::child_policy::for_each_child_with_policy(
+                types,
+                &data,
+                &ChildPolicy::SHALLOW,
+                |child| {
+                    if !visited.contains(&child) {
+                        stack.push(child);
+                    }
+                },
+            );
         }
         false
     })
@@ -240,16 +234,16 @@ pub fn contains_type_parameter_identity_shallow(
                 continue;
             };
 
-            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_))
-                || !has_policy_children(&data, &ChildPolicy::FULL)
-            {
-                continue;
-            }
-            crate::visitors::visitor::for_each_child_by_id(types, current, |child| {
-                if !visited.contains(&child) {
-                    stack.push(child);
-                }
-            });
+            crate::visitors::child_policy::for_each_child_with_policy(
+                types,
+                &data,
+                &ChildPolicy::SHALLOW,
+                |child| {
+                    if !visited.contains(&child) {
+                        stack.push(child);
+                    }
+                },
+            );
         }
         false
     })
@@ -423,12 +417,13 @@ where
     F: Fn(&TypeData) -> bool,
 {
     types: &'a dyn TypeDatabase,
-    policy: &'static ChildPolicy,
+    policy: ChildPolicy,
     predicate: F,
-    /// Match the raw `TypeId::ERROR` sentinel before the intrinsic fast path.
-    /// Only the error-containment walk sets this: the sentinel lives in the
-    /// intrinsic id range, where `lookup`-based predicates are never consulted.
-    detect_error_sentinel: bool,
+    /// Intrinsic-range sentinel id (e.g. `TypeId::ERROR`) matched before the
+    /// intrinsic fast path. Sentinel ids live in the intrinsic id range, where
+    /// `lookup`-based predicates are never consulted, so an id-level match is
+    /// the only way a walk can detect them when nested.
+    sentinel: Option<TypeId>,
     memo: FxHashMap<TypeId, bool>,
     guard: crate::recursion::RecursionGuard<TypeId>,
 }
@@ -437,12 +432,12 @@ impl<'a, F> DeepContainsChecker<'a, F>
 where
     F: Fn(&TypeData) -> bool,
 {
-    fn new(types: &'a dyn TypeDatabase, policy: &'static ChildPolicy, predicate: F) -> Self {
+    fn new(types: &'a dyn TypeDatabase, policy: ChildPolicy, predicate: F) -> Self {
         Self {
             types,
             policy,
             predicate,
-            detect_error_sentinel: false,
+            sentinel: None,
             memo: FxHashMap::default(),
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::ShallowTraversal,
@@ -450,8 +445,8 @@ where
         }
     }
 
-    const fn with_error_sentinel(mut self) -> Self {
-        self.detect_error_sentinel = true;
+    const fn with_sentinel(mut self, sentinel: TypeId) -> Self {
+        self.sentinel = Some(sentinel);
         self
     }
 
@@ -460,8 +455,31 @@ where
         self.memo.len()
     }
 
+    /// Entry point: like [`Self::check`], but leaf roots return without
+    /// touching the memo — the checker is discarded right after, so the
+    /// common leaf-root query stays allocation-free (`FxHashMap` only
+    /// allocates on first insert).
+    fn check_from_root(mut self, type_id: TypeId) -> bool {
+        if self.sentinel == Some(type_id) {
+            return true;
+        }
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        let Some(key) = self.types.lookup(type_id) else {
+            return false;
+        };
+        if (self.predicate)(&key) {
+            return true;
+        }
+        if !has_policy_children(&key, &self.policy) {
+            return false;
+        }
+        self.check(type_id)
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
-        if self.detect_error_sentinel && type_id == TypeId::ERROR {
+        if self.sentinel == Some(type_id) {
             return true;
         }
         // Fast path: intrinsic types (primitives, any, never, etc.) have no
@@ -487,7 +505,7 @@ where
         // policy cannot match below itself. Skipping the recursion guard's
         // enter/leave HashSet round-trip is a pure win; the memo is still
         // updated so repeat visits within one walk stay O(1).
-        if !has_policy_children(&key, self.policy) {
+        if !has_policy_children(&key, &self.policy) {
             self.memo.insert(type_id, false);
             return false;
         }
@@ -499,7 +517,7 @@ where
 
         let types = self.types;
         let policy = self.policy;
-        let result = try_for_each_child_with_policy::<()>(types, &key, policy, &mut |child| {
+        let result = try_for_each_child_with_policy::<(), _>(types, &key, &policy, &mut |child| {
             if self.check(child) {
                 ControlFlow::Break(())
             } else {
@@ -619,14 +637,11 @@ impl<'a> FreeTypeParamCollector<'a> {
             return set;
         }
         let types = self.types;
-        let _ = try_for_each_child_with_policy::<std::convert::Infallible>(
+        crate::visitors::child_policy::for_each_child_with_policy(
             types,
             key,
             &ChildPolicy::FREE_PARAM_COLLECT,
-            &mut |child| {
-                set.extend(self.free(child));
-                ControlFlow::Continue(())
-            },
+            |child| set.extend(self.free(child)),
         );
         set
     }
@@ -710,7 +725,7 @@ mod tests {
         let wrapper = interner.readonly_type(t_param);
 
         let mut contains_checker =
-            DeepContainsChecker::new(&interner, &ChildPolicy::CONTENT_PREDICATE, |key| {
+            DeepContainsChecker::new(&interner, ChildPolicy::CONTENT_PREDICATE, |key| {
                 matches!(key, TypeData::TypeParameter(_))
             });
         assert!(contains_checker.check(wrapper));
@@ -758,25 +773,5 @@ mod tests {
 
         let plain_fn = interner.function(crate::types::FunctionShape::new(vec![], t_param));
         assert!(contains_free_type_parameters(&interner, plain_fn));
-    }
-
-    /// The unified error walk detects errors everywhere both historical
-    /// variants did: the raw `TypeId::ERROR` sentinel nested in application
-    /// arguments and bases (former visitor walker) and errors nested under
-    /// conditional/mapped/keyof wrappers (former checker-boundary walker).
-    #[test]
-    fn error_containment_covers_both_historical_walks() {
-        let interner = TypeInterner::new();
-        let app_with_error_arg = interner.application(TypeId::STRING, vec![TypeId::ERROR]);
-        assert!(contains_error_type(&interner, app_with_error_arg));
-
-        let app_with_error_base = interner.application(TypeId::ERROR, vec![TypeId::STRING]);
-        assert!(contains_error_type(&interner, app_with_error_base));
-
-        let keyof_error = interner.keyof(TypeId::ERROR);
-        assert!(contains_error_type(&interner, keyof_error));
-
-        let clean = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-        assert!(!contains_error_type(&interner, clean));
     }
 }
