@@ -158,6 +158,19 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// `(TypeId, no_unchecked)` key does not capture. All evaluators may still
     /// *read* (the stored value is a definite context-free answer).
     closed_eval_writes_allowed: bool,
+    /// Entries of `cache` whose value is a limit-truncated *stack-context
+    /// artifact* rather than a stable function of the input `TypeId`: a node
+    /// is tainted when a recursion/depth/iteration/divergence limit event
+    /// fired within its own evaluation window (`limit_epoch` moved between
+    /// entry and memo write), or when its value was an explicit cycle/depth
+    /// bail-out insert. Reading a tainted entry back from `cache` records a
+    /// limit event so the taint propagates to every in-flight ancestor.
+    ///
+    /// This is the per-entry discrimination (issue #13241, extending the
+    /// PR #12902 application-eval epoch split) that lets the persistent
+    /// `eval_cache` keep the *clean* intermediates of a run whose unrelated
+    /// subtree hit a limit, instead of dropping the whole run's results.
+    tainted: FxHashSet<TypeId>,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -223,6 +236,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             limit_epoch: 0,
             app_body_limit_epoch: 0,
             closed_eval_writes_allowed: false,
+            tainted: FxHashSet::default(),
         }
     }
 
@@ -369,8 +383,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Drain the evaluator's internal cache, returning all intermediate results.
     /// This allows callers to persist intermediate evaluation results
     /// (e.g., from recursive mapped type expansion) into a longer-lived cache.
+    ///
+    /// Callers persisting these into a cache whose key does not capture the
+    /// ambient stack depth must filter out limit-truncated entries via
+    /// [`take_tainted`](Self::take_tainted).
     pub fn drain_cache(&mut self) -> impl Iterator<Item = (TypeId, TypeId)> + '_ {
         self.cache.drain()
+    }
+
+    /// Take the set of cache entries whose values are limit-truncated
+    /// stack-context artifacts (see the `tainted` field). Pair with
+    /// [`drain_cache`](Self::drain_cache) to persist only stable entries.
+    pub(crate) fn take_tainted(&mut self) -> FxHashSet<TypeId> {
+        std::mem::take(&mut self.tainted)
+    }
+
+    /// Whether `type_id`'s memoized value is a limit-truncated artifact.
+    #[cfg(test)]
+    pub(crate) fn is_tainted(&self, type_id: TypeId) -> bool {
+        self.tainted.contains(&type_id)
     }
 
     /// Pre-seed the evaluator's cache with previously computed evaluation results.
@@ -383,6 +414,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         if self.no_unchecked_indexed_access != enabled {
             self.cache.clear();
+            self.tainted.clear();
         }
         self.no_unchecked_indexed_access = enabled;
     }
@@ -398,6 +430,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub fn reset(&mut self) {
         self.cache.clear();
+        self.tainted.clear();
         self.guard.reset();
         self.def_depth.clear();
         self.real_instantiation_depth_count = 0;
@@ -600,6 +633,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Most evaluate() calls are for already-evaluated types (cache hits),
         // so checking the cache first avoids unnecessary guard operations.
         if let Some(&cached) = self.cache.get(&type_id) {
+            // Reading a limit-truncated artifact makes every in-flight
+            // ancestor's result artifact-dependent: record a limit event so
+            // the epoch-based stamping (and the application-eval epoch gate)
+            // see it. The `is_empty` check keeps the common clean-run hit
+            // path at a single length read.
+            if !self.tainted.is_empty() && self.tainted.contains(&type_id) {
+                self.note_limit_event();
+            }
             return cached;
         }
 
@@ -683,6 +724,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// fast while still catching runaway expansion within a few hundred iterations.
     const FUEL_CHECK_INTERVAL: u32 = 128;
 
+    /// Memoize `result` for `type_id`, stamping the entry as a stack-context
+    /// artifact when a limit event fired within this node's evaluation window
+    /// (`limit_epoch` moved past `epoch_at_entry`). Tainted entries must not
+    /// be persisted to depth-agnostic caches; see the `tainted` field.
+    #[inline]
+    fn memo_insert(&mut self, epoch_at_entry: u32, type_id: TypeId, result: TypeId) {
+        if self.limit_epoch != epoch_at_entry {
+            self.tainted.insert(type_id);
+        }
+        self.cache.insert(type_id, result);
+    }
+
     /// Actual evaluate logic -- separated so `stacker::maybe_grow` can wrap it.
     fn evaluate_guarded_inner(&mut self, type_id: TypeId) -> TypeId {
         use crate::recursion::RecursionResult;
@@ -690,6 +743,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let _span =
             tracing::trace_span!("evaluate_type", ty = type_id.0, depth = self.guard.depth(),)
                 .entered();
+
+        // Snapshot for per-node taint stamping: every memo write below goes
+        // through `memo_insert`, which compares the live `limit_epoch`
+        // against this entry snapshot. The explicit bail-out arms call a
+        // `mark_*` helper (which bumps the epoch) before inserting, so their
+        // artifacts are stamped by the same comparison.
+        let limit_epoch_at_entry = self.limit_epoch;
 
         // The entry-point `evaluate` already consulted `self.cache` and only
         // dispatched here on a miss. `evaluate_guarded_inner` is reached
@@ -714,7 +774,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // self-referential generic constraints look satisfied.
                 let key = self.interner.lookup(type_id);
                 if matches!(key, Some(TypeData::Mapped(_))) {
-                    self.cache.insert(type_id, type_id);
+                    self.memo_insert(limit_epoch_at_entry, type_id, type_id);
                     return type_id;
                 }
                 // When checking type alias definitions for TS2589, a cycle on an
@@ -741,18 +801,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // finite recursion like the type-challenges `Permutation<U>` /
                 // `Combination<U>` patterns (silently leave `type_id` opaque).
                 if self.has_real_instantiation_depth() {
-                    self.cache.insert(type_id, TypeId::ERROR);
+                    self.memo_insert(limit_epoch_at_entry, type_id, TypeId::ERROR);
                     return TypeId::ERROR;
                 }
                 self.guard.clear_exceeded();
                 self.mark_silent_depth_bailed();
-                self.cache.insert(type_id, type_id);
+                self.memo_insert(limit_epoch_at_entry, type_id, type_id);
                 return type_id;
             }
             RecursionResult::IterationExceeded => {
                 // Iteration-limit bail: also a bounded run.
                 self.mark_deep_recursion_seen();
-                self.cache.insert(type_id, type_id);
+                self.memo_insert(limit_epoch_at_entry, type_id, type_id);
                 return type_id;
             }
         }
@@ -771,7 +831,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             self.mark_depth_exceeded();
             self.guard.leave(type_id);
-            self.cache.insert(type_id, TypeId::ERROR);
+            self.memo_insert(limit_epoch_at_entry, type_id, TypeId::ERROR);
             return TypeId::ERROR;
         }
 
@@ -788,7 +848,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Symmetric cleanup: leave guard and cache result
         self.guard.leave(type_id);
-        self.cache.insert(type_id, result);
+        self.memo_insert(limit_epoch_at_entry, type_id, result);
 
         result
     }

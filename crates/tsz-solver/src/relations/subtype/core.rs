@@ -316,6 +316,11 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// but different type param names (e.g., `<D>(f: (t: C) => D) => IList<D>` vs
     /// `<B>(f: (t: C) => B) => IList<B>`).
     pub(crate) type_param_equivalences: Vec<(TypeId, TypeId)>,
+    /// In-flight `Ternary.Maybe`-style relation outcomes awaiting validation
+    /// by the outermost frame of this checker instance (tsc `maybeKeys`
+    /// parity, issue #13241). See `cache::MaybeRelationEntry` and
+    /// `finish_relation_frame` in the `cache` module.
+    pub(crate) maybe_keys: Vec<super::cache::MaybeRelationEntry>,
 }
 
 /// Operation-local cache statistics for [`SubtypeChecker`].
@@ -388,6 +393,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
+            maybe_keys: Vec::new(),
         }
     }
 }
@@ -437,6 +443,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
+            maybe_keys: Vec::new(),
         }
     }
 
@@ -547,6 +554,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.app_expand_depth.clear();
         self.sym_visiting.clear();
         self.eval_cache.clear();
+        self.maybe_keys.clear();
     }
 
     /// Return entry and size accounting for this checker's operation-local caches.

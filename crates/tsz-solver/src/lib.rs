@@ -275,8 +275,8 @@ pub use types::{
     CachedAnyMode, CallableShape, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexSignature, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     OrderedFloat, ParamInfo, RelationCacheConfig, RelationCacheKey, RelationCacheKind,
-    RelationFlags, StringIntrinsicKind, TemplateSpan, TupleElement, TupleListId, TypeParamInfo,
-    TypePredicate, TypePredicateTarget,
+    RelationCacheValue, RelationFlags, StringIntrinsicKind, TemplateSpan, TupleElement,
+    TupleListId, TypeParamInfo, TypePredicate, TypePredicateTarget,
 };
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
@@ -419,6 +419,9 @@ mod interface_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_comprehensive_tests.rs"]
 mod keyof_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/limit_relation_cache_tests.rs"]
+mod limit_relation_cache_tests;
 #[cfg(test)]
 #[path = "../tests/mapped_architecture_tests.rs"]
 mod mapped_architecture_tests;

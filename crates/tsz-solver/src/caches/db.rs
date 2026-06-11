@@ -1519,6 +1519,33 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Default implementation is a no-op.
     fn insert_subtype_cache(&self, _key: RelationCacheKey, _result: bool) {}
 
+    /// Look up the full cached subtype entry, including budget-conditional
+    /// [`crate::types::RelationCacheValue::LimitTrue`] verdicts that the plain
+    /// boolean [`lookup_subtype_cache`](Self::lookup_subtype_cache) hides.
+    /// Default implementation surfaces only definitive entries.
+    fn lookup_subtype_cache_value(
+        &self,
+        key: RelationCacheKey,
+    ) -> Option<crate::types::RelationCacheValue> {
+        self.lookup_subtype_cache(key)
+            .map(crate::types::RelationCacheValue::from_bool)
+    }
+
+    /// Promote a coinductively validated maybe-key (a relation that resolved
+    /// through a cycle assumption whose outermost relation completed
+    /// successfully — `tsc`'s `maybeKeys` promotion in `checkTypeRelatedTo`)
+    /// to a definitive `true` entry. Must NOT overwrite an existing definitive
+    /// entry: a sibling checker may have computed an honest `false` under a
+    /// different budget regime. Default implementation is a no-op.
+    fn promote_subtype_cache_true(&self, _key: RelationCacheKey) {}
+
+    /// Record an assumed-related limit verdict
+    /// ([`crate::types::RelationCacheValue::LimitTrue`]) valid for queries
+    /// whose remaining global fuel budget is at most `fuel_band`. Must NOT
+    /// overwrite an existing definitive entry; an existing `LimitTrue` keeps
+    /// the larger band. Default implementation is a no-op.
+    fn insert_subtype_limit_true(&self, _key: RelationCacheKey, _fuel_band: u32) {}
+
     /// Look up a cached intersection-to-merged-object result.
     /// Used by `build_object_intersection_target` to avoid expensive property
     /// collection for large intersections that are checked multiple times
