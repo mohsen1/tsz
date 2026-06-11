@@ -630,7 +630,7 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        if let Some(all_arenas) = self.ctx.all_arenas.as_ref()
+        if let Some(all_arenas) = self.ctx.all_arenas.clone()
             && let Some(ref sym_name) = sym_name
         {
             for (file_idx, arena) in all_arenas.iter().enumerate() {
@@ -669,37 +669,14 @@ impl<'a> CheckerState<'a> {
                 // which only searches the *current* arena and returns None
                 // for cross-file classes — so the constructor type leaks
                 // into the instance position.
+                // Only short-circuit when the INSTANCE side is also
+                // recoverable; see `class_instance_recoverable` (#13185).
                 if let Some((cached_type, cached_params)) = self
                     .ctx
                     .cached_cross_file_symbol_type(sym_id, file_idx as u32)
+                    && self.ctx.class_instance_recoverable(sym_id, file_idx as u32)
                 {
-                    let cached_instance = self
-                        .ctx
-                        .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
-                        .map(|(inst_type, _)| inst_type)
-                        .filter(|&inst_type| inst_type != TypeId::ANY && inst_type != TypeId::ERROR)
-                        .or_else(|| {
-                            self.ctx
-                                .symbol_instance_types
-                                .get(&sym_id)
-                                .copied()
-                                .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
-                        });
-                    // Only short-circuit when the INSTANCE side is also known.
-                    // The SYMBOL bucket holds the value-side (constructor)
-                    // type; returning it while `symbol_instance_types` stays
-                    // empty makes every later type-position resolution of this
-                    // class fall back to the constructor, flipping
-                    // instance/constructor identity with co-included-root
-                    // check order (#13185). Classes declared in .d.ts files
-                    // never get a ClassInstance bucket entry (the class
-                    // delegation path skips declaration files), so without
-                    // this gate the flip is deterministic for node_modules
-                    // classes.
-                    if let Some(inst_type) = cached_instance {
-                        self.ctx.symbol_instance_types.insert(sym_id, inst_type);
-                        return (cached_type, cached_params.as_ref().clone());
-                    }
+                    return (cached_type, cached_params.as_ref().clone());
                 }
                 // Found class in another file's arena. Create a child checker
                 // with that arena and directly compute the class type.
@@ -794,24 +771,16 @@ impl<'a> CheckerState<'a> {
                     && inst != TypeId::ERROR
                 {
                     self.ctx.symbol_instance_types.insert(sym_id, inst);
-                    // Publish the instance side next to the SYMBOL bucket entry
-                    // so sibling checkers that hit the cross-file fast path can
-                    // recover the instance type. Declaration-file classes have
-                    // no other ClassInstance writer (the class delegation path
-                    // skips .d.ts files), and a SYMBOL entry without a paired
-                    // instance must not short-circuit (#13185).
-                    if self.ctx.share_owner_symbol_type_results && inst != TypeId::UNKNOWN {
-                        self.ctx.definition_store.cache_resolved_cross_file_query(
-                            crate::state_type_analysis::cross_file::CrossFileQueryKind::ClassInstance
-                                .as_storage_kind(),
-                            file_idx as u32,
-                            sym_id.0,
-                            0,
-                            0,
-                            inst,
-                            Vec::new(),
-                        );
-                    }
+                    // Publish the instance side next to the SYMBOL bucket
+                    // entry so sibling checkers can recover it; declaration-
+                    // file classes have no other ClassInstance writer
+                    // (#13185).
+                    self.ctx.cache_cross_file_class_instance_type(
+                        sym_id,
+                        file_idx as u32,
+                        inst,
+                        Vec::new(),
+                    );
                 }
                 for (k, v) in child_instance_types {
                     self.ctx.symbol_instance_types.entry_or_insert(k, v);

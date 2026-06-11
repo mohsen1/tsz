@@ -1196,13 +1196,10 @@ impl<'a> CheckerState<'a> {
             //      (first call to this function for this name)
             // This preserves user-file augmentations while fixing the
             // mismatch between annotation and literal type resolution paths.
-            // Never overwrite an IMPORT ALIAS's cached type: `file_locals`
-            // is name-keyed, so a user import named like a lib type (e.g.
-            // `import { Channel } from 'pkg'` while resolving another
-            // module's `Channel`) would otherwise have its VALUE-side type
-            // replaced with this lib TYPE-position type — flipping class
-            // constructor/instance identity for the unrelated import
-            // (#13185).
+            // Never overwrite an IMPORT ALIAS's cached type: `file_locals` is
+            // name-keyed, so a user import named like a lib type would have
+            // its VALUE-side type replaced with this TYPE-position lib type,
+            // flipping class constructor/instance identity (#13185).
             if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
                 && self
                     .ctx
