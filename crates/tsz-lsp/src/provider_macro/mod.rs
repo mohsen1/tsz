@@ -240,6 +240,33 @@ macro_rules! define_lsp_provider {
                     checker.ctx.set_lib_contexts(self.lib_contexts.to_vec());
                 }
             }
+
+            fn checker_with_cache(
+                &self,
+                type_cache: &mut Option<tsz_checker::TypeCache>,
+            ) -> tsz_checker::CheckerState<'a> {
+                let checker_options = self.checker_options();
+                let mut checker = if let Some(cache) = type_cache.take() {
+                    tsz_checker::CheckerState::with_cache(
+                        self.arena,
+                        self.binder,
+                        self.interner,
+                        self.file_name.clone(),
+                        cache,
+                        checker_options,
+                    )
+                } else {
+                    tsz_checker::CheckerState::new(
+                        self.arena,
+                        self.binder,
+                        self.interner,
+                        self.file_name.clone(),
+                        checker_options,
+                    )
+                };
+                self.apply_lib_contexts(&mut checker);
+                checker
+            }
         }
     };
 }

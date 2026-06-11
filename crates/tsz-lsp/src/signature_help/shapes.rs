@@ -1,4 +1,5 @@
 use super::*;
+use tsz_checker::state::CheckerState;
 
 impl<'a> SignatureHelpProvider<'a> {
     pub(super) fn get_signatures_from_type(
