@@ -91,6 +91,40 @@ impl TypeShard {
     }
 }
 
+/// Arrival-order-immune append protocol for id-indexed interner storage.
+///
+/// `index` is allocated by an atomic counter *before* the storage lock is
+/// taken, so writers may reach the lock out of id order. Growing the vec with
+/// `placeholder` clones and then writing at `index` keeps every id mapped to
+/// its own data regardless of arrival order. A while-`push` backfill loop is
+/// NOT safe here: an earlier-arriving higher id would fill a later-arriving
+/// lower id's slot with its own data, permanently misaligning ids and slots.
+///
+/// Placeholder slots are either overwritten by their rightful owner (which
+/// holds the index from its own `fetch_add`) or belong to ids that lost an
+/// insertion race and are never published, so they are never observed as
+/// long as ids are published only after this write completes.
+///
+/// `placeholder` is invoked only when earlier ids have not written their
+/// slots yet, i.e. only on contended out-of-order arrivals; the common
+/// in-order append pays no placeholder cost.
+#[inline]
+pub(in crate::intern::core) fn write_id_slot<T: Clone>(
+    vec: &mut Vec<T>,
+    index: usize,
+    value: T,
+    placeholder: impl FnOnce() -> T,
+) {
+    match vec.len().cmp(&index) {
+        std::cmp::Ordering::Less => {
+            vec.resize(index, placeholder());
+            vec.push(value);
+        }
+        std::cmp::Ordering::Equal => vec.push(value),
+        std::cmp::Ordering::Greater => vec[index] = value,
+    }
+}
+
 /// Inner data for `ConcurrentSliceInterner`, lazily initialized.
 pub(in crate::intern::core) struct SliceInternerInner<T> {
     /// Flat array from ID to slice value. Sequential IDs make Vec optimal for reverse lookup.
@@ -154,7 +188,6 @@ where
         // Double-check: another thread might have inserted while we allocated
         match inner.map.entry(std::sync::Arc::clone(&temp_arc)) {
             Entry::Vacant(e) => {
-                e.insert(id);
                 {
                     // T2.4 instrumentation: wrap the write-lock acquisition
                     // so contention on the slice-interner's `items` vec lands
@@ -164,11 +197,12 @@ where
                     let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
                         inner.items.write().expect("interner items lock poisoned")
                     });
-                    while vec.len() < id as usize {
-                        vec.push(Arc::clone(&temp_arc));
-                    }
-                    vec.push(temp_arc);
+                    // Gap slots get an empty slice.
+                    write_id_slot(&mut vec, id as usize, temp_arc, || Arc::from(Vec::new()));
                 }
+                // Publish the id only after its slot is readable so a
+                // concurrent map hit can never observe an unwritten slot.
+                e.insert(id);
                 id
             }
             Entry::Occupied(e) => *e.get(),
@@ -251,7 +285,6 @@ where
         // Double-check: another thread might have inserted while we allocated
         match inner.map.entry(std::sync::Arc::clone(&value_arc)) {
             Entry::Vacant(e) => {
-                e.insert(id);
                 {
                     // T2.4 instrumentation: see the matching wrapper in
                     // `ConcurrentSliceInterner::intern`. Same rationale,
@@ -259,11 +292,14 @@ where
                     let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
                         inner.items.write().expect("interner items lock poisoned")
                     });
-                    while vec.len() < id as usize {
-                        vec.push(Arc::clone(&value_arc));
-                    }
-                    vec.push(value_arc);
+                    // No empty value exists for arbitrary `T`; gap slots get
+                    // this value's `Arc` and rightful owners overwrite their
+                    // own index.
+                    write_id_slot(&mut vec, id as usize, Arc::clone(&value_arc), || value_arc);
                 }
+                // Publish the id only after its slot is readable so a
+                // concurrent map hit can never observe an unwritten slot.
+                e.insert(id);
                 id
             }
             Entry::Occupied(e) => *e.get(),

@@ -1004,6 +1004,9 @@ path = "tests/import_type_ambient_module_member_tests.rs"
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"
 [[test]]
+name = "same_base_any_args_application_tests"
+path = "tests/same_base_any_args_application_tests.rs"
+[[test]]
 name = "self_namespace_import_alias_leak_tests"
 path = "tests/self_namespace_import_alias_leak_tests.rs"
 [[test]]
@@ -1755,3 +1758,6 @@ path = "tests/implements_type_param_generation_identity_tests.rs"
 [[test]]
 name = "overload_argument_flow_narrowing_visibility_tests"
 path = "tests/overload_argument_flow_narrowing_visibility_tests.rs"
+[[test]]
+name = "imported_ctor_alias_predicate_narrowing_tests"
+path = "tests/imported_ctor_alias_predicate_narrowing_tests.rs"

@@ -915,8 +915,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        let needs_raw_fallback = self.return_type_needs_raw_fallback(source_return)
+        // Two independent reasons to re-check the raw deferred forms instead
+        // of trusting an `unknown` evaluation of an `Application`/`Lazy`
+        // return:
+        //
+        // 1. Placeholder collapse: the reference is unresolvable (no defining
+        //    `DefId`, no registered body, an `unknown` cross-file placeholder
+        //    body, or a self-referential `Lazy` wrapper), so its `unknown` is
+        //    a missing-body sentinel — see
+        //    [`Self::return_type_needs_raw_fallback`].
+        //
+        // 2. Recursive-application cycle guard: the evaluation collapsed to
+        //    `unknown` because a recursion guard bailed (e.g. self-referential
+        //    iterator applications). The collapsed `unknown` is a cycle
+        //    artifact, not the converged answer — relating against it would
+        //    accept anything.
+        //
+        // Neither guard may fire for a *stable, resolvable* evaluation. A
+        // deferred alias application that genuinely evaluates to `unknown`
+        // (e.g. a conditional alias whose selected branch is `unknown`) is
+        // the converged answer: tsc relates the source against that `unknown`
+        // (everything is assignable). Vetoing it through a raw-form
+        // comparison manufactures `X is not assignable to unknown` false
+        // positives (#13212).
+        let placeholder_fallback = self.return_type_needs_raw_fallback(source_return)
             || self.return_type_needs_raw_fallback(target_return);
+        let mut unstable_unknown_collapse = |ret: TypeId| {
+            matches!(
+                self.interner.lookup(ret),
+                Some(TypeData::Application(_) | TypeData::Lazy(_))
+            ) && self.evaluate_type_with_stability(ret) == (TypeId::UNKNOWN, false)
+        };
+        let needs_raw_fallback = placeholder_fallback
+            || unstable_unknown_collapse(source_return)
+            || unstable_unknown_collapse(target_return);
 
         if needs_raw_fallback {
             let prev = self.bypass_evaluation;

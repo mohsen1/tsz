@@ -11,8 +11,8 @@ mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
 pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
-    NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeNodeSurfaceCaches,
-    TypeReferenceValidationCaches,
+    AssignabilityEvalMemo, AssignabilityEvalStamp, NarrowableIdentifierCache, NodeTypeCache,
+    SymbolTypeCache, TypeNodeSurfaceCaches, TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;

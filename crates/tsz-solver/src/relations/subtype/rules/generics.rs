@@ -616,6 +616,68 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
+    /// Same-base all-`any`-target-args lawyer shortcut.
+    ///
+    /// When source and target are applications of the SAME generic definition
+    /// and every target argument is `any` (e.g. `Kysely<DB>` passed where
+    /// `Kysely<any>` is expected), tsc relates them under assignability:
+    /// `any` type arguments silence per-argument and structural comparison
+    /// for a same-reference target (`AnyPropagationRules` family). This is
+    /// the argument-free subset of the `try_variance_fast_path` shortcut,
+    /// safe to apply even when the application identities were recovered
+    /// from display provenance (full variance on recovered applications is
+    /// not attempted — provenance is display-grade, conclusive only for the
+    /// permissive all-`any` direction, never for rejection).
+    ///
+    /// Gated on any-propagation being permissive on both sides at the
+    /// current depth, so strict subtype/identity relations and asymmetric
+    /// overload passes fall through unchanged.
+    pub(crate) fn try_same_base_all_any_target_args(
+        &mut self,
+        source: TypeId,
+        s_app_id: Option<TypeApplicationId>,
+        t_app_id: TypeApplicationId,
+    ) -> Option<SubtypeResult> {
+        let t_app = self.interner.type_application(t_app_id);
+        if t_app.args.is_empty() || !t_app.args.iter().all(|arg| arg.is_any()) {
+            return None;
+        }
+        let allow_any = self
+            .any_propagation
+            .allows_any_source_at_depth(self.guard.depth())
+            && self
+                .any_propagation
+                .allows_any_target_at_depth(self.guard.depth());
+        if !allow_any {
+            return None;
+        }
+        let same_definition = if let Some(s_app_id) = s_app_id {
+            let s_app = self.interner.type_application(s_app_id);
+            s_app.base == t_app.base
+                || matches!(
+                    (
+                        crate::visitor::lazy_def_id(self.interner, s_app.base),
+                        crate::visitor::lazy_def_id(self.interner, t_app.base),
+                    ),
+                    (Some(s_def), Some(t_def)) if self.resolver.defs_are_equivalent(s_def, t_def)
+                )
+        } else {
+            // The source lost its Application identity to evaluation (e.g. a
+            // class's self-instantiated instance type like `Kysely<DB>` inside
+            // its own body). Match the instance object's nominal symbol
+            // against the target base definition's symbol: an instance of the
+            // SAME definition is assignable to its own all-`any` instantiation.
+            let s_shape_id = object_shape_id(self.interner, source)
+                .or_else(|| object_with_index_shape_id(self.interner, source));
+            let s_symbol =
+                s_shape_id.and_then(|shape_id| self.interner.object_shape(shape_id).symbol);
+            let t_symbol = crate::visitor::lazy_def_id(self.interner, t_app.base)
+                .and_then(|t_def| self.resolver.def_to_symbol_id(t_def));
+            matches!((s_symbol, t_symbol), (Some(s_sym), Some(t_sym)) if s_sym == t_sym)
+        };
+        same_definition.then_some(SubtypeResult::True)
+    }
+
     /// Pre-evaluation variance fast path for Application types.
     ///
     /// When both source and target are Application types with the same base generic

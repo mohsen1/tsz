@@ -12,12 +12,12 @@
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::parser::node_view::NodeAccess;
-use tsz_common::interner::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::SyntaxKind;
 
 /// Find every `Identifier` node currently stored in the arena and pair the
 /// stored atom with the text the arena resolves for it.
-fn collect_identifier_atom_text(arena: &NodeArena) -> Vec<(Atom, String, String)> {
+fn collect_identifier_atom_text(arena: &NodeArena) -> Vec<(AstAtom, String, String)> {
     let mut out = Vec::new();
     for raw in 0..arena.len() {
         let idx = crate::parser::NodeIndex(u32::try_from(raw).expect("node index fits in u32"));
@@ -77,7 +77,7 @@ fn incremental_parse_keeps_arena_interner_coherent_with_new_identifier() {
     // the arena's interner is stale relative to the scanner's.
     let mut found_new = false;
     for (atom, escaped_text, resolved) in collect_identifier_atom_text(&parser.arena) {
-        if atom == Atom::NONE {
+        if atom == AstAtom::NONE {
             continue;
         }
         assert_eq!(

@@ -486,3 +486,104 @@ function f2<T>(args: T) {
         "expected TS2348 to preserve the construct-only interface application, got: {messages:#?}",
     );
 }
+
+/// Type arguments in instance displays must be the application's ACTUAL
+/// arguments. When they cannot be recovered from declared annotations, the
+/// arguments are elided — never harvested from name-sorted member types
+/// (kysely witness: `SelectQueryBuilderImpl<DB, TB, O>` displayed as
+/// `SelectQueryBuilderImpl<SelectQueryBuilderProps, O | undefined, true>`).
+#[test]
+fn generic_instance_display_never_zips_member_types_into_type_args() {
+    let diagnostic = ts2322_diagnostic(
+        r#"
+type AnyColumn<DB, TB extends keyof DB> = {
+  [T in TB]: keyof DB[T]
+}[TB] &
+  string
+
+type RefExpr<DB, TB extends keyof DB> = AnyColumn<DB, TB> | ((db: DB) => TB)
+
+interface Maker<DB, TB extends keyof DB, O> {
+  get expressionType(): O | undefined
+  get isMaker(): true
+  refine<LRE extends RefExpr<DB, TB>>(lhs: LRE): Maker<DB, TB, O>
+}
+
+class MakerImpl<DB, TB extends keyof DB, O> implements Maker<DB, TB, O> {
+  get expressionType(): O | undefined {
+    return undefined
+  }
+  get isMaker(): true {
+    return true
+  }
+  refine(lhs: RefExpr<DB, TB>): Maker<DB, TB, O> {
+    return new MakerImpl()
+  }
+}
+
+function probe<DB, TB extends keyof DB, O>(): Maker<DB, TB, O> & { extra: 1 } {
+  return new MakerImpl()
+}
+"#,
+    );
+
+    assert!(
+        diagnostic.message_text.contains("Type 'MakerImpl"),
+        "expected the instance type in the message, got {diagnostic:#?}"
+    );
+    // Member types (getter/method types, name-sorted) must never be zipped
+    // into the displayed argument list.
+    for fabricated in [
+        "MakerImpl<true",
+        "MakerImpl<O | undefined",
+        "MakerImpl<Maker<",
+    ] {
+        assert!(
+            !diagnostic.message_text.contains(fabricated),
+            "member types were harvested into the type-argument display ({fabricated}): {diagnostic:#?}"
+        );
+    }
+}
+
+/// Same witness with renamed binders and reordered members: the zip defect
+/// sorted properties alphabetically, so the fabricated argument list rotated
+/// with member names. No member-name ordering may leak into the display.
+#[test]
+fn generic_instance_display_zip_guard_is_member_name_independent() {
+    let diagnostic = ts2322_diagnostic(
+        r#"
+interface Zed<Alpha, Beta extends keyof Alpha, Out> {
+  get zz(): Out | undefined
+  get aa(): true
+  pick<K extends keyof Alpha>(key: K): Zed<Alpha, Beta, Out>
+}
+
+class ZedImpl<Alpha, Beta extends keyof Alpha, Out> implements Zed<Alpha, Beta, Out> {
+  get zz(): Out | undefined {
+    return undefined
+  }
+  get aa(): true {
+    return true
+  }
+  pick(key: keyof Alpha): Zed<Alpha, Beta, Out> {
+    return new ZedImpl()
+  }
+}
+
+function probe<Alpha, Beta extends keyof Alpha, Out>(): Zed<Alpha, Beta, Out> & { more: 1 } {
+  return new ZedImpl()
+}
+"#,
+    );
+
+    assert!(
+        diagnostic.message_text.contains("Type 'ZedImpl"),
+        "expected the instance type in the message, got {diagnostic:#?}"
+    );
+    for fabricated in ["ZedImpl<true", "ZedImpl<Out | undefined", "ZedImpl<Zed<"] {
+        assert!(
+            !diagnostic.message_text.contains(fabricated),
+            "member types were harvested into the type-argument display ({fabricated}): {diagnostic:#?}"
+        );
+    }
+}

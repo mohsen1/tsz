@@ -898,6 +898,44 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // A key whose constraint is `keyof X` where `X` is STILL GENERIC after
+        // evaluation (e.g. `P extends keyof Map[T]` with `T` a live type
+        // parameter) cannot produce a member-wise TS2536 in tsc against a
+        // CONCRETE receiver union: tsc keeps the matching receiver deferred as
+        // `Map[T]`, and `keyof Map[T] <= keyof Map[T]` holds by identity. tsz
+        // eagerly distributes small `Map[T]` receivers into their value-type
+        // union (see `LARGE_OBJECT_DEFERRAL_THRESHOLD` in the index-access
+        // evaluator), which would otherwise manufacture a member-keyof
+        // mismatch tsc never checks (conformance `intersectionsOfLargeUnions2`
+        // after predicate narrowing to `U extends ElementTagNameMap[T]`).
+        //
+        // The suppression deliberately requires BOTH:
+        // - generic `keyof` inner (a concrete `P extends keyof A` against an
+        //   unrelated `A | B` receiver keeps reporting TS2536 exactly like
+        //   tsc), and
+        // - a fully concrete receiver union (a generic receiver like `T | U`
+        //   indexed by `keyof (T & U)` is tsc's own deferred-relation failure,
+        //   `keyofAndIndexedAccessErrors` f20, and must keep erroring).
+        let types = self.ctx.types;
+        let constraint_inner = crate::query_boundaries::common::keyof_inner_type(types, index_type)
+            .or_else(|| {
+                crate::query_boundaries::common::type_param_info(types, index_type)
+                    .and_then(|info| info.constraint)
+                    .and_then(|c| crate::query_boundaries::common::keyof_inner_type(types, c))
+            });
+        if let Some(inner) = constraint_inner {
+            let eval_inner = self.evaluate_type_with_env(inner);
+            if eval_inner == object_type
+                || (crate::query_boundaries::common::contains_type_parameters(types, eval_inner)
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        types,
+                        object_type,
+                    ))
+            {
+                return false;
+            }
+        }
+
         members.iter().any(|&member| {
             let member_keyof = self.ctx.types.evaluate_keyof(member);
             !self

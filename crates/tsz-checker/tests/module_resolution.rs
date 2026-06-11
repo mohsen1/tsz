@@ -11,7 +11,7 @@ fn test_strip_ts_extension() {
     assert_eq!(strip_ts_extension("foo.js"), "foo");
     assert_eq!(strip_ts_extension("foo.jsx"), "foo");
     assert_eq!(strip_ts_extension("foo.d.ts"), "foo");
-    assert_eq!(strip_ts_extension("foo.d.tsx"), "foo");
+    assert_eq!(strip_ts_extension("foo.d.tsx"), "foo.d");
     assert_eq!(strip_ts_extension("foo.mts"), "foo");
     assert_eq!(strip_ts_extension("foo.cts"), "foo");
     assert_eq!(strip_ts_extension("foo.mjs"), "foo");
@@ -39,7 +39,8 @@ fn test_strip_ts_extension_no_match() {
 fn test_strip_dts_before_ts() {
     // .d.ts must be stripped as a whole, not just .ts leaving ".d".
     assert_eq!(strip_ts_extension("types.d.ts"), "types");
-    assert_eq!(strip_ts_extension("globals.d.tsx"), "globals");
+    // .d.tsx is a TSX source file, not a declaration extension.
+    assert_eq!(strip_ts_extension("globals.d.tsx"), "globals.d");
 }
 
 // ===========================================================================

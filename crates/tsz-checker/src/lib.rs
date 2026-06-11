@@ -108,6 +108,9 @@ mod assignability_diagnostics_relation_routing_arch_tests;
 #[path = "tests/assignability_display_relation_routing_arch_tests.rs"]
 mod assignability_display_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/assignability_eval_memo_tests.rs"]
+mod assignability_eval_memo_tests;
+#[cfg(test)]
 #[path = "tests/assignability_index_access_normalization_boundary_arch_tests.rs"]
 mod assignability_index_access_normalization_boundary_arch_tests;
 #[cfg(test)]
@@ -702,6 +705,9 @@ mod cross_file_type_param_decl_identity_tests;
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;
 #[cfg(test)]
+#[path = "tests/cross_file_unresolved_alias_union_simplification_tests.rs"]
+mod cross_file_unresolved_alias_union_simplification_tests;
+#[cfg(test)]
 #[path = "tests/cross_module_generic_interface_heritage_tests.rs"]
 mod cross_module_generic_interface_heritage_tests;
 #[cfg(test)]
@@ -1070,6 +1076,9 @@ mod object_global_identity_helper_tests;
 #[cfg(test)]
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
+#[cfg(test)]
+#[path = "tests/object_literal_method_this_parameter_contextual_tests.rs"]
+mod object_literal_method_this_parameter_contextual_tests;
 #[cfg(test)]
 #[path = "tests/object_literal_relation_architecture_tests.rs"]
 mod object_literal_relation_architecture_tests;

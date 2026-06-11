@@ -2,7 +2,7 @@ use super::*;
 
 impl ScannerState {
     /// Scan an identifier.
-    /// ZERO-ALLOCATION: Identifiers are interned, returning an Atom (u32) for O(1) comparison.
+    /// ZERO-ALLOCATION: Identifiers are interned, returning an `AstAtom` (u32) for O(1) comparison.
     /// When a unicode escape is encountered mid-identifier, switches to allocation mode.
     pub(crate) fn scan_identifier(&mut self) {
         let start = self.pos;

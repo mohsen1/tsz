@@ -158,7 +158,8 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             let rel = file.strip_prefix(package_root).ok()?;
-            let mut subpath = self.strip_ts_extensions(&rel.to_string_lossy().replace('\\', "/"));
+            let mut subpath =
+                self.strip_module_path_extension(&rel.to_string_lossy().replace('\\', "/"));
             if subpath.ends_with("/index") {
                 subpath.truncate(subpath.len() - "/index".len());
             }

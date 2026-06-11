@@ -196,7 +196,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .find_map(|(module_path, exports)| {
                     let candidate =
                         if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
-                            Some(self.strip_ts_extensions(
+                            Some(self.strip_module_path_extension(
                                 &self.calculate_relative_path(current_path, module_path),
                             ))
                         } else {
@@ -582,7 +582,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let source_path = self.arena_to_path.get(&arena_addr)?;
                 let candidate =
                     if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
-                        self.strip_ts_extensions(
+                        self.strip_module_path_extension(
                             &self.calculate_relative_path(current_path, source_path),
                         )
                     } else {
@@ -681,7 +681,7 @@ impl<'a> DeclarationEmitter<'a> {
                     let candidate = if module_specifier.starts_with('.')
                         || module_specifier.starts_with('/')
                     {
-                        Some(self.strip_ts_extensions(
+                        Some(self.strip_module_path_extension(
                             &self.calculate_relative_path(current_file_path, module_path),
                         ))
                     } else {
@@ -843,7 +843,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .into_iter()
                 .next()
             {
-                let mut from_path = self.strip_ts_extensions(
+                let mut from_path = self.strip_module_path_extension(
                     &self.calculate_relative_path(current_file_path, module_path),
                 );
                 if from_path.ends_with("/index") {

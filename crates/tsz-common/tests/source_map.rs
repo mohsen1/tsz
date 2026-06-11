@@ -221,6 +221,15 @@ fn escape_js_string_newlines() {
     assert_eq!(escape_js_string("a\rb", '\''), r"a\rb");
 }
 
+#[test]
+fn escape_js_string_control_and_js_line_separators() {
+    assert_eq!(escape_js_string("\x08\x0c\x0b\x01", '"'), r"\b\f\v\u0001");
+    assert_eq!(
+        escape_js_string("\u{2028}\u{2029}\u{0085}", '"'),
+        r"\u2028\u2029\u0085"
+    );
+}
+
 // =============================================================================
 // SourceMapGenerator edge cases
 // =============================================================================

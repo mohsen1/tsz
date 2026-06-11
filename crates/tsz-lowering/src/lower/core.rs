@@ -129,9 +129,9 @@ pub struct TypeLowering<'a> {
     pub(super) limit_exceeded: Rc<RefCell<bool>>,
 }
 
-pub(super) struct InterfaceParts {
+pub(super) struct ObjectTypeParts {
     // Use IndexMap for deterministic property order - this ensures
-    // the same interface produces the same TypeId on every lowering.
+    // the same object type produces the same TypeId on every lowering.
     // FxHashMap has undefined iteration order, causing non-determinism.
     pub(super) properties: IndexMap<Atom, PropertyMerge>,
     pub(super) call_signatures: Vec<CallSignature>,
@@ -139,7 +139,7 @@ pub(super) struct InterfaceParts {
     pub(super) string_index: Option<IndexSignature>,
     /// Additional string-keyed index signatures whose key type differs from
     /// `string_index.key_type`. Merged into `string_index` via key-type union
-    /// in `finish_interface_parts`, where the type interner is available.
+    /// in `finish_object_type_parts`, where the type interner is available.
     pub(super) extra_string_indices: Vec<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
     /// True when at least one member has a computed property name that could not
@@ -176,7 +176,7 @@ pub(super) struct MethodOverloads {
     pub(super) declaration_order: u32,
 }
 
-impl InterfaceParts {
+impl ObjectTypeParts {
     /// Stride between declaration passes. Must be larger than the maximum number
     /// of properties any single interface declaration contributes.
     const DECL_ORDER_STRIDE: u32 = 10_000;
@@ -191,7 +191,9 @@ impl InterfaceParts {
             number_index: None,
             has_late_bound_members: false,
             current_pass_base: 0,
-            pass_local_counter: 0,
+            // 1-based: declaration_order 0 is the interner constructors'
+            // "unset" sentinel (they backfill it from vec order).
+            pass_local_counter: 1,
             declaration_orders: rustc_hash::FxHashMap::default(),
         }
     }
@@ -200,9 +202,11 @@ impl InterfaceParts {
     ///
     /// `forward_decl_index` is the 0-based index of the declaration in
     /// forward (source) order, so the earliest declaration gets index 0.
+    /// Pass-local orders are 1-based so no property keeps `declaration_order`
+    /// of 0, which the interner constructors treat as "unset" and backfill.
     pub(super) const fn set_declaration_pass(&mut self, forward_decl_index: usize) {
         self.current_pass_base = (forward_decl_index as u32) * Self::DECL_ORDER_STRIDE;
-        self.pass_local_counter = 0;
+        self.pass_local_counter = 1;
     }
 
     /// Get the next `declaration_order` value for a property being added in
@@ -355,13 +359,28 @@ impl InterfaceParts {
                     existing.readonly = false;
                 }
             } else {
-                // Distinct pattern: defer key-type union to finish_interface_parts
+                // Distinct pattern: defer key-type union to finish_object_type_parts
                 // where the type interner is available.
                 self.extra_string_indices.push(index);
             }
         } else {
             self.string_index = Some(index);
         }
+    }
+}
+
+/// Merge missing defaults/constraints from a subsequent declaration's type
+/// parameters into the already-collected parameters. Interface merging keeps
+/// the first declaration's parameter list but later declarations may carry the
+/// default or constraint (e.g. `Uint8Array` declares its default in
+/// lib.es5.d.ts while es2015.iterable.d.ts omits it).
+fn merge_type_param_metadata(collected: &mut [TypeParamInfo], extra: Vec<TypeParamInfo>) {
+    for (i, ep) in extra.into_iter().enumerate() {
+        let Some(cp) = collected.get_mut(i) else {
+            break;
+        };
+        cp.default = cp.default.or(ep.default);
+        cp.constraint = cp.constraint.or(ep.constraint);
     }
 }
 
@@ -563,7 +582,7 @@ impl<'a> TypeLowering<'a> {
             return (TypeId::ERROR, Vec::new());
         }
 
-        let mut parts = InterfaceParts::new();
+        let mut parts = ObjectTypeParts::new();
         let mut type_params_collected = false;
         let mut collected_params = Vec::new();
 
@@ -634,27 +653,18 @@ impl<'a> TypeLowering<'a> {
                     // declared in lib.es5.d.ts but other declarations in
                     // es2015.iterable.d.ts etc. omit it.
                     let extra = lowerer.collect_type_parameters_raw(params);
-                    for (i, ep) in extra.into_iter().enumerate() {
-                        if i < collected_params.len() {
-                            if collected_params[i].default.is_none() && ep.default.is_some() {
-                                collected_params[i].default = ep.default;
-                            }
-                            if collected_params[i].constraint.is_none() && ep.constraint.is_some() {
-                                collected_params[i].constraint = ep.constraint;
-                            }
-                        }
-                    }
+                    merge_type_param_metadata(&mut collected_params, extra);
                 }
             }
 
             // Collect members using the arena-specific lowerer
-            lowerer.collect_interface_members(&interface.members, &mut parts);
+            lowerer.collect_object_type_members(&interface.members, &mut parts);
         }
 
         // Assign declaration_order in FORWARD declaration order for diagnostics.
         self.assign_forward_declaration_order_cross_file(&mut parts, declarations);
 
-        let result = self.finish_interface_parts(parts, symbol_id);
+        let result = self.finish_object_type_parts(parts, symbol_id);
 
         if type_params_collected {
             self.pop_type_param_scope();
@@ -696,16 +706,7 @@ impl<'a> TypeLowering<'a> {
             } else {
                 // Merge missing defaults/constraints from subsequent declarations
                 let extra = lowerer.collect_type_parameters_raw(params);
-                for (i, ep) in extra.into_iter().enumerate() {
-                    if i < collected.len() {
-                        if collected[i].default.is_none() && ep.default.is_some() {
-                            collected[i].default = ep.default;
-                        }
-                        if collected[i].constraint.is_none() && ep.constraint.is_some() {
-                            collected[i].constraint = ep.constraint;
-                        }
-                    }
-                }
+                merge_type_param_metadata(&mut collected, extra);
             }
         }
 
@@ -1645,193 +1646,32 @@ impl<'a> TypeLowering<'a> {
     }
 
     /// Lower a type literal ({ x: T, y: U })
+    ///
+    /// Routes through the same member-collection pipeline as interface
+    /// lowering (`collect_object_type_members` / `finish_object_type_parts`)
+    /// so structurally equivalent `interface I { ... }` and `type T = { ... }`
+    /// produce identical types: method overloads accumulate into one member,
+    /// index signatures merge (conflicting value types poison to error,
+    /// distinct string-key patterns union their key types), and duplicate
+    /// member conflicts are detected instead of producing duplicate
+    /// properties.
     fn lower_type_literal(&self, node_idx: NodeIndex) -> TypeId {
         let node = match self.arena.get(node_idx) {
             Some(n) => n,
             None => return TypeId::ERROR,
         };
 
-        if let Some(data) = self.arena.get_type_literal(node) {
-            let mut properties = Vec::new();
-            let mut call_signatures = Vec::new();
-            let mut construct_signatures = Vec::new();
-            let mut string_index = None;
-            let mut number_index = None;
-            let mut has_late_bound_members = false;
+        let Some(data) = self.arena.get_type_literal(node) else {
+            return self.interner.object(vec![]);
+        };
 
-            for &idx in &data.members.nodes {
-                let Some(member) = self.arena.get(idx) else {
-                    continue;
-                };
-
-                if let Some(sig) = self.arena.get_signature(member) {
-                    match member.kind {
-                        k if k == syntax_kind_ext::CALL_SIGNATURE => {
-                            call_signatures.push(self.lower_call_signature(sig));
-                        }
-                        k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                            construct_signatures.push(self.lower_call_signature(sig));
-                        }
-                        k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                            if let Some(name) = self.lower_signature_name(sig.name) {
-                                let is_symbol_named =
-                                    self.lower_signature_name_is_symbol_named(sig.name);
-                                let (is_string_named, single_quoted_name) =
-                                    self.arena.string_property_name_flags(sig.name);
-                                let type_id = self.lower_method_signature(sig);
-                                properties.push(PropertyInfo {
-                                    name,
-                                    type_id,
-                                    write_type: type_id,
-                                    optional: sig.question_token,
-                                    readonly: self.arena.has_modifier(
-                                        &sig.modifiers,
-                                        tsz_scanner::SyntaxKind::ReadonlyKeyword,
-                                    ),
-                                    is_method: true,
-                                    is_class_prototype: false,
-                                    visibility: Visibility::Public,
-                                    parent_id: None,
-                                    declaration_order: 0,
-                                    is_string_named,
-                                    is_symbol_named,
-                                    single_quoted_name,
-                                });
-                            } else if self.is_unresolved_computed_property_name(sig.name) {
-                                has_late_bound_members = true;
-                            }
-                        }
-                        _ => {
-                            if let Some(prop) = self.lower_type_element(idx) {
-                                properties.push(prop);
-                            } else if self.is_unresolved_computed_property_name(sig.name) {
-                                has_late_bound_members = true;
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                if let Some(index_sig) = self.arena.get_index_signature(member)
-                    && let Some(index_info) = self.lower_index_signature(index_sig)
-                {
-                    if index_info.key_type == TypeId::NUMBER {
-                        number_index = Some(index_info);
-                    } else {
-                        string_index = Some(index_info);
-                    }
-                    continue;
-                }
-
-                // Handle accessor declarations (get/set) in type literals
-                if (member.kind == syntax_kind_ext::GET_ACCESSOR
-                    || member.kind == syntax_kind_ext::SET_ACCESSOR)
-                    && let Some(accessor) = self.arena.get_accessor(member)
-                    && let Some(name) = self.lower_signature_name(accessor.name)
-                {
-                    let is_symbol_named = self.lower_signature_name_is_symbol_named(accessor.name);
-                    let (is_string_named, single_quoted_name) =
-                        self.arena.string_property_name_flags(accessor.name);
-                    let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
-                    if is_getter {
-                        let getter_type = self.lower_type(accessor.type_annotation);
-                        if let Some(existing) = properties.iter_mut().find(|p| p.name == name) {
-                            existing.type_id = getter_type;
-                        } else {
-                            properties.push(PropertyInfo {
-                                name,
-                                type_id: getter_type,
-                                write_type: getter_type,
-                                optional: false,
-                                readonly: true,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: 0,
-                                is_string_named,
-                                is_symbol_named,
-                                single_quoted_name,
-                            });
-                        }
-                    } else {
-                        let setter_type = accessor
-                            .parameters
-                            .nodes
-                            .first()
-                            .and_then(|&param_idx| self.arena.get(param_idx))
-                            .and_then(|param_node| self.arena.get_parameter(param_node))
-                            .map_or(TypeId::UNKNOWN, |param| {
-                                self.lower_type(param.type_annotation)
-                            });
-                        if let Some(existing) = properties.iter_mut().find(|p| p.name == name) {
-                            existing.write_type = setter_type;
-                            existing.readonly = false;
-                        } else {
-                            properties.push(PropertyInfo {
-                                name,
-                                type_id: setter_type,
-                                write_type: setter_type,
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: 0,
-                                is_string_named,
-                                is_symbol_named,
-                                single_quoted_name,
-                            });
-                        }
-                    }
-                } else if member.is_accessor()
-                    && let Some(accessor) = self.arena.get_accessor(member)
-                    && self.is_unresolved_computed_property_name(accessor.name)
-                {
-                    has_late_bound_members = true;
-                }
-            }
-
-            if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-                return self.interner.callable(CallableShape {
-                    call_signatures,
-                    construct_signatures,
-                    properties,
-                    string_index,
-                    number_index,
-                    symbol: None,
-                    is_abstract: false,
-                });
-            }
-
-            let flags = if has_late_bound_members {
-                ObjectFlags::HAS_LATE_BOUND_MEMBERS
-            } else {
-                ObjectFlags::empty()
-            };
-
-            if string_index.is_some() || number_index.is_some() {
-                if !self.index_signature_properties_compatible(
-                    &properties,
-                    string_index.as_ref(),
-                    number_index.as_ref(),
-                ) {
-                    return TypeId::ERROR;
-                }
-                return self.interner.object_with_index(ObjectShape {
-                    properties,
-                    string_index,
-                    number_index,
-                    flags,
-                    ..ObjectShape::default()
-                });
-            }
-
-            self.interner.object_with_flags(properties, flags)
-        } else {
-            self.interner.object(vec![])
-        }
+        // A type literal is a single declaration pass, so the 1-based
+        // pass-local counters already produce forward source order; the
+        // separate forward-order walk is only needed when merged interface
+        // declarations are collected in reverse.
+        let mut parts = ObjectTypeParts::new();
+        self.collect_object_type_members(&data.members, &mut parts);
+        self.finish_object_type_parts(parts, None)
     }
 
     pub fn lower_interface_declarations(&self, declarations: &[NodeIndex]) -> TypeId {
@@ -1872,7 +1712,7 @@ impl<'a> TypeLowering<'a> {
             return (TypeId::ERROR, Vec::new());
         }
 
-        let mut parts = InterfaceParts::new();
+        let mut parts = ObjectTypeParts::new();
         let mut type_params: Option<&NodeList> = None;
         let mut found = false;
 
@@ -1925,10 +1765,10 @@ impl<'a> TypeLowering<'a> {
             {
                 self.push_type_param_scope();
                 let _ = self.collect_type_parameters(params);
-                self.collect_interface_members(&interface.members, &mut parts);
+                self.collect_object_type_members(&interface.members, &mut parts);
                 self.pop_type_param_scope();
             } else {
-                self.collect_interface_members(&interface.members, &mut parts);
+                self.collect_object_type_members(&interface.members, &mut parts);
             }
         }
 
@@ -1941,7 +1781,7 @@ impl<'a> TypeLowering<'a> {
         self.assign_forward_declaration_order(&mut parts, declarations.iter().copied());
 
         (
-            self.finish_interface_parts(parts, symbol_id),
+            self.finish_object_type_parts(parts, symbol_id),
             collected_params,
         )
     }

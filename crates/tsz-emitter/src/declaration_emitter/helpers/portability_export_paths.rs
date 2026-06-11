@@ -86,7 +86,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let matches = if module_specifier.starts_with('.')
                     || module_specifier.starts_with('/')
                 {
-                    let relative = self.strip_ts_extensions(
+                    let relative = self.strip_module_path_extension(
                         &self.calculate_relative_path(current_path, module_path),
                     );
                     relative == module_specifier
@@ -138,7 +138,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let subpath = parts.join("/");
 
-        let normalized = self.strip_ts_extensions(module_path).replace('\\', "/");
+        let normalized = self
+            .strip_module_path_extension(module_path)
+            .replace('\\', "/");
         if subpath.is_empty() {
             return normalized.ends_with(&format!("/{package_name}/src/index"))
                 || normalized.ends_with(&format!("/{package_name}/index"));

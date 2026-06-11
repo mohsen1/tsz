@@ -6,7 +6,7 @@ use crate::parser::{
     node::{EnumData, EnumMemberData, IdentifierData, ParameterData},
     syntax_kind_ext,
 };
-use tsz_common::interner::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::SyntaxKind;
 
 fn is_reserved_interface_type_name(name: &str) -> bool {
@@ -114,7 +114,7 @@ impl ParserState {
                 name_start,
                 name_end,
                 IdentifierData {
-                    atom: Atom::NONE,
+                    atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,
@@ -1248,7 +1248,7 @@ impl ParserState {
                 id_start,
                 id_end,
                 crate::parser::node::IdentifierData {
-                    atom: Atom::NONE,
+                    atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,
@@ -1388,7 +1388,7 @@ impl ParserState {
                 start_pos,
                 end_pos,
                 IdentifierData {
-                    atom: Atom::NONE,
+                    atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,

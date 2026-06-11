@@ -420,7 +420,7 @@ impl<'a> DeclarationEmitter<'a> {
                             .into_iter()
                             .max_by_key(|path| path.len())
                         {
-                            let mut from_path = self.strip_ts_extensions(
+                            let mut from_path = self.strip_module_path_extension(
                                 &self.calculate_relative_path(current_file_path, module_path),
                             );
                             if from_path.ends_with("/index") {
@@ -430,7 +430,7 @@ impl<'a> DeclarationEmitter<'a> {
                         }
 
                         let source_path_for_diag = source_path.clone();
-                        let mut from_path = self.strip_ts_extensions(
+                        let mut from_path = self.strip_module_path_extension(
                             &self.calculate_relative_path(current_file_path, &source_path_for_diag),
                         );
                         if from_path.ends_with("/index") {
@@ -532,8 +532,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let mut from_path =
-            self.strip_ts_extensions(&self.calculate_relative_path(current_file_path, source_path));
+        let mut from_path = self.strip_module_path_extension(
+            &self.calculate_relative_path(current_file_path, source_path),
+        );
         if from_path.ends_with("/index") {
             from_path.truncate(from_path.len() - "/index".len());
         }
@@ -586,8 +587,9 @@ impl<'a> DeclarationEmitter<'a> {
             .into_iter()
             .max_by_key(|path| path.len())
         {
-            let mut from_path = self
-                .strip_ts_extensions(&self.calculate_relative_path(current_file_path, module_path));
+            let mut from_path = self.strip_module_path_extension(
+                &self.calculate_relative_path(current_file_path, module_path),
+            );
             if from_path.ends_with("/index") {
                 from_path.truncate(from_path.len() - "/index".len());
             }
@@ -608,8 +610,9 @@ impl<'a> DeclarationEmitter<'a> {
         // Prefer the deepest matching package root so symlinked package trees
         // keep their full path instead of collapsing to the top-level package.
         let package_root = package_roots.into_iter().max_by_key(|root| root.len())?;
-        let mut from_path = self
-            .strip_ts_extensions(&self.calculate_relative_path(current_file_path, &package_root));
+        let mut from_path = self.strip_module_path_extension(
+            &self.calculate_relative_path(current_file_path, &package_root),
+        );
         if from_path.ends_with("/index") {
             from_path.truncate(from_path.len() - "/index".len());
         }
@@ -744,7 +747,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(source_relative) = source_relative else {
             return false;
         };
-        let source_relative_stripped = self.strip_ts_extensions(source_relative);
+        let source_relative_stripped = self.strip_module_path_extension(source_relative);
 
         for (module_path, exports) in binder.module_exports.iter() {
             if module_path == source_path || !module_path.starts_with(package_root_str.as_ref()) {
@@ -788,7 +791,7 @@ impl<'a> DeclarationEmitter<'a> {
                         .filter(|c| !matches!(c, std::path::Component::CurDir))
                         .collect();
                     let resolved_str = resolved.to_string_lossy();
-                    let resolved_stripped = self.strip_ts_extensions(&resolved_str);
+                    let resolved_stripped = self.strip_module_path_extension(&resolved_str);
                     let resolved_stripped = resolved_stripped
                         .strip_prefix("./")
                         .unwrap_or(&resolved_stripped);
@@ -905,7 +908,7 @@ impl<'a> DeclarationEmitter<'a> {
                     return None;
                 }
 
-                let mut from_path = self.strip_ts_extensions(
+                let mut from_path = self.strip_module_path_extension(
                     &self.calculate_relative_path(current_file_path, module_path),
                 );
                 if from_path.ends_with("/index") {
@@ -1099,7 +1102,7 @@ impl<'a> DeclarationEmitter<'a> {
         // against the raw specifier.  ESM `.d.ts` files use `.js` extensions
         // in re-exports (`from './foo.js'`), so we normalise both sides by
         // stripping the specifier's extension too.
-        let specifier_normalized = self.strip_ts_extensions(module_specifier);
+        let specifier_normalized = self.strip_module_path_extension(module_specifier);
         let effective_specifier = if specifier_normalized != module_specifier {
             specifier_normalized.as_str()
         } else {

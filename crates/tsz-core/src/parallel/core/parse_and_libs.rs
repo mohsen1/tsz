@@ -1241,12 +1241,19 @@ pub fn clone_lib_files_for_checker(
     should_clone_libs_in_parallel: bool,
 ) -> Vec<Arc<lib_loader::LibFile>> {
     let clone_lib_file = |lib: &Arc<lib_loader::LibFile>| {
-        let mut binder = (*lib.binder).clone();
-        binder.clear_resolution_caches();
+        // Share the bound lib BINDER read-only: merge_lib_contexts_into_binder
+        // is proven to read lib binders immutably (pinned by the tsz-binder
+        // refcount>1 immutability test), and its resolution caches are
+        // RwLock-interior — clear them once on the shared instance instead of
+        // deep-cloning the whole binder per run. The ARENA keeps its cheap
+        // clone (distinct outer Arc identity): arena-pointer-identity
+        // discriminators across the checker must keep behaving exactly as
+        // with the prior deep clone (the recursiveComplicatedClasses class).
+        lib.binder.clear_resolution_caches_shared();
         Arc::new(lib_loader::LibFile::new(
             lib.file_name.clone(),
             Arc::new((*lib.arena).clone()),
-            Arc::new(binder),
+            Arc::clone(&lib.binder),
             lib.root_index,
         ))
     };

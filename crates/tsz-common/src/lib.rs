@@ -11,7 +11,7 @@
 
 // String interning for identifier deduplication
 pub mod interner;
-pub use interner::{Atom, Interner, ShardedInterner};
+pub use interner::{AstAtom, Atom, Interner, ShardedInterner};
 
 // Common types - Shared constants to break circular dependencies
 pub mod common;
