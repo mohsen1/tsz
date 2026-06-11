@@ -604,6 +604,24 @@ fn scanner_snapshot_and_restore() {
     assert_eq!(next, SyntaxKind::PlusToken);
 }
 
+#[test]
+fn scanner_restore_truncates_lookahead_diagnostics() {
+    let mut scanner = ScannerState::new("0__0 0__1".to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::NumericLiteral);
+    let saved_len = scanner.get_scanner_diagnostics().len();
+    assert!(saved_len > 0);
+
+    let snapshot = scanner.save_state();
+    assert_eq!(scanner.scan(), SyntaxKind::NumericLiteral);
+    assert!(scanner.get_scanner_diagnostics().len() > saved_len);
+
+    scanner.restore_state(snapshot);
+    assert_eq!(scanner.get_scanner_diagnostics().len(), saved_len);
+
+    assert_eq!(scanner.scan(), SyntaxKind::NumericLiteral);
+    assert!(scanner.get_scanner_diagnostics().len() > saved_len);
+}
+
 // ── Rescan methods ────────────────────────────────────────────────
 
 #[test]
