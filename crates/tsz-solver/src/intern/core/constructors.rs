@@ -743,11 +743,25 @@ impl TypeInterner {
     /// Upper input length for the `normalize_union` result memo.
     ///
     /// `reduce_union_subtypes` sets the sticky TS2590 `union_too_complex` flag
-    /// only when it sees >= 1001 members; the member list never grows inside
-    /// `normalize_union_uncached`, so inputs at or below this bound can never
-    /// set the flag and their results are pure functions of the input list.
-    /// Larger inputs skip the memo so a cache hit can never swallow the flag.
-    const UNION_NORMALIZE_CACHE_MAX_LEN: usize = 1000;
+    /// only when its pairwise budget (`UNION_SUBTYPE_PAIRWISE_LIMIT`) is hit;
+    /// the member list never grows inside `normalize_union_uncached`, so
+    /// inputs at or below this bound can never set the flag and their results
+    /// are pure functions of the input list. Larger inputs skip the memo so a
+    /// cache hit can never swallow the flag. The compile-time assertion below
+    /// keeps this bound the largest length whose pairwise count stays under
+    /// the budget, so editing either constant alone fails the build instead
+    /// of silently muting TS2590 on memo hits.
+    const UNION_NORMALIZE_CACHE_MAX_LEN: usize = {
+        let max_len = 1000_usize;
+        // Largest length whose pairwise count stays under the TS2590 budget:
+        // editing either constant alone fails the build instead of silently
+        // muting TS2590 on memo hits.
+        assert!(
+            (max_len as u64) * (max_len as u64 - 1) < Self::UNION_SUBTYPE_PAIRWISE_LIMIT
+                && (max_len as u64 + 1) * (max_len as u64) >= Self::UNION_SUBTYPE_PAIRWISE_LIMIT
+        );
+        max_len
+    };
 
     /// Memoized union normalization.
     ///

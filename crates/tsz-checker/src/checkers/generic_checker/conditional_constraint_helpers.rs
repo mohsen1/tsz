@@ -49,16 +49,16 @@ impl<'a> CheckerState<'a> {
             .type_reference_validation_caches
             .conditional_branch_constraint
             .insert(cache_key, result);
-        if result
-            && self.ctx.shared_constraint_proofs.is_some()
-            && crate::query_boundaries::common::lazy_resolve_failure_count()
-                == lazy_failures_at_entry
-            && !self.ctx.types.is_evaluation_fuel_exhausted()
-            && self.constraint_proof_is_program_shareable(type_arg, constraint)
-            && let Some(shared) = &self.ctx.shared_constraint_proofs
-        {
-            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "conditional_branch", "publish");
-            shared.conditional_branch_successes.insert(cache_key);
+        if result {
+            self.publish_shared_constraint_proof(
+                lazy_failures_at_entry,
+                type_arg,
+                constraint,
+                |shared| {
+                    tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "conditional_branch", "publish");
+                    shared.conditional_branch_successes.insert(cache_key);
+                },
+            );
         }
         result
     }
@@ -168,16 +168,16 @@ impl<'a> CheckerState<'a> {
             .type_reference_validation_caches
             .indexed_object_map_branch_constraint
             .insert(cache_key, result);
-        if result
-            && self.ctx.shared_constraint_proofs.is_some()
-            && crate::query_boundaries::common::lazy_resolve_failure_count()
-                == lazy_failures_at_entry
-            && !self.ctx.types.is_evaluation_fuel_exhausted()
-            && self.constraint_proof_is_program_shareable(branch, constraint)
-            && let Some(shared) = &self.ctx.shared_constraint_proofs
-        {
-            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "indexed_object_map", "publish");
-            shared.indexed_object_map_branch_successes.insert(cache_key);
+        if result {
+            self.publish_shared_constraint_proof(
+                lazy_failures_at_entry,
+                branch,
+                constraint,
+                |shared| {
+                    tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "indexed_object_map", "publish");
+                    shared.indexed_object_map_branch_successes.insert(cache_key);
+                },
+            );
         }
         result
     }

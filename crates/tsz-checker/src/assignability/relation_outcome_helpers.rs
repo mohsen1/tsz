@@ -436,7 +436,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Whether a constraint proof over `(source, target)` is file-independent
-    /// and may be looked up in / published to the program-wide
+    /// and may be published to the program-wide
     /// [`crate::context::SharedConstraintProofCache`].
     ///
     /// Both types must be free of generic type parameters (scope-relative
@@ -444,11 +444,7 @@ impl<'a> CheckerState<'a> {
     /// `SymbolRef` carriers, `this`); see
     /// `contains_file_relative_content` for the exact variant set. Both
     /// predicates are memoized project-wide in the interner.
-    pub(crate) fn constraint_proof_is_program_shareable(
-        &self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
+    fn constraint_proof_is_program_shareable(&self, source: TypeId, target: TypeId) -> bool {
         use crate::query_boundaries::common::{
             contains_file_relative_content, contains_generic_type_parameters,
         };
@@ -457,6 +453,32 @@ impl<'a> CheckerState<'a> {
             && !contains_generic_type_parameters(db, target)
             && !contains_file_relative_content(db, source)
             && !contains_file_relative_content(db, target)
+    }
+
+    /// Publish-side gate for the program-wide
+    /// [`crate::context::SharedConstraintProofCache`]: runs `publish` only
+    /// when the just-computed success over `(source, target)` is safe to
+    /// share. The proof must not have observed an unresolved `Lazy` def
+    /// (`lazy_failures_at_entry` snapshot taken before computing), must not
+    /// have run with exhausted evaluation fuel, and must be file-independent
+    /// (`constraint_proof_is_program_shareable`). The cheap existence check
+    /// comes first so disabled runs skip the deep shareability walks.
+    pub(crate) fn publish_shared_constraint_proof(
+        &self,
+        lazy_failures_at_entry: u64,
+        source: TypeId,
+        target: TypeId,
+        publish: impl FnOnce(&crate::context::SharedConstraintProofCache),
+    ) {
+        let Some(shared) = &self.ctx.shared_constraint_proofs else {
+            return;
+        };
+        if crate::query_boundaries::common::lazy_resolve_failure_count() == lazy_failures_at_entry
+            && !self.ctx.types.is_evaluation_fuel_exhausted()
+            && self.constraint_proof_is_program_shareable(source, target)
+        {
+            publish(shared);
+        }
     }
 
     /// Execute a diagnostic-bearing generic type-argument constraint relation
@@ -518,21 +540,10 @@ impl<'a> CheckerState<'a> {
                 .type_reference_validation_caches
                 .type_arg_constraint_relation_successes
                 .insert(cache_key);
-            // Publish only file-independent proofs (the shareability gate
-            // runs here, once per distinct novel success) that did not depend
-            // on an unresolved `Lazy` def and ran with evaluation fuel to
-            // spare; either can make a result reflect in-flight rather than
-            // program-wide state.
-            if self.ctx.shared_constraint_proofs.is_some()
-                && crate::query_boundaries::common::lazy_resolve_failure_count()
-                    == lazy_failures_at_entry
-                && !self.ctx.types.is_evaluation_fuel_exhausted()
-                && self.constraint_proof_is_program_shareable(source, target)
-                && let Some(shared) = &self.ctx.shared_constraint_proofs
-            {
+            self.publish_shared_constraint_proof(lazy_failures_at_entry, source, target, |shared| {
                 tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "type_arg", "publish");
                 shared.type_arg_relation_successes.insert(cache_key);
-            }
+            });
         }
         outcome
     }
