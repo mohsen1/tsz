@@ -614,7 +614,10 @@ impl TypeEnvironment {
     /// Called by the checker when performing relation checks inside a class
     /// scope so the solver can resolve `this` type references during
     /// subtype/identity comparisons.
-    pub const fn set_this_type(&mut self, this_type: Option<TypeId>) {
+    pub fn set_this_type(&mut self, this_type: Option<TypeId>) {
+        if self.this_type == this_type {
+            return;
+        }
         self.this_type = this_type;
         self.bump_generation();
     }
@@ -633,7 +636,14 @@ impl TypeEnvironment {
     }
 
     /// Register a symbol's resolved type.
+    ///
+    /// Re-inserting the mapping a symbol already has is a no-op and does not
+    /// bump the generation: no later resolve call can return a different
+    /// type because of it (see [`Self::generation`] consumers).
     pub fn insert(&mut self, symbol: SymbolRef, type_id: TypeId) {
+        if self.types.get(&symbol.0) == Some(&type_id) {
+            return;
+        }
         self.types.insert(symbol.0, type_id);
         self.bump_generation();
     }
@@ -721,12 +731,20 @@ impl TypeEnvironment {
     }
 
     /// Register a symbol's resolved type with type parameters.
+    ///
+    /// Same no-op rule as [`Self::insert`]: an identical re-registration does
+    /// not bump the generation.
     pub fn insert_with_params(
         &mut self,
         symbol: SymbolRef,
         type_id: TypeId,
         params: Vec<TypeParamInfo>,
     ) {
+        if self.types.get(&symbol.0) == Some(&type_id)
+            && (params.is_empty() || self.type_params.get(&symbol.0) == Some(&params))
+        {
+            return;
+        }
         self.types.insert(symbol.0, type_id);
         if !params.is_empty() {
             self.type_params.insert(symbol.0, params);
@@ -759,12 +777,7 @@ impl TypeEnvironment {
     /// `DefinitionStore` (if set) so cross-file delegation results are
     /// visible to parent checkers without explicit merge-back.
     pub fn insert_def(&mut self, def_id: DefId, type_id: TypeId) {
-        self.def_types.insert(def_id.0, type_id);
-        // Write through to shared store for cross-checker visibility.
-        if let Some(ref store) = self.definition_store {
-            store.set_body(def_id, type_id);
-        }
-        self.bump_generation();
+        self.insert_def_with_params(def_id, type_id, Vec::new());
     }
 
     /// Get a class `DefId`'s registered instance type.
@@ -801,6 +814,21 @@ impl TypeEnvironment {
         type_id: TypeId,
         params: Vec<TypeParamInfo>,
     ) {
+        // Identical re-registration is a no-op (see `Self::insert`); checked
+        // against both the local map and the shared store so the write-through
+        // below is never skipped while either view is stale.
+        if self.def_types.get(&def_id.0) == Some(&type_id)
+            && (params.is_empty() || self.def_type_params.get(&def_id.0) == Some(&params))
+            && self.definition_store.as_ref().is_none_or(|store| {
+                store.body_and_params_published(
+                    def_id,
+                    type_id,
+                    (!params.is_empty()).then_some(params.as_slice()),
+                )
+            })
+        {
+            return;
+        }
         self.def_types.insert(def_id.0, type_id);
         if !params.is_empty() {
             self.def_type_params.insert(def_id.0, params.clone());

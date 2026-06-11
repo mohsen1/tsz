@@ -754,6 +754,12 @@ impl DefinitionStore {
     /// using the symbol's raw id and its `decl_file_idx`. The composite key ensures
     /// that the same `SymbolId(u32)` from different binders maps to different `DefIds`.
     pub fn register_symbol_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
+        // Re-registering the identical mapping changes nothing a reader can
+        // observe (the file-agnostic index keeps the first DefId anyway), so
+        // skip the generation bump for it.
+        if self.lookup_by_symbol(symbol_id, file_idx) == Some(def_id) {
+            return;
+        }
         self.register_symbol_file_mapping(symbol_id, file_idx, def_id);
         // Also maintain the file-agnostic index (keeps the first registered DefId).
         self.insert_symbol_only_mapping(symbol_id, def_id);
@@ -842,6 +848,21 @@ impl DefinitionStore {
     /// Get the body `TypeId` for a definition.
     pub fn get_body(&self, id: DefId) -> Option<TypeId> {
         self.definitions.get(&id).and_then(|r| r.body)
+    }
+
+    /// Whether `id` already publishes exactly `body` (and, when given,
+    /// exactly `params`). Comparison runs under the entry guard without
+    /// cloning, so no-op republication checks stay cheap on hot paths.
+    pub fn body_and_params_published(
+        &self,
+        id: DefId,
+        body: TypeId,
+        params: Option<&[TypeParamInfo]>,
+    ) -> bool {
+        self.definitions.get(&id).is_some_and(|entry| {
+            entry.body == Some(body)
+                && params.is_none_or(|params| entry.type_params.as_slice() == params)
+        })
     }
 
     /// Get parent class `DefId` for a class.
@@ -938,6 +959,16 @@ impl DefinitionStore {
             return;
         }
         if let Some(mut entry) = self.definitions.get_mut(&id) {
+            // Identical republication is a no-op: nothing a reader can
+            // observe changes, so consumers keyed on `generation()` must not
+            // see a bump for it.
+            if entry.body == Some(body)
+                && params
+                    .as_ref()
+                    .is_none_or(|params| &entry.type_params == params)
+            {
+                return;
+            }
             if let Some(params) = params {
                 if entry.kind == DefKind::TypeAlias
                     && entry.type_params.is_empty()
