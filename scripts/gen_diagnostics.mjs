@@ -147,6 +147,12 @@ ${chunk.map(diagnosticDeclaration).join("\n")}
 
 const partNames = partChunks.map((_, index) => partName(index));
 
+function reExportAll(submodule) {
+  return partNames
+    .map((name) => `    pub use super::${name}::${submodule}::*;`)
+    .join("\n");
+}
+
 writeFileSync(
   join(root, "crates/tsz-common/src/diagnostics/data.rs"),
   `${generatedHeader}
@@ -157,19 +163,21 @@ ${partNames.map((name) => `    ${name}::MESSAGES,`).join("\n")}
 ];
 
 pub fn iter_diagnostic_messages() -> impl Iterator<Item = crate::diagnostics::DiagnosticMessage> {
-    DIAGNOSTIC_MESSAGE_SECTIONS.iter().flat_map(|section| section.iter().copied())
+    DIAGNOSTIC_MESSAGE_SECTIONS
+        .iter()
+        .flat_map(|section| section.iter().copied())
 }
 
 /// Diagnostic message templates matching TypeScript exactly.
 /// Use \`format_message()\` to fill in placeholders.
 pub mod diagnostic_messages {
-${partNames.map((name) => `    pub use super::${name}::templates::*;`).join("\n")}
+${reExportAll("templates")}
 }
 
 /// TypeScript diagnostic error codes.
 /// Matches codes from TypeScript's \`diagnosticMessages.json\`.
 pub mod diagnostic_codes {
-${partNames.map((name) => `    pub use super::${name}::codes::*;`).join("\n")}
+${reExportAll("codes")}
 }
 `
 );
