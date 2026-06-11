@@ -1261,3 +1261,166 @@ interface Node {
             "a genuinely missing member must still report TS2339: {bogus:?}"
         );
     }
+
+    /// Build a program containing one barrel file with `wildcard_count`
+    /// `export * from` declarations plus the leaf modules it re-exports.
+    fn program_with_wildcard_barrel(wildcard_count: usize) -> MergedProgram {
+        let mut files = Vec::new();
+        let mut barrel = String::new();
+        for i in 0..wildcard_count {
+            files.push((
+                format!("/proj/leafmod{i}.ts"),
+                format!("export const widget{i} = {i};"),
+            ));
+            barrel.push_str(&format!("export * from \"./leafmod{i}\";\n"));
+        }
+        files.push(("/proj/barrel.ts".to_string(), barrel));
+        merged_program_from_owned_files(files)
+    }
+
+    fn program_has_large_wildcard_barrel(program: &MergedProgram) -> bool {
+        let work_items: Vec<usize> = (0..program.files.len()).collect();
+        has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
+            files: &program.files,
+            wildcard_reexports: &program.wildcard_reexports,
+            work_items: &work_items,
+            large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
+        })
+    }
+
+    /// Threshold boundary for the PR #5881 sequential fallback: 31 wildcard
+    /// re-exports stay parallel-eligible, 32 and far above (the 201-re-export
+    /// barrel shape from the large-ts-repo row) trip the gate.
+    #[test]
+    fn wildcard_barrel_threshold_boundary_31_32_201() {
+        assert!(
+            !program_has_large_wildcard_barrel(&program_with_wildcard_barrel(
+                LARGE_WILDCARD_BARREL_EXPORTS - 1
+            )),
+            "31 wildcard re-exports must stay below the sequential-fallback threshold"
+        );
+        assert!(
+            program_has_large_wildcard_barrel(&program_with_wildcard_barrel(
+                LARGE_WILDCARD_BARREL_EXPORTS
+            )),
+            "32 wildcard re-exports must trip the sequential fallback"
+        );
+        assert!(
+            program_has_large_wildcard_barrel(&program_with_wildcard_barrel(201)),
+            "201 wildcard re-exports (large-ts-repo heavy barrel) must trip the fallback"
+        );
+    }
+
+    /// The detection is per-file, not transitive: a re-export chain whose
+    /// files each stay below the threshold must not trip the gate even when
+    /// the transitive closure exceeds it.
+    #[test]
+    fn wildcard_barrel_chain_counts_per_file_not_transitively() {
+        let per_file = LARGE_WILDCARD_BARREL_EXPORTS / 2;
+        let mut files = Vec::new();
+        // Three chained tiers (hub -> mid -> leaves), renamed binders per tier.
+        let mut hub = String::new();
+        for m in 0..per_file {
+            let mut mid = String::new();
+            for l in 0..per_file {
+                files.push((
+                    format!("/proj/tierleaf_{m}_{l}.ts"),
+                    format!("export interface Gadget{m}x{l} {{ tag: \"g{m}-{l}\"; }}"),
+                ));
+                mid.push_str(&format!("export * from \"./tierleaf_{m}_{l}\";\n"));
+            }
+            files.push((format!("/proj/tiermid{m}.ts"), mid));
+            hub.push_str(&format!("export * from \"./tiermid{m}\";\n"));
+        }
+        files.push(("/proj/tierhub.ts".to_string(), hub));
+
+        let program = merged_program_from_owned_files(files);
+        assert!(
+            !program_has_large_wildcard_barrel(&program),
+            "chained sub-threshold barrels must not trip the per-file gate"
+        );
+    }
+
+    /// Cyclic wildcard re-exports: detection is a per-file count lookup, so a
+    /// cycle below the threshold stays parallel-eligible and a cycle at the
+    /// threshold trips it — without hanging on the cycle.
+    #[test]
+    fn cyclic_wildcard_reexports_respect_threshold() {
+        let make_cycle = |extra: usize| {
+            let mut files = Vec::new();
+            for (name, peer) in [("ring_a", "ring_b"), ("ring_b", "ring_a")] {
+                let mut src = format!("export * from \"./{peer}\";\n");
+                for i in 0..extra {
+                    files.push((
+                        format!("/proj/{name}_dep{i}.ts"),
+                        format!("export type Spoke{i} = {i};"),
+                    ));
+                    src.push_str(&format!("export * from \"./{name}_dep{i}\";\n"));
+                }
+                files.push((format!("/proj/{name}.ts"), src));
+            }
+            merged_program_from_owned_files(files)
+        };
+
+        // Each cycle member has 1 (peer) + extra wildcard re-exports.
+        let below = make_cycle(LARGE_WILDCARD_BARREL_EXPORTS - 2);
+        assert!(
+            !program_has_large_wildcard_barrel(&below),
+            "cyclic re-exports below the threshold must stay parallel-eligible"
+        );
+        let at = make_cycle(LARGE_WILDCARD_BARREL_EXPORTS - 1);
+        assert!(
+            program_has_large_wildcard_barrel(&at),
+            "cyclic re-exports at the threshold must trip the fallback"
+        );
+    }
+
+    /// Only `export * from` counts: namespace (`export * as ns from`) and
+    /// named (`export { a as b } from`) re-exports carry an export clause and
+    /// must not count toward the wildcard-barrel threshold.
+    #[test]
+    fn clause_reexports_do_not_count_toward_wildcard_barrel() {
+        let mut files = Vec::new();
+        let mut barrel = String::new();
+        for i in 0..LARGE_WILDCARD_BARREL_EXPORTS {
+            files.push((
+                format!("/proj/clausemod{i}.ts"),
+                format!("export const item{i} = {i};"),
+            ));
+            barrel.push_str(&format!("export * as bundle{i} from \"./clausemod{i}\";\n"));
+            barrel.push_str(&format!(
+                "export {{ item{i} as renamed{i} }} from \"./clausemod{i}\";\n"
+            ));
+        }
+        files.push(("/proj/clausebarrel.ts".to_string(), barrel));
+
+        let program = merged_program_from_owned_files(files);
+        assert!(
+            !program_has_large_wildcard_barrel(&program),
+            "namespace/named re-exports must not count toward the wildcard-barrel gate"
+        );
+    }
+
+    /// The gate only inspects scheduled work items: a large barrel outside the
+    /// work set (e.g. an unchecked dependency) must not serialize the batch.
+    #[test]
+    fn wildcard_barrel_outside_work_items_does_not_trip_gate() {
+        let program = program_with_wildcard_barrel(LARGE_WILDCARD_BARREL_EXPORTS);
+        let barrel_idx = program
+            .files
+            .iter()
+            .position(|file| file.file_name.ends_with("/barrel.ts"))
+            .expect("barrel file present");
+        let work_items: Vec<usize> = (0..program.files.len())
+            .filter(|&idx| idx != barrel_idx)
+            .collect();
+        assert!(
+            !has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
+                files: &program.files,
+                wildcard_reexports: &program.wildcard_reexports,
+                work_items: &work_items,
+                large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
+            }),
+            "a barrel outside the scheduled work items must not serialize the batch"
+        );
+    }
