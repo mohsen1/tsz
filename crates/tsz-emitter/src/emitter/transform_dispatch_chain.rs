@@ -58,16 +58,7 @@ impl<'a> Printer<'a> {
                 );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
-                if !es5_mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &es5_mappings);
-                    self.writer.write(&es5_output);
-                } else {
-                    self.write(&es5_output);
-                }
+                self.write_with_offset_mappings(&es5_output, &es5_mappings);
                 let class_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
                 while self.comment_emit_idx < self.all_comments.len()
                     && self.all_comments[self.comment_emit_idx].pos < class_close_pos

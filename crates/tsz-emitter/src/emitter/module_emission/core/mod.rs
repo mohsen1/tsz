@@ -478,16 +478,7 @@ impl<'a> Printer<'a> {
         let es5_output = es5_emitter.emit_class_with_name(class_node, &temp_name);
         self.sync_es5_class_emitter_state(&mut es5_emitter);
         let mappings = es5_emitter.take_mappings();
-        if !mappings.is_empty() && self.writer.has_source_map() {
-            self.writer.write("");
-            let base_line = self.writer.current_line();
-            let base_column = self.writer.current_column();
-            self.writer
-                .add_offset_mappings(base_line, base_column, &mappings);
-            self.writer.write(&es5_output);
-        } else {
-            self.write(&es5_output);
-        }
+        self.write_with_offset_mappings(&es5_output, &mappings);
         self.write_line();
         self.write_export_binding_start("default");
         self.write(&temp_name);

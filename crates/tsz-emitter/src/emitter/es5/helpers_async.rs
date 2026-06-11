@@ -254,11 +254,7 @@ impl<'a> Printer<'a> {
                 self.write_helper("__awaiter");
                 self.write("(");
                 self.write(this_expr);
-                self.write(", void 0, ");
-                self.write_awaiter_promise_arg(&promise_ctor);
-                self.write(", function () {");
-                self.write_line();
-                self.increase_indent();
+                self.open_awaiter_callback(&promise_ctor);
 
                 if let Some(body_node) = self.arena.get(body)
                     && let Some(block) = self.arena.get_block(body_node)
@@ -309,12 +305,16 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let (generator_body, hoisted_var_groups, directive_prologue, _) = async_emitter
-                .emit_generator_body_and_hoisted_vars_skipping(
-                    body,
-                    body_has_await,
-                    &hoisted_function_decls,
-                );
+            let (
+                generator_body,
+                hoisted_var_groups,
+                directive_prologue,
+                needs_lexical_this_capture,
+            ) = async_emitter.emit_generator_body_and_hoisted_vars_skipping(
+                body,
+                body_has_await,
+                &hoisted_function_decls,
+            );
             let generator_mappings = async_emitter.take_mappings();
             self.next_disposable_env_id = async_emitter.disposable_env_counter();
             self.next_dynamic_import_promise_id = async_emitter.dynamic_import_promise_counter();
@@ -328,109 +328,50 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            if hoisted_var_groups.is_empty() {
-                let can_inline_wrapper = body_is_single_line
-                    && hoisted_function_decls.is_empty()
-                    && directive_prologue.is_empty()
-                    && !(this_expr != "this" && generator_body.contains("return _this"))
-                    && generator_mappings.is_empty();
-                if can_inline_wrapper {
-                    self.write(", void 0, ");
-                    self.write_awaiter_promise_arg(&promise_ctor);
-                    self.write(", function () { ");
-                    self.write(&Self::inline_async_generator_body(&generator_body));
-                    self.write(" });");
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("}");
-                    self.skip_comments_for_async_lowered_body(body);
-                    // emit_function_parameters_es5() pushed a temp scope; the
-                    // other early-return paths in this function (and the
-                    // multi-line/normal exit below) all call pop_temp_scope.
-                    // Forgetting it here would leak temp-name state across
-                    // functions and corrupt subsequent emissions.
-                    self.pop_temp_scope();
-                    return;
-                }
-
-                // Multi-line format (matches tsc):
-                // return __awaiter(this, void 0, void 0, function () {
-                //     return __generator(this, function (_a) {
-                //         ...
-                //     });
-                // });
+            let can_inline_wrapper = hoisted_var_groups.is_empty()
+                && body_is_single_line
+                && hoisted_function_decls.is_empty()
+                && directive_prologue.is_empty()
+                && !needs_lexical_this_capture
+                && generator_mappings.is_empty();
+            if can_inline_wrapper {
                 self.write(", void 0, ");
                 self.write_awaiter_promise_arg(&promise_ctor);
-                self.write(", function () {");
+                self.write(", function () { ");
+                self.write(&Self::inline_async_generator_body(&generator_body));
+                self.write(" });");
                 self.write_line();
-                self.increase_indent();
-                for directive in &directive_prologue {
-                    self.write("\"");
-                    self.write(directive);
-                    self.write("\";");
-                    self.write_line();
-                }
-                self.emit_async_hoisted_function_declarations(&hoisted_function_decls);
-                if this_expr != "this" && generator_body.contains("return _this") {
-                    self.write("var _this = this;");
-                    self.write_line();
-                }
-                if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &generator_mappings);
-                    self.writer.write(&generator_body);
-                } else {
-                    self.write(&generator_body);
-                }
                 self.decrease_indent();
-                self.write_line();
-                self.write("});");
-            } else {
-                // Multi-line format with hoisted vars
-                self.write(", void 0, ");
-                self.write_awaiter_promise_arg(&promise_ctor);
-                self.write(", function () {");
-                self.write_line();
-                self.increase_indent();
-                for directive in &directive_prologue {
-                    self.write("\"");
-                    self.write(directive);
-                    self.write("\";");
-                    self.write_line();
-                }
-                self.emit_async_hoisted_function_declarations(&hoisted_function_decls);
-                for group in &hoisted_var_groups {
-                    self.write("var ");
-                    for (i, var_name) in group.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
-                        }
-                        self.write(var_name);
-                    }
-                    self.write(";");
-                    self.write_line();
-                }
-                if this_expr != "this" && generator_body.contains("return _this") {
-                    self.write("var _this = this;");
-                    self.write_line();
-                }
-                if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &generator_mappings);
-                    self.writer.write(&generator_body);
-                } else {
-                    self.write(&generator_body);
-                }
-                self.decrease_indent();
-                self.write_line();
-                self.write("});");
+                self.write("}");
+                self.skip_comments_for_async_lowered_body(body);
+                // emit_function_parameters_es5() pushed a temp scope; the
+                // other early-return paths in this function (and the
+                // multi-line/normal exit below) all call pop_temp_scope.
+                // Forgetting it here would leak temp-name state across
+                // functions and corrupt subsequent emissions.
+                self.pop_temp_scope();
+                return;
             }
+
+            // Multi-line format (matches tsc):
+            // return __awaiter(this, void 0, void 0, function () {
+            //     return __generator(this, function (_a) {
+            //         ...
+            //     });
+            // });
+            self.open_awaiter_callback(&promise_ctor);
+            for directive in &directive_prologue {
+                self.write("\"");
+                self.write(directive);
+                self.write("\";");
+                self.write_line();
+            }
+            self.emit_async_hoisted_function_declarations(&hoisted_function_decls);
+            self.emit_async_hoisted_var_groups(&hoisted_var_groups, needs_lexical_this_capture);
+            self.write_with_offset_mappings(&generator_body, &generator_mappings);
+            self.decrease_indent();
+            self.write_line();
+            self.write("});");
             self.write_line();
             self.decrease_indent();
             self.write("}");
@@ -789,7 +730,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn inline_async_generator_body(generator_body: &str) -> String {
+    pub(in crate::emitter) fn inline_async_generator_body(generator_body: &str) -> String {
         let mut lines = generator_body.lines();
         let Some(first_line) = lines.next() else {
             return String::new();
@@ -802,6 +743,46 @@ impl<'a> Printer<'a> {
             output.push_str(line.get(following_strip..).unwrap_or(line).trim_end());
         }
         output
+    }
+
+    /// Open the multi-line `__awaiter` callback: `, void 0, <promise>,
+    /// function () {` plus the newline/indent for the callback body.
+    pub(in crate::emitter) fn open_awaiter_callback(&mut self, promise_ctor: &Option<String>) {
+        self.write(", void 0, ");
+        self.write_awaiter_promise_arg(promise_ctor);
+        self.write(", function () {");
+        self.write_line();
+        self.increase_indent();
+    }
+
+    /// Emit the hoisted `var` groups for a lowered async body, followed by the
+    /// `var _this = this;` capture when the generator body references a
+    /// lexically captured `this` (an `IR`-level fact computed by the async
+    /// transformer, mirroring tsc's placement after the hoisted groups).
+    pub(in crate::emitter) fn emit_async_hoisted_var_groups(
+        &mut self,
+        hoisted_var_groups: &[Vec<String>],
+        needs_lexical_this_capture: bool,
+    ) {
+        for group in hoisted_var_groups {
+            if group.is_empty() {
+                continue;
+            }
+            self.write("var ");
+            for (i, var_name) in group.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(var_name);
+            }
+            self.write(";");
+            self.write_line();
+        }
+
+        if needs_lexical_this_capture {
+            self.write("var _this = this;");
+            self.write_line();
+        }
     }
 
     pub(in crate::emitter) fn emit_function_parameter_names_only(&mut self, params: &[NodeIndex]) {
