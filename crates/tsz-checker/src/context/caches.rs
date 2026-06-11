@@ -660,6 +660,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cow_cache_clone_is_shared_until_first_write() {
+        let mut live: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        live.insert(1, 10);
+        let snapshot = live.clone();
+        assert!(live.ptr_eq(&snapshot));
+
+        // Reads through either holder never detach.
+        assert_eq!(live.get(&1), Some(&10));
+        assert_eq!(snapshot.get(&1), Some(&10));
+        assert!(live.ptr_eq(&snapshot));
+
+        // First write detaches the writer; the snapshot is isolated.
+        live.insert(2, 20);
+        assert!(!live.ptr_eq(&snapshot));
+        assert_eq!(live.get(&2), Some(&20));
+        assert_eq!(snapshot.get(&2), None);
+        assert_eq!(snapshot.get(&1), Some(&10));
+    }
+
+    #[test]
+    fn cow_cache_clone_from_restores_sharing_with_snapshot() {
+        let mut live: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        live.insert(1, 10);
+        let snapshot = live.clone();
+        live.insert(2, 20);
+
+        // Rollback: O(1) Arc swap back to the snapshot state.
+        live.clone_from(&snapshot);
+        assert!(live.ptr_eq(&snapshot));
+        assert_eq!(live.get(&2), None);
+        assert_eq!(live.get(&1), Some(&10));
+
+        // Rolling back twice is a no-op that keeps sharing.
+        live.clone_from(&snapshot);
+        assert!(live.ptr_eq(&snapshot));
+    }
+
+    #[test]
+    fn cow_cache_parent_writes_after_child_snapshot_stay_isolated() {
+        // `with_parent_cache` ordering: the child snapshots first, the parent
+        // keeps mutating afterwards. Parent writes must not leak into the
+        // child (and vice versa), exactly as with a deep clone.
+        let mut parent: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        parent.insert(1, 10);
+        let mut child = parent.clone();
+
+        parent.insert(2, 20);
+        assert_eq!(child.get(&2), None);
+
+        child.insert(3, 30);
+        assert_eq!(parent.get(&3), None);
+        assert_eq!(parent.get(&2), Some(&20));
+        assert_eq!(child.get(&1), Some(&10));
+    }
+
+    #[test]
+    fn cow_cache_into_inner_clones_only_when_shared() {
+        let mut live: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        live.insert(1, 10);
+        let snapshot = live.clone();
+        let inner = live.into_inner();
+        assert_eq!(inner.get(&1), Some(&10));
+        // The outstanding snapshot still sees its state.
+        assert_eq!(snapshot.get(&1), Some(&10));
+    }
+
+    #[test]
     fn node_type_cache_absent_remove_does_not_detach_shared_snapshot() {
         let mut parent = NodeTypeCache::new();
         parent.insert(1, TypeId::STRING);

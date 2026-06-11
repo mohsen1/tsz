@@ -8,6 +8,15 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use tsz_binder::{ModuleAugmentation, SymbolId, SymbolTable};
+use tsz_solver::TypeId;
+
+/// Flow-analysis result memo: `(FlowNodeId, SymbolId, InitialTypeId) ->
+/// NarrowedTypeId`.
+pub type FlowAnalysisCacheMap = FxHashMap<(tsz_binder::FlowNodeId, SymbolId, TypeId), TypeId>;
+
+/// Stable-flow confirmation memo: `(SymbolId, DeclaredTypeId)` to the last
+/// `FlowNodeId` where flow analysis confirmed no narrowing.
+pub type SymbolFlowConfirmedMap = FxHashMap<(SymbolId, TypeId), tsz_binder::FlowNodeId>;
 
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]

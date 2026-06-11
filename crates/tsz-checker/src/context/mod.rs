@@ -589,9 +589,7 @@ pub struct CheckerContext<'a> {
     /// Prevents re-traversing the flow graph for the same symbol/flow combination.
     /// Fixes performance regression on binaryArithmeticControlFlowGraphNotTooLarge.ts
     /// where each operand in a + b + c was triggering fresh graph traversals.
-    pub flow_analysis_cache: RefCell<
-        CowCache<FxHashMap<(tsz_binder::FlowNodeId, tsz_binder::SymbolId, TypeId), TypeId>>,
-    >,
+    pub flow_analysis_cache: RefCell<CowCache<FlowAnalysisCacheMap>>,
 
     /// Interner that gives property/element reference *paths* (`a.b`) a
     /// session-stable synthetic cache symbol, so `flow_analysis_cache` is shared
@@ -640,8 +638,7 @@ pub struct CheckerContext<'a> {
     /// is skipped entirely, returning the declared type directly.
     /// This eliminates O(N) flow cache misses for N sequential accesses to the same
     /// identifier (e.g., 34 references to `options` in sequential statements).
-    pub symbol_flow_confirmed:
-        RefCell<CowCache<FxHashMap<(SymbolId, TypeId), tsz_binder::FlowNodeId>>>,
+    pub symbol_flow_confirmed: RefCell<CowCache<SymbolFlowConfirmedMap>>,
 
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index. Used by flow narrowing to get
