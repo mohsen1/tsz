@@ -402,6 +402,8 @@ run_lint() {
   node scripts/bench/test-readme-perf-svg.mjs || return $?
   node scripts/bench/test-reduction-backlog.mjs || return $?
   node scripts/bench/test-timeout-runner.mjs || return $?
+  node scripts/bench/test-measure-protocol.mjs || return $?
+  node scripts/bench/test-measure-tsz.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
   node scripts/bench/test-bench-readiness-banner.mjs || return $?
   node scripts/bench/test-ci-health-benchmark-readiness.mjs || return $?

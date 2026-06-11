@@ -50,6 +50,16 @@ is not a timing target yet.
 - **Micro wins overclaimed**: preallocation, clone removal, and formatting
   fixes are valuable only when tied to a hot path or row movement. Keep claims
   proportional.
+- **Measuring a live shared binary**: on shared boxes, a sibling session can
+  overwrite `dist-fast/tsz` mid-run, so the binary you measured may not be the
+  sha you built (#13174 was a phantom regression from exactly this). Measure
+  through `scripts/bench/measure-tsz.sh`, which snapshots the binary to an
+  immutable hash-verified copy first; never time the live build-output path.
+- **Wall-only timeouts under load**: a run needing 14s of CPU exceeds a 420s
+  wall timeout at a <4% CPU share with zero code regression. Record process
+  CPU time next to wall time; a low-CPU-share wall timeout is unmeasured, not
+  slow. `measure-tsz.sh`, `run-with-timeout.sh`, and the project compile guard
+  classify this automatically.
 - **Stale coordination state**: old WIP text, issue notes, or PR labels may be
   stale. Use current PR head, row state, and fresh signed comments before
   taking ownership or publishing results.
@@ -66,6 +76,8 @@ is not a timing target yet.
 - `scripts/bench/project-rows.mjs`: source of truth for required/canary rows
   and compatibility metadata.
 - `scripts/bench/row-utils.mjs`: what counts as a complete green row.
+- `scripts/bench/measure-tsz.sh`: sound single-binary timing on shared boxes
+  (immutable binary snapshot + CPU-share timeout classification).
 - `scripts/bench/perf-hotspots.sh`: narrow hotspot suite for quick perf signal.
 - `scripts/bench/bench-vs-tsgo.sh`: filtered TSZ vs `tsgo` project timing.
 - `scripts/bench/tsgo-winner-report.mjs`: rows where `tsgo` is currently
