@@ -1392,32 +1392,24 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
 /// Returns a map of source filename -> list of symlink paths.
 /// Format in test files: @filename: /path followed by @symlink: /link1,/link2
 fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
+    use tsz_common::test_directives::{parse_directive_line, split_list_values};
+
     let mut result = Vec::new();
     let mut current_filename: Option<String> = None;
 
     for line in content.lines() {
-        let trimmed = line.trim();
-        // Match @filename or @Filename
-        if let Some(rest) = trimmed
-            .strip_prefix("// @filename:")
-            .or_else(|| trimmed.strip_prefix("// @Filename:"))
-            .or_else(|| trimmed.strip_prefix("//@filename:"))
-            .or_else(|| trimmed.strip_prefix("//@Filename:"))
-        {
-            current_filename = Some(rest.trim().to_string());
-        }
-        // Match @symlink or @Symlink
-        if let Some(rest) = trimmed
-            .strip_prefix("// @symlink:")
-            .or_else(|| trimmed.strip_prefix("// @Symlink:"))
-            .or_else(|| trimmed.strip_prefix("//@symlink:"))
-            .or_else(|| trimmed.strip_prefix("//@Symlink:"))
-        {
+        // Canonical recognizer: must agree with the `@filename` splitting in
+        // `test_parser::parse_test_file` (any key casing) so a symlink is
+        // associated with the same file section the splitter produces.
+        let Some(directive) = parse_directive_line(line) else {
+            continue;
+        };
+        if directive.key_is("filename") {
+            current_filename = Some(directive.value.to_string());
+        } else if directive.key_is("symlink") {
             if let Some(ref filename) = current_filename {
-                let links: Vec<String> = rest
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
+                let links: Vec<String> = split_list_values(directive.value)
+                    .map(str::to_string)
                     .collect();
                 if !links.is_empty() {
                     result.push((filename.clone(), links));
@@ -1433,19 +1425,18 @@ fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
 /// content. TypeScript's harness treats these as symlinks rooted at the
 /// destination path that point at the source path.
 fn parse_link_associations(content: &str) -> Vec<(String, String)> {
+    use tsz_common::test_directives::parse_directive_line;
+
     let mut result = Vec::new();
 
     for line in content.lines() {
-        let trimmed = line.trim();
-        let Some(rest) = trimmed
-            .strip_prefix("// @link:")
-            .or_else(|| trimmed.strip_prefix("// @Link:"))
-            .or_else(|| trimmed.strip_prefix("//@link:"))
-            .or_else(|| trimmed.strip_prefix("//@Link:"))
-        else {
+        let Some(directive) = parse_directive_line(line) else {
             continue;
         };
-        let Some((target, link)) = rest.split_once("->") else {
+        if !directive.key_is("link") {
+            continue;
+        }
+        let Some((target, link)) = directive.value.split_once("->") else {
             continue;
         };
         let target = target.trim();

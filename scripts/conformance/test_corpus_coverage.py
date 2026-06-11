@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -6,9 +7,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CACHE_PATH = ROOT / "scripts/conformance/tsc-cache-full.json"
 TEST_CASES_PATH = ROOT / "TypeScript/tests/cases"
+DIRECTIVE_SPEC_VECTORS_PATH = ROOT / "scripts/test-directives/spec-vectors.json"
 
 SOURCE_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
 DECLARATION_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
+
+# Canonical test-directive grammar (issue #13127); must agree with
+# crates/tsz-common/src/common/test_directives.rs and scripts/emit/src/directives.ts.
+# Locked to scripts/test-directives/spec-vectors.json by the tests below.
+_DIRECTIVE_LINE_RE = re.compile(r"^\s*//\s*@([A-Za-z0-9_]+)\s*:([^\r\n]*)$")
+_FLAG_LINE_RE = re.compile(r"^\s*//\s*@([A-Za-z0-9_-]+)\s*$")
+
+
+def parse_directive_line(line: str):
+    """Recognize a `// @key: value` directive; returns (key_lower, value)."""
+    match = _DIRECTIVE_LINE_RE.match(line.rstrip("\r"))
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).strip()
+
+
+def parse_flag_directive_line(line: str):
+    """Recognize a `// @name` flag directive; returns the name as written."""
+    match = _FLAG_LINE_RE.match(line.rstrip("\r"))
+    return match.group(1) if match else None
 
 
 def skipped_conformance_cache_reason(path: str):
@@ -27,14 +49,10 @@ def skipped_conformance_cache_reason(path: str):
 def has_skip_directive(path: Path) -> bool:
     options = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("//"):
-            continue
-        directive = stripped[2:].strip()
-        if not directive.startswith("@") or ":" not in directive:
-            continue
-        key, value = directive[1:].split(":", 1)
-        options[key.strip().lower()] = value.strip()
+        directive = parse_directive_line(line)
+        if directive is not None:
+            key, value = directive
+            options[key] = value
 
     return "skip" in options or options.get("nocheck") == "true"
 
@@ -58,6 +76,34 @@ def discover_expected_cache_keys():
         keys.append(relative)
 
     return sorted(keys)
+
+
+class DirectiveSpecVectorTests(unittest.TestCase):
+    """Bind this module's directive recognizer to the shared grammar vectors."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.vectors = json.loads(
+            DIRECTIVE_SPEC_VECTORS_PATH.read_text(encoding="utf-8")
+        )
+
+    def test_directive_lines_match_spec_vectors(self):
+        for case in self.vectors["directive_lines"]:
+            parsed = parse_directive_line(case["line"])
+            if case["key"] is None:
+                self.assertIsNone(parsed, f"line: {case['line']!r}")
+            else:
+                self.assertEqual(
+                    (case["key"], case["value"]), parsed, f"line: {case['line']!r}"
+                )
+
+    def test_flag_lines_match_spec_vectors(self):
+        for case in self.vectors["flag_lines"]:
+            self.assertEqual(
+                case["name"],
+                parse_flag_directive_line(case["line"]),
+                f"line: {case['line']!r}",
+            )
 
 
 class ConformanceCorpusCoverageTests(unittest.TestCase):

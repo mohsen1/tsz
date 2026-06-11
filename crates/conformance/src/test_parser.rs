@@ -1,30 +1,19 @@
 //! Test file directive parser
 //!
-//! Parses @ directives from TypeScript test files using regex.
+//! Thin adapter over the canonical directive parser in
+//! `tsz_common::test_directives` (the single grammar shared by the
+//! conformance, emit, fourslash, and checker test-harness paths).
 //! Supports: strict, target, module, filename, jsx, lib, noLib,
 //! moduleResolution, noCheck, skip, typeScriptVersion, etc.
+//!
+//! The parsing semantics here are cache-anchored: the checked-in tsc
+//! result cache was generated through this parser, so option keys,
+//! option order, and file-content splitting must stay byte-identical
+//! between the cache generator and the runner.
 
-use once_cell::sync::Lazy;
-use regex::Regex;
 use std::collections::HashMap;
 
-/// Compiled regex for parsing @ directives
-/// Matches: // @key: value (captures entire rest of line as value)
-static DIRECTIVE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*//\s*@(\w+)\s*:\s*([^\r\n]*)").unwrap());
-static TS_DIRECTIVE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*//\s*@([\w-]+)\s*$").unwrap());
-
-/// Parsed test directives
-#[derive(Debug, Default, Clone)]
-pub struct TestDirectives {
-    /// Compiler options (strict, target, module, etc.)
-    pub options: HashMap<String, String>,
-    /// Key insertion order (preserves directive declaration order from the test file).
-    /// Used to generate tsconfig.json with keys in the same order as the cache generator.
-    pub option_order: Vec<String>,
-    /// Additional files defined by @filename directives
-    pub filenames: Vec<(String, String)>, // (filename, content)
-}
+pub use tsz_common::test_directives::TestDirectives;
 
 /// Result of parsing a test file
 #[derive(Debug, Clone)]
@@ -48,76 +37,9 @@ pub struct ParsedTest {
 /// assert_eq!(parsed.directives.options.get("strict"), Some(&"true".to_string()));
 /// ```
 pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
-    let mut directives = TestDirectives::default();
-    let mut filenames = Vec::new();
-
-    // Strip UTF-8 BOM if present — JavaScript's \s matches BOM (U+FEFF) but Rust's
-    // regex \s does not, so without stripping, the first-line directive after a BOM
-    // would be missed, causing hash mismatches with the Node.js cache generator.
-    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
-
-    // Split content into lines
-    let lines: Vec<&str> = content.lines().collect();
-
-    // Track current filename for multi-file tests
-    let mut current_filename: Option<String> = None;
-    let mut current_content: Vec<String> = Vec::new();
-
-    for line in &lines {
-        if let Some(cap) = DIRECTIVE_RE.captures(line) {
-            let key = cap.get(1).unwrap().as_str();
-            let value = cap.get(2).unwrap().as_str().trim();
-
-            // Normalize key to lowercase for case-insensitive matching
-            let key_lower = key.to_lowercase();
-
-            if key_lower == "filename" {
-                // Save previous file if exists
-                if let Some(filename) = current_filename.take() {
-                    filenames.push((filename, current_content.join("\n")));
-                }
-                // Start new file
-                current_filename = Some(value.to_string());
-                current_content = Vec::new();
-            } else {
-                if !directives.options.contains_key(&key_lower) {
-                    directives.option_order.push(key_lower.clone());
-                }
-                directives.options.insert(key_lower, value.to_string());
-            }
-        } else if let Some(cap) = TS_DIRECTIVE_RE.captures(line) {
-            let key = cap.get(1).unwrap().as_str();
-            let key_lower = key.to_lowercase();
-
-            let (mapped_key, value) = match key_lower.as_str() {
-                "ts-check" => ("checkjs", "true"),
-                "ts-nocheck" => ("checkjs", "false"),
-                _ => continue,
-            };
-
-            if !directives.options.contains_key(mapped_key) {
-                directives.option_order.push(mapped_key.to_string());
-            }
-            directives
-                .options
-                .insert(mapped_key.to_string(), value.to_string());
-            if current_filename.is_some() {
-                current_content.push(line.to_string());
-            }
-        } else {
-            // Non-directive line - add to current file content
-            current_content.push(line.to_string());
-        }
-    }
-
-    // Don't forget the last file
-    if let Some(filename) = current_filename {
-        filenames.push((filename, current_content.join("\n")));
-    }
-
-    directives.filenames = filenames;
-
-    Ok(ParsedTest { directives })
+    Ok(ParsedTest {
+        directives: tsz_common::test_directives::parse_test_file(content),
+    })
 }
 
 /// Check if test should be skipped based on directives
@@ -228,6 +150,20 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_bom_prefixed_first_line_directive() {
+        // JavaScript's \s matches BOM (U+FEFF) but a byte-level scan does
+        // not, so the BOM must be stripped before the first-line directive
+        // is recognized — otherwise hashes mismatch with the Node.js cache
+        // generator.
+        let content = "\u{FEFF}// @strict: true\nconst x = 1;";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("strict"),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
     fn test_expand_option_variants_does_not_split_nolib() {
         let mut options = HashMap::new();
         options.insert("nolib".to_string(), "true,false".to_string());
@@ -298,5 +234,22 @@ function foo() {}
             filter_incompatible_module_resolution_variants(vec![accepted.clone(), rejected]);
 
         assert_eq!(filtered, vec![accepted]);
+    }
+
+    #[test]
+    fn test_multi_file_split_matches_canonical_casing() {
+        // The wrapper-side recognizers (symlink/link association,
+        // materialization) must agree with this splitter; both now go
+        // through the canonical parser, so any key casing splits files.
+        let content =
+            "// @Filename: a.ts\nexport const a = 1;\n// @FILENAME: b.ts\nexport const b = 2;\n";
+        let parsed = parse_test_file(content).unwrap();
+        let names: Vec<&str> = parsed
+            .directives
+            .filenames
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(names, vec!["a.ts", "b.ts"]);
     }
 }

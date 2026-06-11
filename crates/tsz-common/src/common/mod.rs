@@ -16,6 +16,7 @@
 //! No module should depend on a module that appears later in this chain.
 
 pub mod directives;
+pub mod test_directives;
 
 fn normalize_ts_option(value: &str) -> String {
     let trimmed = value.trim();

@@ -1415,6 +1415,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "tsz-common",
  "tsz-core",
  "walkdir",
 ]

@@ -961,57 +961,68 @@ impl<'a> CheckerState<'a> {
 
     /// Parse a boolean option from test file comments.
     ///
-    /// Looks for patterns like `// @key: true` or `// @key: false` in the first 32 lines.
+    /// Looks for `// @key: true` / `// @key: false` directives (canonical
+    /// grammar from `tsz_common::test_directives`) in the leading comment
+    /// block, capped at the first 32 lines. `key` is the pragma name with
+    /// its leading `@` (e.g. `"@strict"`); the directive key must match it
+    /// exactly (case-insensitive) — `@strict` does not match
+    /// `@strictNullChecks` and vice versa, mirroring the conformance and
+    /// emit harness recognizers.
     pub(crate) fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
-        for line in text.lines().take(32) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let is_comment =
-                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
-            if !is_comment {
-                break;
-            }
-
-            let lower = trimmed.to_ascii_lowercase();
-            let Some(pos) = lower.find(key) else {
-                continue;
-            };
-            let after_key = &lower[pos + key.len()..];
-            let Some(colon_pos) = after_key.find(':') else {
-                continue;
-            };
-            let value = after_key[colon_pos + 1..].trim();
-
-            // Parse boolean value, handling comma-separated values like "true, false"
-            // Also handle trailing commas, semicolons, and other delimiters
-            let value_clean = if let Some(comma_pos) = value.find(',') {
-                &value[..comma_pos]
-            } else if let Some(semicolon_pos) = value.find(';') {
-                &value[..semicolon_pos]
-            } else {
-                value
-            }
-            .trim();
-
-            match value_clean {
-                "true" => return Some(true),
-                "false" => return Some(false),
-                _ => continue,
-            }
-        }
-        None
+        Self::bool_pragma(&Self::leading_directives(text), key)
     }
 
-    /// Resolve a boolean compiler option from source file comments.
+    /// Key/value directives in the leading comment block, in source order.
+    /// Collected once per file so the ~20 option lookups in
+    /// `resolve_compiler_options_from_source` do not each re-scan the text.
+    fn leading_directives(text: &str) -> Vec<tsz_common::test_directives::DirectiveLine<'_>> {
+        Self::leading_comment_lines(text)
+            .filter_map(tsz_common::test_directives::parse_directive_line)
+            .collect()
+    }
+
+    fn bool_pragma(
+        directives: &[tsz_common::test_directives::DirectiveLine<'_>],
+        key: &str,
+    ) -> Option<bool> {
+        let name = key.strip_prefix('@').unwrap_or(key);
+        directives.iter().find_map(|directive| {
+            // Multi-variant values like "true, false" take the first
+            // variant; non-boolean values keep scanning.
+            directive
+                .key_is(name)
+                .then(|| tsz_common::test_directives::parse_bool_value(directive.value))
+                .flatten()
+        })
+    }
+
+    /// The leading comment block of a source file: non-empty lines from the
+    /// top of the file up to the first non-comment line, capped at 32 lines.
+    /// Test pragmas are only honored in this region so a directive-shaped
+    /// comment deep inside real code cannot mutate compiler options.
+    fn leading_comment_lines(text: &str) -> impl Iterator<Item = &str> {
+        text.lines()
+            .take(32)
+            .filter(|line| !line.trim().is_empty())
+            .take_while(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
+            })
+    }
+
+    /// Resolve a boolean compiler option from the file's leading directives.
     /// Checks for the option-specific pragma first, then optionally checks `@strict`,
     /// and falls back to the provided default.
-    fn resolve_bool_option(text: &str, pragma: &str, strict_fallback: bool, default: bool) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, pragma) {
+    fn resolve_bool_option(
+        directives: &[tsz_common::test_directives::DirectiveLine<'_>],
+        pragma: &str,
+        strict_fallback: bool,
+        default: bool,
+    ) -> bool {
+        if let Some(value) = Self::bool_pragma(directives, pragma) {
             return value;
         }
-        if strict_fallback && let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+        if strict_fallback && let Some(strict) = Self::bool_pragma(directives, "@strict") {
             return strict;
         }
         default
@@ -1020,124 +1031,113 @@ impl<'a> CheckerState<'a> {
     /// Resolve all compiler options from source file comment pragmas.
     /// Called once per file to override compiler options with test pragmas.
     pub(crate) fn resolve_compiler_options_from_source(&mut self, text: &str) {
+        // One scan of the leading comment block serves every option lookup.
+        let pragmas = Self::leading_directives(text);
         // Snapshot current defaults before mutation to avoid aliased borrows.
         let defaults = self.ctx.compiler_options.clone();
         let opts = &mut self.ctx.compiler_options;
-        opts.strict = Self::resolve_bool_option(text, "@strict", false, defaults.strict);
+        opts.strict = Self::resolve_bool_option(&pragmas, "@strict", false, defaults.strict);
         // Options that fall back to @strict
         opts.no_implicit_any =
-            Self::resolve_bool_option(text, "@noimplicitany", true, defaults.no_implicit_any);
+            Self::resolve_bool_option(&pragmas, "@noimplicitany", true, defaults.no_implicit_any);
         opts.use_unknown_in_catch_variables = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@useunknownincatchvariables",
             true,
             defaults.use_unknown_in_catch_variables,
         );
         opts.no_implicit_this =
-            Self::resolve_bool_option(text, "@noimplicitthis", true, defaults.no_implicit_this);
+            Self::resolve_bool_option(&pragmas, "@noimplicitthis", true, defaults.no_implicit_this);
         opts.strict_property_initialization = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@strictpropertyinitialization",
             true,
             defaults.strict_property_initialization,
         );
-        opts.strict_null_checks =
-            Self::resolve_bool_option(text, "@strictnullchecks", true, defaults.strict_null_checks);
+        opts.strict_null_checks = Self::resolve_bool_option(
+            &pragmas,
+            "@strictnullchecks",
+            true,
+            defaults.strict_null_checks,
+        );
         opts.strict_function_types = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@strictfunctiontypes",
             true,
             defaults.strict_function_types,
         );
         // Options without @strict fallback
         opts.no_implicit_returns = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@noimplicitreturns",
             false,
             defaults.no_implicit_returns,
         );
         opts.no_implicit_override = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@noimplicitoverride",
             false,
             defaults.no_implicit_override,
         );
         opts.no_property_access_from_index_signature = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@nopropertyaccessfromindexsignature",
             false,
             defaults.no_property_access_from_index_signature,
         );
-        opts.no_unused_locals =
-            Self::resolve_bool_option(text, "@nounusedlocals", false, defaults.no_unused_locals);
+        opts.no_unused_locals = Self::resolve_bool_option(
+            &pragmas,
+            "@nounusedlocals",
+            false,
+            defaults.no_unused_locals,
+        );
         opts.no_unused_parameters = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@nounusedparameters",
             false,
             defaults.no_unused_parameters,
         );
         opts.always_strict =
-            Self::resolve_bool_option(text, "@alwaysstrict", true, defaults.always_strict);
+            Self::resolve_bool_option(&pragmas, "@alwaysstrict", true, defaults.always_strict);
         opts.no_implicit_use_strict = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@noimplicitusestrict",
             false,
             defaults.no_implicit_use_strict,
         );
         // Option<bool> variant
-        opts.allow_unreachable_code = Self::parse_test_option_bool(text, "@allowunreachablecode")
+        opts.allow_unreachable_code = Self::bool_pragma(&pragmas, "@allowunreachablecode")
             .map(Some)
             .unwrap_or(defaults.allow_unreachable_code);
-        opts.allow_unused_labels = Self::parse_test_option_bool(text, "@allowunusedlabels")
+        opts.allow_unused_labels = Self::bool_pragma(&pragmas, "@allowunusedlabels")
             .map(Some)
             .unwrap_or(defaults.allow_unused_labels);
 
-        // Parse @ignoreDeprecations: "5.0" or "6.0" as a string option.
-        // Pragma directives are confined to the first ~32 leading comment
-        // lines (see `parse_test_option_bool`), so a full-source
-        // `to_ascii_lowercase()` was allocating a complete lowercased copy
-        // of every checked file just to scan a region we already iterate.
-        // Reuse the comment-line scan to avoid that O(file_size) allocation.
+        // @ignoreDeprecations: "5.0"/"6.0" carries a version string, and the
+        // flag form also counts as present, so it is a presence check over
+        // the leading comment block rather than a `pragmas` lookup (the
+        // pre-parsed slice only holds key/value directives).
         if Self::source_has_pragma(text, "@ignoredeprecations") {
             opts.ignore_deprecations = true;
         }
     }
 
-    /// Case-insensitive presence check for a `@pragma` token in the leading
-    /// comment block of a source file. Mirrors `parse_test_option_bool`'s
-    /// scope (first 32 lines, comment lines only) but stops at the first
-    /// match and never allocates a lowercased copy of the full file.
+    /// Case-insensitive presence check for a `@pragma` directive in the
+    /// leading comment block of a source file. Mirrors
+    /// `parse_test_option_bool`'s scope (first 32 lines, comment lines
+    /// only). Recognizes both the key/value form (`// @pragma: value`) and
+    /// the flag form (`// @pragma`), via the canonical directive grammar.
     fn source_has_pragma(text: &str, lower_pragma: &str) -> bool {
-        for line in text.lines().take(32) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
+        let name = lower_pragma.strip_prefix('@').unwrap_or(lower_pragma);
+        Self::leading_comment_lines(text).any(|line| {
+            // The two forms are mutually exclusive: a key/value match means
+            // the flag parse cannot succeed, so skip it.
+            if let Some(directive) = tsz_common::test_directives::parse_directive_line(line) {
+                return directive.key_is(name);
             }
-            let is_comment =
-                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
-            if !is_comment {
-                break;
-            }
-            // Case-insensitive substring match without allocating: walk the
-            // trimmed line in windows the size of `lower_pragma`, comparing
-            // ASCII-lowercased bytes directly.
-            let line_bytes = trimmed.as_bytes();
-            let pragma_bytes = lower_pragma.as_bytes();
-            if line_bytes.len() < pragma_bytes.len() {
-                continue;
-            }
-            for start in 0..=line_bytes.len() - pragma_bytes.len() {
-                let window = &line_bytes[start..start + pragma_bytes.len()];
-                if window
-                    .iter()
-                    .zip(pragma_bytes)
-                    .all(|(a, b)| a.to_ascii_lowercase() == *b)
-                {
-                    return true;
-                }
-            }
-        }
-        false
+            tsz_common::test_directives::parse_flag_directive_line(line)
+                .is_some_and(|flag| flag.eq_ignore_ascii_case(name))
+        })
     }
 
     // =========================================================================

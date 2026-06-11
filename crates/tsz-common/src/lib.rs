@@ -68,3 +68,7 @@ pub mod text_scan;
 
 // Centralized TypeScript lib symbol capability metadata.
 pub mod lib_capabilities;
+
+// Canonical parser for TypeScript test-file directives (`// @option: value`)
+// shared by the conformance, emit, fourslash, and checker test harness paths.
+pub use common::test_directives;
