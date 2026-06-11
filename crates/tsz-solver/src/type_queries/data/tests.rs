@@ -1720,7 +1720,9 @@ fn error_containment_is_unified_across_query_paths() {
             interner.application(TypeId::ERROR, vec![TypeId::STRING]),
             true,
         ),
-        (interner.keyof(TypeId::ERROR), true),
+        // Deferred operations are opaque: an error inside a keyof/conditional
+        // operand is only real once evaluation selects it.
+        (interner.keyof(TypeId::ERROR), false),
         (interner.array(TypeId::ERROR), true),
         (interner.union(vec![TypeId::STRING, TypeId::NUMBER]), false),
         (interner.array(TypeId::STRING), false),

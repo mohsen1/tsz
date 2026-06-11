@@ -61,6 +61,15 @@ pub struct ChildPolicy {
     pub signature_type_predicate: bool,
     /// Visit signature type-parameter `constraint`/`default` metadata.
     pub signature_type_param_metadata: bool,
+    /// Visit the operand structure of deferred type-level operations:
+    /// conditional check/extends/branches, mapped types, indexed-access
+    /// operands, `keyof`, template-literal spans, and string intrinsics.
+    ///
+    /// Error containment turns this off: those operands are unevaluated
+    /// alternatives, not committed structure — an error inside an unselected
+    /// conditional branch (e.g. React's `LibraryManagedAttributes` internals)
+    /// is not an error in the type until evaluation selects it.
+    pub deferred_operations: bool,
 }
 
 impl ChildPolicy {
@@ -81,6 +90,7 @@ impl ChildPolicy {
         signature_this_type: true,
         signature_type_predicate: true,
         signature_type_param_metadata: true,
+        deferred_operations: true,
     };
 
     /// Every child position, including bare type-parameter defaults. Used by
@@ -116,6 +126,7 @@ impl ChildPolicy {
         signature_this_type: true,
         signature_type_predicate: false,
         signature_type_param_metadata: false,
+        deferred_operations: true,
     };
 
     /// [`Self::CONTENT_PREDICATE`] for free-type-parameter checks: generic
@@ -156,15 +167,18 @@ impl ChildPolicy {
         ..Self::FULL
     };
 
-    /// Error containment: every structural *use* position, including
-    /// `Application` bases. Type-parameter declaration metadata (bare
-    /// `constraint`/`default`, mapped iteration variables, signature type
-    /// parameters) is not a use: an unresolved name in a parameter's default
-    /// is diagnosed at the declaration and must not poison every contextual
-    /// use of the parameter itself.
+    /// Error containment: every *committed* structural use position,
+    /// including `Application` bases. Two classes of children are not uses:
+    /// type-parameter declaration metadata (an unresolved name in a
+    /// parameter's `constraint`/`default` is diagnosed at the declaration and
+    /// must not poison every contextual use of the parameter itself), and the
+    /// operands of deferred type-level operations (an error inside an
+    /// unselected conditional/mapped/indexed-access branch is only real once
+    /// evaluation selects it — see `deferred_operations`).
     pub const ERROR_CONTAINMENT: Self = Self {
         type_param_constraint: false,
         type_param_default: false,
+        deferred_operations: false,
         ..Self::STRUCTURAL_USES
     };
 
@@ -213,6 +227,12 @@ pub const fn has_policy_children(key: &TypeData, policy: &ChildPolicy) -> bool {
             (policy.type_param_constraint && info.constraint.is_some())
                 || (policy.type_param_default && info.default.is_some())
         }
+        TypeData::Conditional(_)
+        | TypeData::Mapped(_)
+        | TypeData::IndexAccess(_, _)
+        | TypeData::KeyOf(_)
+        | TypeData::TemplateLiteral(_)
+        | TypeData::StringIntrinsic { .. } => policy.deferred_operations,
         _ => true,
     }
 }
@@ -297,10 +317,16 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
 ) -> ControlFlow<B> {
     match key {
         // Single nested type
-        TypeData::Array(inner)
-        | TypeData::ReadonlyType(inner)
-        | TypeData::KeyOf(inner)
-        | TypeData::NoInfer(inner) => f(*inner),
+        TypeData::Array(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            f(*inner)
+        }
+
+        TypeData::KeyOf(inner) => {
+            if policy.deferred_operations {
+                f(*inner)?;
+            }
+            ControlFlow::Continue(())
+        }
 
         // Composite types with multiple members
         TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
@@ -382,6 +408,9 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
         }
 
         TypeData::Conditional(cond_id) => {
+            if !policy.deferred_operations {
+                return ControlFlow::Continue(());
+            }
             let cond = db.get_conditional(*cond_id);
             f(cond.check_type)?;
             f(cond.extends_type)?;
@@ -390,6 +419,9 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
         }
 
         TypeData::Mapped(mapped_id) => {
+            if !policy.deferred_operations {
+                return ControlFlow::Continue(());
+            }
             let mapped = db.get_mapped(*mapped_id);
             if policy.mapped_type_param_metadata {
                 if let Some(constraint) = mapped.type_param.constraint {
@@ -408,11 +440,17 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
         }
 
         TypeData::IndexAccess(obj, idx) => {
+            if !policy.deferred_operations {
+                return ControlFlow::Continue(());
+            }
             f(*obj)?;
             f(*idx)
         }
 
         TypeData::TemplateLiteral(template_id) => {
+            if !policy.deferred_operations {
+                return ControlFlow::Continue(());
+            }
             for span in db.template_list(*template_id).iter() {
                 if let crate::types::TemplateSpan::Type(type_id) = span {
                     f(*type_id)?;
@@ -421,7 +459,12 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
             ControlFlow::Continue(())
         }
 
-        TypeData::StringIntrinsic { type_arg, .. } => f(*type_arg),
+        TypeData::StringIntrinsic { type_arg, .. } => {
+            if policy.deferred_operations {
+                f(*type_arg)?;
+            }
+            ControlFlow::Continue(())
+        }
 
         TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             if policy.type_param_constraint

@@ -90,12 +90,15 @@ pub fn contains_any_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Check if a type contains the error type anywhere in its structure.
 ///
 /// Structural rule: a type contains an error iff any node reachable through
-/// its structural *use* surface — including `Application` bases, property
-/// write types, and index-signature keys, but excluding type-parameter
-/// declaration metadata — is the `TypeId::ERROR` sentinel, `TypeData::Error`,
-/// or an `UnresolvedTypeName`. The `TypeId::ERROR` sentinel is matched before the
-/// intrinsic fast path (it sits in the intrinsic id range), which the generic
-/// `contains_type_matching` walk cannot do.
+/// its *committed* structural use surface — including `Application` bases,
+/// property write types, and index-signature keys, but excluding
+/// type-parameter declaration metadata and the operands of deferred
+/// type-level operations (conditional/mapped/indexed-access/`keyof`/template
+/// branches are unevaluated alternatives, not committed structure) — is the
+/// `TypeId::ERROR` sentinel, `TypeData::Error`, or an `UnresolvedTypeName`.
+/// The sentinel is matched before the intrinsic fast path (it sits in the
+/// intrinsic id range), which the generic `contains_type_matching` walk
+/// cannot do.
 ///
 /// This is the single canonical error-containment answer; the checker-facing
 /// `contains_error_type_db` delegates here so both query paths agree.
