@@ -19,6 +19,9 @@ pub(super) struct ContextualRetryInput<'s> {
     pub(super) actual_this_type: Option<TypeId>,
     pub(super) overload_snap: &'s FullSnapshot,
     pub(super) has_contextual_refresh_args: bool,
+    /// Pristine caller `node_types` snapshot; the retry's speculative
+    /// collection runs in an overlay over it (read-through, isolated writes).
+    pub(super) caller_node_types: &'s crate::context::NodeTypeCache,
 }
 
 impl<'a> CheckerState<'a> {
@@ -38,6 +41,7 @@ impl<'a> CheckerState<'a> {
             actual_this_type,
             overload_snap,
             has_contextual_refresh_args,
+            caller_node_types,
         } = input;
 
         if !matches!(result, CallResult::ArgumentTypeMismatch { .. })
@@ -101,7 +105,7 @@ impl<'a> CheckerState<'a> {
             _ => sig.return_type,
         };
         self.rollback_overload_retry_state(overload_snap);
-        self.ctx.node_types = Default::default();
+        self.ctx.node_types = caller_node_types.overlay();
         for &arg_idx in args {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             self.ctx.daa_error_nodes.remove(&arg_idx.0);
