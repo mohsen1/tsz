@@ -180,6 +180,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         )
         .entered();
 
+        // TEMP-TRACE (remove before PR): log raw TypeData of both sides.
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(
+                src = source.0,
+                tgt = target.0,
+                src_data = ?self.interner.lookup(source),
+                tgt_data = ?self.interner.lookup(target),
+                "check_subtype entry data"
+            );
+        }
+
         // =========================================================================
         // Fast paths (no cycle tracking needed)
         // =========================================================================
