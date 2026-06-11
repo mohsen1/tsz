@@ -128,7 +128,7 @@ function withTargetCpu(baseArtifact, rustTargetCpu) {
     ...baseArtifact,
     measurement_profile: {
       mode: "release-pgo",
-      profile_guided_optimization: { rust_target_cpu: rustTargetCpu },
+      rust_target_cpu: rustTargetCpu,
     },
   };
 }

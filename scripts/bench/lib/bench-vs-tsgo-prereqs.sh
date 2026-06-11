@@ -1044,15 +1044,16 @@ check_prerequisites() {
     # Preflight: the binary must execute on this machine. A target-cpu above
     # this host's ISA dies with SIGILL (exit 132) and would otherwise surface
     # only as per-row crash artifacts at measurement time (#12764, #13248).
+    local tsz_version
     local tsz_preflight_status=0
-    "$TSZ" --version >/dev/null 2>&1 || tsz_preflight_status=$?
+    tsz_version="$("$TSZ" --version 2>&1)" || tsz_preflight_status=$?
     if [ "$tsz_preflight_status" -ne 0 ]; then
         echo -e "${RED}✗ tsz binary preflight failed (exit ${tsz_preflight_status}): $TSZ${NC}"
         echo -e "${RED}  Built with target-cpu=${BENCH_RUST_TARGET_CPU:-native}; this machine may not support that ISA.${NC}"
         exit 1
     fi
 
-    echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
+    echo -e "${GREEN}✓${NC} tsz: ${tsz_version%%$'\n'*}"
     echo -e "   Binary: $TSZ"
     echo -e "   Size: $(ls -lh "$TSZ" | awk '{print $5}')"
     echo -e "   Built: $(stat -c '%y' "$TSZ" 2>/dev/null | cut -d. -f1 || stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$TSZ" 2>/dev/null || echo 'unknown')"

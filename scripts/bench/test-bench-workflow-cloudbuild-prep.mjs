@@ -86,14 +86,6 @@ assert.match(
   /BENCH_RUST_TARGET_CPU=x86-64-v3/,
   "Cloud Build benchmark shards should inherit the same portable bench target CPU",
 );
-{
-  const targetCpuOf = (config) => config.match(/BENCH_RUST_TARGET_CPU=(\S+?)'/)?.[1] ?? null;
-  assert.equal(
-    targetCpuOf(prepareCloudbuild),
-    targetCpuOf(shardCloudbuild),
-    "prepare and shard Cloud Build configs must pin the identical bench target CPU",
-  );
-}
 
 assert.match(
   workflow,

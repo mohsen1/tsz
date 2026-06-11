@@ -101,6 +101,7 @@ function makeArtifact(rows, extraMeta = {}) {
 const SAMPLE_MEASUREMENT_PROFILE = {
   mode: "release-pgo",
   tsz_binary_source: "bench-dist",
+  rust_target_cpu: "x86-64-v3",
   profile_guided_optimization: {
     requested: true,
     required: true,
@@ -111,7 +112,6 @@ const SAMPLE_MEASUREMENT_PROFILE = {
     profile_fingerprint: "abcdef1234567890",
     training_fingerprint: "123456abcdef7890",
     profile_data_source: "fresh",
-    rust_target_cpu: "x86-64-v3",
     built_at: "2026-05-20T01:02:03Z",
     llvm_profdata: "/toolchain/bin/llvm-profdata",
     training_metadata_available: true,

@@ -44,7 +44,7 @@ export function measurementProfileStatus(artifact) {
     pgo_optimized: pgo.optimized ?? null,
     profile_fingerprint: pgo.profile_fingerprint ?? null,
     training_fingerprint: pgo.training_fingerprint ?? null,
-    rust_target_cpu: pgo.rust_target_cpu ?? null,
+    rust_target_cpu: profile.rust_target_cpu ?? null,
     training_input_count: pgo.training_input_count ?? null,
     training_failure_count: pgo.training_failure_count ?? null,
     warning,

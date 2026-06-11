@@ -1360,6 +1360,7 @@ function measurementProfile() {
   return {
     mode,
     tsz_binary_source: tszOverride ? "override" : "bench-dist",
+    rust_target_cpu: fields.rust_target_cpu || null,
     profile_guided_optimization: {
       requested: pgoRequested,
       required: boolValue(process.env.BENCH_REQUIRE_PGO_VALUE, false),
@@ -1370,7 +1371,6 @@ function measurementProfile() {
       profile_fingerprint: fields.profile_fingerprint || null,
       training_fingerprint: fields.training_fingerprint || null,
       profile_data_source: fields.profile_data_source || null,
-      rust_target_cpu: fields.rust_target_cpu || fields.BENCH_RUST_TARGET_CPU || null,
       built_at: fields.built_at || null,
       llvm_profdata: fields.llvm_profdata || null,
       training_metadata_available: boolValue(fields.training_metadata_available, false),

@@ -32,7 +32,7 @@ function sourceInfo(artifact, file) {
 // (issue #13248: an ISA downgrade read as a +89% row regression).
 function binaryCodegen(previous, current) {
   const targetCpuOf = (artifact) =>
-    artifact?.measurement_profile?.profile_guided_optimization?.rust_target_cpu ?? null;
+    artifact?.measurement_profile?.rust_target_cpu ?? null;
   const previousCpu = targetCpuOf(previous);
   const currentCpu = targetCpuOf(current);
   return {

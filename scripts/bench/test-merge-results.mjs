@@ -916,8 +916,8 @@ withTempDir((dir) => {
 withTempDir((dir) => {
   const firstProfile = cloneJson(SAMPLE_MEASUREMENT_PROFILE);
   const secondProfile = cloneJson(SAMPLE_MEASUREMENT_PROFILE);
-  firstProfile.profile_guided_optimization.rust_target_cpu = "x86-64-v3";
-  secondProfile.profile_guided_optimization.rust_target_cpu = "x86-64";
+  firstProfile.rust_target_cpu = "x86-64-v3";
+  secondProfile.rust_target_cpu = "x86-64";
 
   const first = writeInput(
     dir,
@@ -937,7 +937,7 @@ withTempDir((dir) => {
   assert.equal(merged.validation.measurement_profile_warnings.length, 1);
   assert.deepEqual(
     merged.validation.measurement_profile_warnings[0].mismatched_fields,
-    ["profile_guided_optimization.rust_target_cpu"],
+    ["rust_target_cpu"],
   );
 });
 
