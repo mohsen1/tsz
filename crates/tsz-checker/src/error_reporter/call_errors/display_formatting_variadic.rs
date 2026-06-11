@@ -28,6 +28,29 @@ impl<'a> CheckerState<'a> {
         Some(self.format_tuple_element_display(&elements, readonly))
     }
 
+    /// Whether an argument mapping into this rest parameter is reported
+    /// against a per-position element type or sliced remainder rather than
+    /// the whole rest tuple — true when the rest parameter's type is a tuple.
+    ///
+    /// tsc's `getTypeAtPosition`/`getEffectiveRestType` model never relates an
+    /// argument against the whole rest tuple, and the solver already computes
+    /// that per-position/sliced expected type, so display reconstruction from
+    /// the raw rest parameter must stand down for these shapes.
+    pub(in crate::error_reporter::call_errors) fn rest_tuple_parameter_reports_per_position(
+        &mut self,
+        raw_param_type: TypeId,
+    ) -> bool {
+        let raw_unwrapped = query_common::unwrap_readonly(self.ctx.types, raw_param_type);
+        if query_common::tuple_elements(self.ctx.types, raw_unwrapped).is_some() {
+            return true;
+        }
+        // The raw type may hide the tuple behind an alias/application; only
+        // then pay for an environment evaluation.
+        let instantiated_probe = self.evaluate_type_with_env(raw_param_type);
+        let unwrapped = query_common::unwrap_readonly(self.ctx.types, instantiated_probe);
+        query_common::tuple_elements(self.ctx.types, unwrapped).is_some()
+    }
+
     pub(crate) fn constrained_variadic_tuple_parameter_display(
         &mut self,
         param_type: TypeId,
