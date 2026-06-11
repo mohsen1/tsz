@@ -61,6 +61,7 @@ withTempDir((dir) => {
     measurement_profile: {
       mode: "release-pgo",
       tsz_binary_source: "bench-dist",
+      rust_target_cpu: "x86-64-v3",
       generated_at: "2026-05-20T00:00:00.000Z",
       profile_guided_optimization: {
         requested: true,
@@ -272,6 +273,7 @@ withTempDir((dir) => {
     pgo_optimized: true,
     profile_fingerprint: "profile-abc123",
     training_fingerprint: "training-def456",
+    rust_target_cpu: "x86-64-v3",
     training_input_count: 12,
     training_failure_count: 0,
     warning: null,
@@ -379,6 +381,7 @@ withTempDir((dir) => {
     pgo_optimized: false,
     profile_fingerprint: null,
     training_fingerprint: null,
+    rust_target_cpu: null,
     training_input_count: null,
     training_failure_count: null,
     warning: "release-pgo metadata missing pgo optimized flag, profile fingerprint, training fingerprint",
@@ -758,6 +761,7 @@ withTempDir((dir) => {
     pgo_optimized: null,
     profile_fingerprint: null,
     training_fingerprint: null,
+    rust_target_cpu: null,
     training_input_count: null,
     training_failure_count: null,
     warning: "measurement_profile missing",
