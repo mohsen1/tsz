@@ -10,7 +10,7 @@
 //! schedule-dependent, so the same project produced different diagnostics
 //! run to run (false TS2339/TS2344 storms).
 //!
-//! This test drives the real binary over a 9-file NodeNext project distilled
+//! This test drives the real binary over a 9-file `NodeNext` project distilled
 //! from the issue witness (binders renamed) and asserts forced-parallel runs
 //! are byte-identical to the sequential run. Before the lib-decl fallback
 //! validation this failed deterministically: the parallel output disagreed
