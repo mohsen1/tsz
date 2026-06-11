@@ -69,13 +69,13 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: crate::context::SymbolTypeCache::with_capacity(
                 symbol_cache_capacity,
             ),
-            enum_namespace_types: FxHashMap::default(),
+            enum_namespace_types: crate::context::CowCache::default(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
             lib_delegation_cache: crate::context::CrossFileDelegationCache::default(),
-            namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
-            export_equals_named_cache: RefCell::new(FxHashMap::default()),
-            nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
+            namespace_member_resolution_cache: RefCell::new(crate::context::CowCache::default()),
+            export_equals_named_cache: RefCell::new(crate::context::CowCache::default()),
+            nested_namespace_candidates_cache: RefCell::new(crate::context::CowCache::default()),
             symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
             jsdoc_global_typedef_lookup_cache: crate::context::JSDocGlobalTypedefLookupCache {
                 miss_cache: RefCell::new(FxHashSet::default()),
@@ -83,15 +83,15 @@ impl<'a> CheckerContext<'a> {
                 typedef_presence_by_file: Arc::new(dashmap::DashMap::new()),
             },
             nested_namespace_candidates_cache_complete: Cell::new(false),
-            lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
+            lowering_entity_name_resolution_cache: RefCell::new(crate::context::CowCache::default()),
             namespace_exports_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
             shared_constraint_proofs: None,
             cross_file_type_params_cache: None,
             skip_lib_type_resolution: false,
-            lib_heritage_in_progress: FxHashSet::default(),
+            lib_heritage_in_progress: crate::context::CowCache::default(),
             node_types: crate::context::NodeTypeCache::with_capacity(arena.nodes.len()),
-            request_node_types: FxHashMap::default(),
+            request_node_types: crate::context::CowCache::default(),
             object_literal_tracking: crate::context::ObjectLiteralTracking::default(),
             request_cache_counters: crate::context::RequestCacheCounters::default(),
             type_environment: RefCell::new(TypeEnvironment::new()),
@@ -100,11 +100,10 @@ impl<'a> CheckerContext<'a> {
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
             pruning_union_members: false,
-            jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
-            jsdoc_generic_typedef_resolving: RefCell::new(FxHashMap::default()),
-            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                128,
-                Default::default(),
+            jsdoc_typedef_resolving: RefCell::new(crate::context::CowCache::default()),
+            jsdoc_generic_typedef_resolving: RefCell::new(crate::context::CowCache::default()),
+            flow_analysis_cache: RefCell::new(crate::context::CowCache::new(
+                FxHashMap::with_capacity_and_hasher(128, Default::default()),
             )),
             flow_reference_keys: RefCell::new(FxHashMap::default()),
             narrowable_identifier_cache: RefCell::new(
@@ -118,19 +117,21 @@ impl<'a> CheckerContext<'a> {
             flow_results: RefCell::new(FxHashMap::with_capacity_and_hasher(64, Default::default())),
             flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             symbol_flow_memo: crate::context::SymbolFlowMemoCaches::default(),
-            symbol_flow_confirmed: RefCell::new(FxHashMap::default()),
+            symbol_flow_confirmed: RefCell::new(crate::context::CowCache::default()),
             narrowing_cache: tsz_solver::narrowing::NarrowingCache::new(),
             call_type_predicates: crate::control_flow::CallPredicateMap::default(),
-            daa_error_nodes: FxHashSet::default(),
+            daa_error_nodes: crate::context::CowCache::default(),
             deferred_ts2454_errors: Vec::new(),
-            flow_narrowed_nodes: FxHashSet::with_capacity_and_hasher(256, Default::default()),
+            flow_narrowed_nodes: crate::context::CowCache::new(
+                FxHashSet::with_capacity_and_hasher(256, Default::default()),
+            ),
             refs_resolved: FxHashSet::default(),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             namespace_module_names: FxHashMap::default(),
             js_export_surface_cache: FxHashMap::default(),
             js_export_surface_resolution_set: FxHashSet::default(),
-            expando_property_resolution_set: FxHashSet::default(),
+            expando_property_resolution_set: crate::context::CowCache::default(),
             module_specifiers: Arc::new(FxHashMap::default()),
             module_path_specifiers: Arc::new(FxHashMap::default()),
             class_instance_type_to_decl: FxHashMap::default(),
@@ -170,9 +171,9 @@ impl<'a> CheckerContext<'a> {
             diagnostics: Vec::new(),
             diagnostics_discarded: false,
             diagnostic_indices: DiagnosticIndices::default(),
-            no_overload_call_nodes: FxHashSet::default(),
+            no_overload_call_nodes: crate::context::CowCache::default(),
             callback_return_type_errors: Vec::new(),
-            modules_with_ts2307_emitted: FxHashSet::default(),
+            modules_with_ts2307_emitted: crate::context::CowCache::default(),
             deferred_truthiness_diagnostics: Vec::new(),
             deferred_excess_property_implicit_any_diagnostics: Vec::new(),
             symbol_resolution_stack: Vec::new(),
@@ -189,14 +190,14 @@ impl<'a> CheckerContext<'a> {
             window_partial_ctor_types: FxHashMap::default(),
             jsdoc_enum_resolution_set: FxHashSet::default(),
             circular_class_symbols: FxHashSet::default(),
-            pending_implicit_any_vars: FxHashMap::default(),
+            pending_implicit_any_vars: crate::context::CowCache::default(),
             pending_circular_return_sites: PendingCircularReturnSites::default(),
             non_closure_circular_return_tracking_depth: 0,
-            reported_implicit_any_vars: FxHashMap::default(),
+            reported_implicit_any_vars: crate::context::CowCache::default(),
             inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
-            implicit_any_checked_closures: FxHashSet::default(),
-            implicit_any_contextual_closures: FxHashSet::default(),
+            implicit_any_checked_closures: crate::context::CowCache::default(),
+            implicit_any_contextual_closures: crate::context::CowCache::default(),
             deferred_implicit_any_closures: Vec::new(),
             speculative_implicit_any_closures: Vec::new(),
             closures_with_contextual_this_type: FxHashSet::default(),
@@ -312,7 +313,7 @@ impl<'a> CheckerContext<'a> {
             had_outer_loop: false,
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
-            emitted_ts2454_errors: FxHashSet::default(),
+            emitted_ts2454_errors: crate::context::CowCache::default(),
             emitted_ts2411_for_iface_prop: FxHashSet::default(),
             type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -483,7 +484,8 @@ impl<'a> CheckerContext<'a> {
         // node_types is per-arena (keyed by raw node index u32), so it must NOT
         // be carried across files — indices from file A collide with file B.
         // We keep the fresh per-arena allocation from base().
-        self.flow_analysis_cache = RefCell::new(cache.flow_analysis_cache);
+        self.flow_analysis_cache =
+            RefCell::new(crate::context::CowCache::new(cache.flow_analysis_cache));
         // Reset flow worklist/visited buffers since they had pre-allocated capacity
         // in base() but cache path historically used empty defaults.
         self.flow_worklist = RefCell::new(VecDeque::new());
@@ -657,42 +659,26 @@ impl<'a> CheckerContext<'a> {
         // child writes must be visible to the parent and to sibling children
         // within the same file-check session.
         ctx.lib_delegation_cache = parent.lib_delegation_cache.clone();
-        // Skip the deep `HashMap::clone` for caches that are empty on the
-        // parent: `ctx` was just constructed via `Self::base(...)` so its
-        // matching cache is already an empty HashMap, and cloning an empty
-        // parent into it would be wasted allocation. On the scale-cliff
-        // fixtures, `with_parent_cache` fires 6,735 times per run — even a
-        // single saved allocation per call is meaningful, and these four
-        // caches are typically empty at construction time for the
-        // `TypeEnvironmentCore` / `AliasResolution` /
-        // `DelegateCrossArenaSymbol` child checkers that dominate the call
-        // graph (see #5632's `by_reason` data on monorepo-006).
-        {
-            let parent_cache = parent.namespace_member_resolution_cache.borrow();
-            if !parent_cache.is_empty() {
-                *ctx.namespace_member_resolution_cache.borrow_mut() = parent_cache.clone();
-            }
-        }
-        {
-            let parent_cache = parent.export_equals_named_cache.borrow();
-            if !parent_cache.is_empty() {
-                *ctx.export_equals_named_cache.borrow_mut() = parent_cache.clone();
-            }
-        }
-        {
-            let parent_cache = parent.nested_namespace_candidates_cache.borrow();
-            if !parent_cache.is_empty() {
-                *ctx.nested_namespace_candidates_cache.borrow_mut() = parent_cache.clone();
-            }
-        }
+        // These per-checker caches are `CowCache`-backed: inheriting the
+        // parent's entries is an O(1) `Arc` bump, and the child copy-on-writes
+        // only if it actually mutates the inherited map. The historical
+        // per-child deep `HashMap::clone` here was O(children × cache-size) —
+        // `with_parent_cache` fires 6,735 times per run on the scale-cliff
+        // fixtures (issue #13087).
+        ctx.namespace_member_resolution_cache
+            .borrow_mut()
+            .clone_from(&parent.namespace_member_resolution_cache.borrow());
+        ctx.export_equals_named_cache
+            .borrow_mut()
+            .clone_from(&parent.export_equals_named_cache.borrow());
+        ctx.nested_namespace_candidates_cache
+            .borrow_mut()
+            .clone_from(&parent.nested_namespace_candidates_cache.borrow());
         ctx.nested_namespace_candidates_cache_complete =
             Cell::new(parent.nested_namespace_candidates_cache_complete.get());
-        {
-            let parent_cache = parent.lowering_entity_name_resolution_cache.borrow();
-            if !parent_cache.is_empty() {
-                *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent_cache.clone();
-            }
-        }
+        ctx.lowering_entity_name_resolution_cache
+            .borrow_mut()
+            .clone_from(&parent.lowering_entity_name_resolution_cache.borrow());
         ctx.jsdoc_global_typedef_lookup_cache
             .typedef_presence_by_file = Arc::clone(
             &parent
@@ -712,16 +698,12 @@ impl<'a> CheckerContext<'a> {
         // Cross-file JSDoc import/typedef resolution spawns nested CheckerStates;
         // if the active typedef set is reset at that boundary, cyclic CommonJS
         // JSDoc graphs can recurse until stack overflow.
-        {
-            let parent_typedefs = parent.jsdoc_typedef_resolving.borrow();
-            if !parent_typedefs.is_empty() {
-                ctx.jsdoc_typedef_resolving = RefCell::new(parent_typedefs.clone());
-            }
-            let parent_generic_typedefs = parent.jsdoc_generic_typedef_resolving.borrow();
-            if !parent_generic_typedefs.is_empty() {
-                ctx.jsdoc_generic_typedef_resolving = RefCell::new(parent_generic_typedefs.clone());
-            }
-        }
+        ctx.jsdoc_typedef_resolving
+            .borrow_mut()
+            .clone_from(&parent.jsdoc_typedef_resolving.borrow());
+        ctx.jsdoc_generic_typedef_resolving
+            .borrow_mut()
+            .clone_from(&parent.jsdoc_generic_typedef_resolving.borrow());
 
         // Propagate expando-property resolution state so child checkers do not
         // lose recursion protection while resolving CommonJS/JS property reads
@@ -735,12 +717,8 @@ impl<'a> CheckerContext<'a> {
         // cross-arena delegation (replaces thread-local guards).
         ctx.eval_session = Rc::clone(&parent.eval_session);
 
-        if !parent.implicit_any_checked_closures.is_empty() {
-            ctx.implicit_any_checked_closures = parent.implicit_any_checked_closures.clone();
-        }
-        if !parent.implicit_any_contextual_closures.is_empty() {
-            ctx.implicit_any_contextual_closures = parent.implicit_any_contextual_closures.clone();
-        }
+        ctx.implicit_any_checked_closures = parent.implicit_any_checked_closures.clone();
+        ctx.implicit_any_contextual_closures = parent.implicit_any_contextual_closures.clone();
 
         // Propagate depth from parent to prevent infinite recursion across arena boundaries.
         ctx.recursion_depth =

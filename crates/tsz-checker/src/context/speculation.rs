@@ -40,7 +40,9 @@ use tsz_solver::TypeId;
 
 use crate::diagnostics::Diagnostic;
 
-use super::{CheckerContext, PendingImplicitAnyKind, PendingImplicitAnyVar, RequestCacheKey};
+use super::{
+    CheckerContext, CowCache, PendingImplicitAnyKind, PendingImplicitAnyVar, RequestCacheKey,
+};
 
 // ---------------------------------------------------------------------------
 // Internal helpers (free functions to avoid borrow conflicts)
@@ -50,7 +52,7 @@ use super::{CheckerContext, PendingImplicitAnyKind, PendingImplicitAnyVar, Reque
 /// with code 2454. Without this cleanup, discarded TS2454 errors remain in
 /// the dedup set and prevent re-emission on subsequent passes.
 fn cleanup_ts2454_dedup(
-    emitted_ts2454_errors: &mut FxHashSet<(u32, SymbolId)>,
+    emitted_ts2454_errors: &mut CowCache<FxHashSet<(u32, SymbolId)>>,
     discarded: &[Diagnostic],
 ) {
     for diag in discarded {
@@ -95,11 +97,12 @@ fn is_always_emit_grammar_code(code: u32) -> bool {
 pub(crate) struct DiagnosticSnapshot {
     /// Length of `ctx.diagnostics` at snapshot time (truncation point).
     pub diagnostics_len: usize,
-    /// Clone of `ctx.diagnostic_indices.emitted` for dedup restoration.
-    pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// O(1) `CowCache` snapshot of `ctx.diagnostic_indices.emitted` for
+    /// dedup restoration.
+    pub emitted_diagnostics: CowCache<FxHashSet<(u32, u32)>>,
     /// Clone of nested no-overload call markers for recovery-aware overload
     /// candidate rejection.
-    pub no_overload_call_nodes: FxHashSet<u32>,
+    pub no_overload_call_nodes: CowCache<FxHashSet<u32>>,
     /// Length of `ctx.deferred_ts2454_errors` at snapshot time.
     pub deferred_ts2454_len: usize,
 }
@@ -110,12 +113,12 @@ pub(crate) struct DiagnosticSnapshot {
 /// inference) that mutate more than just the diagnostic vector.
 pub(crate) struct FullSnapshot {
     pub diag: DiagnosticSnapshot,
-    pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
-    pub modules_with_ts2307_emitted: FxHashSet<String>,
-    pub pending_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyVar>,
-    pub reported_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyKind>,
-    pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
-    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
+    pub emitted_ts2454_errors: CowCache<FxHashSet<(u32, SymbolId)>>,
+    pub modules_with_ts2307_emitted: CowCache<FxHashSet<String>>,
+    pub pending_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyVar>>,
+    pub reported_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyKind>>,
+    pub implicit_any_checked_closures: CowCache<FxHashSet<NodeIndex>>,
+    pub request_node_types: CowCache<FxHashMap<(u32, RequestCacheKey), TypeId>>,
 }
 
 /// Cache snapshot for return-type inference, which also corrupts `node_types`,
@@ -126,24 +129,22 @@ pub(crate) struct FullSnapshot {
 pub(crate) struct CacheSnapshot {
     /// Clone of the flat `node_types` cache before speculation.
     pub node_types: super::NodeTypeCache,
-    /// Full request-aware cache snapshot. Speculation may overwrite existing
-    /// entries, so rollback must restore values, not just prune additions.
-    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
-    /// Clone of the flow analysis cache.
-    pub flow_analysis_cache: rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>,
+    /// O(1) `CowCache` snapshot of the flow analysis cache.
+    pub flow_analysis_cache:
+        CowCache<rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>,
     /// Clone of `flow_narrowed_nodes`: nodes `check_flow_usage` already
     /// narrowed, for which `get_type_of_node` skips its second narrowing
     /// pass. Markers minted during speculation describe node types and flow
     /// results this snapshot rolls back; leaving them behind suppresses
     /// re-narrowing against the restored caches and yields stale types.
-    pub flow_narrowed_nodes: FxHashSet<u32>,
+    pub flow_narrowed_nodes: CowCache<FxHashSet<u32>>,
     /// Clone of `daa_error_nodes`: nodes whose definite-assignment (TS2454)
     /// error suppresses flow narrowing. Restored together with the TS2454
     /// diagnostics and dedup state that produced the markers.
-    pub daa_error_nodes: FxHashSet<u32>,
+    pub daa_error_nodes: CowCache<FxHashSet<u32>>,
     /// Clone of the stable-flow confirmation cache. Confirmations recorded
     /// during a speculative pass describe rolled-back flow analysis results.
-    pub symbol_flow_confirmed: FxHashMap<(SymbolId, TypeId), FlowNodeId>,
+    pub symbol_flow_confirmed: CowCache<FxHashMap<(SymbolId, TypeId), FlowNodeId>>,
     /// Thread-local global resolution fuel counter at snapshot time. Speculative
     /// sites (return-type inference) shouldn't bill their work against the
     /// global budget when rolled back — the work will be redone non-
@@ -234,7 +235,6 @@ impl<'a> CheckerContext<'a> {
             full: self.snapshot_full(),
             cache: CacheSnapshot {
                 node_types: self.node_types.clone(),
-                request_node_types: self.request_node_types.clone(),
                 flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
                 flow_narrowed_nodes: self.flow_narrowed_nodes.clone(),
                 daa_error_nodes: self.daa_error_nodes.clone(),
@@ -328,13 +328,15 @@ impl<'a> CheckerContext<'a> {
         );
         self.rollback_full(&snap.full);
         self.node_types.clone_from(&snap.cache.node_types);
-        self.request_node_types
-            .clone_from(&snap.cache.request_node_types);
-        *self.flow_analysis_cache.borrow_mut() = snap.cache.flow_analysis_cache.clone();
+        self.flow_analysis_cache
+            .borrow_mut()
+            .clone_from(&snap.cache.flow_analysis_cache);
         self.flow_narrowed_nodes
             .clone_from(&snap.cache.flow_narrowed_nodes);
         self.daa_error_nodes.clone_from(&snap.cache.daa_error_nodes);
-        *self.symbol_flow_confirmed.borrow_mut() = snap.cache.symbol_flow_confirmed.clone();
+        self.symbol_flow_confirmed
+            .borrow_mut()
+            .clone_from(&snap.cache.symbol_flow_confirmed);
         crate::state_domain::type_environment::lazy::restore_global_resolution_fuel(
             snap.cache.global_resolution_fuel,
         );
@@ -490,14 +492,14 @@ impl<'a> CheckerContext<'a> {
 
     /// Restore TS2454 dedup state from a snapshot, allowing re-emission during
     /// a retry pass (e.g., after overload resolution failure).
-    pub(crate) fn restore_ts2454_state(&mut self, snap: &FxHashSet<(u32, SymbolId)>) {
+    pub(crate) fn restore_ts2454_state(&mut self, snap: &CowCache<FxHashSet<(u32, SymbolId)>>) {
         self.emitted_ts2454_errors.clone_from(snap);
     }
 }
 
 /// Snapshot of speculation-scoped implicit-any closure state.
 pub(crate) struct ImplicitAnyClosureSnapshot {
-    checked_closures: FxHashSet<NodeIndex>,
+    checked_closures: CowCache<FxHashSet<NodeIndex>>,
 }
 
 impl ImplicitAnyClosureSnapshot {
