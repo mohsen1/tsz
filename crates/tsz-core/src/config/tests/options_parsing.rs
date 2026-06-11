@@ -318,6 +318,33 @@ fn test_ts5059_emitted_for_invalid_react_namespace_value() {
 }
 
 #[test]
+fn test_jsx_identifier_options_accept_ecmascript_unicode_identifiers() {
+    let source = r#"{
+  "compilerOptions": {
+"jsx": "react",
+"jsxFactory": "élément.create",
+"reactNamespace": "日本語"
+  }
+}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::INVALID_VALUE_FOR_JSXFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
+        ),
+        "Unicode jsxFactory should be accepted, got diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
+        ),
+        "Unicode reactNamespace should be accepted, got diagnostics: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
 fn test_disable_size_limit_option_is_recognized() {
     let source = r#"{
   "compilerOptions": {

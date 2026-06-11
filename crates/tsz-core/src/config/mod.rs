@@ -9,6 +9,7 @@ use crate::checker::diagnostics::Diagnostic;
 use crate::emitter::{ModuleKind, NewLineKind, ScriptTarget};
 use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
 use tsz_common::diagnostics::format_message;
+use tsz_scanner::{is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 mod deprecation_helpers;
 mod extends;
 mod lib_offsets;
@@ -482,15 +483,12 @@ fn is_valid_identifier_or_qualified_name(s: &str) -> bool {
 }
 
 fn is_valid_identifier(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
     let mut chars = s.chars();
     match chars.next() {
-        Some(c) if c.is_alphabetic() || c == '_' || c == '$' => {}
+        Some(c) if is_ecmascript_identifier_start(c) => {}
         _ => return false,
     }
-    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+    chars.all(is_ecmascript_identifier_part)
 }
 
 /// Find the byte offset of a JSON key within the source text.

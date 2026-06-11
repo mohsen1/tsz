@@ -8,7 +8,10 @@ use super::super::DeclarationEmitter;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::{SyntaxKind, string_to_token, token_is_reserved_word};
+use tsz_scanner::{
+    SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start, string_to_token,
+    token_is_reserved_word,
+};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn format_object_member_type_text(
@@ -391,11 +394,11 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        if !is_ecmascript_identifier_start(first) {
             return false;
         }
 
-        chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        chars.all(is_ecmascript_identifier_part)
     }
 
     pub(in crate::declaration_emitter) fn preferred_object_member_initializer_type_text(

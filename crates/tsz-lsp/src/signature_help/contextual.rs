@@ -1,3 +1,4 @@
+use super::unicode_identifier::identifier_before_offset;
 use super::*;
 
 impl<'a> SignatureHelpProvider<'a> {
@@ -329,12 +330,11 @@ impl<'a> SignatureHelpProvider<'a> {
             return None;
         }
         let prefix = &self.source_text[start..end];
-        let colon_candidate = prefix.rfind(':').and_then(|idx| {
-            self.identifier_before_offset(prefix, idx)
-                .map(|name| (idx, name))
-        });
+        let colon_candidate = prefix
+            .rfind(':')
+            .and_then(|idx| identifier_before_offset(prefix, idx).map(|name| (idx, name)));
         let paren_candidate = prefix.rfind('(').and_then(|idx| {
-            let name = self.identifier_before_offset(prefix, idx)?;
+            let name = identifier_before_offset(prefix, idx)?;
             if name == "function" {
                 return None;
             }
@@ -353,25 +353,6 @@ impl<'a> SignatureHelpProvider<'a> {
             (None, Some((_, pname))) => Some(pname),
             (None, None) => None,
         }
-    }
-
-    pub(super) fn identifier_before_offset(&self, text: &str, offset: usize) -> Option<String> {
-        if offset == 0 || offset > text.len() {
-            return None;
-        }
-        let bytes = text.as_bytes();
-        let mut end = offset;
-        while end > 0 && bytes[end - 1].is_ascii_whitespace() {
-            end -= 1;
-        }
-        if end == 0 {
-            return None;
-        }
-        let mut start = end;
-        while start > 0 && Self::is_ascii_identifier_byte(bytes[start - 1]) {
-            start -= 1;
-        }
-        (start < end).then(|| text[start..end].to_string())
     }
 
     pub(super) fn parameter_type_and_name_at(
@@ -1024,10 +1005,6 @@ impl<'a> SignatureHelpProvider<'a> {
                 })
                 .collect();
         }
-    }
-
-    pub(super) const fn is_ascii_identifier_byte(byte: u8) -> bool {
-        byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
     }
 
     pub(super) fn find_textual_call_trigger(
