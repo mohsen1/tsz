@@ -369,6 +369,9 @@ mod rest_parameter_tests;
 #[path = "../tests/rest_tuple_contextual_typing_tests.rs"]
 mod rest_tuple_contextual_typing_tests;
 #[cfg(test)]
+#[path = "tests/return_alias_unknown_eval_assignability_tests.rs"]
+mod return_alias_unknown_eval_assignability_tests;
+#[cfg(test)]
 #[path = "tests/return_relation_routing_arch_tests.rs"]
 mod return_relation_routing_arch_tests;
 #[cfg(test)]
