@@ -17,6 +17,7 @@ pub mod declaration_emitter;
 pub mod emitter;
 pub mod enums;
 pub mod import_usage;
+pub mod import_value_usage;
 pub(crate) mod jsx_pragmas;
 
 /// tsc emits this exact string when recursive DTS expansion reaches its depth limit.

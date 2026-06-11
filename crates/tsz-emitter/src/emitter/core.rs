@@ -228,6 +228,11 @@ pub struct PrinterOptions {
     /// True when jsx was explicitly set to "preserve" (not the unset default).
     /// Used by rewriteRelativeImportExtensions to add preserveJsx arg.
     pub jsx_preserve_explicit: bool,
+    /// Binder-backed per-import-binding value-usage facts. When set, the
+    /// import-elision decision sites consult these facts instead of the
+    /// text-based heuristics in `crate::import_usage`. Binder-less callers
+    /// (transpile-style emit) leave this `None` and keep the text fallback.
+    pub import_usage_facts: Option<Arc<crate::import_value_usage::ImportValueUsageFacts>>,
 }
 
 impl Default for PrinterOptions {
@@ -273,6 +278,7 @@ impl Default for PrinterOptions {
             verbatim_module_syntax: false,
             rewrite_relative_import_extensions: false,
             jsx_preserve_explicit: false,
+            import_usage_facts: None,
         }
     }
 }

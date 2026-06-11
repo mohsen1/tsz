@@ -447,6 +447,31 @@ pub(crate) fn emit_outputs(
                 &declaration_const_enum_exports,
             );
 
+            // Binder-backed import-elision facts: compute per-binding
+            // value-usage facts from the file's binder so import elision
+            // follows symbol references instead of the text-scan heuristics.
+            // Skipped where elision never applies (JS sources,
+            // --verbatimModuleSyntax) and for files without imports.
+            if !is_js_input
+                && !printer_options.verbatim_module_syntax
+                && tsz_emitter::import_value_usage::file_has_import_declarations(&file.arena)
+            {
+                let binder =
+                    tsz::parallel::create_binder_from_bound_file(file, context.program, file_idx);
+                printer_options.import_usage_facts = Some(std::sync::Arc::new(
+                    tsz_emitter::import_value_usage::compute_import_value_usage_facts(
+                        &file.arena,
+                        &binder,
+                        tsz_emitter::import_value_usage::ImportValueUsageInputs {
+                            external_const_enum_bindings: Some(
+                                &printer_options.external_const_enum_bindings,
+                            ),
+                            type_only_nodes: Some(printer_options.type_only_nodes.as_ref()),
+                        },
+                    ),
+                ));
+            }
+
             // Run the lowering pass to generate transform directives
             let module_none_out_file =
                 js_bundle_path.is_some() && matches!(printer_options.module, ModuleKind::None);

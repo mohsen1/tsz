@@ -214,6 +214,17 @@ impl<'a> LoweringPass<'a> {
         usage
     }
 
+    /// Binder-backed value-usage fact for one import-binding name node.
+    /// `None` when facts are unavailable for this binding; callers fall back
+    /// to the text-based heuristics.
+    fn binding_value_used_fact(&self, name_idx: NodeIndex) -> Option<bool> {
+        self.ctx
+            .options
+            .import_usage_facts
+            .as_ref()?
+            .binding_value_used(name_idx)
+    }
+
     pub(super) fn import_has_value_usage_after_node(
         &self,
         node: &Node,
@@ -223,7 +234,7 @@ impl<'a> LoweringPass<'a> {
         if clause.name.is_some() {
             let default_name = emit_utils::identifier_text_or_empty(self.arena, clause.name);
             if !default_name.is_empty() {
-                names.push(default_name);
+                names.push((clause.name, default_name));
             }
         }
         if clause.named_bindings.is_some()
@@ -233,7 +244,7 @@ impl<'a> LoweringPass<'a> {
             if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                 let ns_name = emit_utils::identifier_text_or_empty(self.arena, named_imports.name);
                 if !ns_name.is_empty() {
-                    names.push(ns_name);
+                    names.push((named_imports.name, ns_name));
                 }
             } else {
                 for &spec_idx in &named_imports.elements.nodes {
@@ -248,7 +259,7 @@ impl<'a> LoweringPass<'a> {
                     }
                     let local_name = emit_utils::identifier_text_or_empty(self.arena, spec.name);
                     if !local_name.is_empty() {
-                        names.push(local_name);
+                        names.push((spec.name, local_name));
                     }
                 }
             }
@@ -256,6 +267,25 @@ impl<'a> LoweringPass<'a> {
         if names.is_empty() {
             return true;
         }
+
+        // Binder-backed facts: authoritative for the pure value-usage
+        // question when every binding is covered. Decorator-metadata and ES5
+        // Promise-constructor usages are implicit references the reference
+        // scan does not model, so they are still checked below.
+        let mut facts_settled = false;
+        if self.ctx.options.import_usage_facts.is_some() {
+            let mut all_known = true;
+            for (name_idx, _) in &names {
+                match self.binding_value_used_fact(*name_idx) {
+                    Some(true) => return true,
+                    Some(false) => {}
+                    None => all_known = false,
+                }
+            }
+            facts_settled = all_known;
+        }
+        let names: Vec<String> = names.into_iter().map(|(_, name)| name).collect();
+
         let Some(source_text) = self.current_source_text else {
             return true;
         };
@@ -290,19 +320,20 @@ impl<'a> LoweringPass<'a> {
             }
         }
         let haystack = &source_text[start..];
-        // Strip type-only content so identifiers in type positions
-        // (type aliases, interfaces, type annotations, etc.) don't
-        // cause unnecessary helper emission.
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
-        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
-            &value_haystack,
-            &self.ctx.options.external_const_enum_bindings,
-        );
-        if names
-            .iter()
-            .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
-        {
-            return true;
+        if !facts_settled {
+            // Strip type-only content so identifiers in type positions
+            // (type aliases, interfaces, type annotations, etc.) don't
+            // cause unnecessary helper emission.
+            let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+            let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+                &value_haystack,
+                &self.ctx.options.external_const_enum_bindings,
+            );
+            if names.iter().any(|name| {
+                crate::import_usage::contains_identifier_occurrence(&value_haystack, name)
+            }) {
+                return true;
+            }
         }
         // Under `--emitDecoratorMetadata`, type annotations on decorated class
         // members become *value* references via `__metadata("design:type", X)`.
@@ -347,17 +378,24 @@ impl<'a> LoweringPass<'a> {
             {
                 return true;
             }
+            let fact = self.binding_value_used_fact(spec.name);
+            if fact == Some(true) {
+                return true;
+            }
             let Some(source_text) = self.current_source_text else {
                 return true;
             };
             let haystack = self.source_after_import_statement(node, source_text);
-            let value_haystack = crate::import_usage::strip_type_only_content(haystack);
-            let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
-                &value_haystack,
-                &self.ctx.options.external_const_enum_bindings,
-            );
-            if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name) {
-                return true;
+            if fact.is_none() {
+                let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+                let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+                    &value_haystack,
+                    &self.ctx.options.external_const_enum_bindings,
+                );
+                if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
+                {
+                    return true;
+                }
             }
             if self.ctx.options.emit_decorator_metadata
                 && crate::import_usage::name_appears_in_decorator_metadata_type(
