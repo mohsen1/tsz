@@ -1194,7 +1194,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     | TypeId::ERROR
                     | TypeId::FUNCTION
                     | TypeId::PROMISE_BASE
-                    | TypeId::DELEGATE
                     | TypeId::STRICT_ANY
             );
         }

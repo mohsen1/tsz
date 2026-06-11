@@ -115,8 +115,6 @@ pub enum RecursionProfile {
 
     // ----- Checker profiles -----
     /// Expression type checking depth.
-    ///
-    /// Used by `ExpressionChecker`.
     /// Generous limit for deeply nested expressions.
     ///
     /// depth = 500

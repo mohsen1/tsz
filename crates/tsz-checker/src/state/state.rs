@@ -1561,19 +1561,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &crate::context::TypingRequest,
     ) -> TypeId {
-        use crate::{ExprCheckResult, ExpressionChecker};
-
-        let expr_result = {
-            let mut expr_checker = ExpressionChecker::new(&mut self.ctx);
-            expr_checker.try_compute_expr_type_with_context(idx, request.contextual_type)
-        };
-
-        match expr_result {
-            ExprCheckResult::Type(ty) => ty,
-            ExprCheckResult::Delegate => {
-                self.compute_type_of_node_complex_with_request(idx, request)
-            }
-        }
+        self.compute_type_of_node_complex_with_request(idx, request)
     }
 
     /// Like `get_type_of_function` but under an explicit [`TypingRequest`].
@@ -1855,12 +1843,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Compute the type of a node (internal, not cached).
-    ///
-    /// This method first dispatches through `ExpressionChecker`. If the
-    /// dispatcher returns [`crate::ExprCheckResult::Delegate`], we fall back
-    /// to the full `CheckerState` implementation that has access to symbol
-    /// resolution, contextual typing, and other complex type checking
-    /// features. Delegation is control flow — it never appears as a `TypeId`.
     #[allow(dead_code)]
     fn compute_type_of_node_complex(&mut self, idx: NodeIndex) -> TypeId {
         self.compute_type_of_node_complex_with_request(idx, &crate::context::TypingRequest::NONE)

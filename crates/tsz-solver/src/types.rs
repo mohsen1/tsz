@@ -141,11 +141,6 @@ impl TypeId {
     /// Used to allow `promise_like_return_type_argument` to extract T from await expressions.
     pub const PROMISE_BASE: Self = Self(17);
 
-    /// Internal sentinel indicating that expression checking should be delegated
-    /// to `CheckerState` for complex cases that need full checker context.
-    /// This is NOT a real type and should never escape ExpressionChecker/CheckerState.
-    pub const DELEGATE: Self = Self(18);
-
     /// Internal sentinel used to represent 'any' in strict mode (North Star Fix).
     /// Behaves like 'any' but does NOT silence structural mismatches.
     pub const STRICT_ANY: Self = Self(19);

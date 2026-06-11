@@ -1,5 +1,5 @@
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
+use tsz_checker::test_utils::{check_source, check_source_code_messages};
 
 #[test]
 fn typeof_type_literal_call_signature_parameter_uses_declared_type() {
@@ -62,5 +62,40 @@ test3(1)("");
     assert!(
         ts2345.iter().any(|d| d.start == test3_string_arg),
         "Expected TS2345 on test3 string argument, got: {ts2345:#?}"
+    );
+}
+
+#[test]
+fn typeof_expression_dispatches_to_literal_union() {
+    let diagnostics = check_source_code_messages(
+        r#"
+declare const value: unknown;
+
+let ok:
+    | "string"
+    | "number"
+    | "bigint"
+    | "boolean"
+    | "symbol"
+    | "undefined"
+    | "object"
+    | "function" = typeof value;
+
+let bad: "string" = typeof value;
+"#,
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "`typeof value` must stay the literal-union result when routed through ExpressionDispatcher; got {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0].1.contains("\"number\""),
+        "diagnostic should mention the literal-union source, got {ts2322:?}"
     );
 }
