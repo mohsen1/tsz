@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 7;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 8;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -273,6 +273,12 @@ pub struct PerfCounterSnapshot {
     /// This bounded list is sorted by descending elapsed time. Alias names are
     /// labels for humans reading the report, not compiler-policy inputs.
     pub slow_type_alias_check_timings: Vec<SlowTypeAliasCheckTiming>,
+    /// Per-category resident-bytes breakdown (issue #13249 step 1).
+    ///
+    /// `None` ("not measured") when counters are disabled or no layer
+    /// recorded its category; `Some` with capacity-based byte estimates
+    /// otherwise. See [`ResidencySnapshot`] for category semantics.
+    pub residency: Option<ResidencySnapshot>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -785,6 +791,7 @@ impl PerfCounters {
             slow_check_file_timings: Self::snapshot_slow_check_file_timings(),
             slow_check_statement_timings: Self::snapshot_slow_check_statement_timings(),
             slow_type_alias_check_timings: Self::snapshot_slow_type_alias_check_timings(),
+            residency: snapshot_residency(),
         }
     }
 
