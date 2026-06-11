@@ -17,11 +17,8 @@ thread_local! {
     static ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK: Cell<bool> = const { Cell::new(false) };
 }
 
-// Global instantiation depth and fuel counters now live in
-// `EvaluationSession` (shared via `Rc` on `CheckerContext::eval_session`).
-// Previously these were `thread_local!` counters that survived cross-arena
-// delegation. The explicit session approach makes the state visible, testable,
-// and compatible with future multi-threaded evaluation.
+// Global instantiation depth and fuel counters live in `EvaluationSession`
+// (shared via `Rc` on `CheckerContext::eval_session`).
 
 impl<'a> CheckerState<'a> {
     // Get type of object literal.
@@ -348,6 +345,7 @@ impl<'a> CheckerState<'a> {
         // (unlike Mapped/Object types which can collide with built-in aliases
         // like Record, Partial, Pick, Omit due to interning dedup).
         if result != type_id {
+            self.record_nominal_application_eval_origin(result, type_id);
             let app_info = query::application_info(self.ctx.types, type_id);
             let db = self.ctx.types.as_type_database();
             let has_param_args = if let Some((_, args)) = &app_info {

@@ -1,8 +1,8 @@
-use super::super::super::{SubtypeChecker, TypeResolver};
+use super::super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use super::args_contain_type_parameters;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
-use crate::types::{TypeData, TypeId, Variance};
+use crate::types::{TypeApplicationId, TypeData, TypeId, Variance};
 use crate::visitor::application_id;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
@@ -111,6 +111,80 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         variances.as_ref().is_some_and(|variances| {
             variances.len() == app.args.len() && variances.iter().all(|v| v.is_independent())
         })
+    }
+
+    /// Same-base identical-or-`any` argument lawyer shortcut.
+    ///
+    /// Generalizes [`Self::try_same_base_all_any_target_args`] to mixed
+    /// argument lists: when source and target are applications of the SAME
+    /// generic definition with equal arity and every argument pair is either
+    /// the identical `TypeId` or has `any` on at least one side, tsc relates
+    /// the two instantiations (`relateVariances`: an invariant-strength
+    /// per-argument check passes in both directions for `any`, regardless of
+    /// the measured variance and before any structural expansion). This is
+    /// the kysely `ExpressionWrapper<DB, TB, any>` vs
+    /// `ExpressionWrapper<DB, TB, O[K]>` shape, whose deferred-conditional
+    /// members can never relate structurally.
+    ///
+    /// Accept-only by construction (returns `Some(True)` or `None`), so it is
+    /// safe for provenance-recovered application identities. Gated on
+    /// any-propagation being permissive on both sides at the current depth.
+    pub(crate) fn try_same_base_args_identical_or_any(
+        &mut self,
+        s_app_id: TypeApplicationId,
+        t_app_id: TypeApplicationId,
+    ) -> Option<SubtypeResult> {
+        let s_app = self.interner.type_application(s_app_id);
+        let t_app = self.interner.type_application(t_app_id);
+
+        if s_app.args.len() != t_app.args.len() || s_app.args.is_empty() {
+            return None;
+        }
+        let same_definition = s_app.base == t_app.base
+            || matches!(
+                (
+                    crate::visitor::lazy_def_id(self.interner, s_app.base),
+                    crate::visitor::lazy_def_id(self.interner, t_app.base),
+                ),
+                (Some(s_def), Some(t_def)) if self.resolver.defs_are_equivalent(s_def, t_def)
+            );
+        if !same_definition {
+            return None;
+        }
+        let args_identical_or_any = s_app
+            .args
+            .iter()
+            .zip(t_app.args.iter())
+            .all(|(&s_arg, &t_arg)| s_arg == t_arg || s_arg.is_any() || t_arg.is_any());
+        if !args_identical_or_any {
+            return None;
+        }
+        // The acceptance is justified by an `any` argument silencing the
+        // differing slot. When EVERY pair is identical, the two sides are
+        // structurally distinct for a NON-argument reason (e.g. the same
+        // application evaluated under different checker contexts -
+        // exactOptionalPropertyTypes can legally produce distinct shapes), so
+        // argument reasoning proves nothing; fall through to the structural
+        // comparison, which distinguishes those shapes correctly
+        // (`inferenceExactOptionalProperties2.ts`).
+        let any_pair_differs = s_app
+            .args
+            .iter()
+            .zip(t_app.args.iter())
+            .any(|(&s_arg, &t_arg)| s_arg != t_arg);
+        if !any_pair_differs {
+            return None;
+        }
+        let allow_any = self
+            .any_propagation
+            .allows_any_source_at_depth(self.guard.depth())
+            && self
+                .any_propagation
+                .allows_any_target_at_depth(self.guard.depth());
+        if !allow_any {
+            return None;
+        }
+        Some(SubtypeResult::True)
     }
 
     pub(super) fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {

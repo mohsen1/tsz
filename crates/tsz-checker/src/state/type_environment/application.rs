@@ -8,6 +8,30 @@ pub(crate) struct ApplicationBaseBody {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Record semantic (non-display) provenance from an evaluated structural
+    /// result back to the nominal `Application` it came from.
+    ///
+    /// A class/interface instantiation that checker-side evaluation lowered
+    /// to a structural shape keeps a reverse link to its application so the
+    /// solver relation layer can recover the generic identity for the
+    /// accept-only variance fast path. Gated on the result shape carrying a
+    /// nominal `symbol` (class/interface instances), so anonymous alias
+    /// expansions stay unrecorded.
+    pub(crate) fn record_nominal_application_eval_origin(
+        &mut self,
+        result: TypeId,
+        application: TypeId,
+    ) {
+        if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, result)
+            .is_some_and(|shape| shape.symbol.is_some())
+        {
+            self.ctx
+                .types
+                .as_type_database()
+                .record_application_eval_origin(result, application);
+        }
+    }
+
     pub(crate) fn evaluate_application_type_for_property_access(
         &mut self,
         type_id: TypeId,

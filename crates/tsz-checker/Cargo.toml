@@ -1755,6 +1755,10 @@ name = "mapped_indexed_constraint_substitution_tests"
 path = "tests/mapped_indexed_constraint_substitution_tests.rs"
 
 [[test]]
+name = "class_member_nominal_any_arg_relation_tests"
+path = "tests/class_member_nominal_any_arg_relation_tests.rs"
+
+[[test]]
 name = "implements_type_param_generation_identity_tests"
 path = "tests/implements_type_param_generation_identity_tests.rs"
 

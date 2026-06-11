@@ -961,6 +961,15 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.get_display_alias(type_id)
     }
 
+    fn record_application_eval_origin(&self, evaluated: TypeId, application: TypeId) {
+        self.interner
+            .record_application_eval_origin(evaluated, application);
+    }
+
+    fn get_application_eval_origin(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.get_application_eval_origin(type_id)
+    }
+
     fn mark_conditional_alias_base(&self, base: TypeId) {
         self.interner.mark_conditional_alias_base(base);
     }

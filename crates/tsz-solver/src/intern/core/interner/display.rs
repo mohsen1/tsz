@@ -183,6 +183,41 @@ impl TypeInterner {
         self.display_alias.get(&type_id).map(|r| *r)
     }
 
+    /// Record semantic provenance from an evaluated structural result back to
+    /// the `Application` it was produced from.
+    ///
+    /// Unlike [`Self::store_display_alias`], this carries no display-repaint
+    /// heuristics: it is recorded unconditionally for nominal application
+    /// evaluations and consumed only by the relation layer's accept-only
+    /// variance recovery (never by the printer). First write wins so a stable
+    /// origin survives later re-evaluations through other instantiations.
+    pub fn record_application_eval_origin(&self, evaluated: TypeId, application: TypeId) {
+        if evaluated == application || evaluated.is_intrinsic() {
+            return;
+        }
+        if !matches!(self.lookup(application), Some(TypeData::Application(_))) {
+            return;
+        }
+        // Guard against self-referential cycles (result appearing in its own
+        // application arguments).
+        if let Some(TypeData::Application(app_id)) = self.lookup(application) {
+            let app = self.type_application(app_id);
+            if app.args.contains(&evaluated) {
+                return;
+            }
+        }
+        self.application_eval_origin
+            .entry(evaluated)
+            .or_insert(application);
+    }
+
+    /// Look up the semantic application origin of an evaluated structural
+    /// result. Returns `None` when the type was not recorded as the
+    /// evaluation of a nominal `Application`.
+    pub fn get_application_eval_origin(&self, type_id: TypeId) -> Option<TypeId> {
+        self.application_eval_origin.get(&type_id).map(|r| *r)
+    }
+
     /// Record that an application base belongs to a type alias whose body is a
     /// conditional type. This is diagnostic-only provenance.
     pub fn mark_conditional_alias_base(&self, base: TypeId) {

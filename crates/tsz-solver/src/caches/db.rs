@@ -232,6 +232,17 @@ pub trait TypeDisplayProvenance {
         None
     }
 
+    /// Record semantic provenance from an evaluated structural result back
+    /// to the nominal `Application` it was produced from (relation-layer
+    /// accept-only variance recovery; never read by the printer).
+    fn record_application_eval_origin(&self, _evaluated: TypeId, _application: TypeId) {}
+
+    /// Look up the semantic application origin of an evaluated structural
+    /// result. Returns `None` when no origin was recorded.
+    fn get_application_eval_origin(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
     /// Mark an application base whose type-alias body is a conditional type.
     fn mark_conditional_alias_base(&self, _base: TypeId) {}
 
@@ -741,6 +752,14 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         Self::get_display_alias(self, type_id)
+    }
+
+    fn record_application_eval_origin(&self, evaluated: TypeId, application: TypeId) {
+        Self::record_application_eval_origin(self, evaluated, application);
+    }
+
+    fn get_application_eval_origin(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::get_application_eval_origin(self, type_id)
     }
 
     fn mark_conditional_alias_base(&self, base: TypeId) {

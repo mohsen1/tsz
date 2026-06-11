@@ -118,6 +118,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // the result is the original `Application` itself (the
                 // historical `if result != original_type_id` gate).
                 if result != original_type_id {
+                    // Semantic (non-display) provenance: a nominal
+                    // class/interface instantiation that evaluation lowered to
+                    // a structural object keeps a reverse link to its
+                    // application so the relation layer can recover the
+                    // generic identity for the accept-only variance fast
+                    // path. Recorded without display heuristics; never read
+                    // by the printer.
+                    if !ctx.is_type_alias_def
+                        && matches!(
+                            self.interner.lookup(result),
+                            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                        )
+                    {
+                        self.interner
+                            .record_application_eval_origin(result, original_type_id);
+                    }
                     self.record_application_evaluation_display_aliases(
                         result,
                         original_type_id,

@@ -258,6 +258,16 @@ pub struct TypeInterner {
     /// The formatter checks this to show `Dictionary<string>` instead
     /// of `{ [index: string]: string; }` in error messages.
     pub(super) display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Semantic provenance: evaluated structural result -> originating
+    /// `Application` TypeId.
+    ///
+    /// Unlike `display_alias`, this map is recorded unconditionally for
+    /// nominal (class/interface) application evaluations and is consumed by
+    /// the relation layer to recover generic identity for the accept-only
+    /// variance fast path (tsc `relateVariances` on same-reference
+    /// instantiations whose tsz forms were eagerly evaluated). It is never
+    /// read by the printer, so it carries no display-repaint heuristics.
+    pub(super) application_eval_origin: DashMap<TypeId, TypeId, FxBuildHasher>,
     /// Application bases whose type-alias body is a conditional type.
     ///
     /// Conditional aliases often evaluate to a branch with its own display
@@ -451,6 +461,7 @@ impl TypeInterner {
             exact_optional_property_types: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
+            application_eval_origin: DashMap::with_hasher(FxBuildHasher),
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),

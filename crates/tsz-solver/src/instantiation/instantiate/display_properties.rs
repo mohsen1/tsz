@@ -58,4 +58,37 @@ impl<'a> TypeInstantiator<'a> {
             .unwrap_or_else(|| display_props.as_ref().clone());
         self.interner.store_display_properties(result, props);
     }
+
+    /// Propagate semantic application provenance through instantiation.
+    ///
+    /// A nominal class/interface instantiation that evaluation lowered to a
+    /// structural shape keeps an `application_eval_origin` link. When the
+    /// shape is then *instantiated* (e.g. a generic interface body holding an
+    /// already-evaluated `ExpressionWrapper<O[K]>` member gets its own type
+    /// arguments substituted), the new shape is produced by substitution, not
+    /// by application evaluation, so it would otherwise lose the link. Rebuild
+    /// the origin by substituting the same arguments into the original
+    /// application's type arguments.
+    pub(super) fn propagate_instantiated_application_origin(
+        &mut self,
+        source: TypeId,
+        result: TypeId,
+    ) {
+        if source == result {
+            return;
+        }
+        let Some(origin) = self.interner.get_application_eval_origin(source) else {
+            return;
+        };
+        let Some(crate::types::TypeData::Application(app_id)) = self.interner.lookup(origin) else {
+            return;
+        };
+        let app = self.interner.type_application(app_id);
+        let base = app.base;
+        let args: Vec<TypeId> = app.args.clone();
+        let new_args: Vec<TypeId> = args.iter().map(|&arg| self.instantiate(arg)).collect();
+        let new_origin = self.interner.application(base, new_args);
+        self.interner
+            .record_application_eval_origin(result, new_origin);
+    }
 }
