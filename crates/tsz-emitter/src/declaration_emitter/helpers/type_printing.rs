@@ -745,6 +745,7 @@ impl<'a> DeclarationEmitter<'a> {
             type_id,
             preserve_named_application,
             None,
+            None,
         )
     }
 
@@ -757,6 +758,7 @@ impl<'a> DeclarationEmitter<'a> {
             &tsz_solver::construction::TypeInterner,
         ) -> bool,
         setter_parameter_names: Option<&FxHashMap<String, String>>,
+        elided_local_alias_defs: Option<&FxHashSet<tsz_solver::def::DefId>>,
     ) -> String {
         if let Some(interner) = self.type_interner {
             let type_id =
@@ -830,6 +832,9 @@ impl<'a> DeclarationEmitter<'a> {
                 .with_has_local_import_alias_resolver(&has_local_import_alias_resolver)
                 .with_setter_parameter_name_resolver(&setter_parameter_name_resolver)
                 .with_strict_null_checks(self.strict_null_checks);
+            if let Some(defs) = elided_local_alias_defs {
+                printer = printer.with_elided_local_alias_defs(defs);
+            }
 
             // Add symbol arena if available for visibility checking
             if let Some(binder) = self.binder {
@@ -884,7 +889,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         setter_parameter_names: Option<&FxHashMap<String, String>>,
     ) -> String {
-        let elided_alias_names = self.function_local_type_alias_application_names(type_id);
+        let elided_alias_defs = self.function_local_type_alias_application_defs(type_id);
         let type_id = if let Some(interner) = self.type_interner {
             let type_id = self
                 .inferred_declaration_mapped_constraint_surface(type_id)
@@ -902,12 +907,8 @@ impl<'a> DeclarationEmitter<'a> {
             type_id,
             Self::should_preserve_named_application_for_inferred_emit,
             setter_parameter_names,
+            Some(&elided_alias_defs),
         );
-        let printed = if elided_alias_names.is_empty() {
-            printed
-        } else {
-            Self::elide_type_reference_names(&printed, &elided_alias_names)
-        };
         let printed =
             Self::simplify_inexact_optional_mapped_intersection_text(&printed).unwrap_or(printed);
         let printed = self
@@ -928,7 +929,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_id: tsz_solver::types::TypeId,
     ) -> String {
-        let elided_alias_names = self.function_local_type_alias_application_names(type_id);
+        let elided_alias_defs = self.function_local_type_alias_application_defs(type_id);
         let type_id = if let Some(interner) = self.type_interner {
             let type_id = self
                 .inferred_declaration_mapped_constraint_surface(type_id)
@@ -942,15 +943,12 @@ impl<'a> DeclarationEmitter<'a> {
             type_id
         };
         let type_id = self.reduce_conditional_aliases_for_inferred_emit(type_id, 0);
-        let printed = self.print_type_id_with_policy(
+        let printed = self.print_type_id_with_policy_and_setter_parameter_names(
             type_id,
             Self::should_preserve_named_type_reference_for_emit,
+            None,
+            Some(&elided_alias_defs),
         );
-        let printed = if elided_alias_names.is_empty() {
-            printed
-        } else {
-            Self::elide_type_reference_names(&printed, &elided_alias_names)
-        };
         let printed =
             Self::simplify_inexact_optional_mapped_intersection_text(&printed).unwrap_or(printed);
         let printed = self
@@ -1105,19 +1103,26 @@ impl<'a> DeclarationEmitter<'a> {
         out
     }
 
-    fn function_local_type_alias_application_names(
+    /// Collect the defs of function-local type aliases applied in `type_id`.
+    ///
+    /// The walk intentionally covers only `Application` bases reachable
+    /// through unions/intersections — the positions where an un-nameable
+    /// local alias can surface in an inferred declaration. The printer then
+    /// elides every rendering of a collected def (applied or bare) wherever
+    /// it occurs in the printed tree.
+    fn function_local_type_alias_application_defs(
         &self,
         type_id: tsz_solver::types::TypeId,
-    ) -> FxHashSet<String> {
-        let mut names = FxHashSet::default();
-        self.collect_function_local_type_alias_application_names(type_id, &mut names, 0);
-        names
+    ) -> FxHashSet<tsz_solver::def::DefId> {
+        let mut defs = FxHashSet::default();
+        self.collect_function_local_type_alias_application_defs(type_id, &mut defs, 0);
+        defs
     }
 
-    fn collect_function_local_type_alias_application_names(
+    fn collect_function_local_type_alias_application_defs(
         &self,
         type_id: tsz_solver::types::TypeId,
-        names: &mut FxHashSet<String>,
+        defs: &mut FxHashSet<tsz_solver::def::DefId>,
         depth: usize,
     ) {
         if depth > 16 {
@@ -1137,180 +1142,27 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(symbol) = self.binder.and_then(|binder| binder.symbols.get(sym_id))
                     && symbol.flags & symbol_flags::TYPE_ALIAS != 0
                     && self.symbol_is_function_local_type_alias(symbol)
-                    && let Some(name) = cache.def_to_name.get(&def_id)
+                    && cache.def_to_name.contains_key(&def_id)
                 {
-                    names.insert(name.clone());
+                    defs.insert(def_id);
                 }
-                self.collect_function_local_type_alias_application_names(
-                    app.base,
-                    names,
-                    depth + 1,
-                );
+                self.collect_function_local_type_alias_application_defs(app.base, defs, depth + 1);
                 for arg in app.args.iter().copied() {
-                    self.collect_function_local_type_alias_application_names(arg, names, depth + 1);
+                    self.collect_function_local_type_alias_application_defs(arg, defs, depth + 1);
                 }
             }
             tsz_solver::types::TypeData::Union(members)
             | tsz_solver::types::TypeData::Intersection(members) => {
                 for member in interner.type_list(members).iter().copied() {
-                    self.collect_function_local_type_alias_application_names(
+                    self.collect_function_local_type_alias_application_defs(
                         member,
-                        names,
+                        defs,
                         depth + 1,
                     );
                 }
             }
             _ => {}
         }
-    }
-
-    fn elide_type_reference_names(type_text: &str, names: &FxHashSet<String>) -> String {
-        let bytes = type_text.as_bytes();
-        let mut out = String::with_capacity(type_text.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            if ch == '"' || ch == '\'' {
-                let start = i;
-                i += 1;
-                while i < bytes.len() {
-                    let current = bytes[i] as char;
-                    if current == '\\' {
-                        i = (i + 2).min(bytes.len());
-                        continue;
-                    }
-                    i += 1;
-                    if current == ch {
-                        break;
-                    }
-                }
-                out.push_str(&type_text[start..i]);
-                continue;
-            }
-            if !Self::is_type_reference_identifier_start(ch) {
-                out.push(ch);
-                i += 1;
-                continue;
-            }
-
-            let start = i;
-            i += 1;
-            while i < bytes.len() && Self::is_type_reference_identifier_continue(bytes[i] as char) {
-                i += 1;
-            }
-            let ident = &type_text[start..i];
-            let prev_non_ws = type_text[..start]
-                .chars()
-                .rev()
-                .find(|c| !c.is_ascii_whitespace());
-            if prev_non_ws == Some('.') || !names.contains(ident) {
-                out.push_str(ident);
-                continue;
-            }
-
-            let mut end = i;
-            while end < bytes.len() && (bytes[end] as char).is_ascii_whitespace() {
-                end += 1;
-            }
-            if end < bytes.len()
-                && bytes[end] as char == '<'
-                && let Some(type_arg_end) = Self::type_reference_type_argument_end(type_text, end)
-            {
-                if let Some(type_arg) =
-                    Self::single_type_argument_text(type_text, end, type_arg_end)
-                {
-                    out.push_str(type_arg);
-                    out.push_str(" | ");
-                    out.push_str(crate::ELIDED_ANY);
-                } else {
-                    out.push_str(crate::ELIDED_ANY);
-                }
-                i = type_arg_end;
-                continue;
-            }
-            out.push_str(crate::ELIDED_ANY);
-        }
-        out
-    }
-
-    fn type_reference_type_argument_end(type_text: &str, start: usize) -> Option<usize> {
-        let bytes = type_text.as_bytes();
-        let mut depth = 0usize;
-        let mut i = start;
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            match ch {
-                '"' | '\'' => {
-                    i += 1;
-                    while i < bytes.len() {
-                        let current = bytes[i] as char;
-                        if current == '\\' {
-                            i = (i + 2).min(bytes.len());
-                            continue;
-                        }
-                        i += 1;
-                        if current == ch {
-                            break;
-                        }
-                    }
-                }
-                '<' => {
-                    depth += 1;
-                    i += 1;
-                }
-                '>' if i == 0 || bytes[i - 1] != b'=' => {
-                    depth = depth.checked_sub(1)?;
-                    i += 1;
-                    if depth == 0 {
-                        return Some(i);
-                    }
-                }
-                _ => {
-                    i += 1;
-                }
-            }
-        }
-        None
-    }
-
-    fn single_type_argument_text(type_text: &str, start: usize, end: usize) -> Option<&str> {
-        let inner = type_text.get(start + 1..end.checked_sub(1)?)?.trim();
-        if inner.is_empty() {
-            return None;
-        }
-        let bytes = inner.as_bytes();
-        let mut depth = 0usize;
-        let mut i = 0;
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            match ch {
-                '"' | '\'' => {
-                    i += 1;
-                    while i < bytes.len() {
-                        let current = bytes[i] as char;
-                        if current == '\\' {
-                            i = (i + 2).min(bytes.len());
-                            continue;
-                        }
-                        i += 1;
-                        if current == ch {
-                            break;
-                        }
-                    }
-                }
-                '<' => {
-                    depth += 1;
-                    i += 1;
-                }
-                '>' if i == 0 || bytes[i - 1] != b'=' => {
-                    depth = depth.checked_sub(1)?;
-                    i += 1;
-                }
-                ',' if depth == 0 => return None,
-                _ => i += 1,
-            }
-        }
-        Some(inner)
     }
 
     pub(in crate::declaration_emitter) const fn is_type_reference_identifier_start(
@@ -1370,7 +1222,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         param_nodes: &[NodeIndex],
     ) -> String {
-        let elided_alias_names = self.function_local_type_alias_application_names(type_id);
+        let elided_alias_defs = self.function_local_type_alias_application_defs(type_id);
         let Some(interner) = self.type_interner else {
             return "any".to_string();
         };
@@ -1422,7 +1274,8 @@ impl<'a> DeclarationEmitter<'a> {
             .with_local_import_alias_name_resolver(&local_import_alias_name_resolver)
             .with_has_local_import_alias_resolver(&has_local_import_alias_resolver)
             .with_strict_null_checks(self.strict_null_checks)
-            .with_outer_type_params(outer_names);
+            .with_outer_type_params(outer_names)
+            .with_elided_local_alias_defs(&elided_alias_defs);
         if let Some(binder) = self.binder {
             printer = printer.with_symbols(&binder.symbols);
         }
@@ -1432,12 +1285,7 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(enc_sym) = self.enclosing_namespace_symbol {
             printer = printer.with_enclosing_symbol(enc_sym);
         }
-        let printed = printer.print_type(type_id);
-        if elided_alias_names.is_empty() {
-            printed
-        } else {
-            Self::elide_type_reference_names(&printed, &elided_alias_names)
-        }
+        printer.print_type(type_id)
     }
 
     pub(crate) fn collect_type_param_names(&self, type_params: &NodeList) -> Vec<String> {

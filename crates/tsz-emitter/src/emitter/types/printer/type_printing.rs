@@ -787,10 +787,21 @@ impl<'a> TypePrinter<'a> {
         if let Some(keyof_text) = self.print_keyof_alias_application(&app) {
             return keyof_text;
         }
+        let base_def_id = visitor::lazy_def_id(self.interner, app.base);
         let base_text = if let Some(sym_ref) = visitor::type_query_symbol(self.interner, app.base) {
             let sym_id = SymbolId(sym_ref.0);
             self.print_named_symbol_reference(sym_id, false)
                 .unwrap_or_else(|| self.print_type(app.base))
+        } else if base_def_id.is_some_and(|def_id| {
+            self.elided_local_alias_defs
+                .is_some_and(|defs| defs.contains(&def_id))
+        }) {
+            // Print an elided-alias Lazy base without the bare-reference
+            // intercept: the application itself decides between `Name<...>`
+            // and the elided form below, based on how the base renders.
+            let mut base_printer = self.clone();
+            base_printer.elided_local_alias_defs = None;
+            base_printer.print_type(app.base)
         } else {
             self.print_type(app.base)
         };
@@ -799,6 +810,27 @@ impl<'a> TypePrinter<'a> {
             && let Some(tuple_text) = self.print_parameters_utility_tuple(app.args[0])
         {
             return tuple_text;
+        }
+
+        // A function-local alias can never be referenced by name in a .d.ts;
+        // when its application would render as `Name<...>`, print the elided
+        // form instead. Keyed on the def, so same-named visible types and
+        // literal text containing the name are unaffected.
+        if let Some(def_id) = base_def_id
+            && self.printed_as_elided_local_alias_name(def_id, &base_text)
+        {
+            let visible = self.visible_type_application_arg_count(app.base, &app.args);
+            let mut visible_args = app.args.iter().copied().take(visible);
+            return match (visible_args.next(), visible_args.next()) {
+                (Some(only_arg), None) => {
+                    format!(
+                        "{} | {}",
+                        self.print_type_argument(only_arg, true),
+                        crate::ELIDED_ANY
+                    )
+                }
+                _ => crate::ELIDED_ANY.to_string(),
+            };
         }
 
         if app.args.is_empty() {

@@ -805,7 +805,14 @@ impl<'a> TypePrinter<'a> {
             return self.print_type_parameter_type(type_id, &param_info);
         }
         if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id) {
-            return self.print_lazy_type(def_id);
+            let printed = self.print_lazy_type(def_id);
+            // A bare reference to a function-local alias name is never valid
+            // declaration output; elide it (display policy, see
+            // `elided_local_alias_defs`).
+            if self.printed_as_elided_local_alias_name(def_id, &printed) {
+                return crate::ELIDED_ANY.to_string();
+            }
+            return printed;
         }
         if let Some((def_id, members_id)) = visitor::enum_components(self.interner, type_id) {
             return self.print_enum(def_id, members_id);
