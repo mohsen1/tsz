@@ -753,9 +753,6 @@ impl TypeInterner {
     /// of silently muting TS2590 on memo hits.
     const UNION_NORMALIZE_CACHE_MAX_LEN: usize = {
         let max_len = 1000_usize;
-        // Largest length whose pairwise count stays under the TS2590 budget:
-        // editing either constant alone fails the build instead of silently
-        // muting TS2590 on memo hits.
         assert!(
             (max_len as u64) * (max_len as u64 - 1) < Self::UNION_SUBTYPE_PAIRWISE_LIMIT
                 && (max_len as u64 + 1) * (max_len as u64) >= Self::UNION_SUBTYPE_PAIRWISE_LIMIT

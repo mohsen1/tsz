@@ -455,6 +455,23 @@ impl<'a> CheckerState<'a> {
             && !contains_file_relative_content(db, target)
     }
 
+    /// Probe the program-wide
+    /// [`crate::context::SharedConstraintProofCache`], if installed.
+    ///
+    /// Probing needs no shareability gate: only pairs that passed the
+    /// publish-side gate can be in a set, so a lookup on an unshareable key
+    /// simply misses. This keeps the deep shareability walks off the
+    /// cold-lookup path.
+    pub(crate) fn shared_constraint_proof_hit(
+        &self,
+        probe: impl FnOnce(&crate::context::SharedConstraintProofCache) -> bool,
+    ) -> bool {
+        self.ctx
+            .shared_constraint_proofs
+            .as_ref()
+            .is_some_and(|shared| probe(shared))
+    }
+
     /// Publish-side gate for the program-wide
     /// [`crate::context::SharedConstraintProofCache`]: runs `publish` only
     /// when the just-computed success over `(source, target)` is safe to
@@ -514,12 +531,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Program-wide success tier: another file checker may already have
-        // proven this exact pair. Probing needs no shareability gate — only
-        // pairs that passed the publish-side gate can be in the set, so a
-        // lookup on an unshareable key simply misses. This keeps the deep
-        // shareability walk off the cold-lookup path.
-        if let Some(shared) = &self.ctx.shared_constraint_proofs
-            && shared.type_arg_relation_successes.contains(&cache_key)
+        // proven this exact pair.
+        if self.shared_constraint_proof_hit(|s| s.type_arg_relation_successes.contains(&cache_key))
         {
             tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "type_arg", "hit");
             self.ctx
