@@ -791,6 +791,9 @@ path = "tests/js_export_surface_tests.rs"
 name = "js_grammar_span_tests"
 path = "tests/js_grammar_span_tests.rs"
 [[test]]
+name = "flow_narrowing_finalization_tests"
+path = "tests/flow_narrowing_finalization_tests.rs"
+[[test]]
 name = "speculation_rollback_tests"
 path = "tests/speculation_rollback_tests.rs"
 [[test]]

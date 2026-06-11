@@ -118,8 +118,11 @@ pub(crate) struct FullSnapshot {
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
 }
 
-/// Cache snapshot for return-type inference, which also corrupts `node_types`
-/// and `flow_analysis_cache`.
+/// Cache snapshot for return-type inference, which also corrupts `node_types`,
+/// `flow_analysis_cache`, and the narrowing marker caches
+/// (`flow_narrowed_nodes`, `daa_error_nodes`, `symbol_flow_confirmed`).
+/// The narrowing caches roll back as one unit: restoring a subset leaves
+/// markers that describe discarded flow results (issue #13079).
 pub(crate) struct CacheSnapshot {
     /// Clone of the flat `node_types` cache before speculation.
     pub node_types: super::NodeTypeCache,
@@ -128,6 +131,19 @@ pub(crate) struct CacheSnapshot {
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
     /// Clone of the flow analysis cache.
     pub flow_analysis_cache: rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>,
+    /// Clone of `flow_narrowed_nodes`: nodes `check_flow_usage` already
+    /// narrowed, for which `get_type_of_node` skips its second narrowing
+    /// pass. Markers minted during speculation describe node types and flow
+    /// results this snapshot rolls back; leaving them behind suppresses
+    /// re-narrowing against the restored caches and yields stale types.
+    pub flow_narrowed_nodes: FxHashSet<u32>,
+    /// Clone of `daa_error_nodes`: nodes whose definite-assignment (TS2454)
+    /// error suppresses flow narrowing. Restored together with the TS2454
+    /// diagnostics and dedup state that produced the markers.
+    pub daa_error_nodes: FxHashSet<u32>,
+    /// Clone of the stable-flow confirmation cache. Confirmations recorded
+    /// during a speculative pass describe rolled-back flow analysis results.
+    pub symbol_flow_confirmed: FxHashMap<(SymbolId, TypeId), FlowNodeId>,
     /// Thread-local global resolution fuel counter at snapshot time. Speculative
     /// sites (return-type inference) shouldn't bill their work against the
     /// global budget when rolled back — the work will be redone non-
@@ -220,6 +236,9 @@ impl<'a> CheckerContext<'a> {
                 node_types: self.node_types.clone(),
                 request_node_types: self.request_node_types.clone(),
                 flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
+                flow_narrowed_nodes: self.flow_narrowed_nodes.clone(),
+                daa_error_nodes: self.daa_error_nodes.clone(),
+                symbol_flow_confirmed: self.symbol_flow_confirmed.borrow().clone(),
                 global_resolution_fuel:
                     crate::state_domain::type_environment::lazy::global_resolution_fuel_value(),
             },
@@ -312,6 +331,10 @@ impl<'a> CheckerContext<'a> {
         self.request_node_types
             .clone_from(&snap.cache.request_node_types);
         *self.flow_analysis_cache.borrow_mut() = snap.cache.flow_analysis_cache.clone();
+        self.flow_narrowed_nodes
+            .clone_from(&snap.cache.flow_narrowed_nodes);
+        self.daa_error_nodes.clone_from(&snap.cache.daa_error_nodes);
+        *self.symbol_flow_confirmed.borrow_mut() = snap.cache.symbol_flow_confirmed.clone();
         crate::state_domain::type_environment::lazy::restore_global_resolution_fuel(
             snap.cache.global_resolution_fuel,
         );
