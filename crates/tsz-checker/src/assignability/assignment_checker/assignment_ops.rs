@@ -890,6 +890,11 @@ impl<'a> CheckerState<'a> {
             "get_type_of_node_with_request must never return the DELEGATE sentinel"
         );
         if right_raw != TypeId::ERROR {
+            tracing::trace!(
+                ?right_idx,
+                ?right_raw,
+                "check_assignment_expression: publishing RHS type for flow analysis"
+            );
             self.ctx.node_types.or_insert(right_idx.0, right_raw);
         }
 

@@ -169,7 +169,14 @@ impl<'a> CheckerState<'a> {
         // Diagnostics produced during this pass are speculative: if no overload
         // matches, TypeScript reports the overload failure and suppresses these
         // nested callback/body diagnostics.
-        self.ctx.node_types = Default::default();
+        //
+        // Use an overlay over the caller's cached expression types rather than
+        // an empty map: speculative collection must still SEE previously
+        // computed types (flow narrowing of an argument like `obj[k]` after
+        // `obj[k] = rhs` reads the cached `rhs` type, exactly as on the
+        // non-overloaded call path), while its own writes stay isolated in the
+        // overlay layer for the selective merge below.
+        self.ctx.node_types = original_node_types.overlay();
         // Clear the contextual resolution cache once before the loop — the cache
         // is shared and needs clearing before any arg is re-evaluated, but clearing
         // it per-arg was redundant (empty after the first iteration).
@@ -364,6 +371,7 @@ impl<'a> CheckerState<'a> {
                     actual_this_type,
                     overload_snap: &overload_snap,
                     has_contextual_refresh_args: !contextual_refresh_args.is_empty(),
+                    caller_node_types: &original_node_types,
                 },
                 &mut selected_type_predicate,
             ) {
@@ -1016,7 +1024,10 @@ impl<'a> CheckerState<'a> {
             // Snapshot per-candidate diagnostic state so we can roll back on mismatch.
             let candidate_snap = self.ctx.snapshot_diagnostics();
             let candidate_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
-            self.ctx.node_types = Default::default();
+            // Per-candidate scratch layer over the caller's cached types: see
+            // the union-contextual collection above for the read-visibility
+            // rationale.
+            self.ctx.node_types = original_node_types.overlay();
             refresh_all_args(self);
             let resolved_func_type =
                 if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
@@ -1151,7 +1162,7 @@ impl<'a> CheckerState<'a> {
                         });
                     self.ctx.restore_ts2454_state(&candidate_ts2454_errors);
                     self.clear_contextual_resolution_cache();
-                    self.ctx.node_types = Default::default();
+                    self.ctx.node_types = original_node_types.overlay();
                     refresh_all_args(self);
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if self.argument_needs_refresh_for_contextual_call(
@@ -1410,7 +1421,7 @@ impl<'a> CheckerState<'a> {
                         .rollback_and_replace_diagnostics(&candidate_snap, merged);
                 }
                 self.ctx.restore_ts2454_state(&candidate_ts2454_errors);
-                self.ctx.node_types = Default::default();
+                self.ctx.node_types = original_node_types.overlay();
                 refresh_all_args(self);
 
                 // Restore const-assertion and literal-preservation context for the

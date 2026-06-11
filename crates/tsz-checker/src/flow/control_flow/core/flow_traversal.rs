@@ -386,6 +386,12 @@ impl<'a> FlowAnalyzer<'a> {
                     // No symbol ID - must do full check
                     self.assignment_targets_reference_node(flow.node, reference)
                 };
+                tracing::trace!(
+                    flow_node = ?flow.node,
+                    ?reference,
+                    targets_reference,
+                    "flow ASSIGNMENT considered"
+                );
                 if targets_reference {
                     // For const symbols declared via destructuring, the declared type
                     // already correctly accounts for all possible values including

@@ -72,9 +72,37 @@ pub struct TypeReferenceValidationCaches {
 /// parent/child checkers. It is Arc-backed for cheap speculation snapshots:
 /// rollback stores a read snapshot and the active cache copy-on-writes only if
 /// it is mutated after the snapshot.
+///
+/// # Overlay mode
+///
+/// Speculative passes (overload-resolution argument collection) need two
+/// properties at once:
+///
+/// 1. **Read visibility**: type queries issued while collecting argument types
+///    must see every expression type the surrounding (non-speculative) check
+///    already computed — flow narrowing of an argument like `obj[k]` after
+///    `obj[k] = rhs` needs `rhs`'s cached type, exactly as on the
+///    non-overloaded call path where the cache is never masked.
+/// 2. **Write isolation**: entries produced while probing a candidate must be
+///    identifiable so the caller can keep only the winning candidate's entries.
+///
+/// [`Self::overlay`] provides both: reads fall through to a read-only `base`
+/// snapshot of the caller's entries, while writes (and removals, recorded as
+/// [`TypeId::NONE`] tombstones) stay in the overlay's own `data` layer.
+/// Bulk operations that harvest speculative results ([`Self::iter`],
+/// [`Self::merge`], [`Self::merge_owned`]) intentionally see only the overlay
+/// layer, so the existing "restore caller map, merge winner entries" restore
+/// choreography is unchanged.
 #[derive(Clone, Debug)]
 pub struct NodeTypeCache {
     data: Arc<FxHashMap<u32, TypeId>>,
+    /// Read-only fallback consulted on `data` misses. `None` for plain caches.
+    ///
+    /// Invariants:
+    /// - `base` never contains [`TypeId::NONE`].
+    /// - `data` may contain [`TypeId::NONE`] tombstones only when `base` is
+    ///   `Some`; a tombstone masks the base entry for that key.
+    base: Option<Arc<FxHashMap<u32, TypeId>>>,
 }
 
 impl NodeTypeCache {
@@ -85,6 +113,7 @@ impl NodeTypeCache {
                 capacity.min(4096),
                 Default::default(),
             )),
+            base: None,
         }
     }
 
@@ -92,12 +121,42 @@ impl NodeTypeCache {
     pub fn new() -> Self {
         Self {
             data: Arc::new(FxHashMap::default()),
+            base: None,
+        }
+    }
+
+    /// Create an empty speculative write layer whose reads fall through to
+    /// this cache's current visible entries. See the type-level docs.
+    pub fn overlay(&self) -> Self {
+        let base = if self.base.is_none() {
+            // Plain cache: share its map as the read-only base (O(1)).
+            Arc::clone(&self.data)
+        } else {
+            // Already an overlay: flatten to a single visible view so the new
+            // overlay has a NONE-free base (O(n), not hit by the overload
+            // choreography which always overlays the pristine caller map).
+            Arc::new(self.to_hash_map())
+        };
+        Self {
+            data: Arc::new(FxHashMap::default()),
+            base: Some(base),
         }
     }
 
     #[inline]
     pub fn get(&self, key: &u32) -> Option<&TypeId> {
-        self.data.get(key)
+        // Plain caches never store NONE (see `insert`), so the common
+        // non-speculative path stays a single hash lookup.
+        let Some(base) = &self.base else {
+            return self.data.get(key);
+        };
+        match self.data.get(key) {
+            // Tombstone: the entry was removed in this layer; do not fall
+            // through to the base.
+            Some(&TypeId::NONE) => None,
+            Some(value) => Some(value),
+            None => base.get(key),
+        }
     }
 
     #[inline]
@@ -105,25 +164,41 @@ impl NodeTypeCache {
         if key == u32::MAX {
             return;
         }
-        let data = Arc::make_mut(&mut self.data);
         if value == TypeId::NONE {
-            data.remove(&key);
-        } else {
-            data.insert(key, value);
+            self.remove(&key);
+            return;
         }
+        Arc::make_mut(&mut self.data).insert(key, value);
     }
 
     #[inline]
     pub fn contains_key(&self, key: &u32) -> bool {
-        self.data.contains_key(key)
+        self.get(key).is_some()
     }
 
     #[inline]
     pub fn remove(&mut self, key: &u32) -> Option<TypeId> {
-        if !self.data.contains_key(key) {
-            return None;
+        let Some(base) = &self.base else {
+            if !self.data.contains_key(key) {
+                return None;
+            }
+            tracing::trace!(key, "node_types: removing entry");
+            return Arc::make_mut(&mut self.data).remove(key);
+        };
+        let previous = match self.data.get(key) {
+            // Already tombstoned in this layer.
+            Some(&TypeId::NONE) => return None,
+            Some(&value) => value,
+            None => *base.get(key)?,
+        };
+        tracing::trace!(key, "node_types: removing entry");
+        if base.contains_key(key) {
+            // Mask the base entry instead of exposing it again.
+            Arc::make_mut(&mut self.data).insert(*key, TypeId::NONE);
+        } else {
+            Arc::make_mut(&mut self.data).remove(key);
         }
-        Arc::make_mut(&mut self.data).remove(key)
+        Some(previous)
     }
 
     #[inline]
@@ -137,25 +212,36 @@ impl NodeTypeCache {
         // that check `if let Some(&cached) = ...get(&idx.0)` would return the
         // sentinel as if it were a real type.
         if value == TypeId::NONE {
-            return self.data.get(&key).copied().unwrap_or(TypeId::NONE);
+            return self.get(&key).copied().unwrap_or(TypeId::NONE);
         }
-        *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
+        if let Some(&existing) = self.get(&key) {
+            return existing;
+        }
+        Arc::make_mut(&mut self.data).insert(key, value);
+        value
     }
 
+    /// Iterate this cache's own (non-tombstone) entries. For an overlay this
+    /// is exactly the set of speculative writes — base entries are excluded by
+    /// design so harvest/merge sites keep their pre-overlay behavior.
     pub fn iter(&self) -> impl Iterator<Item = (u32, TypeId)> + '_ {
-        self.data.iter().map(|(i, t)| (*i, *t))
+        self.data
+            .iter()
+            .filter(|(_, t)| **t != TypeId::NONE)
+            .map(|(i, t)| (*i, *t))
     }
 
     pub fn clear(&mut self) {
         Arc::make_mut(&mut self.data).clear();
+        self.base = None;
     }
 
     pub fn merge(&mut self, other: &Self) {
-        Arc::make_mut(&mut self.data).extend(other.iter());
+        self.extend(other.iter());
     }
 
     pub fn merge_owned(&mut self, other: Self) {
-        Arc::make_mut(&mut self.data).extend(other.iter());
+        self.extend(other.iter());
     }
 
     pub fn extend<I: IntoIterator<Item = (u32, TypeId)>>(&mut self, iter: I) {
@@ -164,16 +250,35 @@ impl NodeTypeCache {
         }
     }
 
+    /// Number of entries in this cache's own layer (tombstones included);
+    /// base entries of an overlay are not counted. Used for cache statistics,
+    /// not for visibility decisions — use [`Self::get`]/[`Self::contains_key`]
+    /// for those.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    /// `true` when this cache's own layer has no entries. Like [`Self::len`],
+    /// ignores any overlay base.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
+    /// Materialize the visible view (base entries overlaid with this layer's
+    /// writes, tombstoned keys excluded).
     pub fn to_hash_map(&self) -> FxHashMap<u32, TypeId> {
-        self.iter().collect()
+        let Some(base) = &self.base else {
+            return self.iter().collect();
+        };
+        let mut map: FxHashMap<u32, TypeId> = base.as_ref().clone();
+        for (key, value) in self.data.iter() {
+            if *value == TypeId::NONE {
+                map.remove(key);
+            } else {
+                map.insert(*key, *value);
+            }
+        }
+        map
     }
 }
 
@@ -372,5 +477,66 @@ mod tests {
         assert!(!Arc::ptr_eq(&parent.data, &child.data));
         assert_eq!(parent.get(&sym), Some(&TypeId::STRING));
         assert_eq!(child.get(&sym), None);
+    }
+
+    #[test]
+    fn node_type_cache_overlay_reads_through_base_and_isolates_writes() {
+        let mut caller = NodeTypeCache::new();
+        caller.insert(1, TypeId::STRING);
+
+        let mut overlay = caller.overlay();
+        // Base entries are visible through the overlay...
+        assert_eq!(overlay.get(&1), Some(&TypeId::STRING));
+        assert!(overlay.contains_key(&1));
+
+        // ...but overlay writes stay in the overlay's own layer.
+        overlay.insert(2, TypeId::NUMBER);
+        assert_eq!(overlay.get(&2), Some(&TypeId::NUMBER));
+        assert_eq!(caller.get(&2), None);
+
+        // Harvest (`iter`) yields only the overlay's own writes, so the
+        // overload-resolution "restore caller, merge winner" choreography
+        // never re-merges base entries.
+        let harvested: Vec<_> = overlay.iter().collect();
+        assert_eq!(harvested, vec![(2, TypeId::NUMBER)]);
+    }
+
+    #[test]
+    fn node_type_cache_overlay_tombstone_masks_base_entry() {
+        let mut caller = NodeTypeCache::new();
+        caller.insert(1, TypeId::STRING);
+
+        let mut overlay = caller.overlay();
+        assert_eq!(overlay.remove(&1), Some(TypeId::STRING));
+        // The base entry stays masked rather than resurfacing.
+        assert_eq!(overlay.get(&1), None);
+        assert!(!overlay.contains_key(&1));
+        // Removing again reports the entry as already gone.
+        assert_eq!(overlay.remove(&1), None);
+        // Tombstones never escape through harvest or materialization.
+        assert_eq!(overlay.iter().count(), 0);
+        assert!(overlay.to_hash_map().is_empty());
+        // A later write through the overlay overrides the tombstone.
+        overlay.insert(1, TypeId::NUMBER);
+        assert_eq!(overlay.get(&1), Some(&TypeId::NUMBER));
+        // The caller's map is untouched throughout.
+        assert_eq!(caller.get(&1), Some(&TypeId::STRING));
+    }
+
+    #[test]
+    fn node_type_cache_nested_overlay_flattens_to_visible_view() {
+        let mut caller = NodeTypeCache::new();
+        caller.insert(1, TypeId::STRING);
+
+        let mut inner = caller.overlay();
+        inner.insert(2, TypeId::NUMBER);
+        inner.remove(&1);
+
+        let nested = inner.overlay();
+        // The nested overlay sees exactly the inner overlay's visible view:
+        // the tombstoned base entry stays hidden, the inner write shows.
+        assert_eq!(nested.get(&1), None);
+        assert_eq!(nested.get(&2), Some(&TypeId::NUMBER));
+        assert_eq!(nested.to_hash_map().len(), 1);
     }
 }

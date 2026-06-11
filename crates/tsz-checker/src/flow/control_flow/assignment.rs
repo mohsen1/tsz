@@ -609,6 +609,12 @@ impl<'a> FlowAnalyzer<'a> {
                     );
                 }
             }
+            if cached_rhs_type.is_none() {
+                tracing::trace!(
+                    ?rhs,
+                    "get_assigned_type: node_types MISS for rhs; trying syntactic fallback"
+                );
+            }
             let fallback_rhs_type = self.fallback_assigned_type_from_expression(rhs);
             if let Some(rhs_type) = fallback_rhs_type {
                 return self.assigned_type_respecting_access_read_surface(

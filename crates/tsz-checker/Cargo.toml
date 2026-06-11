@@ -1747,3 +1747,7 @@ path = "tests/deeply_nested_mapped_types_tests.rs"
 [[test]]
 name = "implements_type_param_generation_identity_tests"
 path = "tests/implements_type_param_generation_identity_tests.rs"
+
+[[test]]
+name = "overload_argument_flow_narrowing_visibility_tests"
+path = "tests/overload_argument_flow_narrowing_visibility_tests.rs"

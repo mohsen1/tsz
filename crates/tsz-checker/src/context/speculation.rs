@@ -302,6 +302,11 @@ impl<'a> CheckerContext<'a> {
     /// Roll back to a return-type snapshot, discarding speculative diagnostics,
     /// dedup state, and cache entries added during speculation.
     fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
+        tracing::trace!(
+            node_types_now = self.node_types.len(),
+            node_types_restored = snap.cache.node_types.len(),
+            "rollback_return_type: restoring node_types/flow caches"
+        );
         self.rollback_full(&snap.full);
         self.node_types.clone_from(&snap.cache.node_types);
         self.request_node_types
