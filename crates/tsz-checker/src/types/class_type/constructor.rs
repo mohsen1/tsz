@@ -181,7 +181,7 @@ impl<'a> CheckerState<'a> {
             && request.is_empty()
             && !nested_in_foreign_class_window
             && current_sym
-                .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
+                .map(|sym_id| self.constructor_cache_admissible(sym_id, result))
                 .unwrap_or(true);
         if can_use_cache {
             self.ctx

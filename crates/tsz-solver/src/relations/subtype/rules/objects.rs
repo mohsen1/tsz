@@ -758,9 +758,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Rule #26: Split Accessors - Contravariant writes
+        // Rule #26 (Sound Mode only): Split Accessors - Contravariant writes
         // For mutable target properties WITH DIFFERENT READ/WRITE TYPES, check write type compatibility
         // Target write type must be subtype of source write type (contravariance)
+        //
+        // PARITY: tsc relates object properties through their *read* types only.
+        // Setter/write types never participate in assignability, subtype, or
+        // conditional-`extends` relations (TS 4.3 divergent accessors); writes
+        // are validated at the actual write site instead. The contravariant
+        // write check below is therefore gated behind
+        // `check_split_accessor_writes`, which only Sound Mode enables.
         //
         // IMPORTANT: This contravariant check only applies to "split accessors" where the
         // property has different types for reading vs writing (e.g., getter returns `string`,
@@ -774,8 +781,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `{ readonly x: T }` IS assignable to `{ x: T }`. When the source
         // property is readonly, its write_type is irrelevant (it may be NONE or
         // a sentinel value), so skip the write check entirely.
-        let has_split_accessor =
-            !source.readonly && (source.has_split_accessor() || target.has_split_accessor());
+        let has_split_accessor = self.check_split_accessor_writes
+            && !source.readonly
+            && (source.has_split_accessor() || target.has_split_accessor());
 
         if !target.readonly && has_split_accessor {
             let source_write = self.bind_property_receiver_this(
@@ -1311,7 +1319,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return SubtypeResult::False;
                 }
-                if !t_prop.readonly && (sp.has_split_accessor() || t_prop.has_split_accessor()) {
+                // Sound Mode only: tsc never relates split-accessor write
+                // types (see check_property_types above for the parity rule).
+                if self.check_split_accessor_writes
+                    && !t_prop.readonly
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
+                {
                     let source_write = self.bind_property_receiver_this(
                         source_receiver,
                         self.optional_property_write_type(sp),

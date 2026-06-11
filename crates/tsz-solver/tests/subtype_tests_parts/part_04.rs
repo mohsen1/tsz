@@ -799,8 +799,18 @@ fn test_mutable_property_split_accessor_wider_write() {
 
     // Split accessor with wider write is a subtype (can write more, reads same)
     assert!(checker.is_subtype_of(obj_split, obj_normal));
-    // Normal cannot substitute for split (narrower write type)
-    assert!(!checker.is_subtype_of(obj_normal, obj_split));
+    // PARITY: tsc relates properties through their *read* types only; the
+    // narrower write type does not block the relation (TS 4.3 divergent
+    // accessors). Witness: `declare const a: { get x(): string; set x(v:
+    // string) }; const b: { get x(): string; set x(v: string | number) } = a`
+    // is accepted by tsc.
+    assert!(checker.is_subtype_of(obj_normal, obj_split));
+
+    // Sound Mode opts back into the contravariant write check.
+    let mut sound_checker = SubtypeChecker::new(&interner);
+    sound_checker.check_split_accessor_writes = true;
+    assert!(sound_checker.is_subtype_of(obj_split, obj_normal));
+    assert!(!sound_checker.is_subtype_of(obj_normal, obj_split));
 }
 
 #[test]
