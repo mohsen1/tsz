@@ -227,13 +227,10 @@ fn string_end(bytes: &[u8], i: usize, quote: u8) -> usize {
 }
 
 fn rewrite_line_comment(line: &str, path_renames: &[(&str, &str)]) -> String {
-    let trimmed_start = line.trim_start();
-    let Some((prefix, path)) = crate::fourslash::strip_filename_directive(trimmed_start) else {
+    let Some((prefix, path)) = crate::fourslash::strip_filename_directive(line) else {
         return line.to_string();
     };
-    let leading_ws = &line[..line.len() - trimmed_start.len()];
     let mut rewritten = String::with_capacity(line.len());
-    rewritten.push_str(leading_ws);
     rewritten.push_str(prefix);
     rewritten.push_str(&apply_path_renames(path, path_renames));
     rewritten

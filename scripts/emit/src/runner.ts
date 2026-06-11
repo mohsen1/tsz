@@ -19,6 +19,7 @@ import ts from 'typescript';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 import { CliTranspiler, type LinkInput } from './cli-transpiler.js';
 import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
+import { parseDirectiveLine, parseFlagDirectiveLine, firstListValue, splitListValues } from './directives.js';
 import { BaselineBlobReader } from './baseline-blob-reader.js';
 import { buildBlob, isBlobFresh } from './build-baseline-blob.js';
 
@@ -378,12 +379,9 @@ function parseSourceTest(content: string, defaultSourceFileName?: string): Parse
   };
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    const optionMatch = trimmed.match(/^\/\/\s*@(\w+)\s*:\s*([^\r\n]*)$/i);
-    if (optionMatch) {
-      const [, key, rawValue] = optionMatch;
-      const value = rawValue.trim();
-      const lowKey = key.toLowerCase();
+    const directive = parseDirectiveLine(line);
+    if (directive) {
+      const { key: lowKey, value } = directive;
       if (lowKey === 'filename') {
         flushCurrentFile();
         currentFileName = value;
@@ -402,9 +400,9 @@ function parseSourceTest(content: string, defaultSourceFileName?: string): Parse
       continue;
     }
 
-    const tsDirectiveMatch = trimmed.match(/^\/\/\s*@([\w-]+)\s*$/i);
-    if (tsDirectiveMatch) {
-      const lowKey = tsDirectiveMatch[1].toLowerCase();
+    const flagDirective = parseFlagDirectiveLine(line);
+    if (flagDirective) {
+      const lowKey = flagDirective.toLowerCase();
       if (lowKey === 'ts-check') {
         options.checkjs = true;
         // @ts-check inside a @filename block is real source content (a comment
@@ -438,6 +436,12 @@ function parseSourceTest(content: string, defaultSourceFileName?: string): Parse
     // verbatim. Without this, in-source `// @internal` comments get silently
     // stripped and tests like `declarationEmitWorkWithInlineComments` see a
     // different source than tsc did.
+    //
+    // This shape test is deliberately broader than the canonical grammar in
+    // directives.ts: it covers the key/value and flag forms in one regex
+    // because it only decides which header lines to drop from the
+    // synthesized single-file source (a baseline-anchored policy), not what
+    // counts as a directive.
     const directiveRegex = /^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i;
     const singleFileContent: string[] = [];
     let inHeader = true;
@@ -494,7 +498,9 @@ function parseLibList(value: unknown): string[] | undefined {
     return libs.length > 0 ? libs : undefined;
   }
   if (typeof value === 'string') {
-    const libs = value.split(',').map(s => s.trim()).filter(Boolean);
+    // `@lib` is a list option: every comma-separated entry is active,
+    // unlike variant-valued scalar options which take the first value.
+    const libs = splitListValues(value);
     return libs.length > 0 ? libs : undefined;
   }
   return undefined;
@@ -663,8 +669,12 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       }
     }
 
+    // Multi-variant scalar directives (`@target: es2015,es5`) take the
+    // first variant, matching the conformance harness; the substring
+    // matching inside parseTarget must not see the raw comma list (it
+    // would resolve `es2015,es5` to es5 instead of es2015).
     const target = variant.target ? parseTarget(variant.target)
-      : directives.target ? parseTarget(String(directives.target))
+      : directives.target ? parseTarget(firstListValue(String(directives.target)))
       : 12;  // TS6 default: ES2025 (LatestStandard)
     // Also check tsconfig.json files embedded in sourceFiles for compiler options
     const tsconfigOptions: Record<string, unknown> = {};
@@ -687,7 +697,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const usesBundlerModuleResolution =
       optionHasToken(moduleResolutionOption, 'bundler');
     const module = variant.module ? parseModule(variant.module)
-      : directives.module ? parseModule(String(directives.module))
+      : directives.module ? parseModule(firstListValue(String(directives.module)))
       : tsconfigModule !== undefined ? tsconfigModule
       // Project-style tsconfig baselines inherit tsc's compiler-option default:
       // unspecified `module` remains CommonJS, independent of `target`, except

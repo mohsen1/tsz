@@ -71,19 +71,19 @@ pub(crate) fn find_marker_end(bytes: &[u8]) -> Option<usize> {
 /// import { x } from "./a";
 /// /*ref*/x;
 /// ```
-/// If `trimmed_line` begins with a `// @filename:` directive (in either
-/// space-after-slashes spelling), return `(prefix, suffix)` where `prefix`
-/// is the literal directive token and `suffix` is everything after it.
-/// Otherwise return `None`. Shared by `parse_multi_file` and the variant
-/// generator so the two recognizers always agree.
-pub(crate) fn strip_filename_directive(trimmed_line: &str) -> Option<(&'static str, &str)> {
-    if let Some(rest) = trimmed_line.strip_prefix("// @filename:") {
-        Some(("// @filename:", rest))
-    } else {
-        trimmed_line
-            .strip_prefix("//@filename:")
-            .map(|rest| ("//@filename:", rest))
-    }
+/// If `line` is a `// @filename:` directive (canonical grammar: leading
+/// whitespace tolerated, any key casing, optional whitespace around the
+/// `@key:` token), return `(prefix, suffix)` where `prefix` is everything
+/// through the colon and `suffix` is everything after it
+/// (`prefix + suffix == line`). Otherwise return `None`. Shared by
+/// `parse_multi_file` and the variant generator so the two recognizers
+/// always agree — and backed by `tsz_common::test_directives` so this
+/// harness agrees with the conformance and emit harnesses too.
+pub(crate) fn strip_filename_directive(line: &str) -> Option<(&str, &str)> {
+    let directive = tsz_common::test_directives::parse_directive_line(line)?;
+    directive
+        .key_is("filename")
+        .then(|| (&line[..directive.prefix_len], directive.raw_value))
 }
 
 pub(super) fn parse_multi_file(content: &str) -> Vec<(String, String)> {
@@ -92,8 +92,7 @@ pub(super) fn parse_multi_file(content: &str) -> Vec<(String, String)> {
     let mut current_content = String::new();
 
     for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some((_, filename)) = strip_filename_directive(trimmed) {
+        if let Some((_, filename)) = strip_filename_directive(line) {
             if !current_file.is_empty() {
                 files.push((current_file, current_content));
                 current_content = String::new();

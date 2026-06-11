@@ -961,47 +961,43 @@ impl<'a> CheckerState<'a> {
 
     /// Parse a boolean option from test file comments.
     ///
-    /// Looks for patterns like `// @key: true` or `// @key: false` in the first 32 lines.
+    /// Looks for `// @key: true` / `// @key: false` directives (canonical
+    /// grammar from `tsz_common::test_directives`) in the leading comment
+    /// block, capped at the first 32 lines. `key` is the pragma name with
+    /// its leading `@` (e.g. `"@strict"`); the directive key must match it
+    /// exactly (case-insensitive) — `@strict` does not match
+    /// `@strictNullChecks` and vice versa, mirroring the conformance and
+    /// emit harness recognizers.
     pub(crate) fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
-        for line in text.lines().take(32) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let is_comment =
-                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
-            if !is_comment {
-                break;
-            }
-
-            let lower = trimmed.to_ascii_lowercase();
-            let Some(pos) = lower.find(key) else {
+        let name = key.strip_prefix('@').unwrap_or(key);
+        for line in Self::leading_comment_lines(text) {
+            let Some(directive) = tsz_common::test_directives::parse_directive_line(line) else {
                 continue;
             };
-            let after_key = &lower[pos + key.len()..];
-            let Some(colon_pos) = after_key.find(':') else {
+            if !directive.key_is(name) {
                 continue;
-            };
-            let value = after_key[colon_pos + 1..].trim();
-
-            // Parse boolean value, handling comma-separated values like "true, false"
-            // Also handle trailing commas, semicolons, and other delimiters
-            let value_clean = if let Some(comma_pos) = value.find(',') {
-                &value[..comma_pos]
-            } else if let Some(semicolon_pos) = value.find(';') {
-                &value[..semicolon_pos]
-            } else {
-                value
             }
-            .trim();
-
-            match value_clean {
-                "true" => return Some(true),
-                "false" => return Some(false),
-                _ => continue,
+            // Multi-variant values like "true, false" take the first
+            // variant; non-boolean values keep scanning.
+            if let Some(value) = tsz_common::test_directives::parse_bool_value(directive.value) {
+                return Some(value);
             }
         }
         None
+    }
+
+    /// The leading comment block of a source file: non-empty lines from the
+    /// top of the file up to the first non-comment line, capped at 32 lines.
+    /// Test pragmas are only honored in this region so a directive-shaped
+    /// comment deep inside real code cannot mutate compiler options.
+    fn leading_comment_lines(text: &str) -> impl Iterator<Item = &str> {
+        text.lines()
+            .take(32)
+            .filter(|line| !line.trim().is_empty())
+            .take_while(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
+            })
     }
 
     /// Resolve a boolean compiler option from source file comments.
@@ -1103,41 +1099,19 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Case-insensitive presence check for a `@pragma` token in the leading
-    /// comment block of a source file. Mirrors `parse_test_option_bool`'s
-    /// scope (first 32 lines, comment lines only) but stops at the first
-    /// match and never allocates a lowercased copy of the full file.
+    /// Case-insensitive presence check for a `@pragma` directive in the
+    /// leading comment block of a source file. Mirrors
+    /// `parse_test_option_bool`'s scope (first 32 lines, comment lines
+    /// only). Recognizes both the key/value form (`// @pragma: value`) and
+    /// the flag form (`// @pragma`), via the canonical directive grammar.
     fn source_has_pragma(text: &str, lower_pragma: &str) -> bool {
-        for line in text.lines().take(32) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let is_comment =
-                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
-            if !is_comment {
-                break;
-            }
-            // Case-insensitive substring match without allocating: walk the
-            // trimmed line in windows the size of `lower_pragma`, comparing
-            // ASCII-lowercased bytes directly.
-            let line_bytes = trimmed.as_bytes();
-            let pragma_bytes = lower_pragma.as_bytes();
-            if line_bytes.len() < pragma_bytes.len() {
-                continue;
-            }
-            for start in 0..=line_bytes.len() - pragma_bytes.len() {
-                let window = &line_bytes[start..start + pragma_bytes.len()];
-                if window
-                    .iter()
-                    .zip(pragma_bytes)
-                    .all(|(a, b)| a.to_ascii_lowercase() == *b)
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        let name = lower_pragma.strip_prefix('@').unwrap_or(lower_pragma);
+        Self::leading_comment_lines(text).any(|line| {
+            tsz_common::test_directives::parse_directive_line(line)
+                .is_some_and(|directive| directive.key_is(name))
+                || tsz_common::test_directives::parse_flag_directive_line(line)
+                    .is_some_and(|flag| flag.eq_ignore_ascii_case(name))
+        })
     }
 
     // =========================================================================
