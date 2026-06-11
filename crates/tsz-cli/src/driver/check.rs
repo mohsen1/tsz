@@ -352,6 +352,33 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// gate requires fixing the cold-start conditional/`infer` evaluation
 /// family first (then re-running the 10x byte-diff determinism loop on
 /// ts-toolbelt at full width).
+///
+/// Deep-dive 2026-06-11 (gate-lift campaign, `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK`
+/// repro on ts-toolbelt at 4 workers; 0/5 runs correct on the pre-fix binary —
+/// 3/5 livelocked >150s, 2/5 emitted false `TS2344`s): the root family is
+/// **in-flight shared-`DefinitionStore` state**. Every fresh checker
+/// re-derives def bodies into the shared store (last-writer-wins; ~6.4k
+/// re-publications with different `TypeId` forms per sequential ts-toolbelt
+/// run — benign there because each checker reads its own writes through its
+/// `TypeEnvironment` before falling back to the store, and foreign bodies are
+/// only read after their writer completed). Under parallelism, sibling
+/// workers consume bodies/params mid-rewrite, so deferred-type evaluation
+/// (`keyof`/indexed-access/conditional checks) observes half-constructed
+/// foreign forms: generic conditionals were resolved to definitive false
+/// branches (e.g. `` `${N}` extends keyof IterationMap `` while `N` is still
+/// generic -> `IterationMap['__']`), which both emits false `TS2344`s and
+/// feeds self-sustaining recursive expansions (`RangeForth` over the `'__'`
+/// sentinel tuple) whose accumulator grows fresh `TypeId`s every step —
+/// defeating every TypeId-keyed cycle guard and burning the full 2M-op
+/// per-query budget per call site (the observed livelock; 67k
+/// generic-check false-branch decisions per run vs 106 sequentially).
+/// Two structural fixes landed from this investigation (tsc-parity generic
+/// check-type deferral in conditional evaluation; atomic body+params
+/// publication), which remove the dominant false-branch storm, but
+/// write-once/session-scoped visibility experiments on the def store show
+/// several more in-flight channels (delegation buckets, lib cache,
+/// interner side-state) still leak; the gate stays until the
+/// mutation-isolation campaign makes shared def state schedule-independent.
 const fn should_use_sequential_fresh_checking(
     work_item_count: usize,
     has_large_wildcard_barrel: bool,
@@ -1147,11 +1174,16 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         let extract_type_cache = !options.no_emit || options.emit_declarations;
         // Create shared cross-file query cache for multi-file projects.
         // Eliminates redundant type evaluations and relation checks across files.
-        let shared_query_cache = if work_items.len() > 1 {
-            Some(tsz_solver::construction::SharedQueryCache::new())
-        } else {
-            None
-        };
+        // `TSZ_EXPERIMENT_NO_SHARED_QC` is a diagnosis-only escape hatch for
+        // the parallel fresh-checking campaign: it disables the cross-file
+        // shared cache so cache-poisoning races can be isolated from other
+        // parallel-lane defects.
+        let shared_query_cache =
+            if work_items.len() > 1 && std::env::var_os("TSZ_EXPERIMENT_NO_SHARED_QC").is_none() {
+                Some(tsz_solver::construction::SharedQueryCache::new())
+            } else {
+                None
+            };
 
         let check_file_with_fresh_checker = |file_idx: usize| {
             let binder = build_checker_binder(file_idx);
@@ -1203,11 +1235,21 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     work_items: &work_items,
                     large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
                 });
-            let use_sequential_checking = should_use_sequential_fresh_checking(
-                work_items.len(),
-                has_large_wildcard_barrel,
-                has_parallel_order_sensitive_global_lib,
-            );
+            // Experiment escape hatch for the parallel fresh-checking gate
+            // lift campaign: force the rayon path regardless of the
+            // DOM-lib/barrel heuristics so livelock/determinism repros can be
+            // driven from the env without rebuilding.
+            let force_parallel_experiment =
+                std::env::var_os("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK").is_some();
+            let use_sequential_checking = if force_parallel_experiment {
+                false
+            } else {
+                should_use_sequential_fresh_checking(
+                    work_items.len(),
+                    has_large_wildcard_barrel,
+                    has_parallel_order_sensitive_global_lib,
+                )
+            };
             // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): the sequential
             // no-emit path *can* construct one `CheckerState` and re-target
             // it across files via `CheckerContext::switch_to_file` instead

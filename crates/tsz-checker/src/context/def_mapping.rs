@@ -872,6 +872,11 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a generic definition body (with type parameters) in **both**
     /// type environments.
+    ///
+    /// Body and params are published to the shared `DefinitionStore` in one
+    /// atomic write so concurrent readers never observe a generic alias whose
+    /// body is visible but whose parameter list is still missing (which would
+    /// mis-instantiate every application of the alias).
     pub fn register_def_with_params_in_envs(
         &self,
         def_id: DefId,
@@ -883,9 +888,8 @@ impl<'a> CheckerContext<'a> {
             .definition_store
             .get_type_params(def_id)
             .is_none_or(|existing| existing != params);
-        self.definition_store.set_body(def_id, body);
         self.definition_store
-            .set_type_params(def_id, params.clone());
+            .set_body_with_params(def_id, body, Some(params.clone()));
         if body_changed || params_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
