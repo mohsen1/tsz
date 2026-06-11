@@ -100,7 +100,7 @@ pub enum RecursionProfile {
 
     /// Shallow type traversal: contains-type checks, type collection.
     ///
-    /// Used by `RecursiveTypeCollector`, `ContainsTypeChecker`.
+    /// Used by `RecursiveTypeCollector`, `DeepContainsChecker`.
     /// Intentionally shallow — these just walk the top-level structure.
     ///
     /// depth = 20, iterations = 100,000

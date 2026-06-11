@@ -1,4 +1,5 @@
 pub mod data;
+pub(crate) mod table_macro;
 
 /// True when `code` is in the TypeScript parser/grammar diagnostic range
 /// (1000–1999) — syntactic errors and grammar rule violations.
@@ -263,16 +264,18 @@ fn compare_related_information(
 }
 
 /// Look up a `DiagnosticMessage` (code + category + template) by numeric code.
-/// Uses binary search over the sorted generated table — O(log n).
+/// The generated sections are globally sorted by code with no duplicates
+/// (locked by `generated_table_codes_are_strictly_increasing`), so the only
+/// section that can contain `code` is the first whose last code is >= `code`;
+/// one binary search there decides the lookup — O(log n).
 pub fn lookup_diagnostic(code: u32) -> Option<DiagnosticMessage> {
-    self::data::DIAGNOSTIC_MESSAGE_SECTIONS
+    let section = self::data::DIAGNOSTIC_MESSAGE_SECTIONS
         .iter()
-        .find_map(|section| {
-            section
-                .binary_search_by_key(&code, |m| m.code)
-                .ok()
-                .map(|idx| section[idx])
-        })
+        .find(|section| section.last().is_some_and(|m| m.code >= code))?;
+    section
+        .binary_search_by_key(&code, |m| m.code)
+        .ok()
+        .map(|idx| section[idx])
 }
 
 pub fn get_message_template(code: u32) -> Option<&'static str> {
@@ -343,6 +346,59 @@ pub fn format_message(message: &str, args: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_table_codes_are_strictly_increasing() {
+        // `lookup_diagnostic` binary-searches each section, so the generated
+        // table must be globally sorted by code with no duplicates.
+        let codes: Vec<u32> = data::iter_diagnostic_messages().map(|m| m.code).collect();
+        assert!(
+            codes.len() >= 2000,
+            "generated diagnostic table is suspiciously small: {} entries",
+            codes.len()
+        );
+        for window in codes.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "diagnostic codes must be strictly increasing: {} then {}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn generated_views_agree_with_the_lookup_table() {
+        // The code constant, template constant, and table entry for a
+        // diagnostic all expand from one `define_diagnostics!` declaration.
+        // Spot-check that the three views line up for a long-standing entry...
+        assert_eq!(diagnostic_codes::UNTERMINATED_STRING_LITERAL, 1002);
+        let entry = lookup_diagnostic(diagnostic_codes::UNTERMINATED_STRING_LITERAL)
+            .expect("table entry for TS1002");
+        assert_eq!(
+            entry.message,
+            diagnostic_messages::UNTERMINATED_STRING_LITERAL
+        );
+        assert_eq!(entry.category, DiagnosticCategory::Error);
+
+        // ...and for an entry that the historical split tables had dropped
+        // (present in the message table but missing its code/template
+        // constants until the views were unified).
+        assert_eq!(
+            diagnostic_codes::TYPE_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_THE_FULFILLMENT_CALLBACK_OF_ITS_OWN,
+            1062
+        );
+        let entry = lookup_diagnostic(1062).expect("table entry for TS1062");
+        assert_eq!(
+            entry.message,
+            diagnostic_messages::TYPE_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_THE_FULFILLMENT_CALLBACK_OF_ITS_OWN
+        );
+
+        // Non-error categories survive the expansion as well.
+        let suggestion = lookup_diagnostic(95194).expect("table entry for TS95194");
+        assert_eq!(suggestion.category, DiagnosticCategory::Message);
+        assert_eq!(suggestion.message, diagnostic_messages::WRAP_IN_PARENTHESES);
+    }
 
     #[test]
     fn lookup_diagnostic_finds_known_code_and_rejects_unknown_code() {

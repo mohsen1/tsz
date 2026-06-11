@@ -1467,3 +1467,276 @@ fn type_id_list_iter_reports_exact_remaining_len() {
     it.next();
     assert_eq!(it.len(), 0);
 }
+
+/// Corpus of roots covering every `TypeData` variant reachable from test
+/// construction, with predicate-relevant leaves planted at varying depths.
+/// Used to pin the project-cached content walker to the generic uncached
+/// walker: both must descend the same `ChildPolicy::CONTENT_PREDICATE` child
+/// set, so their answers must agree on every root for every predicate.
+fn content_walk_agreement_corpus(interner: &TypeInterner) -> Vec<TypeId> {
+    use crate::types::{
+        CallableShape, ConditionalType, IndexSignature, ObjectShape, PropertyInfo, TemplateSpan,
+        TupleElement,
+    };
+
+    let t_name = interner.intern_string("T");
+    let v_name = interner.intern_string("V");
+    let prop_name = interner.intern_string("p");
+
+    let plain_param = interner.type_param(TypeParamInfo::simple(t_name));
+    let infer_v = interner.infer(TypeParamInfo::simple(v_name));
+    let constrained_param = interner.type_param(TypeParamInfo {
+        constraint: Some(infer_v),
+        default: Some(TypeId::STRING),
+        ..TypeParamInfo::simple(t_name)
+    });
+    let lazy = interner.lazy(crate::def::DefId(7));
+    let type_query = interner.type_query(crate::types::SymbolRef(3));
+    let this_obj = interner.object(vec![PropertyInfo::new(prop_name, interner.this_type())]);
+
+    let leaves = [
+        TypeId::STRING,
+        plain_param,
+        infer_v,
+        constrained_param,
+        lazy,
+        type_query,
+        this_obj,
+        interner.conditional(ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: plain_param,
+            true_type: type_query,
+            false_type: TypeId::NEVER,
+            is_distributive: false,
+        }),
+    ];
+
+    let mut corpus = Vec::new();
+    for leaf in leaves {
+        corpus.push(leaf);
+        corpus.push(interner.array(leaf));
+        corpus.push(interner.union(vec![TypeId::NUMBER, leaf]));
+        corpus.push(interner.intersection(vec![interner.object(vec![]), leaf]));
+        corpus.push(interner.tuple(vec![TupleElement::fixed(leaf)]));
+        corpus.push(interner.object(vec![PropertyInfo::new(prop_name, leaf)]));
+        corpus.push(interner.object_with_index(ObjectShape {
+            properties: vec![],
+            string_index: Some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: leaf,
+                readonly: false,
+                param_name: None,
+            }),
+            ..ObjectShape::default()
+        }));
+        corpus.push(interner.function(crate::types::FunctionShape::new(
+            vec![ParamInfo {
+                name: None,
+                type_id: leaf,
+                optional: false,
+                rest: false,
+            }],
+            TypeId::VOID,
+        )));
+        corpus.push(interner.callable(CallableShape {
+            call_signatures: vec![CallSignature::new(vec![], leaf)],
+            ..CallableShape::default()
+        }));
+        corpus.push(interner.application(lazy, vec![leaf]));
+        corpus.push(interner.application(leaf, vec![TypeId::STRING]));
+        corpus.push(interner.conditional(ConditionalType {
+            check_type: leaf,
+            extends_type: TypeId::UNKNOWN,
+            true_type: TypeId::STRING,
+            false_type: TypeId::NEVER,
+            is_distributive: true,
+        }));
+        corpus.push(interner.mapped(MappedType {
+            type_param: TypeParamInfo::simple(interner.intern_string("K")),
+            constraint: interner.keyof(leaf),
+            name_type: None,
+            template: leaf,
+            readonly_modifier: None,
+            optional_modifier: None,
+        }));
+        corpus.push(interner.index_access(leaf, TypeId::STRING));
+        corpus.push(interner.template_literal(vec![
+            TemplateSpan::Text(interner.intern_string("a")),
+            TemplateSpan::Type(leaf),
+        ]));
+        corpus.push(interner.keyof(leaf));
+        corpus.push(interner.readonly_type(leaf));
+        corpus.push(interner.no_infer(leaf));
+        corpus.push(interner.enum_type(crate::def::DefId(9), leaf));
+        corpus.push(interner.array(interner.union(vec![
+            interner.tuple(vec![TupleElement::fixed(
+                interner.object(vec![PropertyInfo::new(prop_name, leaf)]),
+            )]),
+            TypeId::NULL,
+        ])));
+    }
+    corpus
+}
+
+/// The project-cached content walker (`contains_*_db`) and the generic
+/// uncached `contains_type_matching` walk must give identical answers: both
+/// are drivers over the same canonical `CONTENT_PREDICATE` child enumeration.
+/// This replaces the old "must mirror `check_key` exactly" comment contract
+/// with an executable check over a generated shape corpus, driven by the REAL
+/// `ContentPredicate` impls so predicate edits cannot desynchronize the pin.
+#[test]
+fn cached_content_walker_agrees_with_generic_walker_on_corpus() {
+    use super::content_predicates::{
+        ConditionalPredicate, ContentPredicate, InferPredicate, LazyOrRecursivePredicate,
+        SubstitutionDependentPredicate, ThisTypePredicate, TypeQueryPredicate,
+    };
+    use crate::visitors::visitor_predicates::contains_type_matching;
+
+    let interner = TypeInterner::new();
+    let corpus = content_walk_agreement_corpus(&interner);
+    assert!(corpus.len() > 100);
+
+    fn assert_agreement<P: ContentPredicate>(
+        interner: &TypeInterner,
+        corpus: &[TypeId],
+        predicate: &P,
+        cached_query: impl Fn(&TypeInterner, TypeId) -> bool,
+        label: &str,
+    ) {
+        for &root in corpus {
+            let cached = cached_query(interner, root);
+            let generic =
+                contains_type_matching(interner, root, |key| predicate.matches_node(interner, key));
+            assert_eq!(cached, generic, "{label} mismatch on {root:?}");
+        }
+    }
+
+    assert_agreement(
+        &interner,
+        &corpus,
+        &InferPredicate,
+        |i, t| contains_infer_types_db(i, t),
+        "contains_infer",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &TypeQueryPredicate,
+        |i, t| contains_type_query_db(i, t),
+        "contains_type_query",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &LazyOrRecursivePredicate,
+        |i, t| contains_lazy_or_recursive_db(i, t),
+        "contains_lazy_or_recursive",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &ThisTypePredicate,
+        |i, t| contains_this_type_db(i, t),
+        "contains_this",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &ConditionalPredicate,
+        |i, t| contains_conditional_type(i, t),
+        "contains_conditional",
+    );
+    assert_agreement(
+        &interner,
+        &corpus,
+        &SubstitutionDependentPredicate,
+        |i, t| is_substitution_dependent_type(i, t),
+        "substitution-dependent",
+    );
+}
+
+/// `has_policy_children` must stay in lockstep with the canonical enumerator:
+/// whenever it reports a node as terminal under a policy, the enumerator must
+/// yield zero children for that node under the same policy. A `false` from
+/// `has_policy_children` while children exist would make walkers silently
+/// skip subtrees behind their memo/terminal fast paths.
+#[test]
+fn has_policy_children_matches_enumerator_on_corpus() {
+    use crate::visitors::child_policy::{
+        ChildPolicy, for_each_child_with_policy, has_policy_children,
+    };
+
+    let interner = TypeInterner::new();
+    let corpus = content_walk_agreement_corpus(&interner);
+    let policies = [
+        ("FULL", ChildPolicy::FULL),
+        ("EVERYTHING", ChildPolicy::EVERYTHING),
+        ("CONTENT_PREDICATE", ChildPolicy::CONTENT_PREDICATE),
+        ("FREE_TYPE_PARAMS", ChildPolicy::FREE_TYPE_PARAMS),
+        ("FREE_INFER", ChildPolicy::FREE_INFER),
+        ("FREE_PARAM_COLLECT", ChildPolicy::FREE_PARAM_COLLECT),
+        ("STRUCTURAL_USES", ChildPolicy::STRUCTURAL_USES),
+        ("ERROR_CONTAINMENT", ChildPolicy::ERROR_CONTAINMENT),
+        ("SHALLOW", ChildPolicy::SHALLOW),
+        (
+            "STRUCTURAL_USES_SHALLOW",
+            ChildPolicy::STRUCTURAL_USES_SHALLOW,
+        ),
+    ];
+    for &root in &corpus {
+        let Some(key) = interner.lookup(root) else {
+            continue;
+        };
+        for (name, policy) in &policies {
+            if has_policy_children(&key, policy) {
+                continue;
+            }
+            let mut children = 0usize;
+            for_each_child_with_policy(&interner, &key, policy, |_| children += 1);
+            assert_eq!(
+                children, 0,
+                "has_policy_children claims terminal under {name} but enumerator \
+                 yields {children} children for {root:?}"
+            );
+        }
+    }
+}
+
+/// `contains_error_type_db` and the visitor-side `contains_error_type` are one
+/// canonical walk: every nested error position — application args, application
+/// bases, the raw `TypeId::ERROR` sentinel, and wrapper kinds — must be
+/// detected identically through both entry points.
+#[test]
+fn error_containment_is_unified_across_query_paths() {
+    let interner = TypeInterner::new();
+
+    let cases = [
+        (TypeId::ERROR, true),
+        (
+            interner.application(interner.lazy(crate::def::DefId(7)), vec![TypeId::ERROR]),
+            true,
+        ),
+        (
+            interner.application(TypeId::ERROR, vec![TypeId::STRING]),
+            true,
+        ),
+        // Deferred operations are opaque: an error inside a keyof/conditional
+        // operand is only real once evaluation selects it.
+        (interner.keyof(TypeId::ERROR), false),
+        (interner.array(TypeId::ERROR), true),
+        (interner.union(vec![TypeId::STRING, TypeId::NUMBER]), false),
+        (interner.array(TypeId::STRING), false),
+    ];
+    for (root, expected) in cases {
+        assert_eq!(
+            contains_error_type_db(&interner, root),
+            expected,
+            "contains_error_type_db on {root:?}"
+        );
+        assert_eq!(
+            crate::visitors::visitor_predicates::contains_error_type(&interner, root),
+            expected,
+            "visitor contains_error_type on {root:?}"
+        );
+    }
+}
