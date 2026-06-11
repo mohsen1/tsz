@@ -10,6 +10,16 @@ use super::lib_resolution::{
     augmentation_def_id_from_node, no_value_resolver, resolve_augmentation_node,
 };
 
+/// Mutation-isolation campaign prototype gate: the `finalize` variant of the
+/// `TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE` experiment freezes each lib def's
+/// shared-store body at its finalized publication point.
+fn lib_def_freeze_at_finalize_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE").is_ok_and(|v| v == "finalize")
+    })
+}
+
 impl<'a> CheckerState<'a> {
     /// Lower augmentation declarations from a given arena and return the resulting `TypeId`.
     ///
@@ -182,6 +192,12 @@ impl<'a> CheckerState<'a> {
         let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
         self.ctx
             .register_def_auto_params_in_envs(def_id, ty, type_params);
+        // Mutation-isolation campaign prototype (`finalize` variant): freeze
+        // the shared-store body at the finalized publication point so later
+        // checkers' re-finalizations cannot republish a different form.
+        if lib_def_freeze_at_finalize_enabled() {
+            self.ctx.definition_store.mark_publish_once(def_id);
+        }
     }
 
     /// Wrapper around `register_finalized_lib_body` that no-ops unless the

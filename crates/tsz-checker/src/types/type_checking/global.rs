@@ -369,17 +369,40 @@ impl<'a> CheckerState<'a> {
         let mut boxed_def_entries: smallvec::SmallVec<
             [(IntrinsicKind, TypeId, tsz_solver::DefId); 16],
         > = smallvec::SmallVec::new();
+        // Resolve each per-lib-context SymbolId to a DefId and verify the
+        // def actually names this builtin. Per-lib SymbolIds are
+        // binder-relative; `get_lib_def_id` resolves them through
+        // context-agnostic indexes (raw symbol id, with every lib def sharing
+        // the same sentinel decl file index), so a later lib context's
+        // `String` symbol id can collide with an unrelated def from an
+        // earlier lib binder (e.g. `alert`). Registering — and worse,
+        // `insert_def`-publishing — the boxed body onto that unrelated def
+        // corrupts the shared `DefinitionStore` body for that def (a
+        // last-writer-wins in-flight channel the parallel-checking campaign
+        // must eliminate). On mismatch, route through the canonical
+        // name-keyed lib def resolution instead.
+        let boxed_def_for = |checker: &Self, name: &str, sym_id: tsz_binder::SymbolId| {
+            let def_id = checker.ctx.get_lib_def_id(sym_id);
+            let name_matches = checker
+                .ctx
+                .definition_store
+                .get(def_id)
+                .is_some_and(|info| checker.ctx.types.resolve_atom(info.name) == name);
+            if name_matches {
+                def_id
+            } else {
+                checker.ctx.get_canonical_lib_def_id(name, sym_id)
+            }
+        };
         for &(name, type_opt, kind) in boxed_names {
             let Some(ty) = type_opt else { continue };
             for ctx in self.ctx.lib_contexts.iter() {
                 if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                    let def_id = self.ctx.get_lib_def_id(sym_id);
-                    boxed_def_entries.push((kind, ty, def_id));
+                    boxed_def_entries.push((kind, ty, boxed_def_for(self, name, sym_id)));
                 }
             }
             if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                let def_id = self.ctx.get_lib_def_id(sym_id);
-                boxed_def_entries.push((kind, ty, def_id));
+                boxed_def_entries.push((kind, ty, boxed_def_for(self, name, sym_id)));
             }
         }
         for &(kind, _ty, def_id) in &boxed_def_entries {

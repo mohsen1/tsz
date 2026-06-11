@@ -861,6 +861,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Register a non-generic definition body in **both** type environments.
+    #[track_caller]
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
         let body_changed = self.definition_store.get_body(def_id) != Some(body);
         self.definition_store.set_body(def_id, body);
@@ -877,6 +878,7 @@ impl<'a> CheckerContext<'a> {
     /// atomic write so concurrent readers never observe a generic alias whose
     /// body is visible but whose parameter list is still missing (which would
     /// mis-instantiate every application of the alias).
+    #[track_caller]
     pub fn register_def_with_params_in_envs(
         &self,
         def_id: DefId,
@@ -905,6 +907,7 @@ impl<'a> CheckerContext<'a> {
     /// Register a definition body in **both** type environments, choosing
     /// `insert_def` or `insert_def_with_params` based on whether `params` is
     /// empty.
+    #[track_caller]
     pub fn register_def_auto_params_in_envs(
         &self,
         def_id: DefId,
