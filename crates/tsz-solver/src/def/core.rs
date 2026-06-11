@@ -857,7 +857,38 @@ impl DefinitionStore {
     /// entry is created so that cross-file type resolution can find the
     /// body via `get_body`.
     pub fn set_body(&self, id: DefId, body: TypeId) {
+        self.set_body_with_params(id, body, None);
+    }
+
+    /// Publish a definition body — and optionally its type parameters —
+    /// atomically under the entry lock.
+    ///
+    /// The shared `DefinitionStore` is read concurrently by sibling parallel
+    /// file checkers while each fresh checker re-derives bodies for the defs
+    /// it touches. Body and type parameters must be written under one entry
+    /// guard: publishing the body first and the parameter list second (two
+    /// separate `get_mut` windows) let a concurrent reader observe a generic
+    /// alias whose body was visible but whose `type_params` were still
+    /// empty/stale, mis-instantiating every application of the alias
+    /// (false `TS2344` storms under parallel fresh checking; sequential
+    /// checking never interleaves a reader between the two writes).
+    pub fn set_body_with_params(
+        &self,
+        id: DefId,
+        body: TypeId,
+        params: Option<Vec<TypeParamInfo>>,
+    ) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
+            if let Some(params) = params {
+                if entry.kind == DefKind::TypeAlias
+                    && entry.type_params.is_empty()
+                    && !params.is_empty()
+                    && let Some(prev_body) = entry.body
+                {
+                    self.body_to_alias.remove(&prev_body);
+                }
+                entry.type_params = params;
+            }
             entry.body = Some(body);
 
             // Maintain body_to_alias index for non-generic type aliases.
@@ -875,7 +906,7 @@ impl DefinitionStore {
                 DefinitionInfo {
                     kind: DefKind::Interface,
                     name: Atom::default(),
-                    type_params: Vec::new(),
+                    type_params: params.unwrap_or_default(),
                     body: Some(body),
                     instance_shape: None,
                     static_shape: None,
