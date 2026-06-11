@@ -696,6 +696,9 @@ mod cross_file_type_param_decl_identity_tests;
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;
 #[cfg(test)]
+#[path = "tests/cross_module_generic_interface_heritage_tests.rs"]
+mod cross_module_generic_interface_heritage_tests;
+#[cfg(test)]
 #[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
 mod destructured_discriminant_source_narrowing_tests;
 #[cfg(test)]
