@@ -1040,6 +1040,20 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
         );
     }
 
+    fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
+        let mut cache = self.application_eval_cache.borrow_mut();
+        if cache.is_empty() {
+            return;
+        }
+        cache.retain(|(key_def, key_args, _, _), &mut result| {
+            *key_def != def_id
+                && !key_args.iter().any(|&arg| {
+                    crate::visitors::visitor::contains_lazy_def_id(self.interner, arg, def_id)
+                })
+                && !crate::visitors::visitor::contains_lazy_def_id(self.interner, result, def_id)
+        });
+    }
+
     fn lookup_closed_eval_cache(
         &self,
         type_id: TypeId,

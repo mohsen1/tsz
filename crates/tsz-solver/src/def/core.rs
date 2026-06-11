@@ -261,6 +261,17 @@ pub struct DefinitionStore {
     /// Monotonic revision for resolver-visible definition-store mutations.
     generation: AtomicU64,
 
+    /// Import-alias `DefId` -> declaring (target) `DefId` forwarding.
+    ///
+    /// Type annotations lower the *alias name*, so `Lazy`/`Application` bases
+    /// in the importing file carry the alias's `DefId` while the declaring
+    /// module's own references carry the target's. Both denote the same
+    /// definition; relation logic (same-definition application families,
+    /// variance fast paths) canonicalizes through this map so the two keys
+    /// never degrade into a structural mismatch between an expanded shape
+    /// and an opaque application.
+    alias_forwards: DefDashMap<DefId, DefId>,
+
     /// Reverse map: `TypeId` -> `DefId` for named types.
     ///
     /// When a class/interface instance type is computed, the checker registers it here
@@ -629,6 +640,7 @@ impl DefinitionStore {
             definitions: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             generation: AtomicU64::new(1),
+            alias_forwards: DefDashMap::default(),
             type_to_def: DefDashMap::default(),
             type_param_for_decl_node: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
@@ -1095,6 +1107,38 @@ impl DefinitionStore {
     /// publications are dropped.
     pub fn mark_publish_once(&self, id: DefId) {
         self.publish_once_defs.insert(id);
+    }
+
+    /// Record that `alias` is an import alias of `target` (see
+    /// `alias_forwards`). No-op for self-forwards; bumps the generation only
+    /// when the link is new or changed.
+    pub fn set_alias_forward(&self, alias: DefId, target: DefId) {
+        if alias == target || !alias.is_valid() || !target.is_valid() {
+            return;
+        }
+        // Refuse links that would create a forwarding cycle.
+        if self.canonical_def_id(target) == alias {
+            return;
+        }
+        let prev = self.alias_forwards.insert(alias, target);
+        if prev != Some(target) {
+            self.bump_generation();
+        }
+    }
+
+    /// Resolve a `DefId` through the import-alias forwarding chain to the
+    /// declaring definition. Identity for non-alias defs. The chase is
+    /// depth-bounded so a (refused, but defensively handled) cycle cannot
+    /// loop.
+    pub fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        let mut current = def_id;
+        for _ in 0..8 {
+            match self.alias_forwards.get(&current) {
+                Some(next) if *next != current => current = *next,
+                _ => break,
+            }
+        }
+        current
     }
 
     /// Mark a type-alias `DefId` as having an unconditionally-infinite

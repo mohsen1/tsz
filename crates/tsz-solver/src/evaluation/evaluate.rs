@@ -150,6 +150,17 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// of `(DefId, args)` and is safe to persist even if an *earlier, unrelated*
     /// sibling already bailed.
     app_body_limit_epoch: u32,
+    /// Sticky flag: set when an application's base `DefId` could not be
+    /// resolved to a body by this run's resolver (no body registered yet, an
+    /// `UNKNOWN` placeholder, or a first-expansion self-lazy wrapper). The
+    /// result of such a run is a function of the *registration window* it ran
+    /// in, not of `(DefId, args)` alone: once the declaring file registers the
+    /// real body, a fresh evaluation produces a different (correct) answer.
+    /// Persisting the window artifact in the project-wide `closed_eval_cache`
+    /// would permanently shadow that answer, so the commit gate checks this
+    /// flag. The `application_eval_cache` is protected per-application through
+    /// the `limit_epoch` bump in [`Self::mark_unresolved_def_seen`].
+    unresolved_def_seen: bool,
     /// Whether this evaluator may *write* the `closed_eval_cache`. Only the
     /// checker's authoritative, context-free type-resolution pass opts in (via
     /// `with_closed_eval_writes`). Evaluators running mid-relation, mid-inference
@@ -222,6 +233,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             deep_recursion_seen: false,
             limit_epoch: 0,
             app_body_limit_epoch: 0,
+            unresolved_def_seen: false,
             closed_eval_writes_allowed: false,
         }
     }
@@ -564,6 +576,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     const fn mark_silent_depth_bailed(&mut self) {
         self.silent_depth_bailed = true;
         self.note_limit_event();
+    }
+
+    /// Record that an application's base `DefId` had no resolvable body in
+    /// this run (registration-window artifact; see `unresolved_def_seen`).
+    ///
+    /// Bumps `limit_epoch` so the enclosing application's
+    /// `application_eval_cache` write observes a stale
+    /// `app_body_limit_epoch` snapshot and skips persisting — the same
+    /// per-application precision the depth/cycle bails use. Intentionally
+    /// does NOT set `deep_recursion_seen`: an unresolved def is not a depth
+    /// limit and must not feed `recursion_limit_hit()` consumers
+    /// (`TS2589`-adjacent bookkeeping, `depth_exceeded` cache markers).
+    #[inline]
+    pub(super) const fn mark_unresolved_def_seen(&mut self) {
+        self.unresolved_def_seen = true;
+        self.note_limit_event();
+    }
+
+    /// Whether this run evaluated an application whose base `DefId` had no
+    /// resolvable body (see `unresolved_def_seen`).
+    #[inline]
+    pub(super) const fn unresolved_def_seen(&self) -> bool {
+        self.unresolved_def_seen
     }
 
     /// Test hook: simulate an *earlier, unrelated* recursive alias having bailed

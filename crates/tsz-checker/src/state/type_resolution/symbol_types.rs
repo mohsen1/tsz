@@ -1252,7 +1252,24 @@ impl<'a> CheckerState<'a> {
                             return result;
                         }
                         if target_sym_id != sym_id {
-                            return self.type_reference_symbol_type_with_params(target_sym_id);
+                            let (target_type, target_params) =
+                                self.type_reference_symbol_type_with_params(target_sym_id);
+                            // Forward the import-alias `DefId` to the resolved
+                            // target body. Annotations in this file lower the
+                            // alias name to `Application(Lazy(alias_def), args)`
+                            // — without a registered body, solver-side
+                            // evaluation/relations keep those applications
+                            // permanently opaque (one side of a relation
+                            // expands, the alias side does not, producing false
+                            // structural mismatches), and every consumer
+                            // re-resolves the alias from scratch.
+                            self.register_alias_def_forwarding(
+                                sym_id,
+                                target_sym_id,
+                                target_type,
+                                &target_params,
+                            );
+                            return (target_type, target_params);
                         }
                         if self
                             .ctx
@@ -1660,10 +1677,32 @@ impl<'a> CheckerState<'a> {
                 self.pop_type_parameters(updates);
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                     let canonical_params = self.get_type_params_for_symbol(sym_id);
-                    if !canonical_params.is_empty() {
-                        self.ctx.insert_def_type_params(def_id, canonical_params);
+                    let reg_params = if canonical_params.is_empty() {
+                        params.clone()
                     } else {
-                        self.ctx.insert_def_type_params(def_id, params.clone());
+                        canonical_params
+                    };
+                    self.ctx.insert_def_type_params(def_id, reg_params.clone());
+                    // Publication/consumption of heritage-merged interface
+                    // bodies through the shared `DefinitionStore`; see
+                    // `heritage_publication.rs` for the structural rules.
+                    self.publish_heritage_merged_interface_body(
+                        def_id,
+                        merged,
+                        interface_type,
+                        needs_text_based_resolution,
+                        &symbol.declarations,
+                        reg_params,
+                    );
+                    if let Some(consumed) = self.try_consume_published_heritage_body(
+                        sym_id,
+                        def_id,
+                        merged,
+                        needs_text_based_resolution && merged == interface_type,
+                        &decls_with_arenas,
+                        &params,
+                    ) {
+                        return consumed;
                     }
                 }
                 return (merged, params);

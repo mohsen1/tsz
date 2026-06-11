@@ -566,6 +566,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             .or_else(|| self.declared_type_param_variances_for_node(symbol.primary_declaration()?))
     }
 
+    fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        self.definition_store.canonical_def_id(def_id)
+    }
+
     /// Resolve a `DefId` to its cached type.
     ///
     /// This looks up the type from the `symbol_types` cache, which is populated

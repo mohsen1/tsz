@@ -149,6 +149,69 @@ impl<'a> CheckerState<'a> {
         Some(root_idx)
     }
 
+    /// Resolve every interface declaration with an `extends` clause in this
+    /// statement list (recursing into namespace bodies), so the
+    /// heritage-merged body reaches the shared `DefinitionStore` (see the
+    /// publication gate in `type_reference_symbol_type_with_params`) before
+    /// other files evaluate applications of these definitions.
+    fn publish_heritage_interface_bodies(&mut self, statements: &[NodeIndex]) {
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                let has_heritage = self
+                    .ctx
+                    .arena
+                    .get_interface(stmt_node)
+                    .and_then(|iface| iface.heritage_clauses.as_ref())
+                    .is_some_and(|clauses| !clauses.nodes.is_empty());
+                if has_heritage && let Some(&sym_id) = self.ctx.binder.node_symbols.get(&stmt_idx.0)
+                {
+                    // The params-aware resolution directly: the plain
+                    // `type_reference_symbol_type` can short-circuit on the
+                    // prewarmed symbol-type cache before reaching the
+                    // INTERFACE branch that performs the publication.
+                    let _ = self.type_reference_symbol_type_with_params(sym_id);
+                }
+                continue;
+            }
+            // `export interface Foo { .. }` parses as an EXPORT_DECLARATION
+            // wrapping the interface declaration; recurse into the wrapped
+            // declaration so exported interfaces (the cross-module case this
+            // pass exists for) are covered.
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node)
+                    && export_decl.export_clause.is_some()
+                {
+                    self.publish_heritage_interface_bodies(&[export_decl.export_clause]);
+                }
+                continue;
+            }
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = self.ctx.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if module_decl.body.is_none() {
+                continue;
+            }
+            let Some(body_node) = self.ctx.arena.get(module_decl.body) else {
+                continue;
+            };
+            if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                continue;
+            }
+            let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+                continue;
+            };
+            if let Some(inner) = &block.statements {
+                self.publish_heritage_interface_bodies(&inner.nodes);
+            }
+        }
+    }
+
     fn check_interface_declarations_recursively(
         &mut self,
         statements: &[NodeIndex],
@@ -336,6 +399,20 @@ impl<'a> CheckerState<'a> {
         let Some(sf) = self.ctx.arena.get_source_file(node) else {
             return;
         };
+
+        // Resolve (and publish to the shared `DefinitionStore`, per the
+        // INTERFACE-branch publication gate) every heritage-bearing interface
+        // this file declares, before statement checking. Importing files
+        // cannot re-derive a foreign interface's heritage locally —
+        // `merge_interface_heritage_types` reads only the current arena and
+        // the lib-aware fallback resolves bare names to the local import
+        // alias — so they depend on the declaring checker having published
+        // the merged body. Without this pass, publication only happened when
+        // the declaring file's own statements incidentally referenced the
+        // interface, making member resolution order-dependent.
+        if !self.ctx.is_declaration_file() {
+            self.publish_heritage_interface_bodies(&sf.statements.nodes);
+        }
 
         // Type-environment prewarming may construct large alias bodies before
         // statement checking reaches a concrete diagnostic site. Start the

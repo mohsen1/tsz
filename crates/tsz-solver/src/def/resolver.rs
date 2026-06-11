@@ -96,11 +96,24 @@ pub trait TypeResolver {
         None
     }
 
+    /// Resolve a `DefId` through import-alias forwarding to the declaring
+    /// definition's `DefId`. Identity by default; resolvers backed by a
+    /// `DefinitionStore` chase its alias-forward links so an alias-keyed
+    /// `Lazy`/`Application` base and the declaring module's own key compare
+    /// as the same definition.
+    fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        def_id
+    }
+
     /// Check whether two `DefIds` refer to the same declaration (same `DefId` or same `SymbolId`).
     ///
     /// Cross-context `DefId` aliasing can give the same interface different `DefIds`
     /// (e.g., lib file vs heritage clause lowering). This method handles that by
-    /// falling back to `SymbolId` comparison when `DefIds` differ.
+    /// falling back to `SymbolId` comparison when `DefIds` differ. Import-alias
+    /// forwarding intentionally does NOT widen this predicate: its consumers
+    /// (display aliasing, augmentation identity) must keep distinguishing an
+    /// alias's def from its target's; relation-level same-definition detection
+    /// canonicalizes through [`TypeResolver::canonical_def_id`] explicitly.
     fn defs_are_equivalent(&self, a: DefId, b: DefId) -> bool {
         a == b
             || self
@@ -368,6 +381,14 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
         (**self).def_to_symbol_id(def_id)
+    }
+
+    fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        (**self).canonical_def_id(def_id)
+    }
+
+    fn defs_are_equivalent(&self, a: DefId, b: DefId) -> bool {
+        (**self).defs_are_equivalent(a, b)
     }
 
     fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
@@ -1183,6 +1204,12 @@ impl TypeEnvironment {
 impl TypeResolver for TypeEnvironment {
     fn resolver_generation(&self) -> u64 {
         self.generation()
+    }
+
+    fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        self.definition_store
+            .as_ref()
+            .map_or(def_id, |store| store.canonical_def_id(def_id))
     }
 
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
