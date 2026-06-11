@@ -262,20 +262,19 @@ impl ScannerState {
     /// Scan a JSX string literal (used for attribute values).
     /// Unlike regular strings, JSX strings don't support escape sequences.
     fn scan_jsx_string_literal(&mut self, quote: u32) {
+        self.token_atom = AstAtom::NONE;
+        self.token_value.clear();
         self.pos += 1; // Skip opening quote
-        let mut result = String::new();
+        let content_start = self.pos;
 
         while self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
             if ch == quote {
+                let text = &self.source[content_start..self.pos];
+                self.token_atom = self.interner.intern(text);
                 self.pos += 1; // Closing quote
-                self.token_value = result;
                 self.token = SyntaxKind::StringLiteral;
                 return;
-            }
-            // JSX strings don't process escape sequences - they're literal
-            if let Some(c) = char::from_u32(ch) {
-                result.push(c);
             }
             // Advance by the character's UTF-8 byte length so multi-byte chars
             // are not re-decoded from a continuation-byte offset.
@@ -284,7 +283,7 @@ impl ScannerState {
 
         // Unterminated string
         self.token_flags |= TokenFlags::Unterminated as u32;
-        self.token_value = result;
+        self.token_value = self.source[content_start..self.pos].to_string();
         self.token = SyntaxKind::StringLiteral;
     }
 

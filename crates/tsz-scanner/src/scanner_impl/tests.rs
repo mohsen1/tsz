@@ -210,6 +210,26 @@ fn scan_no_substitution_template() {
     assert_eq!(tokens[0].1, "hello world");
 }
 
+// ── String literals ───────────────────────────────────────────────
+
+#[test]
+fn scan_plain_string_literal_uses_interned_source_slice() {
+    let mut scanner = ScannerState::new(r#""pkg/path""#.to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::StringLiteral);
+    assert_eq!(scanner.get_token_value_ref(), "pkg/path");
+    assert_eq!(scanner.token_value, "");
+    assert_ne!(scanner.token_atom, AstAtom::NONE);
+}
+
+#[test]
+fn scan_escaped_string_literal_keeps_cooked_value_path() {
+    let mut scanner = ScannerState::new(r#""a\nb""#.to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::StringLiteral);
+    assert_eq!(scanner.get_token_value_ref(), "a\nb");
+    assert_eq!(scanner.token_value, "a\nb");
+    assert_eq!(scanner.token_atom, AstAtom::NONE);
+}
+
 // ── JSX attribute string literals ─────────────────────────────────
 
 /// Regression for #3977: `scan_jsx_string_literal` advanced by one byte
@@ -237,6 +257,18 @@ fn scan_jsx_attribute_value_preserves_non_ascii() {
     let mut s = ScannerState::new("'héllo 中 😀'".to_string(), true);
     assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
     assert_eq!(s.get_token_value(), "héllo 中 😀");
+}
+
+#[test]
+fn scan_jsx_attribute_string_literal_uses_interned_source_slice() {
+    let mut scanner = ScannerState::new("\"plain attr\"".to_string(), true);
+    assert_eq!(
+        scanner.scan_jsx_attribute_value(),
+        SyntaxKind::StringLiteral
+    );
+    assert_eq!(scanner.get_token_value_ref(), "plain attr");
+    assert_eq!(scanner.token_value, "");
+    assert_ne!(scanner.token_atom, AstAtom::NONE);
 }
 
 // ── Punctuation ───────────────────────────────────────────────────
