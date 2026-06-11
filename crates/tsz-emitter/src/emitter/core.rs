@@ -385,7 +385,7 @@ pub struct Printer<'a> {
 
     /// Precomputed line map for O(log n) line/column lookups from byte offsets.
     /// Built once when source text is set; avoids O(n^2) scanning during emission.
-    pub(crate) line_map: Option<LineMap>,
+    pub(crate) line_map: Option<LineMap<'a>>,
 
     /// Pending source position for mapping the next write.
     pub(crate) pending_source_pos: Option<SourcePosition>,

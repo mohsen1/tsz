@@ -420,3 +420,37 @@ fn test_line_map_treats_u2028_and_u2029_as_line_terminators() {
     // U+2029 sits at bytes 13..16; line3 starts at byte 16.
     assert_eq!(map.offset_to_position(16, source), Position::new(2, 0));
 }
+
+#[test]
+fn test_line_index_matches_offset_to_position_line() {
+    let source = "a\r\nbb\rc\u{2028}dd\nlast";
+    let map = LineMap::build(source);
+    for offset in 0..=u32::try_from(source.len()).unwrap() {
+        assert_eq!(
+            map.line_index(offset),
+            map.offset_to_position(offset, source).line,
+            "line_index diverged from offset_to_position at offset {offset}"
+        );
+    }
+    // Past-end offsets clamp to the last line.
+    assert_eq!(
+        map.line_index(1000),
+        u32::try_from(map.line_count()).unwrap() - 1
+    );
+}
+
+#[test]
+fn test_line_col_utf16_counts_utf16_units() {
+    // 😀 is 4 UTF-8 bytes but 2 UTF-16 code units; é is 2 bytes, 1 unit.
+    let source = "\u{1F600}\u{00E9}x\nsecond";
+    let map = LineMap::build(source);
+    assert_eq!(map.line_col_utf16(0, source), (0, 0));
+    // After the emoji (byte 4): column 2 in UTF-16 units.
+    assert_eq!(map.line_col_utf16(4, source), (0, 2));
+    // After é (byte 6): column 3.
+    assert_eq!(map.line_col_utf16(6, source), (0, 3));
+    // 'x' ends the first line at byte 7.
+    assert_eq!(map.line_col_utf16(7, source), (0, 4));
+    // Start of "second" (byte 8).
+    assert_eq!(map.line_col_utf16(8, source), (1, 0));
+}

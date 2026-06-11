@@ -3,6 +3,7 @@
 //! parse diagnostic conversion, and pragma detection.
 
 use super::*;
+use tsz_common::position::LineMap;
 
 #[path = "check_utils/tslib_helpers.rs"]
 mod tslib_helpers;
@@ -940,57 +941,6 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
 }
 
 // --- TS directive suppression ---
-/// Length in bytes of a line break starting at `bytes[i]`, or `0` if there is
-/// no line break at that position. Recognizes `\n`, `\r`, `\r\n`, and the
-/// UTF-8 encodings of U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
-/// SEPARATOR), matching `tsz-scanner::is_line_break` and tsc's own line
-/// break recognition.
-fn line_break_len_at(bytes: &[u8], i: usize) -> usize {
-    match bytes.get(i) {
-        Some(&b'\n') => 1,
-        Some(&b'\r') => {
-            if bytes.get(i + 1) == Some(&b'\n') {
-                2
-            } else {
-                1
-            }
-        }
-        Some(&0xE2)
-            if bytes.get(i + 1) == Some(&0x80)
-                && matches!(bytes.get(i + 2), Some(&0xA8) | Some(&0xA9)) =>
-        {
-            3
-        }
-        _ => 0,
-    }
-}
-
-/// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
-fn build_line_starts(text: &str) -> Vec<u32> {
-    let mut starts = vec![0u32];
-    let bytes = text.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-    while i < len {
-        let lb = line_break_len_at(bytes, i);
-        if lb > 0 {
-            starts.push((i + lb) as u32);
-            i += lb;
-        } else {
-            i += 1;
-        }
-    }
-    starts
-}
-
-/// Get the 0-based line number for a byte offset.
-fn line_of_offset(line_starts: &[u32], offset: u32) -> u32 {
-    match line_starts.binary_search(&offset) {
-        Ok(exact) => exact as u32,
-        Err(insert) => insert.saturating_sub(1) as u32,
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirectiveKind {
     ExpectError,
@@ -1051,9 +1001,9 @@ struct TsDirective {
     unused_diagnostic_length: u32,
 }
 
-/// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
-fn find_ts_directives(text: &str) -> Vec<TsDirective> {
-    let line_starts = build_line_starts(text);
+/// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in
+/// comments. `line_map` must be built from the same `text`.
+fn find_ts_directives(text: &str, line_map: &LineMap) -> Vec<TsDirective> {
     let mut directives = Vec::new();
 
     for comment in tsz_common::comments::get_comment_ranges(text) {
@@ -1063,18 +1013,15 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
         };
 
         let suppressed_line = if comment.is_multi_line {
-            let close_line = line_of_offset(&line_starts, comment.end.saturating_sub(1));
+            let close_line = line_map.line_index(comment.end.saturating_sub(1));
             close_line + 1
         } else {
-            let comment_line = line_of_offset(&line_starts, comment.pos);
+            let comment_line = line_map.line_index(comment.pos);
             comment_line + 1
         };
         let directive_start = comment.pos.saturating_add(directive_offset);
-        let directive_line = line_of_offset(&line_starts, directive_start) as usize;
-        let directive_line_start = line_starts
-            .get(directive_line)
-            .copied()
-            .unwrap_or(comment.pos);
+        let directive_line = line_map.line_index(directive_start) as usize;
+        let directive_line_start = line_map.line_start(directive_line).unwrap_or(comment.pos);
         let unused_diagnostic_start = if comment.is_multi_line && directive_line_start > comment.pos
         {
             directive_line_start
@@ -1104,12 +1051,11 @@ pub(super) fn apply_ts_directive_suppression(
     diagnostics: &mut Vec<Diagnostic>,
     preserve_declaration_jsdoc_name_diagnostics: bool,
 ) {
-    let directives = find_ts_directives(source_text);
+    let line_map = LineMap::build(source_text);
+    let directives = find_ts_directives(source_text, &line_map);
     if directives.is_empty() {
         return;
     }
-
-    let line_starts = build_line_starts(source_text);
 
     // Check for @ts-nocheck — suppresses TS2578 for unused directives.
     let has_ts_nocheck =
@@ -1132,7 +1078,7 @@ pub(super) fn apply_ts_directive_suppression(
     // syntactic diagnostics on the target line still make `@ts-expect-error`
     // used. Keep those diagnostics while recording the directive hit.
     diagnostics.retain(|diag| {
-        let diag_line = line_of_offset(&line_starts, diag.start);
+        let diag_line = line_map.line_index(diag.start);
         for (idx, directive) in directives.iter().enumerate() {
             if diag_line == directive.suppressed_line {
                 directive_used[idx] = true;
