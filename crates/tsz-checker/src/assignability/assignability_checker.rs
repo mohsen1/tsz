@@ -1537,14 +1537,10 @@ impl<'a> CheckerState<'a> {
         crate::error_reporter::display_budget::record_eval(type_id, result);
 
         // Memoize only clean completions: fuel-exhausted or depth-clamped
-        // evaluations are degraded forms that a later, fresher evaluation
-        // must be allowed to improve on.
-        //
-        // The stamp is recomputed here on purpose: the evaluation above
-        // routinely grows the type environments (def resolution, symbol
-        // types), and the result is valid for that *post*-evaluation state.
-        // Reusing the lookup-time stamp would file the entry under a stale
-        // stamp and the next lookup would immediately drop it.
+        // evaluations are degraded forms a fresher evaluation must improve on.
+        // The stamp is recomputed on purpose: evaluation grows the type
+        // environments, and the result is valid for that *post*-evaluation
+        // state; the lookup-time stamp would file the entry as already stale.
         if outermost
             && result != TypeId::ERROR
             && !refs_resolution_fuel_exhausted()
