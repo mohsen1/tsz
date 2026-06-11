@@ -832,7 +832,9 @@ impl<'a> TypeInstantiator<'a> {
                         shape.flags,
                         shape.symbol,
                     );
-                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    let original = self.interner.intern(*key);
+                    self.propagate_instantiated_display_properties(original, result);
+                    self.propagate_instantiated_application_origin(original, result);
                     result
                 } else {
                     self.interner.intern(*key)
@@ -866,7 +868,9 @@ impl<'a> TypeInstantiator<'a> {
                         number_index: instantiated_number_idx.or(shape.number_index),
                         symbol: shape.symbol,
                     });
-                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    let original = self.interner.intern(*key);
+                    self.propagate_instantiated_display_properties(original, result);
+                    self.propagate_instantiated_application_origin(original, result);
                     result
                 } else {
                     self.interner.intern(*key)
