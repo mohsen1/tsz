@@ -20,6 +20,24 @@ impl<'a> Printer<'a> {
                 })
     }
 
+    /// Binder-backed value-usage fact for one import-binding name node.
+    /// `None` when facts are unavailable for this binding; callers fall back
+    /// to the text-based heuristics in `crate::import_usage`.
+    pub(in crate::emitter) fn binding_value_used_fact(&self, name_idx: NodeIndex) -> Option<bool> {
+        self.ctx
+            .options
+            .import_usage_facts
+            .as_ref()?
+            .binding_value_used(name_idx)
+    }
+
+    /// Gate for the per-binding usage-based elision paths: active when
+    /// binder-backed facts are present, or in text-heuristic mode when the
+    /// checker provided no type-only marks (--noCheck-style emit).
+    pub(in crate::emitter) fn import_usage_gate_active(&self) -> bool {
+        self.ctx.options.import_usage_facts.is_some() || self.ctx.options.type_only_nodes.is_empty()
+    }
+
     pub(in crate::emitter) fn import_has_value_usage_after_node(
         &self,
         node: &Node,
@@ -34,43 +52,30 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let mut names = Vec::new();
-        if clause.name.is_some() {
-            let default_name = self.get_identifier_text_idx(clause.name);
-            if !default_name.is_empty() {
-                names.push(default_name);
-            }
-        }
-        if clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-        {
-            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-                let ns_name = self.get_identifier_text_idx(named_imports.name);
-                if !ns_name.is_empty() {
-                    names.push(ns_name);
-                }
-            } else {
-                for &spec_idx in &named_imports.elements.nodes {
-                    let Some(spec_node) = self.arena.get(spec_idx) else {
-                        continue;
-                    };
-                    let Some(spec) = self.arena.get_specifier(spec_node) else {
-                        continue;
-                    };
-                    if spec.is_type_only {
-                        continue;
-                    }
-                    let local_name = self.get_identifier_text_idx(spec.name);
-                    if !local_name.is_empty() {
-                        names.push(local_name);
-                    }
-                }
-            }
-        }
+        let names = crate::transforms::emit_utils::collect_import_clause_value_binding_names(
+            self.arena, clause,
+        );
         if names.is_empty() {
             return !self.import_clause_is_empty_named_import(clause);
         }
+
+        // Binder-backed facts: authoritative for the pure value-usage
+        // question when every binding is covered. JSX-factory, decorator
+        // metadata, and ES5 Promise-constructor cases stay below because
+        // they are implicit usages the reference scan does not model.
+        let mut facts_settled = false;
+        if self.ctx.options.import_usage_facts.is_some() {
+            let mut all_known = true;
+            for (name_idx, _) in &names {
+                match self.binding_value_used_fact(*name_idx) {
+                    Some(true) => return true,
+                    Some(false) => {}
+                    None => all_known = false,
+                }
+            }
+            facts_settled = all_known;
+        }
+
         let Some(source_text) = self.source_text else {
             return true;
         };
@@ -83,23 +88,25 @@ impl<'a> Printer<'a> {
         };
         let haystack =
             Self::source_excluding_import_decl(source_text, node, import_decl, self.arena);
-        // Strip type-only content from the haystack so that identifiers
-        // appearing only in type positions (type annotations, declare lines,
-        // other import/export type statements, etc.) don't count as value usages.
-        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
-        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
-            &value_haystack,
-            &self.ctx.options.external_const_enum_bindings,
-        );
-        let appears_in_value_haystack = names.iter().any(|name| {
-            crate::import_usage::contains_identifier_value_occurrence(&value_haystack, name)
-        });
-        if appears_in_value_haystack {
-            return true;
+        if !facts_settled {
+            // Strip type-only content from the haystack so that identifiers
+            // appearing only in type positions (type annotations, declare lines,
+            // other import/export type statements, etc.) don't count as value usages.
+            let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
+            let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+                &value_haystack,
+                &self.ctx.options.external_const_enum_bindings,
+            );
+            let appears_in_value_haystack = names.iter().any(|(_, name)| {
+                crate::import_usage::contains_identifier_value_occurrence(&value_haystack, name)
+            });
+            if appears_in_value_haystack {
+                return true;
+            }
         }
         if names
             .iter()
-            .any(|name| self.is_classic_jsx_factory_root(name))
+            .any(|(_, name)| self.is_classic_jsx_factory_root(name))
         {
             return true;
         }
@@ -110,13 +117,16 @@ impl<'a> Printer<'a> {
         // type annotation in the unstripped haystack references one of our
         // imported names.
         if self.ctx.options.emit_decorator_metadata
-            && names.iter().any(|name| {
+            && names.iter().any(|(_, name)| {
                 crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, name)
             })
         {
             return true;
         }
-        self.ctx.target_es5 && self.async_return_type_uses_imported_promise_constructor(&names)
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor(
+                &names.into_iter().map(|(_, name)| name).collect::<Vec<_>>(),
+            )
     }
 
     fn import_clause_is_namespace_only(
@@ -321,114 +331,81 @@ impl<'a> Printer<'a> {
             .any(|root| root == name)
     }
 
-    /// Whether the default binding of an import clause is referenced as a
-    /// value in the rest of the file. Mirrors `filter_value_specs_by_usage`
-    /// for the default binding so that an unused default beside a used named
-    /// or namespace binding is elided (matching tsc).
-    fn default_binding_has_value_usage(
-        &self,
-        import_node: &Node,
-        default_name_idx: NodeIndex,
-    ) -> bool {
-        let local_name = self.get_identifier_text_idx(default_name_idx);
+    /// Whether one import-clause binding (default, namespace, or named
+    /// specifier local name) is referenced as a value in the rest of the
+    /// file. Consults the binder-backed facts when present; otherwise falls
+    /// back to the text-based scan of the whole module with the import
+    /// declaration whited out (issue #3597: ES imports are module-scoped, so
+    /// a use BEFORE the import is still a real value use).
+    ///
+    /// `--emitDecoratorMetadata` and ES5 async Promise-constructor usages are
+    /// implicit references neither path models, so they are checked in both
+    /// modes.
+    fn import_binding_has_value_usage(&self, import_node: &Node, name_idx: NodeIndex) -> bool {
+        let local_name = self.get_identifier_text_idx(name_idx);
         if local_name.is_empty() {
             return true;
         }
-        let Some(source_text) = self.source_text else {
-            return true;
-        };
-        let Some(import_data) = self.arena.get_import_decl(import_node) else {
-            return true;
-        };
-        // Issue #3597: ES import declarations are module-scoped; a top-level
-        // use BEFORE the import is still a real value use. Scan the entire
-        // source with the import declaration's text whited out.
-        let haystack =
-            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
-        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
-            &value_haystack,
-            &self.ctx.options.external_const_enum_bindings,
-        );
-        if crate::import_usage::contains_identifier_value_occurrence(&value_haystack, &local_name) {
+        let fact = self.binding_value_used_fact(name_idx);
+        if fact == Some(true) {
             return true;
         }
-        // Under `--emitDecoratorMetadata`, decorated-member type
-        // annotations are *value* references; preserve the default whose
-        // name appears in such an annotation.
-        if self.ctx.options.emit_decorator_metadata
-            && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &local_name)
-        {
-            return true;
-        }
-        self.ctx.target_es5
-            && self.async_return_type_uses_imported_promise_constructor(&[local_name])
-    }
-
-    /// Whether the namespace binding of an import clause (`import * as ns`) is
-    /// referenced as a value in the rest of the file. Mirrors
-    /// `default_binding_has_value_usage` for the namespace binding so that an
-    /// unused namespace beside a surviving default or named binding is elided
-    /// (matching tsc). The full module is scanned (issue #3597) so a use BEFORE
-    /// the import still keeps the binding.
-    fn namespace_binding_has_value_usage(
-        &self,
-        import_node: &Node,
-        namespace_name_idx: NodeIndex,
-    ) -> bool {
-        let local_name = self.get_identifier_text_idx(namespace_name_idx);
-        if local_name.is_empty() {
-            return true;
-        }
-        let Some(source_text) = self.source_text else {
-            return true;
-        };
-        let Some(import_data) = self.arena.get_import_decl(import_node) else {
-            return true;
-        };
-        let haystack =
-            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
-        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
-            &value_haystack,
-            &self.ctx.options.external_const_enum_bindings,
-        );
-        if crate::import_usage::contains_identifier_value_occurrence(&value_haystack, &local_name) {
-            return true;
-        }
-        // Under `--emitDecoratorMetadata`, decorated-member type annotations are
-        // *value* references; preserve the namespace whose name appears there.
-        if self.ctx.options.emit_decorator_metadata
-            && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &local_name)
-        {
-            return true;
+        let needs_haystack = fact.is_none() || self.ctx.options.emit_decorator_metadata;
+        if needs_haystack {
+            let Some(source_text) = self.source_text else {
+                return true;
+            };
+            let Some(import_data) = self.arena.get_import_decl(import_node) else {
+                return true;
+            };
+            let haystack = Self::source_excluding_import_decl(
+                source_text,
+                import_node,
+                import_data,
+                self.arena,
+            );
+            if fact.is_none() {
+                let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
+                let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+                    &value_haystack,
+                    &self.ctx.options.external_const_enum_bindings,
+                );
+                if crate::import_usage::contains_identifier_value_occurrence(
+                    &value_haystack,
+                    &local_name,
+                ) {
+                    return true;
+                }
+            }
+            // Under `--emitDecoratorMetadata`, decorated-member type
+            // annotations are *value* references; preserve the binding whose
+            // name appears in such an annotation.
+            if self.ctx.options.emit_decorator_metadata
+                && crate::import_usage::name_appears_in_decorator_metadata_type(
+                    &haystack,
+                    &local_name,
+                )
+            {
+                return true;
+            }
         }
         self.ctx.target_es5
             && self.async_return_type_uses_imported_promise_constructor(&[local_name])
     }
 
     /// Filter named import specifiers to only those with value-level usage
-    /// in the rest of the file. Used in --noCheck mode.
+    /// in the rest of the file.
     fn filter_value_specs_by_usage(
         &self,
         import_node: &Node,
         specs: &[NodeIndex],
     ) -> Vec<NodeIndex> {
-        let Some(source_text) = self.source_text else {
+        if self.source_text.is_none() && self.ctx.options.import_usage_facts.is_none() {
             return specs.to_vec();
-        };
-        let Some(import_data) = self.arena.get_import_decl(import_node) else {
+        }
+        if self.arena.get_import_decl(import_node).is_none() {
             return specs.to_vec();
-        };
-        // Issue #3597: scan the entire module so a use BEFORE the import
-        // still keeps the binding alive.
-        let haystack =
-            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
-        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
-            &value_haystack,
-            &self.ctx.options.external_const_enum_bindings,
-        );
+        }
         let jsx_factory_roots = self.classic_jsx_factory_roots();
 
         specs
@@ -448,56 +425,9 @@ impl<'a> Printer<'a> {
                 if jsx_factory_roots.iter().any(|root| root == &local_name) {
                     return true;
                 }
-                if crate::import_usage::contains_identifier_value_occurrence(
-                    &value_haystack,
-                    &local_name,
-                ) {
-                    return true;
-                }
-                // Under `--emitDecoratorMetadata`, decorated-member type
-                // annotations are *value* references; preserve specs whose
-                // name appears in such an annotation.
-                self.ctx.options.emit_decorator_metadata
-                    && crate::import_usage::name_appears_in_decorator_metadata_type(
-                        &haystack,
-                        &local_name,
-                    )
-                    || (self.ctx.target_es5
-                        && self.async_return_type_uses_imported_promise_constructor(&[local_name]))
+                self.import_binding_has_value_usage(import_node, spec.name)
             })
             .collect()
-    }
-
-    fn default_import_has_value_usage_after_node(
-        &self,
-        import_node: &Node,
-        import_data: &tsz_parser::parser::node::ImportDeclData,
-        name_idx: NodeIndex,
-    ) -> bool {
-        let name = self.get_identifier_text_idx(name_idx);
-        if name.is_empty() {
-            return true;
-        }
-        let Some(source_text) = self.source_text else {
-            return true;
-        };
-        // Issue #3597: scan the entire module so a use BEFORE the import
-        // still keeps the default binding alive.
-        let haystack =
-            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
-        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
-            &value_haystack,
-            &self.ctx.options.external_const_enum_bindings,
-        );
-
-        if crate::import_usage::contains_identifier_value_occurrence(&value_haystack, &name)
-            || (self.ctx.options.emit_decorator_metadata
-                && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &name))
-        {
-            return true;
-        }
-        self.ctx.target_es5 && self.async_return_type_uses_imported_promise_constructor(&[name])
     }
 
     /// Check if an import-equals declaration's identifier is used after the import.
@@ -513,6 +443,9 @@ impl<'a> Printer<'a> {
         let name = self.get_identifier_text_idx(import_data.import_clause);
         if name.is_empty() {
             return true;
+        }
+        if let Some(used) = self.binding_value_used_fact(import_data.import_clause) {
+            return used;
         }
         let Some(source_text) = self.source_text else {
             return true;
@@ -592,6 +525,9 @@ impl<'a> Printer<'a> {
         let name = self.get_identifier_text_idx(import_data.import_clause);
         if name.is_empty() {
             return true;
+        }
+        if let Some(used) = self.binding_value_used_fact(import_data.import_clause) {
+            return used;
         }
         let Some(source_text) = self.source_text else {
             return true;
@@ -750,12 +686,12 @@ impl<'a> Printer<'a> {
         if clause.name.is_some() {
             has_default = if preserve_invalid_module_syntax {
                 true
-            } else if self.ctx.options.type_only_nodes.is_empty()
+            } else if self.import_usage_gate_active()
                 && !self.source_is_js_file
                 && !self.ctx.options.verbatim_module_syntax
                 && !self.is_jsx_factory_import_clause(clause)
             {
-                self.default_import_has_value_usage_after_node(node, import, clause.name)
+                self.import_binding_has_value_usage(node, clause.name)
             } else {
                 true
             };
@@ -773,13 +709,13 @@ impl<'a> Printer<'a> {
                     // binding beside a surviving default (`import Foo, * as ns`)
                     // is elided. JSX-factory namespace names are exempt because
                     // they are referenced implicitly by JSX elements.
-                    let gate_namespace = self.ctx.options.type_only_nodes.is_empty()
+                    let gate_namespace = self.import_usage_gate_active()
                         && !self.source_is_js_file
                         && !self.ctx.options.verbatim_module_syntax
                         && !preserve_invalid_module_syntax
                         && !self.is_jsx_factory_import_clause(clause);
                     if !gate_namespace
-                        || self.namespace_binding_has_value_usage(node, named_imports.name)
+                        || self.import_binding_has_value_usage(node, named_imports.name)
                     {
                         namespace_name = Some(named_imports.name);
                     }
@@ -787,7 +723,7 @@ impl<'a> Printer<'a> {
                     value_specs = self.collect_value_specifiers(&named_imports.elements);
                     // In --noCheck mode (type_only_nodes empty), apply text-based
                     // heuristic to elide individual named specifiers unused as values.
-                    if self.ctx.options.type_only_nodes.is_empty()
+                    if self.import_usage_gate_active()
                         && !self.source_is_js_file
                         && !self.ctx.options.verbatim_module_syntax
                         && !preserve_invalid_module_syntax
@@ -812,11 +748,11 @@ impl<'a> Printer<'a> {
         // because their name is referenced implicitly by JSX elements.
         if has_default
             && has_named
-            && self.ctx.options.type_only_nodes.is_empty()
+            && self.import_usage_gate_active()
             && !self.source_is_js_file
             && !self.ctx.options.verbatim_module_syntax
             && !self.is_jsx_factory_import_clause(clause)
-            && !self.default_binding_has_value_usage(node, clause.name)
+            && !self.import_binding_has_value_usage(node, clause.name)
         {
             has_default = false;
         }
@@ -956,7 +892,7 @@ impl<'a> Printer<'a> {
                     has_value_binding = true;
                 } else {
                     let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
-                    if self.ctx.options.type_only_nodes.is_empty()
+                    if self.import_usage_gate_active()
                         && !self.source_is_js_file
                         && !self.ctx.options.verbatim_module_syntax
                     {
@@ -1031,7 +967,7 @@ impl<'a> Printer<'a> {
             && named_imports.name.is_none()
         {
             let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
-            if self.ctx.options.type_only_nodes.is_empty()
+            if self.import_usage_gate_active()
                 && !self.source_is_js_file
                 && !self.ctx.options.verbatim_module_syntax
             {
@@ -1135,7 +1071,7 @@ impl<'a> Printer<'a> {
         }
 
         let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
-        if self.ctx.options.type_only_nodes.is_empty()
+        if self.import_usage_gate_active()
             && !self.source_is_js_file
             && !self.ctx.options.verbatim_module_syntax
         {
@@ -1210,7 +1146,7 @@ impl<'a> Printer<'a> {
             return true;
         }
         let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
-        if self.ctx.options.type_only_nodes.is_empty()
+        if self.import_usage_gate_active()
             && !self.source_is_js_file
             && !self.ctx.options.verbatim_module_syntax
         {

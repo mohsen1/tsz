@@ -170,6 +170,47 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Collect the runtime (non-type-only) bindings of an import clause as
+/// `(name node, name)` pairs: the default name, the namespace name, and each
+/// named specifier's local name. Shared by the printer's and the lowering
+/// pass's import value-usage decision sites.
+pub(crate) fn collect_import_clause_value_binding_names(
+    arena: &NodeArena,
+    clause: &tsz_parser::parser::node::ImportClauseData,
+) -> Vec<(NodeIndex, String)> {
+    let mut names = Vec::new();
+    let mut push = |name_idx: NodeIndex| {
+        let name = identifier_text_or_empty(arena, name_idx);
+        if !name.is_empty() {
+            names.push((name_idx, name));
+        }
+    };
+    if clause.name.is_some() {
+        push(clause.name);
+    }
+    if clause.named_bindings.is_some()
+        && let Some(bindings_node) = arena.get(clause.named_bindings)
+        && let Some(named_imports) = arena.get_named_imports(bindings_node)
+    {
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            push(named_imports.name);
+        } else {
+            for &spec_idx in &named_imports.elements.nodes {
+                let Some(spec_node) = arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if !spec.is_type_only {
+                    push(spec.name);
+                }
+            }
+        }
+    }
+    names
+}
+
 /// Returns true when an expression evaluated from a function parameter can
 /// allocate a downlevel optional-chain/nullish temp in the function body.
 pub(crate) fn parameter_expression_generates_downlevel_temp(
