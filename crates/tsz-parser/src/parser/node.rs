@@ -195,7 +195,7 @@ pub enum NodeCategory {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IdentifierData {
     /// Interned atom for O(1) comparison (`OPTIMIZATION`: use this instead of `escaped_text`).
-    /// Atom indices are stable within a single arena because they are
+    /// `AstAtom` indices are stable within a single arena because they are
     /// allocated by the arena's per-arena `Interner`. Round-tripping the
     /// arena (parser snapshot pipeline, see
     /// `docs/plan/PERFORMANCE_PLAN.md`) requires the atom to
