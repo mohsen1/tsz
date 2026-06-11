@@ -114,15 +114,25 @@ impl LineMap {
         Self { line_starts }
     }
 
-    /// Convert a byte offset to a Position (line, character).
-    /// Character is counted in UTF-16 code units for LSP compatibility.
+    /// Get the 0-based line index containing a byte offset.
+    ///
+    /// Offsets past the end of the source are clamped to the last line. This
+    /// is the line-only counterpart of [`Self::offset_to_position`] for
+    /// callers that do not need a column (and therefore no source text).
     #[must_use]
-    pub fn offset_to_position(&self, offset: u32, source: &str) -> Position {
-        // Binary search for the line containing this offset
+    pub fn line_index(&self, offset: u32) -> u32 {
         let line = match self.line_starts.binary_search(&offset) {
             Ok(exact) => exact,
             Err(insert_point) => insert_point.saturating_sub(1),
         };
+        u32::try_from(line).unwrap_or(u32::MAX)
+    }
+
+    /// Convert a byte offset to a Position (line, character).
+    /// Character is counted in UTF-16 code units for LSP compatibility.
+    #[must_use]
+    pub fn offset_to_position(&self, offset: u32, source: &str) -> Position {
+        let line = self.line_index(offset) as usize;
 
         let line_start = usize::try_from(self.line_starts.get(line).copied().unwrap_or(0))
             .unwrap_or(usize::MAX)
@@ -157,6 +167,19 @@ impl LineMap {
             line: u32::try_from(line).unwrap_or(u32::MAX),
             character,
         }
+    }
+
+    /// Convert a byte offset to a 0-based `(line, column)` pair with the
+    /// column counted in UTF-16 code units.
+    ///
+    /// This is the unit TypeScript uses everywhere positions surface: tsc
+    /// diagnostics, source maps, LSP positions, and tsserver protocol offsets
+    /// all count UTF-16 code units. Convenience wrapper around
+    /// [`Self::offset_to_position`] for callers working with tuples.
+    #[must_use]
+    pub fn line_col_utf16(&self, offset: u32, source: &str) -> (u32, u32) {
+        let position = self.offset_to_position(offset, source);
+        (position.line, position.character)
     }
 
     /// Convert a Position (line, character) to a byte offset.

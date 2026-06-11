@@ -287,11 +287,11 @@ fn ts_directive_scan_ignores_plain_template_text() {
 #[test]
 fn ts_directive_line_starts_treat_cr_as_line_break() {
     assert_eq!(
-        build_line_starts("// @ts-ignore\rlet x: string = 1;\r"),
+        line_starts_of("// @ts-ignore\rlet x: string = 1;\r"),
         vec![0, 14, 33],
     );
     assert_eq!(
-        build_line_starts("// @ts-ignore\r\nlet x: string = 1;\n"),
+        line_starts_of("// @ts-ignore\r\nlet x: string = 1;\n"),
         vec![0, 15, 34],
     );
 }
@@ -471,20 +471,34 @@ fn ts_directive_scan_keeps_triple_slash_directives() {
     assert_eq!(directives[0].suppressed_line, 1);
 }
 
+/// [`super::find_ts_directives`] with a freshly built line map, for tests
+/// that only have source text.
+fn find_ts_directives(text: &str) -> Vec<TsDirective> {
+    super::find_ts_directives(text, &LineMap::build(text))
+}
+
+/// Line-start table of the shared `LineMap`, as used by directive scanning.
+fn line_starts_of(text: &str) -> Vec<u32> {
+    let map = LineMap::build(text);
+    (0..map.line_count())
+        .map(|line| map.line_start(line).unwrap())
+        .collect()
+}
+
 #[test]
-fn build_line_starts_handles_cr_and_crlf() {
+fn line_starts_handle_cr_and_crlf() {
     // \n only
-    assert_eq!(build_line_starts("a\nb\nc"), vec![0, 2, 4]);
+    assert_eq!(line_starts_of("a\nb\nc"), vec![0, 2, 4]);
     // \r only (classic Mac line endings)
-    assert_eq!(build_line_starts("a\rb\rc"), vec![0, 2, 4]);
+    assert_eq!(line_starts_of("a\rb\rc"), vec![0, 2, 4]);
     // \r\n (Windows): one line break, not two
-    assert_eq!(build_line_starts("a\r\nb\r\nc"), vec![0, 3, 6]);
+    assert_eq!(line_starts_of("a\r\nb\r\nc"), vec![0, 3, 6]);
     // Mixed
-    assert_eq!(build_line_starts("a\nb\rc\r\nd"), vec![0, 2, 4, 7]);
+    assert_eq!(line_starts_of("a\nb\rc\r\nd"), vec![0, 2, 4, 7]);
     // U+2028 LINE SEPARATOR
-    assert_eq!(build_line_starts("a\u{2028}b"), vec![0, 4]);
+    assert_eq!(line_starts_of("a\u{2028}b"), vec![0, 4]);
     // U+2029 PARAGRAPH SEPARATOR
-    assert_eq!(build_line_starts("a\u{2029}b"), vec![0, 4]);
+    assert_eq!(line_starts_of("a\u{2029}b"), vec![0, 4]);
 }
 
 #[test]
@@ -1380,7 +1394,7 @@ fn no_check_multiple_expect_error_directives_do_not_emit_ts2578() {
 }
 
 fn check_directive_suppression(source: &str, codes_in: &[u32]) -> Vec<Diagnostic> {
-    let line_starts = build_line_starts(source);
+    let line_starts = line_starts_of(source);
     let line1_start = line_starts.get(1).copied().unwrap_or(0);
     let mut diagnostics: Vec<Diagnostic> = codes_in
         .iter()

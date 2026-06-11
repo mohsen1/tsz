@@ -93,23 +93,14 @@ pub fn decode_mappings(mappings: &str) -> Vec<DecodedMapping> {
     decoded
 }
 
+/// 0-based `(line, column)` of `needle` in `text`, with UTF-16 columns —
+/// the unit source maps use, via the shared `tsz_common` line map.
 pub fn find_line_col(text: &str, needle: &str) -> (u32, u32) {
     let idx = text
         .find(needle)
         .unwrap_or_else(|| panic!("expected to find {needle} in {text}"));
-
-    let mut line = 0u32;
-    let mut col = 0u32;
-    for &b in text.as_bytes().iter().take(idx) {
-        if b == b'\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-
-    (line, col)
+    let offset = u32::try_from(idx).expect("test fixture exceeds u32 offsets");
+    tsz_common::position::LineMap::build(text).line_col_utf16(offset, text)
 }
 
 pub fn has_mapping_for_prefixes(

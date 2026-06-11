@@ -6,34 +6,42 @@ use super::Marker;
 /// The anonymous marker `/**/` gets the name `""`.
 pub(super) fn parse_markers(file: &str, source: &str) -> (String, Vec<Marker>) {
     let mut cleaned = String::with_capacity(source.len());
-    let mut markers = Vec::new();
+    // (name, byte offset in cleaned text); line/character are resolved once
+    // the cleaned text is complete.
+    let mut pending: Vec<(String, u32)> = Vec::new();
     let mut i = 0;
     let bytes = source.as_bytes();
-    let mut offset: u32 = 0;
 
     while i < bytes.len() {
         if i + 3 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
             // Check for marker pattern: /*name*/
             if let Some(end) = find_marker_end(&bytes[i + 2..]) {
-                let name_bytes = &bytes[i + 2..i + 2 + end];
-                let name = String::from_utf8_lossy(name_bytes).to_string();
-                // Calculate position from cleaned text
-                let (line, character) = offset_to_line_col(&cleaned, offset);
-                markers.push(Marker {
-                    name,
-                    file: file.to_string(),
-                    line,
-                    character,
-                    offset,
-                });
+                let name = String::from_utf8_lossy(&bytes[i + 2..i + 2 + end]).to_string();
+                pending.push((name, cleaned.len() as u32));
                 i += 2 + end + 2; // skip /*name*/
                 continue;
             }
         }
-        cleaned.push(bytes[i] as char);
-        offset += 1;
-        i += 1;
+        // Copy the full UTF-8 character so multi-byte content survives intact.
+        let ch_len = source[i..].chars().next().map_or(1, char::len_utf8);
+        cleaned.push_str(&source[i..i + ch_len]);
+        i += ch_len;
     }
+
+    let line_map = tsz_common::position::LineMap::build(&cleaned);
+    let markers = pending
+        .into_iter()
+        .map(|(name, offset)| {
+            let position = line_map.offset_to_position(offset, &cleaned);
+            Marker {
+                name,
+                file: file.to_string(),
+                line: position.line,
+                character: position.character,
+                offset,
+            }
+        })
+        .collect();
 
     (cleaned, markers)
 }
@@ -51,24 +59,6 @@ pub(crate) fn find_marker_end(bytes: &[u8]) -> Option<usize> {
         }
     }
     None
-}
-
-/// Convert byte offset to (line, character) in cleaned text.
-fn offset_to_line_col(text: &str, offset: u32) -> (u32, u32) {
-    let mut line = 0u32;
-    let mut col = 0u32;
-    for (i, ch) in text.chars().enumerate() {
-        if i as u32 == offset {
-            return (line, col);
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
 }
 
 /// Parse multi-file test content.
@@ -217,6 +207,38 @@ mod tests {
         assert_eq!(markers[1].name, "ref");
         assert_eq!(markers[1].line, 1);
         assert_eq!(markers[1].character, 0);
+    }
+
+    #[test]
+    fn test_parse_markers_preserves_non_ascii_and_reports_utf16_columns() {
+        // "héllo" contains a 2-byte é; 😀 is 4 bytes / 2 UTF-16 units.
+        let (cleaned, markers) = parse_markers(
+            "test.ts",
+            "const h\u{00E9}llo = \"\u{1F600}\";\n/*m*/h\u{00E9}llo;",
+        );
+        assert_eq!(
+            cleaned,
+            "const h\u{00E9}llo = \"\u{1F600}\";\nh\u{00E9}llo;"
+        );
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].line, 1);
+        assert_eq!(markers[0].character, 0);
+        // Byte offset into the cleaned text (line 1 starts after the 22-byte
+        // first line + newline).
+        assert_eq!(markers[0].offset, 23);
+        assert_eq!(&cleaned[markers[0].offset as usize..], "h\u{00E9}llo;");
+    }
+
+    #[test]
+    fn test_parse_markers_after_non_ascii_on_same_line_counts_utf16() {
+        let (cleaned, markers) = parse_markers("test.ts", "\u{1F600} + /*m*/x");
+        assert_eq!(cleaned, "\u{1F600} + x");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].line, 0);
+        // Emoji = 2 UTF-16 units, then " + " = 3.
+        assert_eq!(markers[0].character, 5);
+        // Byte offset: emoji = 4 bytes, " + " = 3.
+        assert_eq!(markers[0].offset, 7);
     }
 
     #[test]

@@ -895,20 +895,9 @@ impl Server {
                 == Some("characterTyped");
             if is_character_typed {
                 // Compute byte offset from line/character position
-                let byte_offset = {
-                    let mut off = 0usize;
-                    let mut current_line = 0u32;
-                    for (i, ch) in source_text.char_indices() {
-                        if current_line == position.line {
-                            off = i + position.character as usize;
-                            break;
-                        }
-                        if ch == '\n' {
-                            current_line += 1;
-                        }
-                    }
-                    off
-                };
+                let byte_offset = line_map
+                    .position_to_offset(position, &source_text)
+                    .map_or(0, |offset| offset as usize);
                 // Check the position of the just-typed character (offset - 1),
                 // since the cursor is positioned after the typed character.
                 if byte_offset > 0 && Self::is_in_string_or_comment(&source_text, byte_offset - 1) {
@@ -939,20 +928,9 @@ impl Server {
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.chars().next());
                 if let Some(tc) = trigger_char {
-                    let byte_offset = {
-                        let mut off = 0usize;
-                        let mut current_line = 0u32;
-                        for (i, ch) in source_text.char_indices() {
-                            if current_line == position.line {
-                                off = i + position.character as usize;
-                                break;
-                            }
-                            if ch == '\n' {
-                                current_line += 1;
-                            }
-                        }
-                        off
-                    };
+                    let byte_offset = line_map
+                        .position_to_offset(position, &source_text)
+                        .map_or(0, |offset| offset as usize);
                     let typed_pos = byte_offset.saturating_sub(1);
                     let span_start = sig_help.applicable_span_start as usize;
                     if !Self::is_trigger_syntactic_owner(&source_text, tc, typed_pos, span_start) {

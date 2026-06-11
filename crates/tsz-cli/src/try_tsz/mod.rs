@@ -816,17 +816,12 @@ fn line_column_for_path_label(
 ) -> Option<(Option<u32>, Option<u32>)> {
     let path = cwd.join(label);
     let text = fs::read_to_string(path).ok()?;
-    let offset = usize::try_from(start).ok()?.min(text.len());
-    let prefix = &text[..offset];
-    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
-    let column = prefix
-        .rsplit_once('\n')
-        .map_or(prefix.chars().count() + 1, |(_, tail)| {
-            tail.chars().count() + 1
-        });
+    // 1-based line/column with UTF-16 columns, matching how tsc reports
+    // diagnostic positions (these values are diffed against tsc output).
+    let position = tsz_common::position::LineMap::build(&text).offset_to_position(start, &text);
     Some((
-        Some(u32::try_from(line).ok()?),
-        Some(u32::try_from(column).ok()?),
+        Some(position.line.saturating_add(1)),
+        Some(position.character.saturating_add(1)),
     ))
 }
 

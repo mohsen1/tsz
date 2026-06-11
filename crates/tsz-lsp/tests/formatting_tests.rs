@@ -672,3 +672,19 @@ fn position_to_offset(text: &str, position: Position) -> usize {
         text.len()
     );
 }
+
+#[test]
+fn test_document_end_position_counts_utf16_units() {
+    // LSP positions are UTF-16 code units: 😀 is 2 units (4 UTF-8 bytes).
+    let end = document_end_position("ab\nc\u{1F600}d");
+    assert_eq!(end, Position::new(1, 4));
+}
+
+#[test]
+fn test_document_end_position_handles_cr_and_unicode_separators() {
+    // \r, \r\n, U+2028 and U+2029 are line terminators, matching the line
+    // map used for every other LSP position in the workspace.
+    assert_eq!(document_end_position("a\rb"), Position::new(1, 1));
+    assert_eq!(document_end_position("a\r\nb"), Position::new(1, 1));
+    assert_eq!(document_end_position("a\u{2028}b"), Position::new(1, 1));
+}

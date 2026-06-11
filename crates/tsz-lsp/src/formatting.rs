@@ -585,18 +585,12 @@ impl DocumentFormattingProvider {
 
 /// Compute the end position of a document (the position immediately past the
 /// last character). Used to build a whole-document replacement range.
+///
+/// Columns are UTF-16 code units, matching the LSP protocol's position
+/// encoding.
 fn document_end_position(source: &str) -> Position {
-    let mut line: u32 = 0;
-    let mut character: u32 = 0;
-    for ch in source.chars() {
-        if ch == '\n' {
-            line += 1;
-            character = 0;
-        } else {
-            character += 1;
-        }
-    }
-    Position::new(line, character)
+    let end = u32::try_from(source.len()).unwrap_or(u32::MAX);
+    tsz_common::position::LineMap::build(source).offset_to_position(end, source)
 }
 
 #[cfg(test)]

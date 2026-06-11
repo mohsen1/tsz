@@ -844,59 +844,31 @@ impl Default for SourceWriter {
 /// Without this, computing line/column from a byte offset requires scanning
 /// from the beginning of the file, which is O(pos) per call and leads to
 /// O(n^2) total cost when emitting large files.
-pub struct LineMap {
-    /// Byte offsets of the start of each line (line 0 starts at offset 0).
-    /// `line_starts[i]` is the byte offset of the first character on line `i`.
-    line_starts: Vec<u32>,
-    /// The full source text, needed for UTF-16 column computation.
-    text: String,
+///
+/// Thin adapter over [`tsz_common::position::LineMap`] that pairs the map
+/// with the borrowed source text, so emitter call sites get `(line, column)`
+/// tuples without threading the text through every lookup. Line terminators
+/// (`\n`, `\r`, `\r\n`, U+2028, U+2029) and UTF-16 column units match tsc's
+/// scanner line map, which is what tsc uses for source map positions.
+pub struct LineMap<'a> {
+    inner: tsz_common::position::LineMap,
+    text: &'a str,
 }
 
-impl LineMap {
+impl<'a> LineMap<'a> {
     /// Build a line map from source text. O(n) in text length.
-    pub fn new(text: &str) -> Self {
-        let mut line_starts = Vec::with_capacity(text.len() / 40 + 1);
-        line_starts.push(0);
-        for (i, b) in text.as_bytes().iter().enumerate() {
-            if *b == b'\n' {
-                line_starts.push((i + 1) as u32);
-            }
-        }
+    pub fn new(text: &'a str) -> Self {
         Self {
-            line_starts,
-            text: text.to_string(),
+            inner: tsz_common::position::LineMap::build(text),
+            text,
         }
     }
 
     /// Look up (line, column) from a byte offset. O(log n) via binary search.
     /// Column counting uses UTF-16 code units for source map compatibility.
+    /// Offsets past the end of the text clamp to the end-of-file position.
     pub fn line_col(&self, pos: u32) -> (u32, u32) {
-        let pos_usize = pos as usize;
-        if pos_usize >= self.text.len() {
-            // End-of-file position
-            let line = (self.line_starts.len() - 1) as u32;
-            let line_start = *self.line_starts.last().unwrap_or(&0) as usize;
-            let col: u32 = self.text[line_start..]
-                .chars()
-                .map(|c| c.len_utf16() as u32)
-                .sum();
-            return (line, col);
-        }
-
-        // Binary search for the line containing `pos`
-        let line = match self.line_starts.binary_search(&pos) {
-            Ok(exact) => exact,
-            Err(insert) => insert - 1,
-        };
-        let line_start = self.line_starts[line] as usize;
-
-        // Compute column in UTF-16 code units
-        let col: u32 = self.text[line_start..pos_usize]
-            .chars()
-            .map(|c| c.len_utf16() as u32)
-            .sum();
-
-        (line as u32, col)
+        self.inner.line_col_utf16(pos, self.text)
     }
 
     /// Create a `SourcePosition` from a byte offset. O(log n).
@@ -906,39 +878,14 @@ impl LineMap {
     }
 }
 
-/// Compute line and column from byte offset in source text
-/// Note: Column counting uses UTF-16 code units for source map compatibility
+/// Compute line and column from byte offset in source text.
+///
+/// Column counting uses UTF-16 code units and the full tsc line terminator
+/// set, exactly like [`LineMap`]; prefer a cached [`LineMap`] when computing
+/// more than one position for the same text, since this rebuilds the line
+/// table on every call.
 pub fn compute_line_col(text: &str, pos: u32) -> (u32, u32) {
-    let pos = pos as usize;
-    if pos >= text.len() {
-        // Return end of file position
-        let line = text.matches('\n').count() as u32;
-        let last_newline = text.rfind('\n').map_or(0, |i| i + 1);
-        // Count UTF-16 code units in the last line
-        let col = text[last_newline..]
-            .chars()
-            .map(|c| c.len_utf16() as u32)
-            .sum();
-        return (line, col);
-    }
-
-    let mut line = 0u32;
-    let mut col = 0u32;
-
-    for (i, ch) in text.char_indices() {
-        if i >= pos {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            // UTF-16 code units: non-BMP characters (emojis etc.) count as 2
-            col += ch.len_utf16() as u32;
-        }
-    }
-
-    (line, col)
+    tsz_common::position::LineMap::build(text).line_col_utf16(pos, text)
 }
 
 /// Create a `SourcePosition` from a byte offset and source text

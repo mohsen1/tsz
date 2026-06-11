@@ -906,3 +906,27 @@ fn source_position_copy_clone_independence() {
     assert_eq!(c.line, 2);
     assert_eq!(a.column, 3);
 }
+
+#[test]
+fn line_map_recognizes_cr_crlf_and_unicode_separators() {
+    // tsc's scanner line map treats \r, \r\n, U+2028 and U+2029 as line
+    // terminators; source map positions must match.
+    let lm = LineMap::new("a\rb\r\nc\u{2028}d");
+    assert_eq!(lm.line_col(0), (0, 0)); // 'a'
+    assert_eq!(lm.line_col(2), (1, 0)); // 'b' after \r
+    assert_eq!(lm.line_col(5), (2, 0)); // 'c' after \r\n
+    assert_eq!(lm.line_col(9), (3, 0)); // 'd' after U+2028
+}
+
+#[test]
+fn compute_line_col_matches_line_map_on_mixed_terminators() {
+    let text = "a\rb\r\nc\u{2028}d\u{2029}e\n\u{1F600}";
+    let lm = LineMap::new(text);
+    for pos in 0..=(text.len() as u32 + 2) {
+        assert_eq!(
+            compute_line_col(text, pos),
+            lm.line_col(pos),
+            "compute_line_col diverged from LineMap at byte {pos}"
+        );
+    }
+}
