@@ -435,6 +435,30 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Whether a constraint proof over `(source, target)` is file-independent
+    /// and may be looked up in / published to the program-wide
+    /// [`crate::context::SharedConstraintProofCache`].
+    ///
+    /// Both types must be free of generic type parameters (scope-relative
+    /// meaning) and of file-relative content (`UnresolvedTypeName`, raw
+    /// `SymbolRef` carriers, `this`); see
+    /// `contains_file_relative_content` for the exact variant set. Both
+    /// predicates are memoized project-wide in the interner.
+    pub(crate) fn constraint_proof_is_program_shareable(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common::{
+            contains_file_relative_content, contains_generic_type_parameters,
+        };
+        let db = self.ctx.types;
+        !contains_generic_type_parameters(db, source)
+            && !contains_generic_type_parameters(db, target)
+            && !contains_file_relative_content(db, source)
+            && !contains_file_relative_content(db, target)
+    }
+
     /// Execute a diagnostic-bearing generic type-argument constraint relation
     /// for raw checker types, preserving the canonical TS2344 request shape.
     /// Decision-only: every caller reads only `outcome.related`, so the
@@ -444,6 +468,16 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
+        const RELATED_SUCCESS: crate::query_boundaries::assignability::RelationOutcome =
+            crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let flags = self.ctx.pack_relation_flags();
         let sound_mode = self.ctx.sound_mode();
@@ -454,16 +488,26 @@ impl<'a> CheckerState<'a> {
             .type_arg_constraint_relation_successes
             .contains(&cache_key)
         {
-            return crate::query_boundaries::assignability::RelationOutcome {
-                related: true,
-                depth_exceeded: false,
-                iteration_exceeded: false,
-                failure: None,
-                weak_union_violation: false,
-                property_classification: None,
-            };
+            return RELATED_SUCCESS;
         }
 
+        // Program-wide success tier: another file checker may already have
+        // proven this exact pair. Probing needs no shareability gate — only
+        // pairs that passed the publish-side gate can be in the set, so a
+        // lookup on an unshareable key simply misses. This keeps the deep
+        // shareability walk off the cold-lookup path.
+        if let Some(shared) = &self.ctx.shared_constraint_proofs
+            && shared.type_arg_relation_successes.contains(&cache_key)
+        {
+            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "type_arg", "hit");
+            self.ctx
+                .type_reference_validation_caches
+                .type_arg_constraint_relation_successes
+                .insert(cache_key);
+            return RELATED_SUCCESS;
+        }
+
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let request = crate::query_boundaries::assignability::RelationRequest::type_arg_constraint(
             source, target,
         )
@@ -474,6 +518,21 @@ impl<'a> CheckerState<'a> {
                 .type_reference_validation_caches
                 .type_arg_constraint_relation_successes
                 .insert(cache_key);
+            // Publish only file-independent proofs (the shareability gate
+            // runs here, once per distinct novel success) that did not depend
+            // on an unresolved `Lazy` def and ran with evaluation fuel to
+            // spare; either can make a result reflect in-flight rather than
+            // program-wide state.
+            if self.ctx.shared_constraint_proofs.is_some()
+                && crate::query_boundaries::common::lazy_resolve_failure_count()
+                    == lazy_failures_at_entry
+                && !self.ctx.types.is_evaluation_fuel_exhausted()
+                && self.constraint_proof_is_program_shareable(source, target)
+                && let Some(shared) = &self.ctx.shared_constraint_proofs
+            {
+                tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "type_arg", "publish");
+                shared.type_arg_relation_successes.insert(cache_key);
+            }
         }
         outcome
     }

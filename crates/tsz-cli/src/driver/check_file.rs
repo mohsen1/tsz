@@ -17,6 +17,9 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// import count.
     pub(super) resolved_modules_per_file: &'a Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
     pub(super) shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    /// Program-wide success tier for generic type-argument constraint proofs;
+    /// see `tsz::checker::context::SharedConstraintProofCache`.
+    pub(super) shared_constraint_proofs: Arc<tsz::checker::context::SharedConstraintProofCache>,
     /// Shared cross-file query cache for multi-file projects.
     /// Eliminates redundant type evaluations and relation checks across files.
     pub(super) shared_query_cache: Option<&'a tsz_solver::construction::SharedQueryCache>,
@@ -327,6 +330,7 @@ pub(super) fn check_file_for_parallel<'a>(
         program_context,
         resolved_modules_per_file,
         shared_lib_cache,
+        shared_constraint_proofs,
         shared_query_cache,
         no_check,
         check_js,
@@ -381,6 +385,7 @@ pub(super) fn check_file_for_parallel<'a>(
     );
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
+    checker.ctx.shared_constraint_proofs = Some(shared_constraint_proofs);
 
     // Apply all project-level shared state in one call. This installs the
     // shared DefinitionStore and runs warm_local_caches_from_shared_store().
@@ -497,6 +502,7 @@ pub(super) struct CheckFilesReuseCtx<'a> {
     pub(super) program_context: &'a tsz::checker::context::ProgramContext,
     pub(super) resolved_modules_per_file: &'a Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
     pub(super) shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    pub(super) shared_constraint_proofs: Arc<tsz::checker::context::SharedConstraintProofCache>,
     pub(super) shared_query_cache: Option<&'a tsz_solver::construction::SharedQueryCache>,
 }
 
@@ -516,6 +522,7 @@ where
         program_context,
         resolved_modules_per_file,
         shared_lib_cache,
+        shared_constraint_proofs,
         shared_query_cache,
     } = ctx;
     let &CheckFileFlags {
@@ -584,6 +591,7 @@ where
             );
             state.ctx.report_unresolved_imports = true;
             state.ctx.shared_lib_type_cache = Some(Arc::clone(shared_lib_cache));
+            state.ctx.shared_constraint_proofs = Some(Arc::clone(shared_constraint_proofs));
             // `apply_to` is the expensive setup we're amortising:
             // shared `DefinitionStore`, shared global indices,
             // resolved-module maps, file-is-ESM map, etc. Running it
@@ -673,6 +681,7 @@ where
                 program_context: ctx.program_context,
                 resolved_modules_per_file: ctx.resolved_modules_per_file,
                 shared_lib_cache: Arc::clone(&ctx.shared_lib_cache),
+                shared_constraint_proofs: Arc::clone(&ctx.shared_constraint_proofs),
                 shared_query_cache: ctx.shared_query_cache,
             };
             check_files_sequentially_with_reuse(chunk, &chunk_ctx, flags, build_checker_binder)

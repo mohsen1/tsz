@@ -1740,3 +1740,90 @@ fn error_containment_is_unified_across_query_paths() {
         );
     }
 }
+
+// =============================================================================
+// contains_file_relative_content_db
+// =============================================================================
+
+/// Direct file-relative roots: every variant whose meaning depends on the
+/// producing file or lexical scope must be flagged.
+#[test]
+fn file_relative_content_flags_direct_roots() {
+    use crate::types::SymbolRef;
+    let interner = TypeInterner::new();
+
+    let unresolved = interner.unresolved_type_name(interner.intern_string("LocalName"));
+    let type_query = interner.type_query(SymbolRef(7));
+    let unique_symbol = interner.unique_symbol(SymbolRef(7));
+    let module_ns = interner.module_namespace(SymbolRef(7));
+    let this_type = interner.this_type();
+
+    for ty in [unresolved, type_query, unique_symbol, module_ns, this_type] {
+        assert!(
+            contains_file_relative_content_db(&interner, ty),
+            "expected file-relative root to be flagged"
+        );
+    }
+}
+
+/// File-relative content nested inside structural types is found by the deep
+/// walk (union member, array element, tuple element).
+#[test]
+fn file_relative_content_flags_nested_content() {
+    use crate::types::{SymbolRef, TupleElement};
+    let interner = TypeInterner::new();
+
+    let type_query = interner.type_query(SymbolRef(3));
+    let in_union = interner.union(vec![TypeId::STRING, type_query]);
+    assert!(contains_file_relative_content_db(&interner, in_union));
+
+    let unresolved = interner.unresolved_type_name(interner.intern_string("Gaps"));
+    let in_array = interner.array(unresolved);
+    assert!(contains_file_relative_content_db(&interner, in_array));
+
+    let in_tuple = interner.tuple(vec![TupleElement {
+        type_id: interner.this_type(),
+        optional: false,
+        rest: false,
+        name: None,
+    }]);
+    assert!(contains_file_relative_content_db(&interner, in_tuple));
+}
+
+/// Program-global content is NOT file-relative: intrinsics, literals,
+/// `Lazy(DefId)` references, and applications of lazy bases over concrete
+/// args all have one program-wide meaning through the shared store.
+#[test]
+fn file_relative_content_accepts_program_global_types() {
+    use crate::def::DefId;
+    let interner = TypeInterner::new();
+
+    let literal = interner.literal_string("transformation");
+    let lazy = interner.lazy(DefId(42));
+    let app = interner.application(lazy, vec![TypeId::STRING, literal]);
+    let union = interner.union(vec![TypeId::NUMBER, app]);
+    let arr = interner.array(union);
+
+    for ty in [TypeId::STRING, literal, lazy, app, union, arr] {
+        assert!(
+            !contains_file_relative_content_db(&interner, ty),
+            "expected program-global type to be shareable"
+        );
+    }
+}
+
+/// The memoized walk returns consistent answers on repeat queries (the
+/// per-node results live in the shared interner cache).
+#[test]
+fn file_relative_content_is_stable_across_repeat_queries() {
+    use crate::types::SymbolRef;
+    let interner = TypeInterner::new();
+
+    let tainted = interner.union(vec![TypeId::STRING, interner.type_query(SymbolRef(9))]);
+    let clean = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    for _ in 0..3 {
+        assert!(contains_file_relative_content_db(&interner, tainted));
+        assert!(!contains_file_relative_content_db(&interner, clean));
+    }
+}

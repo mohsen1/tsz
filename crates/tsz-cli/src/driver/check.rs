@@ -1003,6 +1003,14 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
         Arc::new(dashmap::DashMap::new());
 
+    // Program-wide success tier for generic type-argument constraint proofs.
+    // File checkers re-prove the same constraint pairs for every file that
+    // references the same generic alias; this tier shares file-independent
+    // successes across the whole check wave (lookup on local miss, publish on
+    // untainted success). See `SharedConstraintProofCache` for the contract.
+    let shared_constraint_proofs =
+        Arc::new(tsz::checker::context::SharedConstraintProofCache::default());
+
     // Prime Array<T> base type with global augmentations before fresh-checker
     // file checks. Tiny no-emit batches use the sequential reused-checker
     // path; that real checker primes itself before checking the first file, so
@@ -1042,6 +1050,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             &options.checker,
         );
         checker.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+        checker.ctx.shared_constraint_proofs = Some(Arc::clone(&shared_constraint_proofs));
         program_context.apply_to(&mut checker.ctx);
         checker.prime_boxed_types();
     }
@@ -1233,6 +1242,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 program_context: &program_context,
                 resolved_modules_per_file: &resolved_modules_per_file,
                 shared_lib_cache: Arc::clone(&shared_lib_cache),
+                shared_constraint_proofs: Arc::clone(&shared_constraint_proofs),
                 shared_query_cache: shared_query_cache.as_ref(),
                 no_check,
                 check_js,
@@ -1319,6 +1329,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     program_context: &program_context,
                     resolved_modules_per_file: &resolved_modules_per_file,
                     shared_lib_cache: Arc::clone(&shared_lib_cache),
+                    shared_constraint_proofs: Arc::clone(&shared_constraint_proofs),
                     shared_query_cache: shared_query_cache.as_ref(),
                 };
                 let reuse_flags = CheckFileFlags {
@@ -1348,6 +1359,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     program_context: &program_context,
                     resolved_modules_per_file: &resolved_modules_per_file,
                     shared_lib_cache: Arc::clone(&shared_lib_cache),
+                    shared_constraint_proofs: Arc::clone(&shared_constraint_proofs),
                     shared_query_cache: shared_query_cache.as_ref(),
                 };
                 let reuse_flags = CheckFileFlags {

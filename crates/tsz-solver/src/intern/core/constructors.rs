@@ -740,7 +740,38 @@ impl TypeInterner {
         }
     }
 
-    pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
+    /// Upper input length for the `normalize_union` result memo.
+    ///
+    /// `reduce_union_subtypes` sets the sticky TS2590 `union_too_complex` flag
+    /// only when it sees >= 1001 members; the member list never grows inside
+    /// `normalize_union_uncached`, so inputs at or below this bound can never
+    /// set the flag and their results are pure functions of the input list.
+    /// Larger inputs skip the memo so a cache hit can never swallow the flag.
+    const UNION_NORMALIZE_CACHE_MAX_LEN: usize = 1000;
+
+    /// Memoized union normalization.
+    ///
+    /// The full pipeline (callable-order probe, semantic sort, dedup, literal
+    /// absorption, enum merge, intersection absorption, subtype reduction,
+    /// interning) is deterministic in the flattened input list over immutable
+    /// interned types, and evaluation hot paths rebuild the same unions
+    /// constantly (the interner sees ~97% repeat hits on type-level-heavy
+    /// projects). Key is the exact pre-normalization member list, so repeats
+    /// skip straight to the previously interned result.
+    pub(super) fn normalize_union(&self, flat: TypeListBuffer) -> TypeId {
+        if flat.len() > Self::UNION_NORMALIZE_CACHE_MAX_LEN {
+            return self.normalize_union_uncached(flat);
+        }
+        if let Some(hit) = self.union_normalize_cache.get(flat.as_slice()) {
+            return *hit;
+        }
+        let key: Box<[TypeId]> = flat.as_slice().into();
+        let result = self.normalize_union_uncached(flat);
+        self.union_normalize_cache.insert(key, result);
+        result
+    }
+
+    fn normalize_union_uncached(&self, mut flat: TypeListBuffer) -> TypeId {
         // Callable unions feed signature-combining diagnostics, where tsc preserves
         // the declaration/indexed-access order for intersected parameter display.
         // The normal semantic union sort can invert class-backed function members
@@ -1700,6 +1731,17 @@ impl TypeInterner {
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
         size += self.eval_contains_infer_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.contains_file_relative_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self
+            .union_normalize_cache
+            .iter()
+            .map(|entry| {
+                DASHMAP_ENTRY_OVERHEAD
+                    + std::mem::size_of::<TypeId>() * (entry.key().len() + 1)
+                    + std::mem::size_of::<Box<[TypeId]>>()
+            })
+            .sum::<usize>();
         // alloc_order is now stored per-shard alongside index_to_key (4 bytes per type)
         size += type_count * 4;
         size += self.display_properties.len()

@@ -25,12 +25,41 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
+        // Program-wide success tier: file checkers re-prove the same
+        // conditional-branch pairs for every file that references the same
+        // generic alias. Probing needs no shareability gate (only gated pairs
+        // are ever published); the gate runs at publish time, once per
+        // distinct novel success. Only successes are shared (see
+        // `SharedConstraintProofCache`).
+        if let Some(shared) = &self.ctx.shared_constraint_proofs
+            && shared.conditional_branch_successes.contains(&cache_key)
+        {
+            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "conditional_branch", "hit");
+            self.ctx
+                .type_reference_validation_caches
+                .conditional_branch_constraint
+                .insert(cache_key, true);
+            return true;
+        }
+
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let result =
             self.conditional_result_branches_satisfy_constraint_uncached(type_arg, constraint);
         self.ctx
             .type_reference_validation_caches
             .conditional_branch_constraint
             .insert(cache_key, result);
+        if result
+            && self.ctx.shared_constraint_proofs.is_some()
+            && crate::query_boundaries::common::lazy_resolve_failure_count()
+                == lazy_failures_at_entry
+            && !self.ctx.types.is_evaluation_fuel_exhausted()
+            && self.constraint_proof_is_program_shareable(type_arg, constraint)
+            && let Some(shared) = &self.ctx.shared_constraint_proofs
+        {
+            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "conditional_branch", "publish");
+            shared.conditional_branch_successes.insert(cache_key);
+        }
         result
     }
 
@@ -117,12 +146,39 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
+        // Program-wide success tier; see
+        // `conditional_result_branches_satisfy_constraint` above.
+        if let Some(shared) = &self.ctx.shared_constraint_proofs
+            && shared
+                .indexed_object_map_branch_successes
+                .contains(&cache_key)
+        {
+            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "indexed_object_map", "hit");
+            self.ctx
+                .type_reference_validation_caches
+                .indexed_object_map_branch_constraint
+                .insert(cache_key, true);
+            return true;
+        }
+
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let result =
             self.indexed_object_map_branch_satisfies_constraint_uncached(branch, constraint);
         self.ctx
             .type_reference_validation_caches
             .indexed_object_map_branch_constraint
             .insert(cache_key, result);
+        if result
+            && self.ctx.shared_constraint_proofs.is_some()
+            && crate::query_boundaries::common::lazy_resolve_failure_count()
+                == lazy_failures_at_entry
+            && !self.ctx.types.is_evaluation_fuel_exhausted()
+            && self.constraint_proof_is_program_shareable(branch, constraint)
+            && let Some(shared) = &self.ctx.shared_constraint_proofs
+        {
+            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "indexed_object_map", "publish");
+            shared.indexed_object_map_branch_successes.insert(cache_key);
+        }
         result
     }
 
