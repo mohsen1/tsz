@@ -412,19 +412,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             match db.lookup_subtype_cache_value(key) {
                 Some(RelationCacheValue::True) => return SubtypeResult::True,
                 Some(RelationCacheValue::False) => return SubtypeResult::False,
-                Some(RelationCacheValue::LimitTrue { fuel_band }) => {
-                    // Budget-conditional assumed-related verdict (tsc
-                    // `Ternary.Maybe` parity): honest only when this query's
-                    // remaining fuel budget is no larger than the recorded
-                    // run's. Under a raised budget, fall through and
-                    // recompute (fuel-band cache honesty).
-                    if limit_result_cache_enabled() && remaining_global_subtype_fuel() <= fuel_band
-                    {
-                        tsz_common::perf_counters::record_relation_limit_cache_hit();
-                        return SubtypeResult::DepthExceeded;
-                    }
+                // Budget-conditional assumed-related verdict (tsc
+                // `Ternary.Maybe` parity): honest only when this query's
+                // remaining fuel budget is no larger than the recorded
+                // run's. Under a raised budget, fall through and recompute
+                // (fuel-band cache honesty).
+                Some(RelationCacheValue::LimitTrue { fuel_band })
+                    if limit_result_cache_enabled()
+                        && remaining_global_subtype_fuel() <= fuel_band =>
+                {
+                    tsz_common::perf_counters::record_relation_limit_cache_hit();
+                    return SubtypeResult::DepthExceeded;
                 }
-                None => {}
+                Some(RelationCacheValue::LimitTrue { .. }) | None => {}
             }
         }
 

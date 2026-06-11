@@ -510,18 +510,18 @@ impl<'a> QueryCache<'a> {
                 }
                 return false;
             }
-            Some(RelationCacheValue::LimitTrue { fuel_band }) => {
-                if Self::limit_true_usable(fuel_band) {
-                    tsz_common::perf_counters::record_relation_limit_cache_hit();
-                    if let Some(query_id) = trace_query_id {
-                        query_trace::relation_end(query_id, trace_op, true, true);
-                    }
-                    return true;
+            Some(RelationCacheValue::LimitTrue { fuel_band })
+                if Self::limit_true_usable(fuel_band) =>
+            {
+                tsz_common::perf_counters::record_relation_limit_cache_hit();
+                if let Some(query_id) = trace_query_id {
+                    query_trace::relation_end(query_id, trace_op, true, true);
                 }
-                // A larger budget is available: recompute honestly below and
-                // let the definitive insert overwrite the limit entry.
+                return true;
             }
-            None => {}
+            // A larger budget is available: recompute honestly below and
+            // let the definitive insert overwrite the limit entry.
+            Some(RelationCacheValue::LimitTrue { .. }) | None => {}
         }
 
         let result = query_relation(
