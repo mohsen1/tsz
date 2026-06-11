@@ -312,3 +312,74 @@ export function speak(a: Animal2): void {
         "derived-class predicate narrowing must keep working; got {diagnostics:#?}"
     );
 }
+
+#[test]
+fn predicate_to_generic_indexed_access_keeps_keyof_param_indexable() {
+    // Conformance `intersectionsOfLargeUnions2` regression shape: after a
+    // predicate narrows to `U extends TagMap[T]`, indexing with
+    // `P extends keyof TagMap[T]` must stay valid (tsc keeps the receiver
+    // deferred as `TagMap[T]`; tsz distributes small maps eagerly, and the
+    // TS2536 union gate must not treat that distribution as a key mismatch).
+    let main = r#"
+interface Elem2 { tagName: string }
+interface DivElem2 extends Elem2 { d: number }
+interface SpanElem2 extends Elem2 { s: number }
+interface TagMap2 {
+  div: DivElem2
+  span: SpanElem2
+}
+
+declare function assertTag<
+  T extends keyof TagMap2,
+  U extends TagMap2[T]>(node: Elem2 | null, tagName: T): node is U
+
+export function pick<
+  T extends keyof TagMap2,
+  P extends keyof TagMap2[T]>(node: Elem2 | null, tagName: T, prop: P) {
+  if (assertTag(node, tagName)) {
+    node[prop];
+  }
+}
+"#;
+    let diagnostics = check_files(&[("main.ts", main)], "main.ts");
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2536),
+        "keyof-of-generic-indexed-access param must stay a valid index; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn concrete_keyof_param_against_unrelated_union_still_ts2536() {
+    // Negative case (tsc parity): a CONCRETE `P extends keyof A` indexing an
+    // unrelated `A | B` union must keep reporting TS2536.
+    let main = r#"
+interface Alpha { a: number; shared: string }
+interface Beta { b: number; shared: string }
+declare const u: Alpha | Beta
+export function f<P extends keyof Alpha>(p: P) {
+  u[p]
+}
+"#;
+    let diagnostics = check_files(&[("main.ts", main)], "main.ts");
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2536),
+        "concrete keyof constraint against unrelated union must keep TS2536; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn generic_union_receiver_with_intersection_keyof_still_ts2536() {
+    // Negative case (`keyofAndIndexedAccessErrors` f20): a GENERIC receiver
+    // `T | U` indexed by `keyof (T & U)` is tsc's own deferred-relation
+    // failure and must keep erroring.
+    let main = r#"
+export function f20<T, U>(x: T | U, k3: keyof (T & U)) {
+  x[k3]
+}
+"#;
+    let diagnostics = check_files(&[("main.ts", main)], "main.ts");
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2536),
+        "generic union receiver indexed by keyof intersection must keep TS2536; got {diagnostics:#?}"
+    );
+}
