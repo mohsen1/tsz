@@ -12,8 +12,8 @@ fn test_compiler_managed_name_predicate_has_domain_boundary() {
     let predicates_source = fs::read_to_string("src/query_boundaries/type_predicates.rs")
         .expect("failed to read query_boundaries/type_predicates.rs");
     let import_guard_source =
-        fs::read_to_string("src/tests/architecture_contract_tests_parts/part_01.rs")
-            .expect("failed to read architecture_contract_tests_parts/part_01.rs");
+        fs::read_to_string("src/tests/architecture_contract_tests/part_01.rs")
+            .expect("failed to read architecture_contract_tests/part_01.rs");
 
     assert!(
         !common_source.contains("fn is_compiler_managed_type("),

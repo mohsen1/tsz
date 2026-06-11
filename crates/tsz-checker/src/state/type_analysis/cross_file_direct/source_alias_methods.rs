@@ -58,7 +58,7 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.lazy(def_id))
     }
 
-    pub(in crate::state_domain::type_analysis) fn direct_source_file_variable_annotation_type(
+    pub(super) fn direct_source_file_variable_annotation_type(
         &self,
         sym_id: SymbolId,
         delegate_binder: &BinderState,

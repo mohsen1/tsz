@@ -5,9 +5,7 @@
 use super::*;
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::state_domain::type_analysis) fn source_file_local_type_alias_application_is_projection_lowerable<
-        'b,
-    >(
+    pub(super) fn source_file_local_type_alias_application_is_projection_lowerable<'b>(
         arena: &'b NodeArena,
         binder: &'b BinderState,
         symbol: &Symbol,

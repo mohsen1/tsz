@@ -129,6 +129,7 @@ fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::Pat
     }
 }
 
+/// Helper: recursively walk a directory collecting production `.rs` files.
 fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;

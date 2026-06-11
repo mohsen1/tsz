@@ -5,7 +5,7 @@
 use super::*;
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::state_domain::type_analysis) fn cross_arena_symbol_miss_kind(
+    pub(super) fn cross_arena_symbol_miss_kind(
         &self,
         sym_id: SymbolId,
     ) -> CrossArenaSymbolMissKind {

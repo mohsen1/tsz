@@ -599,7 +599,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(in crate::state_domain::type_analysis) fn type_alias_type_param_names(
+    pub(super) fn type_alias_type_param_names(
         arena: &NodeArena,
         type_alias: &TypeAliasData,
     ) -> Vec<String> {
@@ -1019,9 +1019,7 @@ impl<'a> CheckerState<'a> {
         Some(base_decl_idx)
     }
 
-    pub(in crate::state_domain::type_analysis) fn source_file_expand_direct_lowerable_interface_heritage<
-        'b,
-    >(
+    pub(super) fn source_file_expand_direct_lowerable_interface_heritage<'b>(
         declarations: &[(NodeIndex, &'b NodeArena)],
         delegate_binder: &BinderState,
     ) -> Option<Vec<(NodeIndex, &'b NodeArena)>> {

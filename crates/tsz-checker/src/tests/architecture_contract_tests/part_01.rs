@@ -342,8 +342,6 @@ fn test_solver_imports_go_through_query_boundaries() {
 // Prompt 4.2 — Dependency Direction Tests
 // =============================================================================
 
-/// Helper: recursively walk a directory collecting production `.rs` files.
-
 /// CLAUDE.md §4: Binder must not import Solver.
 /// The binder produces symbols, scopes, and flow graphs without type computation.
 #[test]

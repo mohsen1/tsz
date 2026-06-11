@@ -13,8 +13,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {}
-
 mod annotation_context;
 
 impl<'a> CheckerState<'a> {
