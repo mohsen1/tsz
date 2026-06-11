@@ -137,6 +137,9 @@ write_pgo_marker() {
         printf 'profile-use=%s\n' "$profile_use"
         printf 'built_at=%s\n' "$(date -u +%FT%TZ)"
         printf 'profile_data_source=%s\n' "$profile_data_source"
+        # Codegen target of the optimized binary build (the training-metadata
+        # BENCH_RUST_TARGET_CPU line below can be stale on PGO cache reuse).
+        printf 'rust_target_cpu=%s\n' "${BENCH_RUST_TARGET_CPU:-native}"
         if [ -f "$metadata_file" ]; then
             cat "$metadata_file"
         else
@@ -1038,7 +1041,19 @@ check_prerequisites() {
         fi
     fi
 
-    echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
+    # Preflight: the binary must execute on this machine. A target-cpu above
+    # this host's ISA dies with SIGILL (exit 132) and would otherwise surface
+    # only as per-row crash artifacts at measurement time (#12764, #13248).
+    local tsz_version
+    local tsz_preflight_status=0
+    tsz_version="$("$TSZ" --version 2>&1)" || tsz_preflight_status=$?
+    if [ "$tsz_preflight_status" -ne 0 ]; then
+        echo -e "${RED}✗ tsz binary preflight failed (exit ${tsz_preflight_status}): $TSZ${NC}"
+        echo -e "${RED}  Built with target-cpu=${BENCH_RUST_TARGET_CPU:-native}; this machine may not support that ISA.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}✓${NC} tsz: ${tsz_version%%$'\n'*}"
     echo -e "   Binary: $TSZ"
     echo -e "   Size: $(ls -lh "$TSZ" | awk '{print $5}')"
     echo -e "   Built: $(stat -c '%y' "$TSZ" 2>/dev/null | cut -d. -f1 || stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$TSZ" 2>/dev/null || echo 'unknown')"

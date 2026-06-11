@@ -1360,6 +1360,7 @@ function measurementProfile() {
   return {
     mode,
     tsz_binary_source: tszOverride ? "override" : "bench-dist",
+    rust_target_cpu: fields.rust_target_cpu || null,
     profile_guided_optimization: {
       requested: pgoRequested,
       required: boolValue(process.env.BENCH_REQUIRE_PGO_VALUE, false),

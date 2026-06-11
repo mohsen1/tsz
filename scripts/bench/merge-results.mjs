@@ -295,6 +295,7 @@ function measurementProfileSignature(profile) {
   return {
     mode: profile?.mode || null,
     tsz_binary_source: profile?.tsz_binary_source || null,
+    rust_target_cpu: profile?.rust_target_cpu || null,
     profile_guided_optimization: {
       requested: pgo.requested ?? null,
       required: pgo.required ?? null,

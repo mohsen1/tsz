@@ -470,6 +470,7 @@ function buildReport({ artifact, measurementProfile, validationWarnings, sourceF
     `| Measurement profile | ${profileLabel} |`,
     `| PGO profile | ${profile.profile_fingerprint ? `\`${profile.profile_fingerprint.slice(0, 12)}\`` : "—"} |`,
     `| PGO training | ${profile.training_fingerprint ? `\`${profile.training_fingerprint.slice(0, 12)}\`` : "—"} |`,
+    `| Binary target CPU | ${profile.rust_target_cpu ? `\`${profile.rust_target_cpu}\`` : "—"} |`,
     `| Required rows | ${rows.length} |`,
     `| Successful project timing pairs | ${successfulProjectTimingPairs.length} |`,
     `| ✅ green | ${green.length} |`,

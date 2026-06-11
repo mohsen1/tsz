@@ -121,6 +121,69 @@ assert.deepEqual(duplicateProjectReport.duplicate_rows, [
   },
 ]);
 
+// Binary codegen (target-cpu) drift between artifacts is surfaced so timing
+// deltas across a build-config change are not attributed to source commits.
+function withTargetCpu(baseArtifact, rustTargetCpu) {
+  return {
+    ...baseArtifact,
+    measurement_profile: {
+      mode: "release-pgo",
+      rust_target_cpu: rustTargetCpu,
+    },
+  };
+}
+
+const codegenDriftReport = createProjectWinnerRegressionReport(
+  withTargetCpu(previous, "native"),
+  withTargetCpu(current, "x86-64"),
+  "previous.json",
+  "current.json",
+);
+assert.deepEqual(codegenDriftReport.binary_codegen, {
+  previous_rust_target_cpu: "native",
+  current_rust_target_cpu: "x86-64",
+  changed: true,
+});
+
+const codegenStableReport = createProjectWinnerRegressionReport(
+  withTargetCpu(previous, "x86-64-v3"),
+  withTargetCpu(current, "x86-64-v3"),
+  "previous.json",
+  "current.json",
+);
+assert.equal(codegenStableReport.binary_codegen.changed, false);
+
+// Artifacts predating the rust_target_cpu field must not be flagged as drift.
+const codegenUnknownReport = createProjectWinnerRegressionReport(
+  previous,
+  withTargetCpu(current, "x86-64-v3"),
+  "previous.json",
+  "current.json",
+);
+assert.deepEqual(codegenUnknownReport.binary_codegen, {
+  previous_rust_target_cpu: null,
+  current_rust_target_cpu: "x86-64-v3",
+  changed: false,
+});
+
+withTempDir((dir) => {
+  const before = path.join(dir, "before.json");
+  const after = path.join(dir, "after.json");
+  writeJson(before, withTargetCpu(artifact([row("vite-vanilla-ts-app", "tsz", GREEN_COMPAT, 2)]), "native"));
+  writeJson(after, withTargetCpu(artifact([row("vite-vanilla-ts-app", "tsz", GREEN_COMPAT, 1.8)]), "x86-64"));
+
+  const result = spawnSync(process.execPath, [SCRIPT, before, after], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /Binary codegen target changed between artifacts \(`native` -> `x86-64`\)/,
+    "markdown report should warn when the binary codegen target changed",
+  );
+});
+
 withTempDir((dir) => {
   const before = path.join(dir, "before.json");
   const after = path.join(dir, "after.json");
