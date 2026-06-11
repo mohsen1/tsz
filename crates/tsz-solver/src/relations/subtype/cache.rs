@@ -457,9 +457,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // (correctness-preserving: the result is recomputed later), never
         // produces a wrong answer. Captures `lazy_failures_at_entry` and
         // `weak_sensitivity_at_entry` from the enclosing scope by name.
+        //
+        // Results computed under `bypass_evaluation` are also never written:
+        // that mode compares raw alias/meta forms without expanding them, so
+        // its answers can differ from full-evaluation answers for the same
+        // pair, and the flag-agnostic `RelationCacheKey` cannot tell the two
+        // modes apart. Persisting a raw-mode `False` (e.g. `unknown` vs an
+        // alias application that evaluates to `unknown`) would poison every
+        // later full-evaluation check of the same pair, from any raw-mode
+        // entry point (`check_return_compat`'s placeholder fallback, the
+        // evaluator's union/intersection simplification). Reads stay shared:
+        // a full-evaluation answer is the more precise result for the same
+        // relation, so serving it to a bypass-mode query is sound.
         macro_rules! cache_definitive {
             ($db:expr, $key:expr, $result:expr) => {
-                if lazy_resolve_failure_count() == lazy_failures_at_entry
+                if !self.bypass_evaluation
+                    && lazy_resolve_failure_count() == lazy_failures_at_entry
                     && weak_type_sensitivity_count() == weak_sensitivity_at_entry
                 {
                     match $result {

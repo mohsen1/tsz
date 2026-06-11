@@ -915,16 +915,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        let source_needs_raw_fallback = matches!(
-            self.interner.lookup(source_return),
-            Some(TypeData::Application(_) | TypeData::Lazy(_))
-        ) && self.evaluate_type(source_return) == TypeId::UNKNOWN;
-        let target_needs_raw_fallback = matches!(
-            self.interner.lookup(target_return),
-            Some(TypeData::Application(_) | TypeData::Lazy(_))
-        ) && self.evaluate_type(target_return) == TypeId::UNKNOWN;
+        let needs_raw_fallback = self.return_type_needs_raw_fallback(source_return)
+            || self.return_type_needs_raw_fallback(target_return);
 
-        if source_needs_raw_fallback || target_needs_raw_fallback {
+        if needs_raw_fallback {
             let prev = self.bypass_evaluation;
             self.bypass_evaluation = true;
             let raw_result = self.check_subtype(source_return, target_return);
@@ -943,6 +937,57 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             self.check_subtype(source_return, target_return)
         }
+    }
+
+    /// Whether a return type must be compared in its raw alias form by
+    /// [`Self::check_return_compat`]: an `Application`/`Lazy` reference whose
+    /// evaluation produced `unknown` as a placeholder for a missing body,
+    /// rather than as a genuine evaluation result.
+    ///
+    /// A reference the resolver maps to a real body (e.g. `C<number>` where
+    /// `type C<T> = T extends 1 ? unknown : unknown`) makes the evaluator's
+    /// `unknown` answer authoritative: the relation must compare the
+    /// evaluated form (`unknown` relates to `unknown`), not the raw alias
+    /// shape. Only an unresolvable reference — no defining `DefId`, no
+    /// registered body, an `unknown` placeholder body (cross-file body not
+    /// yet registered), or a self-referential `Lazy` wrapper — justifies the
+    /// raw-form fallback.
+    ///
+    /// Detecting a placeholder also records an undetermined-result event
+    /// (`note_lazy_resolve_failure`): any relation result derived from the
+    /// raw comparison is schedule-dependent and must not be memoized as
+    /// definitive in the shared relation cache.
+    fn return_type_needs_raw_fallback(&mut self, return_type: TypeId) -> bool {
+        // Single interner lookup yields both the alias-shape gate and the
+        // defining `DefId` (this runs for every function-pair return check).
+        let def_id = match self.interner.lookup(return_type) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            Some(TypeData::Application(app_id)) => {
+                let base = self.interner.type_application(app_id).base;
+                crate::visitor::lazy_def_id(self.interner, base)
+            }
+            _ => return false,
+        };
+        if self.evaluate_type(return_type) != TypeId::UNKNOWN {
+            return false;
+        }
+        let is_placeholder = match def_id {
+            Some(def_id) => match self.resolver.resolve_lazy(def_id, self.interner) {
+                Some(body) => {
+                    body == TypeId::UNKNOWN
+                        || matches!(
+                            self.interner.lookup(body),
+                            Some(TypeData::Lazy(body_def)) if body_def == def_id
+                        )
+                }
+                None => true,
+            },
+            None => true,
+        };
+        if is_placeholder {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+        }
+        is_placeholder
     }
 
     pub(crate) fn instantiate_function_shape(
