@@ -40,7 +40,17 @@ fn valid_identifiers_emit_bare_regardless_of_name_choice() {
     // Vary the spelling: plain, leading underscore, leading `$`, the
     // `__proto__` witness, and a mixed case. None are reserved words, so all
     // must be emittable bare.
-    for name in ["foo", "_x", "$bar", "__proto__", "_proto__", "fooBar123"] {
+    for name in [
+        "foo",
+        "_x",
+        "$bar",
+        "__proto__",
+        "_proto__",
+        "fooBar123",
+        "café",
+        "日本語",
+        "π2",
+    ] {
         assert!(
             DeclarationEmitter::can_emit_bare_property_name(name),
             "expected `{name}` to be emittable bare",
@@ -96,6 +106,10 @@ fn literal_text_canonicalizes_valid_identifiers_to_bare() {
     assert_eq!(
         DeclarationEmitter::format_property_name_literal_text("___proto__"),
         "___proto__",
+    );
+    assert_eq!(
+        DeclarationEmitter::format_property_name_literal_text("café"),
+        "café",
     );
 }
 

@@ -53,6 +53,7 @@ mod shapes;
 #[path = "internal_tests.rs"]
 mod signature_help_internal_tests;
 mod trigger;
+mod unicode_identifier;
 
 pub(super) use display::apply_type_param_substitution;
 use phases::TypeArgumentContext;

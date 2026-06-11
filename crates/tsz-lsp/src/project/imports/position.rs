@@ -8,9 +8,13 @@ use crate::utils::find_node_at_offset;
 use tsz_common::position::{Position, Range};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeArena, NodeIndex, syntax_kind_ext};
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
 use super::super::{ImportKind, ImportTarget, Project, ProjectFile};
+
+fn identifier_span_touches_probe(start: usize, end: usize, probe: usize) -> bool {
+    (start..=end).contains(&probe)
+}
 
 impl Project {
     /// Returns `true` when `position` falls inside a `NamedImports` node —
@@ -121,45 +125,32 @@ impl Project {
     }
 
     fn identifier_text_around_offset(source_text: &str, probe_offset: usize) -> Option<String> {
-        let bytes = source_text.as_bytes();
-        if bytes.is_empty() {
-            return None;
-        }
+        let probe = probe_offset.min(source_text.len());
+        let mut current_start = None;
+        let mut current_end = 0;
 
-        let mut idx = probe_offset.min(bytes.len() - 1);
-        if !Self::is_ascii_identifier_continue(bytes[idx]) {
-            if idx > 0 && Self::is_ascii_identifier_continue(bytes[idx - 1]) {
-                idx -= 1;
-            } else {
-                return None;
+        for (idx, ch) in source_text.char_indices() {
+            let next = idx + ch.len_utf8();
+            if let Some(start) = current_start {
+                if is_ecmascript_identifier_part(ch) {
+                    current_end = next;
+                    continue;
+                }
+                if identifier_span_touches_probe(start, current_end, probe) {
+                    return Some(source_text[start..current_end].to_string());
+                }
+                current_start = None;
+            }
+
+            if is_ecmascript_identifier_start(ch) {
+                current_start = Some(idx);
+                current_end = next;
             }
         }
 
-        let mut start = idx;
-        while start > 0 && Self::is_ascii_identifier_continue(bytes[start - 1]) {
-            start -= 1;
-        }
-
-        let mut end = idx + 1;
-        while end < bytes.len() && Self::is_ascii_identifier_continue(bytes[end]) {
-            end += 1;
-        }
-
-        if start >= end || !Self::is_ascii_identifier_start(bytes[start]) {
-            return None;
-        }
-
-        source_text
-            .get(start..end)
-            .map(std::string::ToString::to_string)
-    }
-
-    const fn is_ascii_identifier_start(byte: u8) -> bool {
-        byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
-    }
-
-    const fn is_ascii_identifier_continue(byte: u8) -> bool {
-        byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+        let start = current_start?;
+        identifier_span_touches_probe(start, current_end, probe)
+            .then(|| source_text[start..current_end].to_string())
     }
 
     pub(crate) fn identifier_at_position(
@@ -291,5 +282,31 @@ impl Project {
             module_specifier,
             kind,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Project;
+
+    #[test]
+    fn identifier_text_around_offset_accepts_unicode_identifier_start_and_part() {
+        let source = "const café = 日本語;";
+
+        let cafe_start = source.find("café").expect("café");
+        assert_eq!(
+            Project::identifier_text_around_offset(source, cafe_start),
+            Some("café".to_string())
+        );
+        assert_eq!(
+            Project::identifier_text_around_offset(source, cafe_start + "café".len()),
+            Some("café".to_string())
+        );
+
+        let japanese_mid = source.find("本").expect("日本語");
+        assert_eq!(
+            Project::identifier_text_around_offset(source, japanese_mid),
+            Some("日本語".to_string())
+        );
     }
 }
