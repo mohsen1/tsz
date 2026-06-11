@@ -245,7 +245,7 @@ impl NodeAccess for NodeArena {
     fn get_identifier_text(&self, index: NodeIndex) -> Option<&str> {
         let node = self.get(index)?;
         let data = self.get_identifier(node)?;
-        // Use atom for O(1) lookup if available, otherwise fall back to escaped_text
+        // Use the parser-owned text resolver so stale atoms cannot corrupt display text.
         Some(self.resolve_identifier_text(data))
     }
 

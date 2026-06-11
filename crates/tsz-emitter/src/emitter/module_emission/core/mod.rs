@@ -1445,10 +1445,7 @@ impl<'a> Printer<'a> {
 
         let node = self.arena.get(name_idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .arena
-                .get_identifier(node)
-                .map(|id| id.escaped_text.clone());
+            return self.arena.identifier_text_owned(name_idx);
         }
 
         if node.kind == syntax_kind_ext::QUALIFIED_NAME

@@ -1918,10 +1918,7 @@ fn type_reference_identifier_name(source_arena: &NodeArena, type_idx: NodeIndex)
 }
 
 fn identifier_text(source_arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    source_arena
-        .get(idx)
-        .and_then(|node| source_arena.get_identifier(node))
-        .map(|ident| ident.escaped_text.clone())
+    source_arena.identifier_text(idx).map(str::to_owned)
 }
 
 fn callable_function_from_symbol_decl(

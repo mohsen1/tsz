@@ -15,10 +15,7 @@ impl<'a> DeclarationEmitter<'a> {
         arena: &NodeArena,
         idx: NodeIndex,
     ) -> Option<String> {
-        let node = arena.get(idx)?;
-        arena
-            .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone())
+        arena.identifier_text(idx).map(str::to_owned)
     }
 
     pub(in crate::declaration_emitter) fn property_name_text_from_arena(

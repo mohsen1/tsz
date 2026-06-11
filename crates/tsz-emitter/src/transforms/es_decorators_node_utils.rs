@@ -394,14 +394,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
     }
 
     pub(super) fn get_identifier_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            self.arena
-                .get_identifier(node)
-                .map(|id| id.escaped_text.clone())
-        } else {
-            None
-        }
+        self.arena.identifier_text(idx).map(str::to_owned)
     }
 
     pub(super) fn node_text(&self, idx: NodeIndex) -> String {
