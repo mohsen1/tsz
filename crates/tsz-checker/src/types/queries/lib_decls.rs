@@ -1,6 +1,7 @@
 //! Declaration-arena helpers for lib symbols and global augmentations.
 
 use std::sync::Arc;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 
 /// Resolve fallback arena for a lib symbol from merged binders/lib contexts.
@@ -76,7 +77,22 @@ pub(crate) fn collect_lib_decls_with_arenas_in_contexts<'a>(
                 let lib_decl_arenas =
                     collect_decl_arenas_from_lib_contexts(binder, sym_id, decl_idx, lib_contexts);
                 if lib_decl_arenas.is_empty() {
-                    vec![(decl_idx, fallback_arena)]
+                    // Blind fallback: `decl_idx` was never proven to belong to
+                    // `fallback_arena`. `NodeIndex`es are arena-local, so for a
+                    // cross-file program symbol the same index addresses an
+                    // unrelated node in this arena; lowering that node
+                    // manufactures a wrong type (empty interface bodies,
+                    // mis-typed members) that then leaks into the shared
+                    // `DefinitionStore` and poisons sibling checkers under
+                    // parallel fresh checking (issue #13255). Keep the pair
+                    // only when the node is a named declaration that actually
+                    // declares this symbol's name.
+                    if fallback_arena_node_declares_symbol(binder, sym_id, decl_idx, fallback_arena)
+                    {
+                        vec![(decl_idx, fallback_arena)]
+                    } else {
+                        Vec::new()
+                    }
                 } else {
                     lib_decl_arenas
                         .into_iter()
@@ -86,6 +102,48 @@ pub(crate) fn collect_lib_decls_with_arenas_in_contexts<'a>(
             }
         })
         .collect()
+}
+
+/// Whether the node at `decl_idx` in `arena` is a named declaration whose
+/// declared name equals the symbol's escaped name.
+///
+/// Used to validate the blind arena fallback in
+/// [`collect_lib_decls_with_arenas_in_contexts`]: a pair is only usable for
+/// name-driven lib lowering when the node provably declares the looked-up
+/// name. Unrecognized node kinds and name mismatches are rejected — they are
+/// foreign-arena index collisions, not declarations of this symbol.
+fn fallback_arena_node_declares_symbol(
+    binder: &tsz_binder::BinderState,
+    sym_id: tsz_binder::SymbolId,
+    decl_idx: NodeIndex,
+    arena: &NodeArena,
+) -> bool {
+    let Some(symbol) = binder.get_symbol(sym_id) else {
+        return false;
+    };
+    let Some(node) = arena.get(decl_idx) else {
+        return false;
+    };
+    let name_idx = if let Some(interface) = arena.get_interface(node) {
+        interface.name
+    } else if let Some(alias) = arena.get_type_alias(node) {
+        alias.name
+    } else if let Some(class) = arena.get_class(node) {
+        class.name
+    } else if let Some(function) = arena.get_function(node) {
+        function.name
+    } else if let Some(enum_decl) = arena.get_enum(node) {
+        enum_decl.name
+    } else if let Some(module) = arena.get_module(node) {
+        module.name
+    } else if let Some(variable) = arena.get_variable_declaration(node) {
+        variable.name
+    } else {
+        return false;
+    };
+    arena
+        .get_identifier_text(name_idx)
+        .is_some_and(|name| name == symbol.escaped_name)
 }
 
 fn collect_decl_arenas_from_lib_contexts<'a>(

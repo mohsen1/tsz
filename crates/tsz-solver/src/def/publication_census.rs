@@ -102,8 +102,9 @@ struct DefCensus {
     file_id: Option<u32>,
     publications: u64,
     different_body: u64,
-    /// Distinct body `TypeId`s observed (deduped, capped).
-    bodies: Vec<TypeId>,
+    /// Distinct body `TypeId`s observed (deduped, capped), each with the
+    /// call site that first published that form.
+    bodies: Vec<(TypeId, &'static str, u32)>,
     /// True once the distinct-body list overflowed [`MAX_TRACKED_BODIES`].
     bodies_overflowed: bool,
 }
@@ -181,9 +182,9 @@ pub fn record_publication(
     if outcome.is_different_body() {
         entry.different_body += 1;
     }
-    if !entry.bodies.contains(&new_body) {
+    if !entry.bodies.iter().any(|(body, _, _)| *body == new_body) {
         if entry.bodies.len() < MAX_TRACKED_BODIES {
-            entry.bodies.push(new_body);
+            entry.bodies.push((new_body, caller.file(), caller.line()));
         } else {
             entry.bodies_overflowed = true;
         }
@@ -404,10 +405,13 @@ pub fn dump_to_string(
             census.bodies.len(),
             if census.bodies_overflowed { "+" } else { "" },
         ));
-        for body in &census.bodies {
+        for (body, caller_file, caller_line) in &census.bodies {
             let desc = describe_type(*body);
             let desc: String = desc.chars().take(400).collect();
-            body_details.push_str(&format!("    {} = {desc}\n", body.0));
+            body_details.push_str(&format!(
+                "    {} = {desc}\n        first published by {caller_file}:{caller_line}\n",
+                body.0
+            ));
         }
     }
     for (def_id, census) in defs.into_iter().take(60) {

@@ -322,7 +322,13 @@ impl<'a> CheckerState<'a> {
     /// This is the primary entry point for type checking after parsing and binding.
     /// It traverses the entire AST and performs all type checking operations.
     pub fn check_source_file(&mut self, root_idx: NodeIndex) {
-        let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
+        let _span = span!(
+            Level::INFO,
+            "check_source_file",
+            idx = ?root_idx,
+            file = %self.ctx.file_name
+        )
+        .entered();
         // Open a deterministic, per-file naming scope for inference placeholders
         // so any `__infer_*` witness that surfaces in a diagnostic is stable
         // across runs and across parallel file checks.

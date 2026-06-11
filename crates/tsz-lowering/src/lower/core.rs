@@ -585,6 +585,7 @@ impl<'a> TypeLowering<'a> {
         let mut parts = ObjectTypeParts::new();
         let mut type_params_collected = false;
         let mut collected_params = Vec::new();
+        let mut lowered_interface_decls = 0usize;
 
         let is_lib_decl = |arena: &NodeArena, idx: NodeIndex| {
             let mut current = idx;
@@ -636,6 +637,7 @@ impl<'a> TypeLowering<'a> {
             let Some(interface) = decl_arena.get_interface(node) else {
                 continue;
             };
+            lowered_interface_decls += 1;
 
             // Collect or merge type parameters from this declaration
             if let Some(params) = &interface.type_parameters
@@ -659,6 +661,21 @@ impl<'a> TypeLowering<'a> {
 
             // Collect members using the arena-specific lowerer
             lowerer.collect_object_type_members(&interface.members, &mut parts);
+        }
+
+        // No declaration actually lowered as an interface: every pair either
+        // pointed at a missing node or at a non-interface node (foreign-arena
+        // `NodeIndex` collisions). Synthesizing an empty object here would
+        // manufacture a memberless body for a real interface — that body then
+        // leaks into shared definition state and produces false "property
+        // does not exist" diagnostics (issue #13255). A genuinely empty
+        // `interface Empty {}` still lowers normally: its declaration parses
+        // as an interface and increments the counter.
+        if lowered_interface_decls == 0 {
+            if type_params_collected {
+                self.pop_type_param_scope();
+            }
+            return (TypeId::ERROR, collected_params);
         }
 
         // Assign declaration_order in FORWARD declaration order for diagnostics.
