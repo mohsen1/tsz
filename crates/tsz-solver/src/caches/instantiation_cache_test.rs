@@ -10,8 +10,8 @@
 //!    alias even though the substitution is empty.
 //! 3. The leaf fast paths (`TypeParameter` direct hit, `IndexAccess`) are NOT
 //!    cached — they remain allocation-free.
-//! 4. The empty / identity short-circuit runs BEFORE cache-key construction,
-//!    leaving the cache untouched on no-op substitutions.
+//! 4. The empty / concrete-identity short-circuit runs BEFORE cache-key
+//!    construction, leaving the cache untouched on no-op substitutions.
 //! 5. Results from a `depth_exceeded` walk are NOT cached.
 //! 6. Semantically equal substitutions hit the same cache slot even if their
 //!    `FxHashMap` insertion order differs.
@@ -333,6 +333,77 @@ fn empty_substitution_short_circuits_before_cache() {
     assert_eq!(
         stats1.instantiation_cache_misses, stats0.instantiation_cache_misses,
         "empty substitution must NOT probe the cache"
+    );
+}
+
+#[test]
+fn concrete_body_short_circuits_before_cache_with_non_empty_substitution() {
+    // A non-empty substitution cannot affect a body that contains no
+    // TypeParameter/Infer roots. The instantiator should return identity before
+    // probing the cross-call instantiation cache.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, _) = type_param(&interner, "T");
+    let concrete_body = object_with(&interner, TypeId::STRING);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_atom, TypeId::NUMBER);
+
+    let stats0 = db.statistics();
+
+    for _ in 0..16 {
+        let direct = instantiate_type_cached(&interner, Some(&db), concrete_body, &subst);
+        let preserving =
+            instantiate_type_preserving_cached(&interner, Some(&db), concrete_body, &subst);
+        assert_eq!(direct, concrete_body);
+        assert_eq!(preserving, concrete_body);
+    }
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
+        "concrete identity must NOT populate the instantiation cache"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_misses, stats0.instantiation_cache_misses,
+        "concrete identity must NOT probe the instantiation cache"
+    );
+}
+
+#[test]
+fn concrete_generic_body_short_circuits_before_cache() {
+    // `instantiate_generic_cached` still builds a substitution from the
+    // call-site type arguments, but a body with no type parameters is identity
+    // and should avoid the instantiation cache entirely.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, _) = type_param(&interner, "T");
+    let concrete_body = object_with(&interner, TypeId::STRING);
+    let type_params = [param_info(t_atom)];
+    let type_args = [TypeId::NUMBER];
+
+    let stats0 = db.statistics();
+
+    for _ in 0..16 {
+        let result = instantiate_generic_cached(
+            &interner,
+            Some(&db),
+            concrete_body,
+            &type_params,
+            &type_args,
+        );
+        assert_eq!(result, concrete_body);
+    }
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
+        "generic concrete identity must NOT populate the instantiation cache"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_misses, stats0.instantiation_cache_misses,
+        "generic concrete identity must NOT probe the instantiation cache"
     );
 }
 

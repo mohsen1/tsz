@@ -34,11 +34,11 @@ fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R 
 /// (`instantiate_type_preserving_cached`, `instantiate_type_preserving_meta_cached`,
 /// `instantiate_type_with_infer_cached`).
 ///
-/// All three apply the same "intrinsic check → empty/identity short-circuit →
-/// delegate to engine" prelude; the only thing that varies is the option set
-/// passed to the instantiator. `instantiate_type_cached` does NOT share this
-/// helper because it has additional allocation-free leaf fast paths
-/// (`TypeParameter`, `IndexAccess(T, P)`) that must precede any cache-key
+/// All three apply the same "intrinsic check → empty/concrete identity
+/// short-circuit → delegate to engine" prelude; the only thing that varies is
+/// the option set passed to the instantiator. `instantiate_type_cached` does
+/// NOT share this helper because it has additional allocation-free leaf fast
+/// paths (`TypeParameter`, `IndexAccess(T, P)`) that must precede any cache-key
 /// construction. The `substitute_this_*` variants also bypass this helper
 /// because they intentionally skip the empty-subst short-circuit (their cache
 /// key is keyed on `this_type`, not the substitution map).
@@ -54,6 +54,9 @@ fn instantiate_with_options_cached(
         return type_id;
     }
     if substitution.is_empty() {
+        return type_id;
+    }
+    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return type_id;
     }
     instantiate_with_request_cached(
@@ -165,6 +168,9 @@ pub(crate) fn instantiate_type_with_shadowed(
     if substitution.is_empty() {
         return type_id;
     }
+    if !crate::visitor::contains_type_parameters(interner, type_id) {
+        return type_id;
+    }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     instantiator.shadowed.extend_from_slice(shadowed_params);
     let result = instantiator.instantiate(type_id);
@@ -193,6 +199,9 @@ pub(crate) fn instantiate_type_preserving_with_declared(
     declared_type: TypeId,
 ) -> TypeId {
     if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -224,6 +233,9 @@ pub fn instantiate_type_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
+    if substitution.is_empty() {
+        return type_id;
+    }
     match interner.lookup(type_id) {
         // Fast path: TypeParameter directly in the substitution — return immediately.
         // This is the most common leaf case in mapped type template instantiation.
@@ -234,6 +246,13 @@ pub fn instantiate_type_cached(
                 return result;
             }
         }
+        _ => {}
+    }
+    // Concrete identity short-circuit — no cache key construction needed.
+    if !crate::visitor::contains_type_parameters(interner, type_id) {
+        return type_id;
+    }
+    match interner.lookup(type_id) {
         // Fast path: IndexAccess(T, P) — the most common mapped type template pattern.
         // Recursively instantiate obj and idx without creating a TypeInstantiator.
         // Same reasoning as above: cache-key construction MUST NOT happen for this case.
@@ -246,11 +265,6 @@ pub fn instantiate_type_cached(
             return interner.index_access(new_obj, new_idx);
         }
         _ => {}
-    }
-
-    // Empty/identity short-circuit — no cache key construction needed.
-    if substitution.is_empty() {
-        return type_id;
     }
 
     instantiate_with_request_cached(
@@ -379,6 +393,9 @@ pub fn instantiate_type_with_depth_status(
         return (type_id, false);
     }
     if substitution.is_empty() {
+        return (type_id, false);
+    }
+    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return (type_id, false);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -514,6 +531,9 @@ pub fn instantiate_generic_cached(
     }
     let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
     if substitution.is_empty() || substitution.is_identity_for(interner, type_params) {
+        return type_id;
+    }
+    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return type_id;
     }
     instantiate_with_request_cached(
