@@ -142,6 +142,15 @@ impl BinderState {
     /// # Panics
     ///
     /// Panics if either resolution cache lock is poisoned.
+    /// Concurrency contract (the shared-lib-universe data-race answer): this
+    /// merge mutates ONLY `self` (the program binder) — every `Arc::make_mut`
+    /// below targets `self`'s own fields, free at refcount 1 during a
+    /// per-file bind. The lib contexts are read immutably, so lib binders and
+    /// arenas held at refcount > 1 (a shared read-only lib set, or sibling
+    /// rayon workers binding concurrently) are never copy-on-write poisoned
+    /// and never race: sharing the bound lib set across workers is sound with
+    /// respect to this merge. Pinned by
+    /// `lib_merge_reads_shared_lib_binder_immutably_at_refcount_above_one`.
     pub fn merge_lib_contexts_into_binder(&mut self, lib_contexts: &[LibContext]) {
         // Merging lib contexts remaps SymbolIds; clear both caches so callers
         // don't receive stale ids from prior binding passes.
