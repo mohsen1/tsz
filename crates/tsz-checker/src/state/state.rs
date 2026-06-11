@@ -1316,18 +1316,10 @@ impl<'a> CheckerState<'a> {
                 let key = (flow_node, sym_id, cached);
                 let flow_cached = self.ctx.flow_analysis_cache.borrow().get(&key).copied();
                 if let Some(flow_cached) = flow_cached {
-                    // Apply the same widening check as the full path
-                    if flow_cached != cached && flow_cached != TypeId::ERROR {
-                        let evaluated_cached = self.evaluate_type_for_assignability(cached);
-                        let widened_cached = crate::query_boundaries::common::widen_type(
-                            self.ctx.types,
-                            evaluated_cached,
-                        );
-                        if widened_cached == flow_cached {
-                            return cached;
-                        }
-                    }
-                    return flow_cached;
+                    // The flow cache stores raw analysis results; apply the
+                    // same finalization as the full paths so a cache hit
+                    // cannot change the observed type.
+                    return self.finalize_flow_narrowed_type(idx, cached, flow_cached, false);
                 }
 
                 // PERF: Stable flow cache — skip flow analysis for repeated identifier
@@ -1387,35 +1379,7 @@ impl<'a> CheckerState<'a> {
                     return cached;
                 }
                 let narrowed = self.apply_flow_narrowing(idx, cached);
-                // FIX: If flow analysis returns a widened version of a literal cached type
-                // (e.g., cached="foo" but flow returns string), use the cached type.
-                // This prevents zombie freshness where flow analysis undoes literal preservation.
-                // IMPORTANT: Evaluate the cached type first to expand type aliases
-                // and lazy references, so widen_type can see the actual union members.
-                if narrowed != cached && narrowed != TypeId::ERROR {
-                    let evaluated_cached = self.evaluate_type_for_assignability(cached);
-                    let widened_cached = crate::query_boundaries::common::widen_type(
-                        self.ctx.types,
-                        evaluated_cached,
-                    );
-                    if widened_cached == narrowed {
-                        // Update stable flow cache: flow returned declared type
-                        if should_narrow && cached != TypeId::UNKNOWN {
-                            self.update_symbol_flow_confirmed(idx, cached, true);
-                        }
-                        return cached;
-                    }
-                    // Flow returned a narrowed type — invalidate stable cache
-                    if should_narrow {
-                        self.update_symbol_flow_confirmed(idx, cached, false);
-                    }
-                } else {
-                    // Flow returned declared type unchanged — update stable cache
-                    if should_narrow && cached != TypeId::UNKNOWN {
-                        self.update_symbol_flow_confirmed(idx, cached, true);
-                    }
-                }
-                return narrowed;
+                return self.finalize_flow_narrowed_type(idx, cached, narrowed, should_narrow);
             }
 
             // TS 5.1+ divergent accessor types: when in a write context
@@ -1572,39 +1536,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let mut narrowed = self.apply_flow_narrowing(idx, result);
-            // FIX: Flow narrowing may return the original fresh type from the initializer
-            // expression, undoing the freshness stripping that get_type_of_identifier
-            // already performed. Re-apply freshness stripping to prevent "Zombie Freshness"
-            // where excess property checks fire on non-literal variable references.
-            if !self.ctx.compiler_options.sound_mode {
-                use crate::query_boundaries::common::{is_fresh_object_type, widen_freshness};
-                if is_fresh_object_type(self.ctx.types, narrowed) {
-                    narrowed = widen_freshness(self.ctx.types, narrowed);
-                }
-            }
-            // FIX: For mutable variables with non-widened literal declared types
-            // (e.g., `declare var a: "foo"; let b = a` → b has declared type "foo"),
-            // flow analysis may return the widened primitive (string) even though
-            // there's no actual narrowing. Detect this case: if widen(result) == narrowed,
-            // the flow is just widening our literal, not genuinely narrowing.
-            // IMPORTANT: Evaluate the result type first to expand type aliases
-            // and lazy references, so widen_type can see the actual union members.
-            if narrowed != result && narrowed != TypeId::ERROR {
-                let evaluated_result = self.evaluate_type_for_assignability(result);
-                let widened_result =
-                    crate::query_boundaries::common::widen_type(self.ctx.types, evaluated_result);
-                if widened_result == narrowed {
-                    // Flow just widened our literal type - use the original result
-                    narrowed = result;
-                }
-            }
-            // Update stable flow cache based on whether narrowing occurred
-            if narrowed == result && result != TypeId::UNKNOWN {
-                self.update_symbol_flow_confirmed(idx, result, true);
-            } else {
-                self.update_symbol_flow_confirmed(idx, result, false);
-            }
+            let narrowed = self.apply_flow_narrowing(idx, result);
+            let narrowed = self.finalize_flow_narrowed_type(idx, result, narrowed, true);
             tracing::trace!(
                 idx = idx.0,
                 type_id = result.0,
@@ -1774,6 +1707,57 @@ impl<'a> CheckerState<'a> {
         }
         // Can't determine the target — conservatively assume it targets our symbol
         true
+    }
+
+    /// Finalize a flow-narrowed type before it is returned from
+    /// `get_type_of_node_with_request`.
+    ///
+    /// Every flow-narrowed return path — the flow-cache fast path, the
+    /// cached-hit path, and the computed path — must agree on three rules;
+    /// keeping them here is what prevents per-path drift.
+    ///
+    /// 1. Freshness stripping: flow narrowing may return the original fresh
+    ///    object type from the initializer expression, undoing the freshness
+    ///    widening the declared type already received. Without re-stripping,
+    ///    excess-property checks fire on non-literal variable references
+    ///    ("zombie freshness").
+    /// 2. Literal-widening undo: for mutable variables with non-widened
+    ///    literal declared types (e.g. `declare var a: "foo"; let b = a`),
+    ///    flow analysis may return the widened primitive even though nothing
+    ///    narrowed. The declared type is evaluated first so aliases and lazy
+    ///    references expand; if widening it reproduces the flow result, the
+    ///    flow pass only widened the literal — keep the declared type.
+    /// 3. Stable-flow-cache update (when `update_stable_cache` is set):
+    ///    record a confirmed "no narrowing" observation only when flow
+    ///    analysis returned the declared type unchanged and the declared
+    ///    type is not `unknown`; any other result — including `error` —
+    ///    invalidates the confirmation.
+    fn finalize_flow_narrowed_type(
+        &mut self,
+        idx: NodeIndex,
+        declared: TypeId,
+        mut narrowed: TypeId,
+        update_stable_cache: bool,
+    ) -> TypeId {
+        if !self.ctx.compiler_options.sound_mode {
+            use crate::query_boundaries::common::{is_fresh_object_type, widen_freshness};
+            if is_fresh_object_type(self.ctx.types, narrowed) {
+                narrowed = widen_freshness(self.ctx.types, narrowed);
+            }
+        }
+        if narrowed != declared && narrowed != TypeId::ERROR {
+            let evaluated_declared = self.evaluate_type_for_assignability(declared);
+            let widened_declared =
+                crate::query_boundaries::common::widen_type(self.ctx.types, evaluated_declared);
+            if widened_declared == narrowed {
+                narrowed = declared;
+            }
+        }
+        if update_stable_cache {
+            let confirmed_stable = narrowed == declared && declared != TypeId::UNKNOWN;
+            self.update_symbol_flow_confirmed(idx, declared, confirmed_stable);
+        }
+        narrowed
     }
 
     /// Update the stable flow cache for a symbol after flow analysis.
