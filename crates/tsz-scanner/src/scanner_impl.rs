@@ -105,14 +105,13 @@ pub struct ScannerSnapshot {
     pub token_invalid_separator_pos: Option<usize>,
     pub token_invalid_separator_is_consecutive: bool,
     pub regex_flag_errors: Vec<RegexFlagError>,
-    pub scanner_diagnostics: Vec<ScannerDiagnostic>,
+    pub scanner_diagnostics_len: usize,
 }
 
 /// The scanner state that holds the current position and token information.
 ///
 /// ZERO-COPY OPTIMIZATION: Source is stored as UTF-8 text directly (no Vec<char>).
-/// For ASCII-only files (99% of TypeScript), byte position == character position.
-/// Positions are byte-based internally for performance, converted when needed.
+/// Positions are byte-based internally; for ASCII-only files, byte position == character position.
 #[wasm_bindgen]
 pub struct ScannerState {
     /// The source text as UTF-8 text, shared so we don't duplicate per phase.
@@ -1066,7 +1065,7 @@ impl ScannerState {
             token_invalid_separator_pos: self.token_invalid_separator_pos,
             token_invalid_separator_is_consecutive: self.token_invalid_separator_is_consecutive,
             regex_flag_errors: self.regex_flag_errors.clone(),
-            scanner_diagnostics: self.scanner_diagnostics.clone(),
+            scanner_diagnostics_len: self.scanner_diagnostics.len(),
         }
     }
 
@@ -1083,7 +1082,8 @@ impl ScannerState {
         self.token_invalid_separator_is_consecutive =
             snapshot.token_invalid_separator_is_consecutive;
         self.regex_flag_errors = snapshot.regex_flag_errors;
-        self.scanner_diagnostics = snapshot.scanner_diagnostics;
+        self.scanner_diagnostics
+            .truncate(snapshot.scanner_diagnostics_len);
     }
 
     /// Get the interned atom for the current identifier token.
