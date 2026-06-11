@@ -8,10 +8,132 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 
+use super::declaration_helpers::should_rewrite_module_specifier;
+use super::declaration_helpers::{declaration_file_extension, ts_extension_suffix};
 use super::declaration_helpers::{imported_types_package_target, is_node_builtin_module};
-use super::declaration_helpers::{should_rewrite_module_specifier, ts_extension_suffix};
 
 impl<'a> CheckerState<'a> {
+    /// Shared TS2846/TS5097 module-specifier extension diagnostics.
+    ///
+    /// Mirrors tsc's `resolveExternalModule` extension block (checker.ts):
+    /// when a module specifier ends in a TypeScript extension and the module
+    /// actually resolves, tsc reports TS2846 for declaration-file specifiers
+    /// (`.d.ts`/`.d.mts`/`.d.cts`) or TS5097 for source specifiers
+    /// (`.ts`/`.tsx`/`.mts`/`.cts`) at the specifier. tsc anchors the check on
+    /// `findAncestor(location, isImportDeclaration)?.importClause ||
+    /// findAncestor(location, or(isImportEqualsDeclaration, isExportDeclaration))`,
+    /// so the same rule serves `import ... from`, `export ... from`
+    /// (named/star/namespace re-exports), and `import x = require(...)`.
+    ///
+    /// Statement-level type-only forms (`import type` / `export type`) are
+    /// exempt; specifier-level `{ type x }` modifiers are not. Declaration
+    /// source files never report these. `allowImportingTsExtensions` and
+    /// `rewriteRelativeImportExtensions` both suppress TS5097
+    /// (tsc `shouldAllowImportingTsExtension` / `getAllowImportingTsExtensions`).
+    ///
+    /// Returns `true` when a diagnostic was emitted; callers use this to
+    /// suppress the lower-priority TS2307 "cannot find module" family.
+    pub(crate) fn check_module_specifier_ts_extension(
+        &mut self,
+        module_name: &str,
+        spec_start: u32,
+        spec_length: u32,
+        is_type_only: bool,
+        request_resolution_mode: Option<crate::context::ResolutionModeOverride>,
+    ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let mut emitted_extension_diagnostic = false;
+
+        // TS2846: a declaration-file specifier requires `import type`.
+        // tsc only emits TS2846 when the .d.ts module actually resolves; if
+        // the file doesn't exist, TS2307 (cannot find module) takes priority.
+        let dts_ext = declaration_file_extension(module_name);
+        if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext
+            && !is_type_only
+        {
+            let module_resolves_dts = self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    module_name,
+                    request_resolution_mode,
+                )
+                .is_some()
+                || self
+                    .ctx
+                    .module_exports_contains_module(self.ctx.binder, module_name);
+            if module_resolves_dts {
+                let base = module_name.trim_end_matches(dts_suffix);
+                let suggested = if self.ctx.compiler_options.allow_importing_ts_extensions {
+                    format!("{base}{ts_ext}")
+                } else {
+                    // For CommonJS-like module kinds, extensionless imports are valid.
+                    // For ESM-like module kinds, append .js/.mjs/.cjs extension.
+                    use tsz_common::common::ModuleKind;
+                    match self.ctx.compiler_options.module {
+                        ModuleKind::CommonJS
+                        | ModuleKind::AMD
+                        | ModuleKind::UMD
+                        | ModuleKind::System
+                        | ModuleKind::None => base.to_string(),
+                        _ => format!("{base}{js_ext}"),
+                    }
+                };
+                let message = format_message(
+                    diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                    &[&suggested],
+                );
+                self.error_at_position(
+                    spec_start,
+                    spec_length,
+                    &message,
+                    diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                );
+                emitted_extension_diagnostic = true;
+            }
+        }
+
+        // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled.
+        // rewriteRelativeImportExtensions also suppresses this error (tsc utilities.ts:9045).
+        // tsc does not emit TS5097 inside declaration files (.d.ts).
+        // When the resolver reports TS6142 (jsx not set), tsz does not also emit TS5097
+        // (TS6142 is the more actionable diagnostic for the unresolvable .tsx target).
+        let has_jsx_not_set_error = self
+            .ctx
+            .get_resolution_error_with_mode(module_name, request_resolution_mode)
+            .is_some_and(|e| {
+                e.code
+                    == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+            });
+        // tsc only emits TS5097 when the module actually resolves (so the .ts
+        // extension is the user's mistake on a real file). When the module
+        // doesn't resolve at all, tsc emits TS2307 ('cannot find module')
+        // instead — emitting both produces a misleading double-diagnostic.
+        if !self.ctx.compiler_options.allow_importing_ts_extensions
+            && !self.ctx.compiler_options.rewrite_relative_import_extensions
+            && !is_type_only
+            && !self.ctx.is_declaration_file()
+            && !has_jsx_not_set_error
+            && self.module_target_is_typescript_input_file(module_name)
+            && let Some(ext) = ts_extension_suffix(module_name)
+        {
+            let message = format_message(
+                diagnostic_messages::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+                &[ext],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+            );
+            emitted_extension_diagnostic = true;
+        }
+
+        emitted_extension_diagnostic
+    }
+
     /// Check an import declaration for unresolved modules and missing exports.
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
@@ -177,102 +299,14 @@ impl<'a> CheckerState<'a> {
         // Track whether TS2846/TS5097 extension diagnostics were emitted.
         // When these fire, TS2307 from module resolution should be suppressed
         // (tsc prioritizes extension-specific diagnostics over "cannot find module").
-        let mut emitted_extension_diagnostic = false;
-
-        let dts_ext = if module_name.ends_with(".d.ts") {
-            Some((".d.ts", ".ts", ".js"))
-        } else if module_name.ends_with(".d.mts") {
-            Some((".d.mts", ".mts", ".mjs"))
-        } else if module_name.ends_with(".d.cts") {
-            Some((".d.cts", ".cts", ".cjs"))
-        } else {
-            None
-        };
-        // tsc only emits TS2846 when the .d.ts module actually resolves; if
-        // the file doesn't exist, TS2307 (cannot find module) takes priority.
-        // Without this guard we emit both TS5097/TS2846 AND tsc's TS2307,
-        // producing extra diagnostics on missing imports.
-        let module_resolves_dts = self
-            .ctx
-            .resolve_import_target_from_file_with_mode(
-                self.ctx.current_file_idx,
-                module_name,
-                request_resolution_mode,
-            )
-            .is_some()
-            || self
-                .ctx
-                .module_exports_contains_module(self.ctx.binder, module_name);
-        if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext
-            && !is_type_only_import
-            && module_resolves_dts
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let base = module_name.trim_end_matches(dts_suffix);
-            let suggested = if self.ctx.compiler_options.allow_importing_ts_extensions {
-                format!("{base}{ts_ext}")
-            } else {
-                // For CommonJS-like module kinds, extensionless imports are valid.
-                // For ESM-like module kinds, append .js/.mjs/.cjs extension.
-                use tsz_common::common::ModuleKind;
-                match self.ctx.compiler_options.module {
-                    ModuleKind::CommonJS
-                    | ModuleKind::AMD
-                    | ModuleKind::UMD
-                    | ModuleKind::System
-                    | ModuleKind::None => base.to_string(),
-                    _ => format!("{base}{js_ext}"),
-                }
-            };
-            let message = format_message(
-                diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-                &[&suggested],
-            );
-            self.error_at_position(
-                spec_start,
-                spec_length,
-                &message,
-                diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-            );
-            emitted_extension_diagnostic = true;
-        }
-
-        // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled.
-        // rewriteRelativeImportExtensions also suppresses this error (tsc utilities.ts:9045).
-        // tsc does not emit TS5097 inside declaration files (.d.ts).
-        // When the resolver reports TS6142 (jsx not set), tsc does not also emit TS5097.
-        let has_jsx_not_set_error = self
-            .ctx
-            .get_resolution_error_for_request(module_name, request_resolution_mode, request_kind)
-            .is_some_and(|e| {
-                e.code
-                    == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
-            });
-        // tsc only emits TS5097 when the module actually resolves (so the .ts
-        // extension is the user's mistake on a real file). When the module
-        // doesn't resolve at all, tsc emits TS2307 ('cannot find module')
-        // instead — emitting both produces a misleading double-diagnostic.
-        if !self.ctx.compiler_options.allow_importing_ts_extensions
-            && !self.ctx.compiler_options.rewrite_relative_import_extensions
-            && !is_type_only_import
-            && !self.ctx.is_declaration_file()
-            && !has_jsx_not_set_error
-            && self.module_target_is_typescript_input_file(module_name)
-            && let Some(ext) = ts_extension_suffix(module_name)
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(
-                    diagnostic_messages::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
-                    &[ext],
-                );
-            self.error_at_position(
-                    spec_start,
-                    spec_length,
-                    &message,
-                    diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
-                );
-            emitted_extension_diagnostic = true;
-        }
+        let dts_ext = declaration_file_extension(module_name);
+        let mut emitted_extension_diagnostic = self.check_module_specifier_ts_extension(
+            module_name,
+            spec_start,
+            spec_length,
+            is_type_only_import,
+            request_resolution_mode,
+        );
 
         // TS2876: rewriteRelativeImportExtensions — specifier looks like a file name
         // (e.g. `./foo.ts`) but actually resolves to a directory index file

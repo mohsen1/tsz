@@ -56,10 +56,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_export_module_specifier(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
 
-        if !self.ctx.report_unresolved_imports {
-            return;
-        }
-
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
@@ -91,6 +87,29 @@ impl<'a> CheckerState<'a> {
         };
 
         let module_name = &literal.text;
+
+        // TS2846/TS5097: re-export module specifiers with TypeScript
+        // extensions follow the same rule as imports — tsc's
+        // `resolveExternalModule` anchors the check on
+        // `findAncestor(location, isExportDeclaration)`, so `export ... from
+        // "./x.ts"` reports TS5097 (and `export ... from "./x.d.ts"` reports
+        // TS2846) exactly like the `import ... from` forms. `export type`
+        // statements are exempt; specifier-level `{ type x }` modifiers are
+        // not. Runs before the unresolved-import reporting gate because the
+        // import path emits these in that mode too (the module must resolve
+        // for either diagnostic to fire).
+        let emitted_extension_diagnostic = self.check_module_specifier_ts_extension(
+            module_name,
+            spec_node.pos,
+            spec_node.end.saturating_sub(spec_node.pos),
+            export_decl.is_type_only,
+            resolution_mode,
+        );
+
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
         // Re-exports report TS2307 per declaration site. Clear the per-module
         // dedupe entry up front so each `export ... from "x"` statement gets
         // one chance to report unresolved-module diagnostics, while still
@@ -215,16 +234,37 @@ impl<'a> CheckerState<'a> {
         // Unlike imports, tsc reports these per re-export site, so we must not
         // suppress later `export ... from "x"` diagnostics just because an
         // earlier re-export from the same missing module already failed.
+        //
+        // When TS2846 or TS5097 was already emitted for this re-export,
+        // suppress the TS2307 "cannot find module" family — tsc prioritizes
+        // extension-specific diagnostics over module-not-found errors. Other
+        // resolution errors (e.g. TS6142) still surface, mirroring the
+        // import-declaration path.
         if self
             .ctx
             .get_resolution_error_with_mode(module_name, resolution_mode)
             .is_some()
         {
             let (message, code) = self.module_not_found_diagnostic(module_name);
+            if emitted_extension_diagnostic
+                && (code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                    || code == diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O)
+            {
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
             self.ctx
                 .modules_with_ts2307_emitted
                 .insert(module_name.to_string());
             self.error_at_node(export_decl.module_specifier, &message, code);
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // The trailing fallback below reports module-not-found for specifiers
+        // with no recorded resolution error; skip it when an extension
+        // diagnostic already covered this site.
+        if emitted_extension_diagnostic {
             self.ctx.import_resolution_stack.pop();
             return;
         }
