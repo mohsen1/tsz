@@ -6,9 +6,6 @@
 
 use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
-use crate::types_domain::unique_symbol_arena::{
-    has_declared_unique_symbol_owner, is_unique_symbol_type_annotation_unwrapped,
-};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_solver::TypeId;
@@ -562,42 +559,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         arena: &NodeArena,
         expr_idx: NodeIndex,
     ) -> Option<String> {
-        let node = arena.get(expr_idx)?;
-
-        if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            let paren = arena.get_parenthesized(node)?;
-            return Self::well_known_symbol_property_name_in_arena(arena, paren.expression);
-        }
-
-        if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-
-        let access = arena.get_access_expr(node)?;
-        let base_node = arena.get(access.expression)?;
-        let base_ident = arena.get_identifier(base_node)?;
-        if base_ident.escaped_text != "Symbol" {
-            return None;
-        }
-
-        let name_node = arena.get(access.name_or_argument)?;
-        if let Some(ident) = arena.get_identifier(name_node) {
-            return Some(format!("[Symbol.{}]", ident.escaped_text));
-        }
-
-        if matches!(
-            name_node.kind,
-            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
-                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        ) && let Some(lit) = arena.get_literal(name_node)
-            && !lit.text.is_empty()
-        {
-            return Some(format!("[Symbol.{}]", lit.text));
-        }
-
-        None
+        // Cross-arena callers have no binder for `arena`, so the `Symbol`
+        // base cannot be verified against the global lib value here; the
+        // syntactic shape is trusted, matching the historical behavior of
+        // this path.
+        super::computed_names::well_known_symbol_access_shape(arena, expr_idx)?.name
     }
 
     fn resolve_computed_property_symbol_in_arena<F>(
@@ -636,245 +602,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> bool {
-        let Some(symbol) = self.get_symbol_from_any_context(sym_id) else {
-            return false;
-        };
-        let file_idx = symbol.decl_file_idx;
-        let owner_binder = self
-            .ctx
-            .get_binder_for_file(file_idx as usize)
-            .unwrap_or(self.ctx.binder);
-
-        symbol.all_declarations().into_iter().any(|decl_idx| {
-            let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
-            if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
-            }
-            if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
-                candidate_arenas.push(symbol_arena.as_ref());
-            }
-            if std::ptr::eq(owner_binder, self.ctx.binder) {
-                candidate_arenas.push(self.ctx.arena);
-            }
-
-            candidate_arenas.into_iter().any(|arena| {
-                self.declaration_is_unique_symbol_in_arena(owner_binder, arena, decl_idx)
-            })
-        })
-    }
-
-    fn declaration_is_unique_symbol_in_arena(
-        &self,
-        owner_binder: &tsz_binder::BinderState,
-        arena: &NodeArena,
-        mut decl_idx: NodeIndex,
-    ) -> bool {
-        let Some(mut node) = arena.get(decl_idx) else {
-            return false;
-        };
-
-        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            let Some(parent_idx) = arena.get_extended(decl_idx).map(|ext| ext.parent) else {
-                return false;
-            };
-            let Some(parent_node) = arena.get(parent_idx) else {
-                return false;
-            };
-            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
-                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_DECLARATION
-            {
-                decl_idx = parent_idx;
-                node = parent_node;
-            }
-        }
-
-        if node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION {
-            let Some(var_decl) = arena.get_variable_declaration(node) else {
-                return false;
-            };
-            if !arena.is_const_variable_declaration(decl_idx) {
-                return false;
-            }
-
-            return (var_decl.type_annotation.is_some()
-                && is_unique_symbol_type_annotation_unwrapped(arena, var_decl.type_annotation))
-                || self.is_global_symbol_factory_call_initializer_in_resolution_arena(
-                    owner_binder,
-                    arena,
-                    var_decl.initializer,
-                );
-        }
-
-        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_DECLARATION {
-            let Some(prop) = arena.get_property_decl(node) else {
-                return false;
-            };
-            return prop.type_annotation.is_some()
-                && is_unique_symbol_type_annotation_unwrapped(arena, prop.type_annotation)
-                && has_declared_unique_symbol_owner(arena, prop.type_annotation);
-        }
-
-        false
-    }
-
-    fn is_unique_symbol_type_annotation_in_resolution_arena(
-        &self,
-        arena: &NodeArena,
-        type_annotation: NodeIndex,
-    ) -> bool {
-        let Some(type_node) = arena.get(type_annotation) else {
-            return false;
-        };
-
-        match type_node.kind {
-            k if k == tsz_parser::parser::syntax_kind_ext::TYPE_OPERATOR => {
-                arena.get_type_operator(type_node).is_some_and(|op| {
-                    op.operator == tsz_scanner::SyntaxKind::UniqueKeyword as u16
-                        && self.is_symbol_type_node_in_resolution_arena(arena, op.type_node)
-                })
-            }
-            _ => false,
-        }
-    }
-
-    fn is_symbol_type_node_in_resolution_arena(
-        &self,
-        arena: &NodeArena,
-        type_annotation: NodeIndex,
-    ) -> bool {
-        let Some(type_node) = arena.get(type_annotation) else {
-            return false;
-        };
-        if type_node.kind != tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
-            return false;
-        }
-
-        let Some(type_ref) = arena.get_type_ref(type_node) else {
-            return false;
-        };
-        let Some(name_node) = arena.get(type_ref.type_name) else {
-            return false;
-        };
-
-        arena
-            .get_identifier(name_node)
-            .is_some_and(|ident| ident.escaped_text == "symbol")
-    }
-
-    fn is_global_symbol_factory_call_initializer_in_resolution_arena(
-        &self,
-        owner_binder: &tsz_binder::BinderState,
-        arena: &NodeArena,
-        init_idx: NodeIndex,
-    ) -> bool {
-        let Some(node) = arena.get(init_idx) else {
-            return false;
-        };
-        if node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
-            return false;
-        }
-
-        let Some(call) = arena.get_call_expr(node) else {
-            return false;
-        };
-        self.is_global_symbol_factory_callee_in_resolution_arena(
-            owner_binder,
-            arena,
-            call.expression,
-        )
-    }
-
-    fn is_global_symbol_factory_callee_in_resolution_arena(
-        &self,
-        owner_binder: &tsz_binder::BinderState,
-        arena: &NodeArena,
-        callee_idx: NodeIndex,
-    ) -> bool {
-        let Some(node) = arena.get(callee_idx) else {
-            return false;
-        };
-
-        if let Some(ident) = arena.get_identifier(node) {
-            if ident.escaped_text != "Symbol" {
-                return false;
-            }
-            return owner_binder
-                .resolve_identifier(arena, callee_idx)
-                .or_else(|| owner_binder.file_locals.get("Symbol"))
-                .or_else(|| {
-                    self.ctx
-                        .lib_contexts
-                        .iter()
-                        .find_map(|ctx| ctx.binder.file_locals.get("Symbol"))
-                })
-                .is_some_and(|sym_id| {
-                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                        || self.ctx.symbol_is_from_lib(sym_id)
-                });
-        }
-
-        if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
-        }
-        let Some(access) = arena.get_access_expr(node) else {
-            return false;
-        };
-        arena
-            .get_identifier_text(access.name_or_argument)
-            .is_some_and(|name| name == "for")
-            && self.is_global_symbol_factory_callee_in_resolution_arena(
-                owner_binder,
-                arena,
-                access.expression,
-            )
+        super::computed_names::symbol_is_unique_symbol_binding(self.ctx, sym_id)
     }
 
     pub(crate) fn get_symbol_from_any_context(
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> Option<&tsz_binder::Symbol> {
-        // Raw `SymbolId` values are per-binder-local: different binders in the
-        // same compilation can assign the same `u32` to unrelated symbols.
-        // When `resolve_symbol_file_index` has recorded an authoritative file for
-        // `sym_id` that differs from the current checker file, return THAT file's
-        // symbol rather than the current binder's colliding symbol.
-        //
-        // Without this, cross-file type aliases passed to `ensure_type_alias_resolved`
-        // or `ensure_declared_type_params_cached` could receive the wrong symbol
-        // from the current binder (e.g. a type-parameter instead of the
-        // target interface), causing the TYPE_ALIAS / INTERFACE flag check to
-        // fail silently and leaving DefId bodies unregistered.
-        let auth_file = self.ctx.resolve_symbol_file_index(sym_id);
-        if let Some(file_idx) = auth_file
-            && file_idx != self.ctx.current_file_idx
-            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
-            && let Some(sym) = binder.get_symbol(sym_id)
-        {
-            return Some(sym);
-        }
-
-        self.ctx
-            .binder
-            .get_symbol(sym_id)
-            .or_else(|| {
-                // O(1) fast-path via resolve_symbol_file_index (same-file case handled above)
-                if let Some(file_idx) = auth_file
-                    && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
-                    && let Some(sym) = binder.get_symbol(sym_id)
-                {
-                    return Some(sym);
-                }
-                self.ctx
-                    .all_binders
-                    .as_ref()
-                    .and_then(|binders| binders.iter().find_map(|binder| binder.get_symbol(sym_id)))
-            })
-            .or_else(|| {
-                self.ctx
-                    .lib_contexts
-                    .iter()
-                    .find_map(|ctx| ctx.binder.get_symbol(sym_id))
-            })
+        super::computed_names::symbol_from_any_context(self.ctx, sym_id)
     }
 
     /// Get or create a `DefId` for a symbol and ensure its type alias body

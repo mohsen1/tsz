@@ -1056,6 +1056,28 @@ impl BinderState {
     /// Clear resolution caches that were populated during binding.
     /// Called after cloning a binder for the checker, which needs a clean
     /// cache state for its own symbol resolution.
+    /// `&self` variant of [`Self::clear_resolution_caches`] for shared
+    /// (refcount > 1) lib binders: the caches are `RwLock`-interior, so a
+    /// shared instance can be reset without cloning the binder.
+    pub fn clear_resolution_caches_shared(&self) {
+        self.resolved_export_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
+        self.resolved_export_type_only_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
+        self.resolved_identifier_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
+        self.find_enclosing_scope_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
+    }
+
     pub fn clear_resolution_caches(&mut self) {
         self.resolved_export_cache
             .write()

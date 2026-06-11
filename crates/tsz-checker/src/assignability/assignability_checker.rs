@@ -1456,11 +1456,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Session-state stamp for the [`crate::context::AssignabilityEvalMemo`].
+    ///
+    /// `None` when either type environment is currently mutably borrowed; the
+    /// memo is skipped entirely for such re-entrant calls.
+    fn assignability_eval_memo_stamp(&self) -> Option<crate::context::AssignabilityEvalStamp> {
+        let env_generation = self.ctx.type_env.try_borrow().ok()?.generation();
+        let environment_generation = self.ctx.type_environment.try_borrow().ok()?.generation();
+        Some((
+            env_generation,
+            environment_generation,
+            self.ctx.symbol_types.version(),
+            self.ctx.symbol_instance_types.version(),
+        ))
+    }
+
     /// Evaluate a type for assignability checking.
     ///
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
+    ///
+    /// Outermost calls are memoized per checker session: the recursive
+    /// normalization below is deterministic while the type environments and
+    /// symbol-type caches are unchanged, and constraint validation re-requests
+    /// the same `TypeId`s heavily (~94% repeated outermost calls on the
+    /// ts-toolbelt project row, issue #8356). Nested calls are never served
+    /// from or written to the memo so the cycle-guard semantics (re-entered
+    /// types evaluate to themselves) are preserved exactly.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        use crate::state_domain::type_environment::lazy::{
+            global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
+        };
+
         if type_id.is_intrinsic() {
             return type_id;
         }
@@ -1480,6 +1507,18 @@ impl<'a> CheckerState<'a> {
                 Default::default();
         }
 
+        let outermost = ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow().is_empty());
+        if outermost
+            && let Some(stamp) = self.assignability_eval_memo_stamp()
+            && let Some(memoized) = self
+                .ctx
+                .type_reference_validation_caches
+                .assignability_eval_memo
+                .get(stamp, type_id)
+        {
+            return memoized;
+        }
+
         let entered =
             ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().insert(type_id));
         if !entered {
@@ -1496,6 +1535,28 @@ impl<'a> CheckerState<'a> {
         // Cycle-truncated returns above are never recorded — only complete
         // results are safe to replay for later calls in this scope.
         crate::error_reporter::display_budget::record_eval(type_id, result);
+
+        // Memoize only clean completions: fuel-exhausted or depth-clamped
+        // evaluations are degraded forms that a later, fresher evaluation
+        // must be allowed to improve on.
+        //
+        // The stamp is recomputed here on purpose: the evaluation above
+        // routinely grows the type environments (def resolution, symbol
+        // types), and the result is valid for that *post*-evaluation state.
+        // Reusing the lookup-time stamp would file the entry under a stale
+        // stamp and the next lookup would immediately drop it.
+        if outermost
+            && result != TypeId::ERROR
+            && !refs_resolution_fuel_exhausted()
+            && !global_resolution_fuel_exhausted()
+            && !self.ctx.depth_exceeded.get()
+            && let Some(stamp) = self.assignability_eval_memo_stamp()
+        {
+            self.ctx
+                .type_reference_validation_caches
+                .assignability_eval_memo
+                .insert(stamp, type_id, result);
+        }
         result
     }
 

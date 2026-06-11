@@ -182,6 +182,34 @@ fn contextual_object_member_signature_preferred_over_outer_call() {
 }
 
 #[test]
+fn contextual_object_member_signature_accepts_unicode_member_name() {
+    let source = "interface I { café(n: number, s: string): void; }\ndeclare function takesObj(i: I): void;\ntakesObj({ café: () });";
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let cursor_offset = source.find("café: (").expect("unicode member") + "café: (".len();
+    let position = line_map.offset_to_position(cursor_offset as u32, source);
+    let mut cache = None;
+    let help = provider
+        .get_signature_help(root, position, &mut cache)
+        .expect("unicode contextual signature help should be available");
+    let active = &help.signatures[help.active_signature as usize].label;
+    assert_eq!(active, "café(n: number, s: string): void");
+}
+
+#[test]
 fn contextual_variable_initializer_type_alias_and_function_type() {
     let source = "type Cb = () => void;\nconst cb: Cb = ();\nconst cb2: () => void = ();";
     let (parser, root) = parse_test_source(source);

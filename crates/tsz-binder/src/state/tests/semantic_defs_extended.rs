@@ -1157,3 +1157,76 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
 // =============================================================================
 // Stable Identity Tests: All Declaration Families
 // =============================================================================
+
+#[test]
+fn lib_merge_reads_shared_lib_binder_immutably_at_refcount_above_one() {
+    // The shared-lib-universe invariant (and the parallel-checking
+    // mutation-isolation campaign's foundation): merging lib contexts into a
+    // program binder mutates ONLY the program binder (`self`); the lib
+    // binder/arena are read immutably. Holding the lib `Arc`s at refcount > 1
+    // (the future shared-read-only configuration) must therefore leave every
+    // `Arc`-backed merge-phase field of the LIB binder pointer-identical —
+    // proving no `Arc::make_mut` copy-on-write fires against shared lib state
+    // during a program-bind merge, and that the merge is race-free to run
+    // while other holders read the same lib binder.
+    let lib_source = r"
+interface ZetaIterable<T> { next(): T; }
+declare var zetaGlobal: ZetaIterable<number>;
+declare namespace ZetaSpace { interface Inner {} }
+";
+    let mut lib_parser = ParserState::new("lib.zeta.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    let lib_binder = std::sync::Arc::new(lib_binder);
+    let lib_arena = std::sync::Arc::new(lib_parser.get_arena().clone());
+    // Extra holders: refcount > 1, exactly like a shared read-only lib set.
+    let binder_holder = std::sync::Arc::clone(&lib_binder);
+    let arena_holder = std::sync::Arc::clone(&lib_arena);
+
+    // Snapshot the Arc-backed merge-phase fields of the LIB binder (the six
+    // targets of `Arc::make_mut` in `merge_lib_contexts_into_binder`, which
+    // must only ever fire on the PROGRAM binder's own fields).
+    let before = (
+        std::sync::Arc::as_ptr(&lib_binder.lib_type_namespace),
+        std::sync::Arc::as_ptr(&lib_binder.declaration_arenas),
+        std::sync::Arc::as_ptr(&lib_binder.symbol_arenas),
+        std::sync::Arc::as_ptr(&lib_binder.lib_symbol_ids),
+        std::sync::Arc::as_ptr(&lib_binder.lib_symbol_reverse_remap),
+        std::sync::Arc::as_ptr(&lib_binder.semantic_defs),
+    );
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::clone(&lib_arena),
+        binder: std::sync::Arc::clone(&lib_binder),
+    };
+
+    let user_source = "const renamedProbe = zetaGlobal.next();";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    let after = (
+        std::sync::Arc::as_ptr(&lib_binder.lib_type_namespace),
+        std::sync::Arc::as_ptr(&lib_binder.declaration_arenas),
+        std::sync::Arc::as_ptr(&lib_binder.symbol_arenas),
+        std::sync::Arc::as_ptr(&lib_binder.lib_symbol_ids),
+        std::sync::Arc::as_ptr(&lib_binder.lib_symbol_reverse_remap),
+        std::sync::Arc::as_ptr(&lib_binder.semantic_defs),
+    );
+    assert_eq!(
+        before, after,
+        "merge_lib_contexts_into_binder must not copy-on-write any Arc-backed \
+         merge-phase field of a shared (refcount>1) lib binder"
+    );
+    // The program binder did absorb the lib symbols (the merge ran for real).
+    assert!(
+        main_binder.file_locals.get("ZetaIterable").is_some(),
+        "merge must remap lib symbols into the program binder"
+    );
+    drop(binder_holder);
+    drop(arena_holder);
+}

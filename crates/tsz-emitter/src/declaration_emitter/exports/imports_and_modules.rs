@@ -785,8 +785,8 @@ impl<'a> DeclarationEmitter<'a> {
         let current_dir = current.parent().unwrap_or(std::path::Path::new(""));
         let joined = current_dir.join(spec);
         let normalized = Self::normalize_path_text(&joined);
-        let current_no_ext = self.strip_ts_extensions(current_path);
-        let normalized_no_ext = self.strip_ts_extensions(&normalized);
+        let current_no_ext = self.strip_module_path_extension(current_path);
+        let normalized_no_ext = self.strip_module_path_extension(&normalized);
         if normalized_no_ext == current_no_ext {
             return true;
         }

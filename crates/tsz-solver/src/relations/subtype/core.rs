@@ -272,7 +272,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
     /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
-    pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
+    /// Value is `(result, stable)` where `stable` records whether the evaluation
+    /// converged without tripping a recursion/depth/budget limit (see
+    /// `evaluate_type_with_stability`).
+    pub(crate) eval_cache: FxHashMap<(TypeId, bool), (TypeId, bool)>,
     /// Apparent object shapes for primitive wrapper fallback.
     ///
     /// Primitive structural subtype checks can ask for the same wrapper shape
@@ -540,7 +543,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn cache_statistics(&self) -> SubtypeCheckerCacheStatistics {
         let eval_entries = self.eval_cache.len();
         let estimated_size_bytes =
-            eval_entries.saturating_mul(std::mem::size_of::<((TypeId, bool), TypeId)>());
+            eval_entries.saturating_mul(std::mem::size_of::<((TypeId, bool), (TypeId, bool))>());
         SubtypeCheckerCacheStatistics {
             eval_entries,
             estimated_size_bytes,

@@ -26,7 +26,6 @@ use crate::jsdoc::{JsdocTag, ParsedJsdoc, inline_param_jsdocs, jsdoc_for_node, p
 use crate::resolver::{ScopeCache, ScopeCacheStats};
 use crate::utils::find_node_at_or_before_offset;
 use tsz_binder::symbol_flags;
-use tsz_checker::state::CheckerState;
 use tsz_common::position::Position;
 use tsz_parser::parser::node::{CallExprData, NodeAccess};
 use tsz_parser::{
@@ -53,6 +52,7 @@ mod shapes;
 #[path = "internal_tests.rs"]
 mod signature_help_internal_tests;
 mod trigger;
+mod unicode_identifier;
 
 pub(super) use display::apply_type_param_substitution;
 use phases::TypeArgumentContext;
@@ -302,26 +302,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         // 6. Create checker with persistent cache if available
-        let compiler_options = self.checker_options();
-        let mut checker = if let Some(cache) = type_cache.take() {
-            CheckerState::with_cache(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            )
-        };
-        self.apply_lib_contexts(&mut checker);
+        let mut checker = self.checker_with_cache(type_cache);
 
         let access_docs = if call_kind == CallKind::Call {
             self.signature_documentation_for_property_access(root, callee_expr)

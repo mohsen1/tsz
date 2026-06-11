@@ -17,6 +17,7 @@ use tsz::lsp::Project;
 use tsz::lsp::code_actions::{CodeActionProvider, CodeFixRegistry, ImportCandidate};
 use tsz::lsp::position::LineMap;
 use tsz::parser::ParserState;
+use tsz_common::file_extensions::strip_known_extension;
 
 impl Server {
     pub(super) fn best_import_module_specifier_for_name(
@@ -632,16 +633,7 @@ impl Server {
             return specifier.to_string();
         }
 
-        for ext in [
-            ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
-            ".cjs",
-        ] {
-            if let Some(stripped) = specifier.strip_suffix(ext) {
-                return stripped.to_string();
-            }
-        }
-
-        specifier.to_string()
+        strip_known_extension(specifier).to_string()
     }
 
     pub(super) fn verbatim_commonjs_auto_import_codefix_action(
@@ -1471,15 +1463,9 @@ impl Server {
         };
         let rest = tail.strip_prefix(&package).unwrap_or_default();
 
-        let mut normalized_rest = rest.to_string();
-        for ext in [
-            ".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs",
-        ] {
-            if normalized_rest.ends_with(ext) {
-                let new_len = normalized_rest.len().saturating_sub(ext.len());
-                normalized_rest.truncate(new_len);
-                break;
-            }
+        let mut normalized_rest = strip_known_extension(rest).to_string();
+        if normalized_rest.is_empty() {
+            normalized_rest = rest.to_string();
         }
         if normalized_rest.ends_with("/index") {
             let new_len = normalized_rest.len().saturating_sub("/index".len());
@@ -1546,5 +1532,26 @@ impl Server {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Server;
+
+    #[test]
+    fn normalize_commonjs_module_specifier_uses_shared_extension_rules() {
+        assert_eq!(
+            Server::normalize_commonjs_module_specifier("./types.d.cts"),
+            "./types"
+        );
+        assert_eq!(
+            Server::normalize_commonjs_module_specifier("./types.d.tsx"),
+            "./types.d"
+        );
+        assert_eq!(
+            Server::normalize_commonjs_module_specifier("react/index.d.ts"),
+            "react/index.d.ts"
+        );
     }
 }

@@ -765,14 +765,17 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let raw_param_type = raw_sig
+        let (raw_param_type, param_is_rest) = raw_sig
             .params
             .get(arg_index)
-            .map(|param| param.type_id)
+            .map(|param| (param.type_id, param.rest))
             .or_else(|| {
                 let last = raw_sig.params.last()?;
-                last.rest.then_some(last.type_id)
+                last.rest.then_some((last.type_id, true))
             })?;
+        if param_is_rest && self.rest_tuple_parameter_reports_per_position(raw_param_type) {
+            return None;
+        }
 
         let mut replacements = FxHashMap::default();
         for (raw_param, &call_arg_idx) in raw_sig.params.iter().zip(args.nodes.iter()) {

@@ -28,6 +28,7 @@ pub(crate) const MAX_RECURSIVE_EXPANSION: u32 = 10;
 pub(crate) const MAX_RECURSIVE_INTERSECTION_EXPANSION: u32 = 5;
 pub mod lowering;
 pub mod output;
+pub mod passes;
 pub mod safe_slice;
 pub mod transforms;
 pub mod type_cache_view;

@@ -402,6 +402,10 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display) = self.effective_rest_slice_parameter_display(param_type) {
+            return display;
+        }
+
         if let Some(display) =
             self.underfilled_generic_variadic_tuple_parameter_display(param_type, arg_type)
         {

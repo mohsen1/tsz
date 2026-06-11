@@ -9,3 +9,4 @@ use tsz_solver::*;
 include!("lower_tests_parts/helpers.rs");
 include!("lower_tests_parts/fundamental_types.rs");
 include!("lower_tests_parts/object_template_and_advanced_types.rs");
+include!("lower_tests_parts/member_pipeline_parity.rs");

@@ -163,7 +163,14 @@ impl<'a> CheckerState<'a> {
             if let Some(namespace) = namespace
                 && let Some(sym_id) = self.resolve_lib_namespace_export_symbol(namespace, type_name)
             {
-                return Some(self.ctx.get_lib_def_id(sym_id));
+                // Namespace-export SymbolIds are relative to the lib binder
+                // owning the export table; resolve the def name-verified so a
+                // raw-id collision with another lib binder cannot answer with
+                // an unrelated def.
+                return Some(
+                    self.ctx
+                        .get_or_create_def_id_for_symbol_name(sym_id, type_name),
+                );
             }
             self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
                 .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
@@ -198,7 +205,12 @@ impl<'a> CheckerState<'a> {
             ty = self.merge_lib_interface_heritage(ty, cache_name).0;
         }
 
-        self.ctx.register_lib_def_resolved(sym_id, ty, params);
+        // For namespace-qualified lib types the def is registered under the
+        // bare export name (the symbol's escaped name), not the dotted cache
+        // key.
+        let bare_name = cache_name.rsplit('.').next().unwrap_or(cache_name);
+        self.ctx
+            .register_lib_def_resolved(bare_name, sym_id, ty, params);
         self.ensure_relation_input_ready(ty);
         self.ctx
             .lib_type_resolution_cache
@@ -303,7 +315,9 @@ impl<'a> CheckerState<'a> {
                         && let Some(sym_id) =
                             self.resolve_lib_namespace_export_symbol(namespace, &name)
                     {
-                        return Some(self.ctx.get_lib_def_id(sym_id));
+                        // Name-verified: see the namespace-export resolver in
+                        // `resolve_lib_interface_type_by_symbol` above.
+                        return Some(self.ctx.get_or_create_def_id_for_symbol_name(sym_id, &name));
                     }
                     self.resolve_actual_lib_name_to_def_id_for_lowering(&name)
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(&name))

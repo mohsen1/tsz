@@ -59,7 +59,7 @@ pub(crate) fn register_selected_lib_def_resolved(
     params: Vec<TypeParamInfo>,
 ) -> DefId {
     if !selected_from_lib_context {
-        return ctx.register_lib_def_resolved(sym_id, ty, params);
+        return ctx.register_lib_def_resolved(name, sym_id, ty, params);
     }
 
     let def_id = ctx.get_canonical_lib_def_id(name, sym_id);

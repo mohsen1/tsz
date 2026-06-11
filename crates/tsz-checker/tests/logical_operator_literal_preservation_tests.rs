@@ -127,19 +127,17 @@ function fn2<U, V>(u: U, v: V) {
         2,
         "expected one TS2322 per logical-or assignment, got: {diagnostics:?}"
     );
+    // tsc orders union members by type creation, so the NonNullable<T>
+    // approximation synthesized while checking `t || u` always displays after
+    // the already-created right operand: `U | NonNullable<T>`, never the
+    // reverse.
     let has_t_u_display = ts2322.iter().any(|diag| {
         diag.message_text
             .contains("Type 'U | NonNullable<T>' is not assignable to type '{}'.")
-            || diag
-                .message_text
-                .contains("Type 'NonNullable<T> | U' is not assignable to type '{}'.")
     });
     let has_u_v_display = ts2322.iter().any(|diag| {
         diag.message_text
             .contains("Type 'V | NonNullable<U>' is not assignable to type '{}'.")
-            || diag
-                .message_text
-                .contains("Type 'NonNullable<U> | V' is not assignable to type '{}'.")
     });
     assert!(
         has_t_u_display,
@@ -148,6 +146,29 @@ function fn2<U, V>(u: U, v: V) {
     assert!(
         has_u_v_display,
         "expected whole-expression display for U || V, got: {ts2322:?}"
+    );
+}
+
+/// Concrete (non-type-parameter) left operands keep source order: the truthy
+/// left type already exists when the `||` union forms, so it displays first —
+/// `(options || {})` renders `{ a: string; b: number; } | {}`.
+#[test]
+fn logical_or_concrete_left_operand_keeps_source_display_order() {
+    let source = r#"
+declare let options: { a: string; b: number } | undefined;
+const probe: never = (options || {});
+"#;
+
+    let diagnostics = check_source_strict(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type '{ a: string; b: number; } | {}'")),
+        "expected truthy-left-first display for concrete operands, got: {ts2322:?}"
     );
 }
 

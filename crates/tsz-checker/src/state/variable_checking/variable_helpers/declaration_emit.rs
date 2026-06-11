@@ -1831,17 +1831,4 @@ impl<'a> CheckerState<'a> {
             .trim_start_matches("./")
             .to_string()
     }
-
-    fn strip_ts_extensions(&self, path: &str) -> String {
-        for ext in [
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".tsx", ".ts", ".mts", ".cts", ".jsx", ".js",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(path) = path.strip_suffix(ext) {
-                return path.to_string();
-            }
-        }
-
-        path.to_string()
-    }
 }

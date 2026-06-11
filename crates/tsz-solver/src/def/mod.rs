@@ -7,6 +7,7 @@
 
 mod core;
 pub mod incremental;
+pub mod publication_census;
 pub mod resolver;
 
 pub use self::core::*;

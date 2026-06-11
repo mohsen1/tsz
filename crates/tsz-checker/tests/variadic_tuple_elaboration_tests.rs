@@ -306,3 +306,115 @@ foo('blah1', 'blah2', 1, 2, 3);
         "expanded readonly constraint should not leak into TS2345 display: {messages:?}"
     );
 }
+
+/// Renamed binders + mutable (non-readonly) constraint: the per-position /
+/// sliced parameter surface is keyed on the tuple structure, not on the
+/// spelling of the type parameter, the rest parameter, or readonly-ness.
+#[test]
+fn constrained_mutable_variadic_tuple_call_uses_constraint_surface_renamed() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function collect<Parts extends [boolean, ...boolean[]]>(...flagsAndTag: [...Parts, string]): void;
+collect(1);
+collect(true, false, 1, 2, "tag");
+"#,
+    );
+
+    let messages: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("parameter of type 'boolean'")),
+        "expected scalar mismatch against constrained first element, got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("parameter of type '[...boolean[], string]'")),
+        "expected aggregate mismatch against remaining constrained tuple, got {messages:?}"
+    );
+}
+
+/// Negative control: a valid call against the constrained variadic rest tuple
+/// stays clean — the slicing/flattening must not invent errors.
+#[test]
+fn constrained_readonly_variadic_tuple_valid_call_no_errors() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function foo<S extends readonly [string, ...string[]]>(...stringsAndNumber: readonly [...S, number]): [...S, number];
+foo("a", 1);
+foo("a", "b", "c", 2);
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != 2345),
+        "valid constrained variadic calls must not report TS2345, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The synthesized effective-rest slice must display structurally even when a
+/// user alias is structurally identical — tsc's sliceTupleType creates an
+/// anonymous tuple, so the alias name never appears in the TS2345 surface.
+#[test]
+fn aggregate_rest_slice_does_not_borrow_structural_alias_name() {
+    let diags = check_source_diagnostics(
+        r#"
+type Tail = [...string[], number];
+declare let keep: Tail;
+declare function foo<S extends readonly [string, ...string[]]>(...stringsAndNumber: readonly [...S, number]): [...S, number];
+foo('blah1', 'blah2', 1, 2, 3);
+"#,
+    );
+
+    let ts2345 = diags
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+    assert!(
+        ts2345
+            .message_text
+            .contains("parameter of type '[...string[], number]'"),
+        "expected structural slice display, got {ts2345:?}"
+    );
+    assert!(
+        !ts2345.message_text.contains("'Tail'"),
+        "synthesized rest slice must not borrow a structurally identical alias name: {ts2345:?}"
+    );
+}
+
+/// A variadic spread of a tuple that carries its own rest, followed by a
+/// fixed suffix, flattens like tsc's createNormalizedTupleType:
+/// `[...[string, ...string[]], number]` is `[string, ...string[], number]`,
+/// so a tuple-level assignment mismatch shows the flattened target.
+#[test]
+fn middle_variadic_tuple_spread_flattens_for_display() {
+    let diags = check_source_diagnostics(
+        r#"
+declare let direct: [...[string, ...string[]], number];
+direct = ["a", "b", 9, "c"];
+"#,
+    );
+
+    let ts2322 = diags
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    assert!(
+        ts2322
+            .message_text
+            .contains("'[string, ...string[], number]'"),
+        "expected flattened variadic spread display, got {ts2322:?}"
+    );
+    assert!(
+        !ts2322.message_text.contains("[...["),
+        "variadic tuple spread with a fixed suffix must not stay nested: {ts2322:?}"
+    );
+}

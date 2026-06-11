@@ -33,10 +33,18 @@ python3 scripts/perf/migration_callsite_counts.py --json
 python3 scripts/perf/query-perf-counters.py --json <artifact> --baseline <baseline>
 scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --quick --json-file /tmp/hotspots.json
 scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --filter '<row>' --json-file /tmp/bench.json
+scripts/bench/measure-tsz.sh --timeout 420 --json-file /tmp/m.json -- --noEmit -p <tsconfig>
 ```
 
 Use focused compile guard or `cargo nextest run -E 'test(...)'` when shortest.
 Do not run full conformance, emit, fourslash, or broad project suites locally.
+
+For ad-hoc timing or perf bisects on shared boxes, use
+`scripts/bench/measure-tsz.sh`: it snapshots the binary to an immutable
+hash-verified copy (never time the live `dist-fast/` path — sibling sessions
+overwrite it) and records process CPU time next to wall time, so wall-only
+timeouts under CPU contention are reported as unmeasured instead of slow.
+See `references/perf-mistakes.md` and issue #13174.
 
 ## Cache Checklist
 

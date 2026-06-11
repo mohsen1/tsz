@@ -550,7 +550,6 @@ impl<'a> CheckerState<'a> {
         };
 
         let param_position = parameters.iter().position(|&idx| idx == param_idx)?;
-        let this_atom = self.ctx.types.intern_string("this");
         let contextual_index = parameters[..param_position]
             .iter()
             .filter(|&&idx| {
@@ -558,11 +557,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(idx)
                     .and_then(|node| self.ctx.arena.get_parameter(node))
-                    .and_then(|p| self.ctx.arena.get(p.name))
-                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .is_none_or(|ident| {
-                        self.ctx.types.intern_string(&ident.escaped_text) != this_atom
-                    })
+                    .is_none_or(|p| !self.is_this_parameter_name(p.name))
             })
             .count();
 

@@ -44,6 +44,10 @@ pub struct Args {
     #[arg(long)]
     pub shard: Option<String>,
 
+    /// Emit a JSON plan for N conformance shards, then exit.
+    #[arg(long, value_name = "N")]
+    pub plan: Option<usize>,
+
     /// Shard assignment strategy.
     #[arg(long, default_value = "hash", value_enum)]
     pub shard_strategy: ShardStrategy,
@@ -159,6 +163,14 @@ impl Args {
             // --all flag just means use a very high max
             // No additional validation needed
         }
+        if let Some(count) = self.plan {
+            if count == 0 {
+                anyhow::bail!("--plan count must be greater than zero");
+            }
+            if self.shard.is_some() {
+                anyhow::bail!("--plan cannot be combined with --shard");
+            }
+        }
         Ok(())
     }
 
@@ -220,5 +232,24 @@ mod tests {
         let args = parse_args(&["tsz-conformance", "--all"]);
         assert!(args.validate().is_ok());
         assert!(args.is_verbose() == (args.verbose || args.print_test_files));
+    }
+
+    #[test]
+    fn validate_accepts_positive_plan_count() {
+        let args = parse_args(&["tsz-conformance", "--plan", "4"]);
+        assert_eq!(args.plan, Some(4));
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_zero_plan_count() {
+        let args = parse_args(&["tsz-conformance", "--plan", "0"]);
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_plan_with_selected_shard() {
+        let args = parse_args(&["tsz-conformance", "--plan", "4", "--shard", "0/4"]);
+        assert!(args.validate().is_err());
     }
 }

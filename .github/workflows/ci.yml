@@ -1311,6 +1311,14 @@ jobs:
               runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
               accepted_summary_names = ("CI Summary",) if required_summary else ("CI Summary", "CI Light Summary")
               accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"
+              # Metadata gates are re-validated by THIS metadata run (the
+              # summary above already failed hard if this run's pr-body-gate
+              # failed), so a previous failure caused ONLY by those gates must
+              # not be mirrored: that would deadlock body fixes — the edited
+              # event that repairs the body would forever mirror the stale
+              # gate failure it just fixed. Suite-job failures still mirror
+              # as failures.
+              metadata_gate_jobs = {"pr-body-gate", "CI Summary", "CI Light Summary"}
               for run in runs:
                   jobs = github_json(f"/repos/{repository}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
                   summaries = [job for job in jobs if job.get("name") in accepted_summary_names]
@@ -1324,7 +1332,22 @@ jobs:
                   if conclusion == "success":
                       print(f"Metadata-only CI mirrors successful {summary_name} from run {run['id']}: {url}")
                       return
-                  print(f"Previous {summary_name} for this head was {conclusion or 'missing'} in run {run['id']}: {url}")
+                  suite_failures = [
+                      job.get("name")
+                      for job in jobs
+                      if job.get("name") not in metadata_gate_jobs
+                      and job.get("conclusion") not in (None, "success", "skipped", "neutral")
+                  ]
+                  if conclusion == "cancelled" and not suite_failures:
+                      print(f"Previous {summary_name} in run {run['id']} was cancelled (superseded) with no suite failures; scanning older runs.")
+                      continue
+                  if not suite_failures:
+                      print(
+                          f"Previous {summary_name} in run {run['id']} failed only on metadata gates; "
+                          f"this metadata run re-validated the PR body, so the suite verdict stands green: {url}"
+                      )
+                      return
+                  print(f"Previous {summary_name} for this head was {conclusion or 'missing'} in run {run['id']} with suite failures {suite_failures}: {url}")
                   sys.exit(1)
               print(f"Metadata-only CI could not find a previous {accepted_summary_label} for head {head_sha}.")
               sys.exit(1)

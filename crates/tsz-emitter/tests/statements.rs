@@ -178,6 +178,25 @@ fn es5_property_access_preserves_raw_astral_identifier_name() {
 }
 
 #[test]
+fn object_literal_unicode_property_names_emit_bare() {
+    let source = "const obj = { café: 1, 日本語: 2 };";
+    let output = parse_and_emit_strict_target(source, "unicode.ts", ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("café: 1"),
+        "Unicode identifier-start property should emit bare.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("日本語: 2"),
+        "Unicode identifier-name property should emit bare.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\"café\"") && !output.contains("\"日本語\""),
+        "Unicode identifier property names should not be quoted.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_arrow_empty_block_preserves_inner_line_comment() {
     let source = "const f: () => undefined = () => {\n    // keep\n};\n";
     let output = parse_and_emit_strict_target(source, "arrow.ts", ScriptTarget::ES5);

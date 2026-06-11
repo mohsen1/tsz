@@ -22,6 +22,14 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::TypeParamInfo;
 
+/// Opt-in switch for the finalized-lib-def freeze (mutation-isolation
+/// experiment). Default OFF until augmentation-aware invalidation lands.
+pub(super) fn lib_def_freeze_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_ENABLE_LIB_DEF_FREEZE").is_ok_and(|v| v == "1"))
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_actual_lib_name_to_def_id_for_lowering(
         &self,
@@ -36,6 +44,28 @@ impl<'a> CheckerState<'a> {
             .global_augmentations
             .get(name)
             .is_some_and(|v| !v.is_empty())
+    }
+
+    /// Whether ANY file in the program declares a global augmentation for
+    /// `name`. The lib-def freeze must be gated program-wide, not on the
+    /// current checker's binder: a non-augmenting file can resolve (and would
+    /// otherwise freeze) a lib name before the augmenting file's
+    /// `declare global` merge runs, pinning the pre-augmentation form into the
+    /// shared store (witness: importMeta.ts). When the cross-file binder set
+    /// is unavailable, conservatively report `true` so the freeze stays off.
+    pub(crate) fn any_program_file_augments_lib_name(&self, name: &str) -> bool {
+        if self.lib_name_has_local_augmentation(name) {
+            return true;
+        }
+        let Some(binders) = self.ctx.all_binders.as_ref() else {
+            return true;
+        };
+        binders.iter().any(|binder| {
+            binder
+                .global_augmentations
+                .get(name)
+                .is_some_and(|v| !v.is_empty())
+        })
     }
 
     fn lib_name_depends_on_builtin_iterator_return(name: &str) -> bool {

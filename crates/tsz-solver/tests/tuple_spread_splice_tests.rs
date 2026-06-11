@@ -3,9 +3,11 @@
 //!
 //! Structural rule: a rest element `...X` whose type is a concrete tuple
 //! contributes a statically known run of elements, so `[A, ...[B, C]]` is
-//! exactly `[A, B, C]`. A fixed inner tuple is always inlined; a variadic inner
-//! tuple is inlined only as the parent's sole, last rest (keeping ≤ 1 rest); a
-//! lone `[...X]` is left compressed; rest arrays are never inlined.
+//! exactly `[A, B, C]`. A fixed inner tuple is always inlined; a variadic
+//! inner tuple is inlined when it is the parent's sole rest (its rest simply
+//! replaces the parent's, keeping ≤ 1 rest), including middle positions with
+//! a fixed suffix — `[...[A, ...B[]], C]` is `[A, ...B[], C]`; a lone `[...X]`
+//! is left compressed; rest arrays are never inlined.
 
 use crate::intern::TypeInterner;
 use crate::types::{TupleElement, TypeData, TypeId};
@@ -83,12 +85,38 @@ fn variadic_inner_tuple_inlines_as_sole_last_rest() {
 }
 
 #[test]
-fn variadic_inner_tuple_not_last_is_left_compressed() {
+fn variadic_inner_tuple_not_last_inlines_when_sole_rest() {
     let interner = TypeInterner::new();
-    // inner = [boolean, ...number[]] spliced would put a rest before a trailing
-    // fixed element, creating a second rest — so it must stay un-inlined.
+    // inner = [boolean, ...number[]]: its single rest simply replaces the
+    // parent's, so [...[boolean, ...number[]], string] normalizes to
+    // [boolean, ...number[], string] — exactly tsc's createNormalizedTupleType
+    // result for an instantiated middle-position variadic spread.
     let inner = interner.tuple(vec![
         fixed(TypeId::BOOLEAN),
+        rest(interner.array(TypeId::NUMBER)),
+    ]);
+    let outer = interner.tuple(vec![rest(inner), fixed(TypeId::STRING)]);
+
+    let elements = tuple_elements(&interner, outer);
+    assert_eq!(elements.len(), 3, "the middle variadic spread is inlined");
+    assert_eq!(elements[0].type_id, TypeId::BOOLEAN);
+    assert!(!elements[0].rest);
+    assert!(elements[1].rest, "the inner rest replaces the parent's");
+    assert_eq!(elements[2].type_id, TypeId::STRING);
+    assert!(!elements[2].rest);
+}
+
+#[test]
+fn optional_carrying_variadic_inner_tuple_not_last_is_left_compressed() {
+    let interner = TypeInterner::new();
+    // inner = [boolean?, ...number[]]: splicing into a middle position would
+    // move an optional element in front of the parent's required suffix (an
+    // illegal tuple shape), so the spread stays compressed.
+    let inner = interner.tuple(vec![
+        TupleElement {
+            optional: true,
+            ..fixed(TypeId::BOOLEAN)
+        },
         rest(interner.array(TypeId::NUMBER)),
     ]);
     let outer = interner.tuple(vec![rest(inner), fixed(TypeId::STRING)]);
@@ -97,7 +125,7 @@ fn variadic_inner_tuple_not_last_is_left_compressed() {
     assert_eq!(
         elements.len(),
         2,
-        "the variadic spread is kept compressed when not last"
+        "an optional-carrying variadic spread is kept compressed when not last"
     );
     assert!(elements[0].rest);
     assert_eq!(elements[0].type_id, inner);

@@ -25,7 +25,7 @@ use crate::parser::{
 };
 use rustc_hash::FxHashMap;
 use tracing::warn;
-use tsz_common::interner::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 use tsz_scanner::{SyntaxKind, token_is_keyword};
 // =============================================================================
@@ -807,7 +807,7 @@ impl ParserState {
             start_pos,
             end_pos,
             IdentifierData {
-                atom: Atom::NONE,
+                atom: AstAtom::NONE,
                 escaped_text: recovered,
                 original_text: None,
                 type_arguments: None,

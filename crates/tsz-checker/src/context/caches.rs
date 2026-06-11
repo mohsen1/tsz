@@ -64,6 +64,9 @@ pub struct TypeReferenceValidationCaches {
     pub type_param_default_constraint: FxHashSet<(u32, TypeId, TypeId)>,
     /// Synthetic type-node surfaces cached for the active checker file.
     pub type_node_surface: TypeNodeSurfaceCaches,
+    /// Stamp-guarded result memo for `evaluate_type_for_assignability`.
+    /// See [`AssignabilityEvalMemo`].
+    pub assignability_eval_memo: AssignabilityEvalMemo,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
@@ -350,6 +353,10 @@ impl Default for NarrowableIdentifierCache {
 #[derive(Clone, Debug)]
 pub struct SymbolTypeCache {
     data: Arc<FxHashMap<SymbolId, TypeId>>,
+    /// Monotonic mutation counter. Consumers (the assignability evaluation
+    /// memo) treat a version change as "any previously observed symbol type
+    /// may have changed"; reads never bump it.
+    version: u64,
 }
 
 impl SymbolTypeCache {
@@ -360,6 +367,7 @@ impl SymbolTypeCache {
                 capacity.min(4096),
                 Default::default(),
             )),
+            version: 0,
         }
     }
 
@@ -367,7 +375,15 @@ impl SymbolTypeCache {
     pub fn new() -> Self {
         Self {
             data: Arc::new(FxHashMap::default()),
+            version: 0,
         }
+    }
+
+    /// Monotonic counter bumped on every mutation that can change a lookup
+    /// result. Consumed by `CheckerContext::assignability_eval_memo` stamps.
+    #[inline]
+    pub const fn version(&self) -> u64 {
+        self.version
     }
 
     #[inline]
@@ -377,11 +393,22 @@ impl SymbolTypeCache {
 
     #[inline]
     pub fn insert(&mut self, key: SymbolId, value: TypeId) {
-        let data = Arc::make_mut(&mut self.data);
+        // No-op writes (same value, or removing an absent entry) leave every
+        // lookup result unchanged, so they must not bump the version: version
+        // consumers would needlessly drop their memoized state.
+        let existing = self.data.get(&key).copied();
         if value == TypeId::NONE {
-            data.remove(&key);
+            if existing.is_none() {
+                return;
+            }
+            self.version += 1;
+            Arc::make_mut(&mut self.data).remove(&key);
         } else {
-            data.insert(key, value);
+            if existing == Some(value) {
+                return;
+            }
+            self.version += 1;
+            Arc::make_mut(&mut self.data).insert(key, value);
         }
     }
 
@@ -395,6 +422,7 @@ impl SymbolTypeCache {
         if !self.data.contains_key(key) {
             return None;
         }
+        self.version += 1;
         Arc::make_mut(&mut self.data).remove(key)
     }
 
@@ -406,6 +434,9 @@ impl SymbolTypeCache {
         // with `value == NONE` would silently break that.
         if value == TypeId::NONE {
             return self.data.get(&key).copied().unwrap_or(TypeId::NONE);
+        }
+        if !self.data.contains_key(&key) {
+            self.version += 1;
         }
         *Arc::make_mut(&mut self.data).entry(key).or_insert(value)
     }
@@ -429,12 +460,78 @@ impl SymbolTypeCache {
     }
 
     pub fn extend(&mut self, other: Self) {
+        if other.data.is_empty() {
+            return;
+        }
+        let changes = other.data.iter().any(|(symbol_id, &type_id)| {
+            type_id != TypeId::NONE && self.data.get(symbol_id) != Some(&type_id)
+        });
+        if !changes {
+            return;
+        }
+        self.version += 1;
         let data = Arc::make_mut(&mut self.data);
         for (&symbol_id, &type_id) in other.data.iter() {
             if type_id != TypeId::NONE {
                 data.insert(symbol_id, type_id);
             }
         }
+    }
+}
+
+/// Session-state stamp guarding [`AssignabilityEvalMemo`] entries.
+///
+/// Captures the generations of the two checker `TypeEnvironment`s — `type_env`
+/// (relation/evaluation bindings) and `type_environment` (flow-narrowing
+/// bindings) are independently mutated, so both generations are needed; each
+/// already folds in the shared `DefinitionStore` generation — plus the
+/// mutation versions of the symbol-type caches. Evaluating a type for
+/// assignability is deterministic while none of these change: every mutable
+/// input the evaluation consults (def/type-env bindings, resolved symbol
+/// types, class instance types) bumps one of the components.
+pub type AssignabilityEvalStamp = (u64, u64, u64, u64);
+
+/// Result memo for `evaluate_type_for_assignability`.
+///
+/// That evaluation is a recursive normalization pipeline with only a cycle
+/// guard; constraint validation and relation preparation re-run it for the
+/// same `TypeId`s thousands of times per file (measured ~94% repeated
+/// outermost calls on the ts-toolbelt project row, issue #8356). Entries are
+/// only written for outermost, fuel-clean evaluations and are dropped
+/// wholesale whenever the session stamp moves, so a hit always returns
+/// exactly what a fresh evaluation under the current environment would.
+#[derive(Debug, Default)]
+pub struct AssignabilityEvalMemo {
+    stamp: Option<AssignabilityEvalStamp>,
+    entries: FxHashMap<TypeId, TypeId>,
+}
+
+impl AssignabilityEvalMemo {
+    fn roll_to(&mut self, stamp: AssignabilityEvalStamp) {
+        if self.stamp != Some(stamp) {
+            self.entries.clear();
+            self.stamp = Some(stamp);
+        }
+    }
+
+    /// Look up a memoized evaluation result valid for `stamp`.
+    pub fn get(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId) -> Option<TypeId> {
+        self.roll_to(stamp);
+        self.entries.get(&type_id).copied()
+    }
+
+    /// Record an evaluation result computed under `stamp`.
+    pub fn insert(&mut self, stamp: AssignabilityEvalStamp, type_id: TypeId, result: TypeId) {
+        self.roll_to(stamp);
+        self.entries.insert(type_id, result);
+    }
+
+    /// Drop all entries and forget the stamp. Required between file sessions:
+    /// a fresh file's environment can restart at a previously seen generation,
+    /// which would otherwise collide with the prior file's stamp.
+    pub fn clear(&mut self) {
+        self.stamp = None;
+        self.entries.clear();
     }
 }
 

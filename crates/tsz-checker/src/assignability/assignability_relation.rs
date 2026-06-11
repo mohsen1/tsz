@@ -386,41 +386,44 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Execute an env-aware generic type-argument constraint relation while
-    /// preserving the canonical TS2344 request shape.
+    /// preserving the canonical TS2344 request shape. Decision-only: every
+    /// caller reads only `outcome.related`, so failure analysis is skipped.
     pub(crate) fn type_arg_constraint_relation_outcome_with_env(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> RelationOutcome {
-        self.relation_outcome_with_env(source, target, RelationRequest::type_arg_constraint)
+        self.relation_outcome_with_env(source, target, |source, target| {
+            RelationRequest::type_arg_constraint(source, target).with_decision_only()
+        })
     }
 
     /// Execute an env-aware generic argument suppression relation while
-    /// preserving the canonical suppression request shape.
+    /// preserving the canonical suppression request shape. Decision-only:
+    /// every caller reads only `outcome.related`, so failure analysis is
+    /// skipped.
     pub(crate) fn generic_argument_suppression_relation_outcome_with_env(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> RelationOutcome {
-        self.relation_outcome_with_env(
-            source,
-            target,
-            RelationRequest::generic_argument_suppression,
-        )
+        self.relation_outcome_with_env(source, target, |source, target| {
+            RelationRequest::generic_argument_suppression(source, target).with_decision_only()
+        })
     }
 
     /// Execute an env-aware constructor-inference constraint relation while
     /// preserving the canonical constructor-inference request shape.
+    /// Decision-only: every caller reads only `outcome.related`, so failure
+    /// analysis is skipped.
     pub(crate) fn constructor_inference_constraint_relation_outcome_with_env(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> RelationOutcome {
-        self.relation_outcome_with_env(
-            source,
-            target,
-            RelationRequest::constructor_inference_constraint,
-        )
+        self.relation_outcome_with_env(source, target, |source, target| {
+            RelationRequest::constructor_inference_constraint(source, target).with_decision_only()
+        })
     }
 
     /// Execute a diagnostic-bearing call-argument relation for raw checker
@@ -438,39 +441,47 @@ impl<'a> CheckerState<'a> {
 
     /// Execute a diagnostic-bearing call-argument relation using the current
     /// `TypeEnvironment`, preserving env-aware relation semantics while keeping
-    /// call diagnostics on the canonical TS2345 request shape.
+    /// call diagnostics on the canonical TS2345 request shape. Decision-only:
+    /// every caller reads only `outcome.related`, so failure analysis is
+    /// skipped.
     pub(crate) fn call_arg_relation_outcome_with_env(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> RelationOutcome {
-        self.relation_outcome_with_env(source, target, RelationRequest::call_arg)
+        self.relation_outcome_with_env(source, target, |source, target| {
+            RelationRequest::call_arg(source, target).with_decision_only()
+        })
     }
 
     /// Execute a diagnostic-bearing round-2 contextual substitution relation
     /// using the current `TypeEnvironment`, preserving env-aware relation
     /// semantics while keeping call-inference refinement on its named request.
+    /// Decision-only: every caller reads only `outcome.related`, so failure
+    /// analysis is skipped.
     pub(crate) fn round2_contextual_substitution_relation_outcome_with_env(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> RelationOutcome {
-        self.relation_outcome_with_env(
-            source,
-            target,
-            RelationRequest::round2_contextual_substitution,
-        )
+        self.relation_outcome_with_env(source, target, |source, target| {
+            RelationRequest::round2_contextual_substitution(source, target).with_decision_only()
+        })
     }
 
     /// Execute a diagnostic-bearing return relation using the current
     /// `TypeEnvironment`, preserving env-aware relation semantics while keeping
-    /// return diagnostics on the canonical return request shape.
+    /// return diagnostics on the canonical return request shape. Decision-only:
+    /// every caller reads only `outcome.related`, so failure analysis is
+    /// skipped.
     pub(crate) fn return_relation_outcome_with_env(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> RelationOutcome {
-        self.relation_outcome_with_env(source, target, RelationRequest::return_stmt)
+        self.relation_outcome_with_env(source, target, |source, target| {
+            RelationRequest::return_stmt(source, target).with_decision_only()
+        })
     }
 
     /// Execute a diagnostic-bearing bivariant-callback relation for raw

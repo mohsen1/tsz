@@ -588,8 +588,8 @@ impl<'a> DeclarationEmitter<'a> {
             return text.to_string();
         }
 
-        let rel_path =
-            self.strip_ts_extensions(&self.calculate_relative_path(current_path, source_path));
+        let rel_path = self
+            .strip_module_path_extension(&self.calculate_relative_path(current_path, source_path));
         let Some(source_file) = self.arena_source_file(source_arena) else {
             return text.to_string();
         };
