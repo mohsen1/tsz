@@ -915,14 +915,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        let source_needs_raw_fallback = matches!(
-            self.interner.lookup(source_return),
-            Some(TypeData::Application(_) | TypeData::Lazy(_))
-        ) && self.evaluate_type(source_return) == TypeId::UNKNOWN;
-        let target_needs_raw_fallback = matches!(
-            self.interner.lookup(target_return),
-            Some(TypeData::Application(_) | TypeData::Lazy(_))
-        ) && self.evaluate_type(target_return) == TypeId::UNKNOWN;
+        // Recursive-application cycle guard: when a deferred `Application`/`Lazy`
+        // return collapses to `unknown` because a recursion guard bailed (e.g.
+        // self-referential iterator applications), the collapsed `unknown` is a
+        // cycle artifact, not the converged answer — relating against it would
+        // accept anything. Re-check the raw deferred forms in that case.
+        //
+        // The guard must only fire for *unstable* evaluations. A deferred alias
+        // application that genuinely evaluates to `unknown` (e.g. a conditional
+        // alias whose selected branch is `unknown`) is the converged answer:
+        // tsc relates the source against that `unknown` (everything is
+        // assignable). Vetoing it through a raw-form comparison manufactures
+        // `X is not assignable to unknown` false positives (#13212).
+        let mut unstable_unknown_collapse = |ret: TypeId| {
+            matches!(
+                self.interner.lookup(ret),
+                Some(TypeData::Application(_) | TypeData::Lazy(_))
+            ) && self.evaluate_type_with_stability(ret) == (TypeId::UNKNOWN, false)
+        };
+        let source_needs_raw_fallback = unstable_unknown_collapse(source_return);
+        let target_needs_raw_fallback = unstable_unknown_collapse(target_return);
 
         if source_needs_raw_fallback || target_needs_raw_fallback {
             let prev = self.bypass_evaluation;

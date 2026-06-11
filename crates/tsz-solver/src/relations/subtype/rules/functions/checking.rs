@@ -1949,10 +1949,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Results are cached in `eval_cache` to avoid re-evaluating the same type across
     /// multiple subtype checks. This turns O(n²) evaluate calls into O(n).
     pub(crate) fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_with_stability(type_id).0
+    }
+
+    /// Like [`Self::evaluate_type`], but also reports whether the evaluation is
+    /// *stable*: it converged without tripping any recursion/depth/budget limit
+    /// and without a cross-instance cycle bail.
+    ///
+    /// A stable result is the type's converged answer; an unstable one is a
+    /// recursion artifact (e.g. a self-referential application collapsed to
+    /// `unknown` by a cycle guard). Callers that special-case collapsed results
+    /// must consult the flag so a genuinely evaluated `unknown` is not treated
+    /// like a bail artifact.
+    pub(crate) fn evaluate_type_with_stability(&mut self, type_id: TypeId) -> (TypeId, bool) {
         // Fast path: intrinsic types (number, string, boolean, void, null, etc.)
         // never need evaluation. Skip cache lookup entirely.
         if type_id.is_intrinsic() {
-            return type_id;
+            return (type_id, true);
         }
         // Check local evaluation cache first.
         // Key includes no_unchecked_indexed_access since with that flag evaluation results can vary.
@@ -1969,8 +1982,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // evaluator, re-entering the same `TypeId` without any guard firing. On a
         // cross-instance cycle (`None`) leave the type unevaluated and, crucially,
         // do not record it in `eval_cache` — the in-flight ancestor owns the result.
-        let Some(result) =
-            cross_eval_guard::memoized_eval(type_id, self.no_unchecked_indexed_access, || {
+        let Some((result, stable)) = cross_eval_guard::memoized_eval_with_stability(
+            type_id,
+            self.no_unchecked_indexed_access,
+            || {
                 let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
                 evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
                 // Pass query_db to share the application evaluation cache across
@@ -1981,11 +1996,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 let result = evaluator.evaluate(type_id);
                 (result, !evaluator.recursion_limit_hit())
-            })
-        else {
-            return type_id;
+            },
+        ) else {
+            return (type_id, false);
         };
-        self.eval_cache.insert(cache_key, result);
-        result
+        self.eval_cache.insert(cache_key, (result, stable));
+        (result, stable)
     }
 }
