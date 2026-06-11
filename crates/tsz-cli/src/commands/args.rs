@@ -720,7 +720,9 @@ pub struct CliArgs {
     /// Override the compiler version used for typesVersions resolution
     /// (or set `TSZ_TYPES_VERSIONS_COMPILER_VERSION`).
     #[arg(
-        long = "typesVersions",
+        long = "typesVersionsCompilerVersion",
+        alias = "types-versions-compiler-version",
+        alias = "typesVersions",
         alias = "types-versions",
         value_name = "VERSION",
         hide = true
