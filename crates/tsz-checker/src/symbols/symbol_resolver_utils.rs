@@ -969,21 +969,31 @@ impl<'a> CheckerState<'a> {
     /// `@strictNullChecks` and vice versa, mirroring the conformance and
     /// emit harness recognizers.
     pub(crate) fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
+        Self::bool_pragma(&Self::leading_directives(text), key)
+    }
+
+    /// Key/value directives in the leading comment block, in source order.
+    /// Collected once per file so the ~20 option lookups in
+    /// `resolve_compiler_options_from_source` do not each re-scan the text.
+    fn leading_directives(text: &str) -> Vec<tsz_common::test_directives::DirectiveLine<'_>> {
+        Self::leading_comment_lines(text)
+            .filter_map(tsz_common::test_directives::parse_directive_line)
+            .collect()
+    }
+
+    fn bool_pragma(
+        directives: &[tsz_common::test_directives::DirectiveLine<'_>],
+        key: &str,
+    ) -> Option<bool> {
         let name = key.strip_prefix('@').unwrap_or(key);
-        for line in Self::leading_comment_lines(text) {
-            let Some(directive) = tsz_common::test_directives::parse_directive_line(line) else {
-                continue;
-            };
-            if !directive.key_is(name) {
-                continue;
-            }
+        directives.iter().find_map(|directive| {
             // Multi-variant values like "true, false" take the first
             // variant; non-boolean values keep scanning.
-            if let Some(value) = tsz_common::test_directives::parse_bool_value(directive.value) {
-                return Some(value);
-            }
-        }
-        None
+            directive
+                .key_is(name)
+                .then(|| tsz_common::test_directives::parse_bool_value(directive.value))
+                .flatten()
+        })
     }
 
     /// The leading comment block of a source file: non-empty lines from the
@@ -1000,14 +1010,19 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    /// Resolve a boolean compiler option from source file comments.
+    /// Resolve a boolean compiler option from the file's leading directives.
     /// Checks for the option-specific pragma first, then optionally checks `@strict`,
     /// and falls back to the provided default.
-    fn resolve_bool_option(text: &str, pragma: &str, strict_fallback: bool, default: bool) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, pragma) {
+    fn resolve_bool_option(
+        directives: &[tsz_common::test_directives::DirectiveLine<'_>],
+        pragma: &str,
+        strict_fallback: bool,
+        default: bool,
+    ) -> bool {
+        if let Some(value) = Self::bool_pragma(directives, pragma) {
             return value;
         }
-        if strict_fallback && let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+        if strict_fallback && let Some(strict) = Self::bool_pragma(directives, "@strict") {
             return strict;
         }
         default
@@ -1016,75 +1031,85 @@ impl<'a> CheckerState<'a> {
     /// Resolve all compiler options from source file comment pragmas.
     /// Called once per file to override compiler options with test pragmas.
     pub(crate) fn resolve_compiler_options_from_source(&mut self, text: &str) {
+        // One scan of the leading comment block serves every option lookup.
+        let pragmas = Self::leading_directives(text);
         // Snapshot current defaults before mutation to avoid aliased borrows.
         let defaults = self.ctx.compiler_options.clone();
         let opts = &mut self.ctx.compiler_options;
-        opts.strict = Self::resolve_bool_option(text, "@strict", false, defaults.strict);
+        opts.strict = Self::resolve_bool_option(&pragmas, "@strict", false, defaults.strict);
         // Options that fall back to @strict
         opts.no_implicit_any =
-            Self::resolve_bool_option(text, "@noimplicitany", true, defaults.no_implicit_any);
+            Self::resolve_bool_option(&pragmas, "@noimplicitany", true, defaults.no_implicit_any);
         opts.use_unknown_in_catch_variables = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@useunknownincatchvariables",
             true,
             defaults.use_unknown_in_catch_variables,
         );
         opts.no_implicit_this =
-            Self::resolve_bool_option(text, "@noimplicitthis", true, defaults.no_implicit_this);
+            Self::resolve_bool_option(&pragmas, "@noimplicitthis", true, defaults.no_implicit_this);
         opts.strict_property_initialization = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@strictpropertyinitialization",
             true,
             defaults.strict_property_initialization,
         );
-        opts.strict_null_checks =
-            Self::resolve_bool_option(text, "@strictnullchecks", true, defaults.strict_null_checks);
+        opts.strict_null_checks = Self::resolve_bool_option(
+            &pragmas,
+            "@strictnullchecks",
+            true,
+            defaults.strict_null_checks,
+        );
         opts.strict_function_types = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@strictfunctiontypes",
             true,
             defaults.strict_function_types,
         );
         // Options without @strict fallback
         opts.no_implicit_returns = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@noimplicitreturns",
             false,
             defaults.no_implicit_returns,
         );
         opts.no_implicit_override = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@noimplicitoverride",
             false,
             defaults.no_implicit_override,
         );
         opts.no_property_access_from_index_signature = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@nopropertyaccessfromindexsignature",
             false,
             defaults.no_property_access_from_index_signature,
         );
-        opts.no_unused_locals =
-            Self::resolve_bool_option(text, "@nounusedlocals", false, defaults.no_unused_locals);
+        opts.no_unused_locals = Self::resolve_bool_option(
+            &pragmas,
+            "@nounusedlocals",
+            false,
+            defaults.no_unused_locals,
+        );
         opts.no_unused_parameters = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@nounusedparameters",
             false,
             defaults.no_unused_parameters,
         );
         opts.always_strict =
-            Self::resolve_bool_option(text, "@alwaysstrict", true, defaults.always_strict);
+            Self::resolve_bool_option(&pragmas, "@alwaysstrict", true, defaults.always_strict);
         opts.no_implicit_use_strict = Self::resolve_bool_option(
-            text,
+            &pragmas,
             "@noimplicitusestrict",
             false,
             defaults.no_implicit_use_strict,
         );
         // Option<bool> variant
-        opts.allow_unreachable_code = Self::parse_test_option_bool(text, "@allowunreachablecode")
+        opts.allow_unreachable_code = Self::bool_pragma(&pragmas, "@allowunreachablecode")
             .map(Some)
             .unwrap_or(defaults.allow_unreachable_code);
-        opts.allow_unused_labels = Self::parse_test_option_bool(text, "@allowunusedlabels")
+        opts.allow_unused_labels = Self::bool_pragma(&pragmas, "@allowunusedlabels")
             .map(Some)
             .unwrap_or(defaults.allow_unused_labels);
 
