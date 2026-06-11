@@ -137,6 +137,19 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     /// When evaluating an index access during generic instantiation,
     /// if the index is still a generic type (like a type parameter),
     /// we must defer evaluation instead of returning UNDEFINED.
+    ///
+    /// A "missing key → `undefined`" answer is only correct for a *concrete*
+    /// key type (literal / primitive / union of those). Any index that is
+    /// still a deferred type-level computation — a type parameter, an alias
+    /// `Application` the resolver could not (yet) expand, an unresolved
+    /// `Lazy`/`TypeQuery` reference, a bound parameter, or a string-mapping
+    /// intrinsic over a deferred operand — may later instantiate to a real
+    /// key, so the access must stay deferred. tsc mirrors this through
+    /// `isGenericIndexType`: alias references are eagerly expanded there, so
+    /// the corresponding deferred state is a body that still contains type
+    /// variables, which keeps the indexed access deferred rather than
+    /// resolving the lookup to `undefined` (ts-toolbelt
+    /// `{0: A, 1: B}[_IsNegative<N2>]` cold-start false TS2344 family).
     fn is_generic_index(&self) -> bool {
         if self.index_type.is_intrinsic() {
             return false;
@@ -155,6 +168,17 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
                 | TypeData::Conditional(_)
                 | TypeData::TemplateLiteral(_) // Templates might resolve to generic strings
                 | TypeData::Intersection(_)
+                // Deferred / unresolved type-level references: evaluation
+                // already ran on the index before the visitor dispatched, so
+                // An unresolved alias application or lazy def ref here means
+                // the key could not be reduced to a concrete type (unresolved
+                // def, generic arguments, or an in-flight recursion guard).
+                // Never collapse those to `undefined`. Scoped to the two
+                // witnessed shapes; wider classification (TypeQuery /
+                // BoundParameter / StringIntrinsic) regressed inferential
+                // typing on Linux CI (inferentialTypingWithFunctionTypeZip).
+                | TypeData::Application(_)
+                | TypeData::Lazy(_)
         )
     }
 
