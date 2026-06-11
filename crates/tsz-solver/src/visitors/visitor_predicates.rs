@@ -326,7 +326,6 @@ pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
                 | TypeId::ERROR
                 | TypeId::FUNCTION
                 | TypeId::PROMISE_BASE
-                | TypeId::DELEGATE
                 | TypeId::STRICT_ANY
         );
     }
