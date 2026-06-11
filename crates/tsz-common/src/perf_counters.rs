@@ -23,3 +23,6 @@ include!("perf_counters/snapshot.rs");
 
 #[cfg(test)]
 include!("perf_counters/tests.rs");
+
+#[cfg(test)]
+include!("perf_counters/dump_tests.rs");
