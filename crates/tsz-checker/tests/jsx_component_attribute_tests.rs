@@ -186,8 +186,287 @@ declare namespace JSX {
 
 // Split into under-cap shards to satisfy the 2000-line limit (CLAUDE.md §19).
 // Each shard contains a contiguous slice of jsx_component_attribute_tests tests.
-include!("jsx_component_attribute_tests_parts/part_00.rs");
-include!("jsx_component_attribute_tests_parts/part_01.rs");
-include!("jsx_component_attribute_tests_parts/part_02.rs");
-include!("jsx_component_attribute_tests_parts/part_03.rs");
-include!("jsx_component_attribute_tests_parts/part_04.rs");
+/// Helper: Standard JSX namespace preamble with `ElementAttributesProperty` + `ElementChildrenAttribute`.
+/// Element has a `__brand` property so it's not just `{}` — this prevents `any[]` from being
+/// assignable to `JSX.Element` (which would break TS2746 single-child detection).
+const JSX_CHILDREN_PREAMBLE: &str = r#"
+interface Array<T> { length: number; [n: number]: T; }
+declare namespace JSX {
+    interface Element { __brand: string }
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+}
+"#;
+
+/// Helper to compile a multi-file JSX project and return diagnostics for the main file.
+fn cross_file_jsx_diagnostics(lib_source: &str, main_source: &str) -> Vec<(u32, String)> {
+    cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        main_source,
+        JsxMode::Preserve,
+        false,
+    )
+}
+
+fn cross_file_jsx_diagnostics_with_mode(
+    lib_source: &str,
+    main_source: &str,
+    jsx_mode: JsxMode,
+) -> Vec<(u32, String)> {
+    cross_file_jsx_diagnostics_with_mode_and_default_libs(lib_source, main_source, jsx_mode, false)
+}
+
+fn cross_file_jsx_diagnostics_with_mode_and_default_libs(
+    lib_source: &str,
+    main_source: &str,
+    jsx_mode: JsxMode,
+    include_default_libs: bool,
+) -> Vec<(u32, String)> {
+    cross_file_jsx_diagnostics_with_options_and_default_libs(
+        lib_source,
+        main_source,
+        CheckerOptions {
+            jsx_mode,
+            ..CheckerOptions::default()
+        },
+        include_default_libs,
+    )
+}
+
+fn cross_file_jsx_diagnostics_with_options_and_default_libs(
+    lib_source: &str,
+    main_source: &str,
+    options: CheckerOptions,
+    include_default_libs: bool,
+) -> Vec<(u32, String)> {
+    let default_lib_files = if include_default_libs {
+        load_cross_file_jsx_lib_files()
+    } else {
+        Vec::new()
+    };
+
+    // Parse and bind lib file (react.d.ts equivalent)
+    let mut parser_lib = ParserState::new("react.d.ts".to_string(), lib_source.to_string());
+    let root_lib = parser_lib.parse_source_file();
+    let mut binder_lib = tsz_binder::BinderState::new();
+    binder_lib.bind_source_file(parser_lib.get_arena(), root_lib);
+    let arena_lib = Arc::new(parser_lib.get_arena().clone());
+    let binder_lib = Arc::new(binder_lib);
+
+    // Parse and bind main file
+    let mut parser_main = ParserState::new("file.tsx".to_string(), main_source.to_string());
+    let root_main = parser_main.parse_source_file();
+    let mut binder_main = tsz_binder::BinderState::new();
+    let mut raw_lib_contexts: Vec<_> = default_lib_files
+        .iter()
+        .map(|lib| tsz_binder::state::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    raw_lib_contexts.push(tsz_binder::state::LibContext {
+        arena: Arc::clone(&arena_lib),
+        binder: Arc::clone(&binder_lib),
+    });
+    binder_main.merge_lib_contexts_into_binder(&raw_lib_contexts);
+    binder_main.bind_source_file(parser_main.get_arena(), root_main);
+
+    let arena_main = Arc::new(parser_main.get_arena().clone());
+    let binder_main = Arc::new(binder_main);
+
+    let mut all_arenas_vec = vec![Arc::clone(&arena_main), Arc::clone(&arena_lib)];
+    let mut all_binders_vec = vec![Arc::clone(&binder_main), Arc::clone(&binder_lib)];
+    for lib in &default_lib_files {
+        all_arenas_vec.push(Arc::clone(&lib.arena));
+        all_binders_vec.push(Arc::clone(&lib.binder));
+    }
+    let all_arenas = Arc::new(all_arenas_vec);
+    let all_binders = Arc::new(all_binders_vec);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_main.as_ref(),
+        binder_main.as_ref(),
+        &types,
+        "file.tsx".to_string(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(0);
+    let mut checker_lib_contexts: Vec<_> = default_lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker_lib_contexts.push(tsz_checker::context::LibContext {
+        arena: Arc::clone(&arena_lib),
+        binder: Arc::clone(&binder_lib),
+    });
+    checker.ctx.set_lib_contexts(checker_lib_contexts);
+    checker
+        .ctx
+        .set_actual_lib_file_count(default_lib_files.len());
+
+    checker.check_source_file(root_main);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn cross_file_jsx_diagnostics_with_pos(
+    lib_source: &str,
+    main_source: &str,
+    jsx_mode: JsxMode,
+) -> Vec<(u32, u32, String)> {
+    // Parse and bind lib file (react.d.ts equivalent)
+    let mut parser_lib = ParserState::new("react.d.ts".to_string(), lib_source.to_string());
+    let root_lib = parser_lib.parse_source_file();
+    let mut binder_lib = tsz_binder::BinderState::new();
+    binder_lib.bind_source_file(parser_lib.get_arena(), root_lib);
+    let arena_lib = Arc::new(parser_lib.get_arena().clone());
+    let binder_lib = Arc::new(binder_lib);
+
+    let mut parser_main = ParserState::new("file.tsx".to_string(), main_source.to_string());
+    let root_main = parser_main.parse_source_file();
+    let mut binder_main = tsz_binder::BinderState::new();
+    binder_main.merge_lib_contexts_into_binder(&[tsz_binder::state::LibContext {
+        arena: Arc::clone(&arena_lib),
+        binder: Arc::clone(&binder_lib),
+    }]);
+    binder_main.bind_source_file(parser_main.get_arena(), root_main);
+
+    let arena_main = Arc::new(parser_main.get_arena().clone());
+    let binder_main = Arc::new(binder_main);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_main.as_ref(),
+        binder_main.as_ref(),
+        &types,
+        "file.tsx".to_string(),
+        CheckerOptions {
+            jsx_mode,
+            ..CheckerOptions::default()
+        },
+    );
+    checker.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&arena_main),
+        Arc::clone(&arena_lib),
+    ]));
+    checker.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&binder_main),
+        Arc::clone(&binder_lib),
+    ]));
+    checker.ctx.set_current_file_idx(0);
+    checker
+        .ctx
+        .set_lib_contexts(vec![tsz_checker::context::LibContext {
+            arena: Arc::clone(&arena_lib),
+            binder: Arc::clone(&binder_lib),
+        }]);
+    checker.ctx.set_actual_lib_file_count(1);
+
+    checker.check_source_file(root_main);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect()
+}
+
+/// Regression test for issue #3227: `JSX.LibraryManagedAttributes` was being
+/// discarded whenever the formatted evaluated props type happened to contain
+/// the substring `Factory<`. That was a display-text heuristic, not a
+/// semantic condition, so any user type named `Factory` (or anything else
+/// whose printed form started with `Factory<`) silently broke LMA.
+///
+/// Structural rule: when a component has `defaultProps`, the props returned
+/// from `JSX.LibraryManagedAttributes<C, Props>` must reflect the mapped
+/// optional-property result regardless of the names of types appearing in
+/// the props.
+fn jsx_lma_user_type_named_factory_does_not_disable_default_props_helper(
+    user_type_name: &str,
+) -> Vec<u32> {
+    let source = format!(
+        r#"
+declare namespace JSX {{
+    interface Element {{}}
+    interface ElementClass {{}}
+    interface IntrinsicElements {{}}
+    type LibraryManagedAttributes<C, P> =
+        C extends {{ defaultProps: infer D }}
+          ? {{ [K in keyof P]?: P[K] }}
+          : P;
+}}
+
+interface {user_type_name}<T> {{
+    make(): T;
+}}
+
+interface Props {{
+    value: {user_type_name}<number>;
+    other: number;
+}}
+
+declare function Comp(props: Props): JSX.Element;
+declare namespace Comp {{
+    const defaultProps: {{
+        value: {user_type_name}<number>;
+    }};
+}}
+
+const _ok = <Comp />;
+"#
+    );
+    jsx_codes(&source)
+}
+
+fn load_typescript_fixture(rel_path: &str) -> Option<String> {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest_dir.join("../../").join(rel_path),
+        manifest_dir.join("../../../").join(rel_path),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return std::fs::read_to_string(candidate).ok();
+        }
+    }
+
+    None
+}
+
+/// Helper that wraps `jsx_diagnostics` but returns only unique error codes.
+fn jsx_codes(source: &str) -> Vec<u32> {
+    let diags = jsx_diagnostics(source);
+    let mut codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
+    codes.sort_unstable();
+    codes.dedup();
+    codes
+}
+
+fn load_cross_file_jsx_lib_files() -> Vec<Arc<LibFile>> {
+    load_compiled_lib_files(&["lib.es5.d.ts"])
+}
+
+#[path = "jsx_component_attribute_tests/part_00.rs"]
+mod part_00;
+#[path = "jsx_component_attribute_tests/part_01.rs"]
+mod part_01;
+#[path = "jsx_component_attribute_tests/part_02.rs"]
+mod part_02;
+#[path = "jsx_component_attribute_tests/part_03.rs"]
+mod part_03;
+#[path = "jsx_component_attribute_tests/part_04.rs"]
+mod part_04;

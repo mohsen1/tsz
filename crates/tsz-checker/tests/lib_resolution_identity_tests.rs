@@ -216,6 +216,9 @@ fn inspect_symbol_with_lib(
 
 // Split into under-cap shards to satisfy the 2000-line limit (CLAUDE.md §19).
 // Each shard contains a contiguous slice of lib_resolution_identity_tests tests.
-include!("lib_resolution_identity_tests_parts/part_00.rs");
-include!("lib_resolution_identity_tests_parts/part_01.rs");
-include!("lib_resolution_identity_tests_parts/part_02.rs");
+#[path = "lib_resolution_identity_tests/part_00.rs"]
+mod part_00;
+#[path = "lib_resolution_identity_tests/part_01.rs"]
+mod part_01;
+#[path = "lib_resolution_identity_tests/part_02.rs"]
+mod part_02;

@@ -20,6 +20,8 @@ use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
 use super::post_generic::PostGenericCallDiagnostics;
 
+mod argument_collection;
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_call_expression_inner(
         &mut self,
@@ -766,8 +768,7 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.preserve_literal_types = true;
         }
-        // Kept in a separate shard to respect the repo-wide source file ceiling.
-        let (
+        let argument_collection::CollectedCallArguments {
             non_generic_contextual_types,
             pushed_this_type_from_shape,
             had_return_context_substitution,
@@ -775,7 +776,21 @@ impl<'a> CheckerState<'a> {
             checker_round2_shape,
             direct_literal_conflict_substitution,
             mut arg_types,
-        ) = include!("inner_argument_collection.rs");
+        } = self.collect_call_arguments_for_dispatch(
+            argument_collection::CallArgumentCollectionInputs {
+                args,
+                callee_shape,
+                ctx_helper,
+                base_contextual_param_types: &base_contextual_param_types,
+                callable_ctx,
+                contextual_type,
+                is_generic_call,
+                force_bivariant_callbacks,
+                actual_this_type,
+                callee_type_for_context,
+                check_excess_properties,
+            },
+        );
         self.ctx.preserve_literal_types = prev_preserve_literals;
         // NOTE: generic_excess_skip is NOT restored here. It's kept until after all
         // excess property checks are done (including recovery paths and handle_call_result).

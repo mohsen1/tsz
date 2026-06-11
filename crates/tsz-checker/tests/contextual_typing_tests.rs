@@ -41,6 +41,9 @@ fn check_with_libs(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
     check_source_with_libs(source, "test.ts", options, &libs)
 }
 
-include!("contextual_typing_tests_parts/part_00.rs");
-include!("contextual_typing_tests_parts/part_01.rs");
-include!("contextual_typing_tests_parts/part_02.rs");
+#[path = "contextual_typing_tests/part_00.rs"]
+mod part_00;
+#[path = "contextual_typing_tests/part_01.rs"]
+mod part_01;
+#[path = "contextual_typing_tests/part_02.rs"]
+mod part_02;

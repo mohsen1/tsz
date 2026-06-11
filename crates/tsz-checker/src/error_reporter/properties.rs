@@ -1816,7 +1816,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-include!("properties/diagnostic_methods_tail.rs");
+mod diagnostic_methods_tail;
 
 /// Match tsc's `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$` regex used by
 /// `containerSeemsToBeEmptyDomElement` to detect DOM element-like type names.

@@ -1,5 +1,11 @@
+//! Source-file shape lowering helpers for direct cross-file queries.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn cross_file_interface_declarations<'b>(
+    pub(super) fn cross_file_interface_declarations<'b>(
         &self,
         sym_id: SymbolId,
         delegate_binder: &'b BinderState,
@@ -39,7 +45,9 @@ impl<'a> CheckerState<'a> {
         (!declarations.is_empty()).then_some(declarations)
     }
 
-    fn interface_declarations_have_heritage(declarations: &[(NodeIndex, &NodeArena)]) -> bool {
+    pub(super) fn interface_declarations_have_heritage(
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> bool {
         declarations.iter().any(|(decl_idx, arena)| {
             let Some(node) = arena.get(*decl_idx) else {
                 return false;
@@ -59,7 +67,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn interface_declarations_have_computed_names(
+    pub(super) fn interface_declarations_have_computed_names(
         declarations: &[(NodeIndex, &NodeArena)],
     ) -> bool {
         declarations.iter().any(|(decl_idx, arena)| {
@@ -90,7 +98,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    pub(super) fn source_file_type_node_is_scope_independent(
+    pub(in crate::state_domain::type_analysis) fn source_file_type_node_is_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,
     ) -> bool {
@@ -181,7 +189,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_explicit_unknown(
+    pub(super) fn source_file_type_node_is_explicit_unknown(
         arena: &NodeArena,
         mut node_idx: NodeIndex,
     ) -> bool {
@@ -213,7 +221,9 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn source_file_type_node_is_option_bag_lowerable<'b>(
+    pub(in crate::state_domain::type_analysis) fn source_file_type_node_is_option_bag_lowerable<
+        'b,
+    >(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         node_idx: NodeIndex,
@@ -340,7 +350,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_reference_targets_option_bag_lowerable_declaration<'b>(
+    pub(super) fn source_file_type_reference_targets_option_bag_lowerable_declaration<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         name: &'b str,
@@ -404,7 +414,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn source_file_local_name_def_id_for_lowering(
+    pub(in crate::state_domain::type_analysis) fn source_file_local_name_def_id_for_lowering(
         &self,
         delegate_binder: &BinderState,
         symbol_arena: &NodeArena,
@@ -431,7 +441,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn source_file_type_node_is_generic_scope_independent(
+    pub(in crate::state_domain::type_analysis) fn source_file_type_node_is_generic_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,
         type_param_names: &[String],
@@ -608,7 +618,7 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    pub(super) fn collect_infer_type_param_names(
+    pub(in crate::state_domain::type_analysis) fn collect_infer_type_param_names(
         arena: &NodeArena,
         root: NodeIndex,
         names: &mut Vec<String>,
@@ -632,7 +642,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn source_file_type_node_contains_kind(
+    pub(in crate::state_domain::type_analysis) fn source_file_type_node_contains_kind(
         arena: &NodeArena,
         root: NodeIndex,
         kind: u16,
@@ -647,7 +657,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn source_file_type_node_contains_disallowed_type_query(
+    pub(in crate::state_domain::type_analysis) fn source_file_type_node_contains_disallowed_type_query(
         arena: &NodeArena,
         binder: &BinderState,
         root: NodeIndex,
@@ -669,7 +679,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn source_file_type_query_is_well_known_global_symbol_property(
+    pub(in crate::state_domain::type_analysis) fn source_file_type_query_is_well_known_global_symbol_property(
         arena: &NodeArena,
         binder: &BinderState,
         type_query_idx: NodeIndex,
@@ -683,21 +693,23 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = arena.get(type_query.expr_name) else {
             return false;
         };
-        let (base_idx, member_idx) = if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        {
-            let Some(access) = arena.get_access_expr(expr_node) else {
+        let (base_idx, member_idx) =
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let Some(access) = arena.get_access_expr(expr_node) else {
+                    return false;
+                };
+                (access.expression, access.name_or_argument)
+            } else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let Some(qualified) = arena.get_qualified_name(expr_node) else {
+                    return false;
+                };
+                (qualified.left, qualified.right)
+            } else {
                 return false;
             };
-            (access.expression, access.name_or_argument)
-        } else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let Some(qualified) = arena.get_qualified_name(expr_node) else {
-                return false;
-            };
-            (qualified.left, qualified.right)
-        } else {
-            return false;
-        };
-        let Some(base_ident) = arena.get(base_idx).and_then(|base| arena.get_identifier(base))
+        let Some(base_ident) = arena
+            .get(base_idx)
+            .and_then(|base| arena.get_identifier(base))
         else {
             return false;
         };
@@ -719,7 +731,7 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
-    pub(super) fn source_file_type_node_contains_identifier_name(
+    pub(in crate::state_domain::type_analysis) fn source_file_type_node_contains_identifier_name(
         arena: &NodeArena,
         root: NodeIndex,
         name: &str,
@@ -738,7 +750,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn external_declaration_body_uses_local_array_shadow(
+    pub(super) fn external_declaration_body_uses_local_array_shadow(
         arena: &NodeArena,
         delegate_binder: &BinderState,
         root: NodeIndex,
@@ -749,7 +761,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn source_file_interface_declarations_are_direct_lowerable_with_seen<'b>(
+    pub(super) fn source_file_interface_declarations_are_direct_lowerable_with_seen<'b>(
         declarations: &[(NodeIndex, &'b NodeArena)],
         delegate_binder: &BinderState,
         seen_type_names: &mut Vec<&'b str>,
@@ -818,7 +830,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Call/construct/index signatures, accessors, computed names, and members
     /// with unannotated parameters or return types stay on the child path.
-    fn source_file_interface_member_is_direct_lowerable<'b>(
+    pub(super) fn source_file_interface_member_is_direct_lowerable<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         member_idx: NodeIndex,
@@ -887,7 +899,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_parameter_is_this(
+    pub(super) fn source_file_parameter_is_this(
         arena: &NodeArena,
         parameter: &tsz_parser::parser::node::ParameterData,
     ) -> bool {
@@ -897,7 +909,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|ident| ident.escaped_text == "this")
     }
 
-    fn source_file_interface_heritage_is_direct_lowerable<'b>(
+    pub(super) fn source_file_interface_heritage_is_direct_lowerable<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         interface: &tsz_parser::parser::node::InterfaceData,
@@ -911,30 +923,35 @@ impl<'a> CheckerState<'a> {
             let Some(heritage) = arena.get_heritage_clause_at(clause_idx) else {
                 return false;
             };
-            heritage.types.nodes.iter().copied().all(|heritage_type_idx| {
-                let Some(base_name) =
-                    Self::source_file_simple_heritage_identifier(arena, heritage_type_idx)
-                else {
-                    return false;
-                };
-                let Some(base_decl_idx) = Self::source_file_direct_heritage_base_decl(
-                    arena,
-                    delegate_binder,
-                    base_name,
-                    seen_type_names,
-                ) else {
-                    return false;
-                };
-                Self::source_file_interface_declarations_are_direct_lowerable_with_seen(
-                    &[(base_decl_idx, arena)],
-                    delegate_binder,
-                    seen_type_names,
-                )
-            })
+            heritage
+                .types
+                .nodes
+                .iter()
+                .copied()
+                .all(|heritage_type_idx| {
+                    let Some(base_name) =
+                        Self::source_file_simple_heritage_identifier(arena, heritage_type_idx)
+                    else {
+                        return false;
+                    };
+                    let Some(base_decl_idx) = Self::source_file_direct_heritage_base_decl(
+                        arena,
+                        delegate_binder,
+                        base_name,
+                        seen_type_names,
+                    ) else {
+                        return false;
+                    };
+                    Self::source_file_interface_declarations_are_direct_lowerable_with_seen(
+                        &[(base_decl_idx, arena)],
+                        delegate_binder,
+                        seen_type_names,
+                    )
+                })
         })
     }
 
-    fn source_file_simple_heritage_identifier(
+    pub(super) fn source_file_simple_heritage_identifier(
         arena: &NodeArena,
         heritage_type_idx: NodeIndex,
     ) -> Option<&str> {
@@ -970,7 +987,7 @@ impl<'a> CheckerState<'a> {
             .map(|ident| ident.escaped_text.as_str())
     }
 
-    fn source_file_direct_heritage_base_decl<'b>(
+    pub(super) fn source_file_direct_heritage_base_decl<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         base_name: &'b str,
@@ -1019,11 +1036,10 @@ impl<'a> CheckerState<'a> {
             for clause_idx in heritage_clauses.nodes.iter().copied() {
                 let heritage = arena.get_heritage_clause_at(clause_idx)?;
                 for heritage_type_idx in heritage.types.nodes.iter().copied() {
-                    let base_name =
-                        CheckerState::source_file_simple_heritage_identifier(
-                            arena,
-                            heritage_type_idx,
-                        )?;
+                    let base_name = CheckerState::source_file_simple_heritage_identifier(
+                        arena,
+                        heritage_type_idx,
+                    )?;
                     let base_decl_idx = CheckerState::source_file_direct_heritage_base_decl(
                         arena,
                         delegate_binder,
@@ -1070,7 +1086,7 @@ impl<'a> CheckerState<'a> {
         Some(expanded)
     }
 
-    fn source_file_interface_declarations_are_direct_lowerable(
+    pub(super) fn source_file_interface_declarations_are_direct_lowerable(
         declarations: &[(NodeIndex, &NodeArena)],
         delegate_binder: &BinderState,
     ) -> bool {

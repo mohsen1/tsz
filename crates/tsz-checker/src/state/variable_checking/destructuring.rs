@@ -1603,4 +1603,4 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-include!("destructuring/tail.rs");
+mod tail;

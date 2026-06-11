@@ -1,5 +1,11 @@
+//! Type-literal lowerability helpers for source-file alias chains.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn source_file_type_literal_properties_are_lowerable(
+    pub(super) fn source_file_type_literal_properties_are_lowerable(
         arena: &NodeArena,
         binder: Option<&BinderState>,
         node: &tsz_parser::parser::node::Node,
@@ -64,7 +70,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn source_file_computed_property_name_is_direct_lowerable(
+    pub(super) fn source_file_computed_property_name_is_direct_lowerable(
         arena: &NodeArena,
         binder: Option<&BinderState>,
         name_idx: NodeIndex,
@@ -93,7 +99,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn source_file_computed_property_expression_is_direct_lowerable(
+    pub(super) fn source_file_computed_property_expression_is_direct_lowerable(
         arena: &NodeArena,
         binder: &BinderState,
         expr_idx: NodeIndex,

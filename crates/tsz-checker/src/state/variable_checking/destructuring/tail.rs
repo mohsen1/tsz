@@ -1,5 +1,11 @@
+//! Destructuring assignment helpers split out of `destructuring.rs`.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn preserve_actual_lib_namespace_binding_parent_type(
+    pub(super) fn preserve_actual_lib_namespace_binding_parent_type(
         &mut self,
         original_type: TypeId,
         evaluated_type: TypeId,
@@ -55,7 +61,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(evaluated_type)
     }
 
-    fn get_binding_element_literal_key_type(
+    pub(super) fn get_binding_element_literal_key_type(
         &mut self,
         parent_type: TypeId,
         key_type: TypeId,
@@ -102,7 +108,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn get_binding_element_literal_key_type_for_parent(
+    pub(super) fn get_binding_element_literal_key_type_for_parent(
         &mut self,
         literal_parent_type: TypeId,
         string_keys: &[Atom],
@@ -159,7 +165,7 @@ impl<'a> CheckerState<'a> {
     }
 
     #[allow(dead_code)]
-    fn get_binding_element_computed_key_type(
+    pub(super) fn get_binding_element_computed_key_type(
         &mut self,
         pattern_idx: NodeIndex,
         expr_idx: NodeIndex,
@@ -171,7 +177,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn get_binding_element_computed_key_type_with_request(
+    pub(super) fn get_binding_element_computed_key_type_with_request(
         &mut self,
         pattern_idx: NodeIndex,
         expr_idx: NodeIndex,
@@ -224,7 +230,7 @@ impl<'a> CheckerState<'a> {
         key_type
     }
 
-    fn collect_enclosing_default_assignment_key_types(
+    pub(super) fn collect_enclosing_default_assignment_key_types(
         &mut self,
         pattern_idx: NodeIndex,
         sym_id: SymbolId,
@@ -261,7 +267,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn collect_assignment_types_for_symbol(
+    pub(super) fn collect_assignment_types_for_symbol(
         &mut self,
         expr_idx: NodeIndex,
         sym_id: SymbolId,
@@ -303,7 +309,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn binding_assignment_target_matches_symbol(
+    pub(super) fn binding_assignment_target_matches_symbol(
         &self,
         target_idx: NodeIndex,
         sym_id: SymbolId,
@@ -319,11 +325,14 @@ impl<'a> CheckerState<'a> {
     }
 
     #[allow(dead_code)]
-    fn get_binding_identifier_initializer_key_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+    pub(super) fn get_binding_identifier_initializer_key_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
         self.get_binding_identifier_initializer_key_type_with_request(sym_id, &TypingRequest::NONE)
     }
 
-    fn get_binding_identifier_initializer_key_type_with_request(
+    pub(super) fn get_binding_identifier_initializer_key_type_with_request(
         &mut self,
         sym_id: SymbolId,
         request: &TypingRequest,
@@ -348,7 +357,7 @@ impl<'a> CheckerState<'a> {
     /// parameter types can remain as unresolved type parameters temporarily.
     /// Avoid emitting premature TS2339 from destructuring in that phase; final
     /// assignability diagnostics (e.g. TS2322/TS2345) should drive the error.
-    fn should_defer_property_not_found_for_contextual_destructuring(
+    pub(super) fn should_defer_property_not_found_for_contextual_destructuring(
         &self,
         pattern_idx: NodeIndex,
         parent_type: TypeId,
@@ -402,7 +411,7 @@ impl<'a> CheckerState<'a> {
     /// - `{ [ident]: a }` → "ident" (computed with identifier)
     ///
     /// Returns None for truly dynamic computed keys (e.g., `{ [expr]: a }`).
-    fn extract_binding_property_name(
+    pub(super) fn extract_binding_property_name(
         &mut self,
         element_data: &tsz_parser::parser::node::BindingElementData,
     ) -> Option<String> {
@@ -418,7 +427,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_untyped_parameter_binding_pattern_without_context(
+    pub(super) fn is_untyped_parameter_binding_pattern_without_context(
         &self,
         pattern_idx: NodeIndex,
         request: &TypingRequest,

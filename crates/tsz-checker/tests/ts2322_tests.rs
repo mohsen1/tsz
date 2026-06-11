@@ -200,8 +200,101 @@ fn assert_no_missing_property_diagnostics(diagnostics: &[Diagnostic]) {
 
 // Split into under-cap shards to satisfy the 2000-line limit (CLAUDE.md §19).
 // Each shard contains a contiguous slice of ts2322_tests tests.
-include!("ts2322_tests_parts/part_00.rs");
-include!("ts2322_tests_parts/part_01.rs");
-include!("ts2322_tests_parts/part_02.rs");
-include!("ts2322_tests_parts/part_03.rs");
-include!("ts2322_tests_parts/part_04.rs");
+fn compile_with_libs_for_ts(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib_files = load_lib_files_for_test();
+
+    let mut binder = BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn compile_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    with_lib_contexts(source, file_name, options)
+}
+
+fn diagnostics_for_source(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    let file_name = "test.ts".to_string();
+    let mut parser = ParserState::new(file_name.clone(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib_files = load_lib_files_for_test();
+    let mut binder = BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name,
+        CheckerOptions::default(),
+    );
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
+}
+
+#[path = "ts2322_tests/part_00.rs"]
+mod part_00;
+#[path = "ts2322_tests/part_01.rs"]
+mod part_01;
+#[path = "ts2322_tests/part_02.rs"]
+mod part_02;
+#[path = "ts2322_tests/part_03.rs"]
+mod part_03;
+#[path = "ts2322_tests/part_04.rs"]
+mod part_04;

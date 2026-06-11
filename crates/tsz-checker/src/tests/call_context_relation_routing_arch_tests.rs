@@ -299,7 +299,7 @@ fn contextual_return_substitution_uses_env_relation_outcome_boundary() {
 
 #[test]
 fn contextual_callback_return_retyping_uses_env_relation_outcome_boundary() {
-    let source = fs::read_to_string("src/types/computation/call/inner_argument_collection.rs")
+    let source = fs::read_to_string("src/types/computation/call/inner/argument_collection.rs")
         .expect("failed to read call argument collection source");
     let start = source
         .find("let ctx_return = refreshed_contextual_types")

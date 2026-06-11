@@ -1,5 +1,11 @@
+//! Property diagnostic helpers split out of `properties.rs`.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn actual_lib_namespace_merged_type_has_property(
+    pub(super) fn actual_lib_namespace_merged_type_has_property(
         &mut self,
         type_id: TypeId,
         prop_name: &str,
@@ -160,7 +166,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_namespace_import_rooted_expression(&self, expr_idx: NodeIndex) -> bool {
+    pub(super) fn is_namespace_import_rooted_expression(&self, expr_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
 
         let Some(root_ident) = self.root_identifier_for_expression(expr_idx) else {
@@ -213,7 +219,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn root_identifier_for_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn root_identifier_for_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = self.ctx.arena.skip_parenthesized(expr_idx);
         loop {
             let node = self.ctx.arena.get(current)?;
@@ -696,7 +702,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    fn no_index_signature_method_suggestion(
+    pub(super) fn no_index_signature_method_suggestion(
         &mut self,
         object_type: TypeId,
         index_type: TypeId,
@@ -719,7 +725,7 @@ impl<'a> CheckerState<'a> {
         Some(method_name.to_string())
     }
 
-    fn no_index_signature_method_accepts_index(
+    pub(super) fn no_index_signature_method_accepts_index(
         &mut self,
         object_type: TypeId,
         method_name: &str,
@@ -743,7 +749,7 @@ impl<'a> CheckerState<'a> {
         self.callable_accepts_index_argument(method_type, index_type)
     }
 
-    fn callable_accepts_index_argument(
+    pub(super) fn callable_accepts_index_argument(
         &mut self,
         callable_type: TypeId,
         index_type: TypeId,
@@ -763,7 +769,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn signature_accepts_index_argument(
+    pub(super) fn signature_accepts_index_argument(
         &mut self,
         params: &[tsz_solver::ParamInfo],
         index_type: TypeId,
@@ -776,7 +782,7 @@ impl<'a> CheckerState<'a> {
             .related
     }
 
-    fn is_named_method_suggestion_receiver(&self, idx: NodeIndex) -> bool {
+    pub(super) fn is_named_method_suggestion_receiver(&self, idx: NodeIndex) -> bool {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -799,7 +805,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|access| self.is_named_method_suggestion_receiver(access.expression))
     }
 
-    fn is_element_access_write_like(&self, expr_idx: NodeIndex) -> bool {
+    pub(super) fn is_element_access_write_like(&self, expr_idx: NodeIndex) -> bool {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let Some(ext) = self.ctx.arena.get_extended(expr_idx) else {
             return false;
@@ -826,7 +832,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn named_method_suggestion_receiver_text(&self, idx: NodeIndex) -> Option<String> {
+    pub(super) fn named_method_suggestion_receiver_text(&self, idx: NodeIndex) -> Option<String> {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         let node = self.ctx.arena.get(idx)?;
 
@@ -862,14 +868,17 @@ impl<'a> CheckerState<'a> {
         Some(format!("{left}.{right}"))
     }
 
-    fn is_object_literal_backed_element_access_receiver(&self, expr_idx: NodeIndex) -> bool {
+    pub(super) fn is_object_literal_backed_element_access_receiver(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let Some(receiver) = self.access_receiver_for_diagnostic_node(expr_idx) else {
             return false;
         };
         self.is_object_literal_backed_receiver(receiver)
     }
 
-    fn is_object_literal_backed_receiver(&self, idx: NodeIndex) -> bool {
+    pub(super) fn is_object_literal_backed_receiver(&self, idx: NodeIndex) -> bool {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -892,7 +901,7 @@ impl<'a> CheckerState<'a> {
     /// Check if the receiver of an element access expression is an object literal
     /// expression (e.g., `{}["hi"]`). Used to distinguish TS2339 vs TS7053 for
     /// literal-keyed element access on types without index signatures.
-    fn is_object_literal_element_access_receiver(&self, expr_idx: NodeIndex) -> bool {
+    pub(super) fn is_object_literal_element_access_receiver(&self, expr_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
@@ -911,7 +920,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an identifier node refers to a variable declared in a for-in statement.
-    fn is_for_in_variable_identifier(&self, idx: NodeIndex) -> bool {
+    pub(super) fn is_for_in_variable_identifier(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -967,7 +976,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TypeScript suppresses TS7053 for `this[...]`/`super[...]` when the class extends an `any` base.
-    fn is_element_access_on_this_or_super_with_any_base(&mut self, idx: NodeIndex) -> bool {
+    pub(super) fn is_element_access_on_this_or_super_with_any_base(
+        &mut self,
+        idx: NodeIndex,
+    ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         // idx may be the element access expression itself or its argument node.
@@ -1044,7 +1056,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the display name for a namespace/module value type, if applicable.
     /// Returns `Some("M")` for `namespace M {}` types, enabling `typeof M` display.
-    fn get_namespace_typeof_name(&self, type_id: TypeId) -> Option<String> {
+    pub(super) fn get_namespace_typeof_name(&self, type_id: TypeId) -> Option<String> {
         use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
         use tsz_binder::{SymbolId, symbol_flags};
 
@@ -1078,7 +1090,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type should get TS2812 (suggest 'dom' lib) instead of TS2339.
     /// Returns true if ALL named components of the type match known DOM global names
     /// AND each component is structurally empty (no user-defined members).
-    fn should_suggest_dom_lib_for_type(&mut self, type_id: TypeId) -> bool {
+    pub(super) fn should_suggest_dom_lib_for_type(&mut self, type_id: TypeId) -> bool {
         // Check intersection members individually
         if let Some(members) =
             crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
@@ -1094,11 +1106,11 @@ impl<'a> CheckerState<'a> {
         self.should_suggest_dom_lib_for_empty_named_type(type_id)
     }
 
-    fn should_suggest_dom_lib_for_empty_named_type(&mut self, type_id: TypeId) -> bool {
+    pub(super) fn should_suggest_dom_lib_for_empty_named_type(&mut self, type_id: TypeId) -> bool {
         self.is_empty_dom_named_type(type_id) && !self.has_dom_lib_loaded()
     }
 
-    fn has_dom_lib_loaded(&self) -> bool {
+    pub(super) fn has_dom_lib_loaded(&self) -> bool {
         if self.ctx.typescript_dom_replacement_loaded {
             return true;
         }
@@ -1112,7 +1124,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a single type has a known DOM type name and is structurally empty.
-    fn is_empty_dom_named_type(&self, type_id: TypeId) -> bool {
+    pub(super) fn is_empty_dom_named_type(&self, type_id: TypeId) -> bool {
         // Get the type's display name to check against the DOM-element name
         // pattern. We mirror tsc's `containerSeemsToBeEmptyDomElement`, which
         // tests the name against the regex `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$`
@@ -1157,7 +1169,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Try to get the display name for a type, checking symbol and def store.
-    fn dom_type_name(&self, type_id: TypeId) -> Option<String> {
+    pub(super) fn dom_type_name(&self, type_id: TypeId) -> Option<String> {
         // Try Lazy(DefId) types directly
         if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
             && let Some(def) = self.ctx.definition_store.get(def_id)
@@ -1195,7 +1207,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an interface symbol's declarations have zero members.
-    fn interface_has_no_members(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(super) fn interface_has_no_members(&self, sym_id: tsz_binder::SymbolId) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;

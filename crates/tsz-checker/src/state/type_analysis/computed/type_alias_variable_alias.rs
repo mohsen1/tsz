@@ -13,7 +13,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
-include!("type_alias_variable_alias_helpers.rs");
+mod helpers;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(

@@ -180,6 +180,9 @@ fn get_method_call_receiver_identifier(
 
 // Split into under-cap shards to satisfy the 2000-line limit (CLAUDE.md §19).
 // Each shard contains a contiguous slice of control_flow_tests tests.
-include!("control_flow_tests_parts/part_00.rs");
-include!("control_flow_tests_parts/part_01.rs");
-include!("control_flow_tests_parts/part_02.rs");
+#[path = "control_flow_tests/part_00.rs"]
+mod part_00;
+#[path = "control_flow_tests/part_01.rs"]
+mod part_01;
+#[path = "control_flow_tests/part_02.rs"]
+mod part_02;

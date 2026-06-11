@@ -1,5 +1,11 @@
+//! Direct cross-file interface lowering helpers.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    pub(super) fn direct_cross_file_interface_lowering(
+    pub(in crate::state_domain::type_analysis) fn direct_cross_file_interface_lowering(
         &self,
         sym_id: SymbolId,
         delegate_binder: &BinderState,
@@ -138,7 +144,7 @@ impl<'a> CheckerState<'a> {
         Some((interface_type, params))
     }
 
-    pub(super) fn direct_cross_file_interface_member_simple_types(
+    pub(in crate::state_domain::type_analysis) fn direct_cross_file_interface_member_simple_types(
         &mut self,
         interface_idx: NodeIndex,
         member_indices: &[NodeIndex],

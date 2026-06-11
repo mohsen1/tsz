@@ -1972,7 +1972,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-include!("cross_file_direct_alias_chain/subtractive_guard_methods.rs");
-include!("cross_file_direct_alias_chain/projection_guard_methods.rs");
-include!("cross_file_direct_alias_chain/template_literal_guard_methods.rs");
-include!("cross_file_direct_alias_chain/type_literal_methods.rs");
+mod projection_guard_methods;
+mod subtractive_guard_methods;
+mod template_literal_guard_methods;
+mod type_literal_methods;

@@ -18,5 +18,7 @@ fn count_code(diags: &[(u32, String)], code: u32) -> usize {
     diags.iter().filter(|(c, _)| *c == code).count()
 }
 
-include!("definite_assignment_tests_parts/part_00.rs");
-include!("definite_assignment_tests_parts/part_01.rs");
+#[path = "definite_assignment_tests/part_00.rs"]
+mod part_00;
+#[path = "definite_assignment_tests/part_01.rs"]
+mod part_01;

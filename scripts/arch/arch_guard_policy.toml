@@ -338,6 +338,11 @@ exclude_files = [
 ]
 
 [[pattern_checks]]
+name = "Checker line-cap: include! fragment evasion must not return (#13085)"
+base = "crates/tsz-checker"
+pattern = '\binclude!\s*\('
+
+[[pattern_checks]]
 name = "Checker test boundary: no direct solver internal type inspection in integration tests"
 base = "crates/tsz-checker/tests"
 pattern = '\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b'
@@ -350,9 +355,9 @@ name = "Checker test boundary: no direct solver internal type inspection in src 
 base = "crates/tsz-checker/src/tests"
 pattern = '\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b'
 exclude_dirs = [
-  # Split shards of the architecture-contract self-test contain the forbidden
+  # Sub-modules of the architecture-contract self-test contain the forbidden
   # patterns as fixture strings for the guard itself.
-  "architecture_contract_tests_parts",
+  "architecture_contract_tests",
 ]
 exclude_files = [
   "crates/tsz-checker/src/tests/architecture_contract_tests.rs",

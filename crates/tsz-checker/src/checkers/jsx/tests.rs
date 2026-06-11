@@ -54,7 +54,50 @@ fn check_jsx_no_strict_codes(source: &str) -> Vec<u32> {
 }
 
 // Split into under-cap shards to satisfy the 2000-line limit (CLAUDE.md §19).
-// Each shard contains a contiguous slice of tests tests.
-include!("tests_parts/part_00.rs");
-include!("tests_parts/part_01.rs");
-include!("tests_parts/part_02.rs");
+// Each shard module holds a contiguous slice of the original test list.
+fn cross_file_jsx_opts() -> crate::context::CheckerOptions {
+    use tsz_common::checker_options::JsxMode;
+    crate::context::CheckerOptions {
+        jsx_mode: JsxMode::Preserve,
+        strict_null_checks: true,
+        ..Default::default()
+    }
+}
+
+const REACT_DECL: &str = r#"
+declare namespace React {
+    type ReactNode = ReactElement<any> | string | number | null;
+    interface ReactElement<P> { props: P; }
+    type ComponentState = any;
+    interface Component<P = {}, S = ComponentState> {
+        readonly props: P;
+        state: S;
+        render(): ReactNode;
+    }
+    interface ComponentClass<P = {}, S = ComponentState> {
+        new(props: P, context?: any): Component<P, S>;
+        defaultProps?: Partial<P>;
+    }
+    interface StatelessComponent<P = {}> {
+        (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+        defaultProps?: Partial<P>;
+    }
+    type ComponentType<P = {}> = ComponentClass<P> | StatelessComponent<P>;
+    type ReactType<P = any> = string | ComponentType<P>;
+}
+declare namespace JSX {
+    interface Element extends React.ReactElement<any> {}
+    interface ElementClass extends React.Component<any> {
+        render(): React.ReactNode;
+    }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements {
+        a: {};
+        button: {};
+    }
+}
+"#;
+
+mod part_00;
+mod part_01;
+mod part_02;

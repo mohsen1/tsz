@@ -1,5 +1,11 @@
+//! JSDoc `@enum` initializer and prior-value compatibility checks.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    pub(super) fn check_jsdoc_enum_initializer_values(
+    pub(in crate::state_domain::variable_checking) fn check_jsdoc_enum_initializer_values(
         &mut self,
         initializer_idx: NodeIndex,
         enum_element_type: TypeId,

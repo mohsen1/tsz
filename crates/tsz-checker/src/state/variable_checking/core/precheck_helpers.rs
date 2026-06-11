@@ -1,5 +1,11 @@
+//! Variable redeclaration pre-check helpers.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    pub(super) fn redeclaration_initializer_request(
+    pub(in crate::state_domain::variable_checking) fn redeclaration_initializer_request(
         &mut self,
         decl_idx: NodeIndex,
         name_idx: NodeIndex,
@@ -44,7 +50,7 @@ impl<'a> CheckerState<'a> {
         TypingRequest::with_contextual_type(self.contextual_type_for_expression(cached_type))
     }
 
-    pub(super) fn checked_js_remote_class_declared_type_for_variable(
+    pub(in crate::state_domain::variable_checking) fn checked_js_remote_class_declared_type_for_variable(
         &mut self,
         decl_idx: NodeIndex,
     ) -> Option<TypeId> {
@@ -110,7 +116,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(super) fn maybe_clear_checked_initializer_type_cache(
+    pub(in crate::state_domain::variable_checking) fn maybe_clear_checked_initializer_type_cache(
         &mut self,
         initializer_idx: NodeIndex,
     ) {

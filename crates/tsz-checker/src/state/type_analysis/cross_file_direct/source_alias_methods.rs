@@ -1,5 +1,11 @@
+//! Source-file alias lowering helpers for direct cross-file queries.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn direct_lower_source_file_annotation_type(
+    pub(super) fn direct_lower_source_file_annotation_type(
         &self,
         annotation: NodeIndex,
         delegate_binder: &BinderState,
@@ -80,7 +86,7 @@ impl<'a> CheckerState<'a> {
         self.direct_lower_source_file_annotation_type(annotation, delegate_binder, symbol_arena)
     }
 
-    pub(super) fn direct_source_file_variable_annotation_result(
+    pub(in crate::state_domain::type_analysis) fn direct_source_file_variable_annotation_result(
         &self,
         sym_id: SymbolId,
         direct_target: Option<(&NodeArena, &BinderState, Option<usize>)>,
@@ -167,7 +173,7 @@ impl<'a> CheckerState<'a> {
                                        sym_id: SymbolId| {
                 self.source_file_import_alias_target_for_lowering(source_file_idx, binder, sym_id)
             };
-            let proof = super::cross_file_direct_alias_chain::SourceFileAliasProofContext {
+            let proof = crate::state_domain::type_analysis::cross_file_direct_alias_chain::SourceFileAliasProofContext {
                 current_file_idx: Some(target_file_idx),
                 global_type_is_lowerable: &global_type_is_lowerable,
                 global_value_is_lowerable: &global_value_is_lowerable,
@@ -221,9 +227,10 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             delegate_binder,
             type_alias.type_node,
-        ) || !self
-            .source_file_type_node_type_queries_are_direct_lowerable(symbol_arena, type_alias.type_node)
-        {
+        ) || !self.source_file_type_node_type_queries_are_direct_lowerable(
+            symbol_arena,
+            type_alias.type_node,
+        ) {
             record(DirectSourceFileTypeAliasLoweringOutcome::TypeQueryOrSelfReference);
             return None;
         }
@@ -274,7 +281,7 @@ impl<'a> CheckerState<'a> {
         Some((alias_type, params))
     }
 
-    fn prime_source_file_alias_application_targets(
+    pub(super) fn prime_source_file_alias_application_targets(
         &mut self,
         symbol_arena: &NodeArena,
         delegate_binder: &BinderState,

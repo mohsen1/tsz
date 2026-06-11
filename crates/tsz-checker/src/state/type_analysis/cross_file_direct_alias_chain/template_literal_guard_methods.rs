@@ -1,5 +1,11 @@
+//! Template-literal guard helpers for source-file alias chains.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn collect_template_literal_infer_type_param_names(
+    pub(super) fn collect_template_literal_infer_type_param_names(
         arena: &NodeArena,
         root: NodeIndex,
         names: &mut Vec<String>,
@@ -33,7 +39,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn template_literal_segment_consumes(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    pub(super) fn template_literal_segment_consumes(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
         arena
             .get(node_idx)
             .and_then(|node| arena.get_literal(node))

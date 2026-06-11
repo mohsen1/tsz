@@ -13,9 +13,10 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {}
-
-include!("core/annotation_context.rs");
+mod annotation_context;
+mod async_jsdoc_return;
+mod jsdoc_enum_and_prior_values;
+mod precheck_helpers;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn bare_type_alias_annotation_declared_type(
@@ -167,8 +168,6 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-include!("core/jsdoc_enum_and_prior_values.rs");
-
 impl<'a> CheckerState<'a> {
     fn cached_inferred_variable_type(
         &self,
@@ -312,8 +311,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 }
-
-include!("core/precheck_helpers.rs");
 
 impl<'a> CheckerState<'a> {
     /// Check a single variable declaration.
@@ -1959,8 +1956,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 }
-
-include!("core/async_jsdoc_return.rs");
 
 #[cfg(test)]
 #[path = "core_tests.rs"]

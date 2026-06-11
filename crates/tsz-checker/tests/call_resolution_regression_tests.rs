@@ -54,5 +54,7 @@ fn no_errors_with_options(source: &str, options: &CheckerOptions) -> bool {
 // Basic call expression checks
 // ============================================================================
 
-include!("call_resolution_regression_tests_parts/part_00.rs");
-include!("call_resolution_regression_tests_parts/part_01.rs");
+#[path = "call_resolution_regression_tests/part_00.rs"]
+mod part_00;
+#[path = "call_resolution_regression_tests/part_01.rs"]
+mod part_01;

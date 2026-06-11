@@ -63,5 +63,7 @@ fn ts18048_messages(diagnostics: &[(u32, String)]) -> Vec<&str> {
 
 // Split into under-cap shards to satisfy the 2000-line limit (CLAUDE.md §19).
 // Each shard contains a contiguous slice of control_flow_type_guard_tests tests.
-include!("control_flow_type_guard_tests_parts/part_00.rs");
-include!("control_flow_type_guard_tests_parts/part_01.rs");
+#[path = "control_flow_type_guard_tests/part_00.rs"]
+mod part_00;
+#[path = "control_flow_type_guard_tests/part_01.rs"]
+mod part_01;

@@ -1,5 +1,11 @@
+//! Subtractive (`Exclude`-style) alias-chain guard helpers.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn source_file_type_arguments_contain_guard_name(
+    pub(super) fn source_file_type_arguments_contain_guard_name(
         arena: &NodeArena,
         args: &NodeList,
         guard_names: &[String],
@@ -10,7 +16,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn source_file_type_arguments_contain_subtractive_guard<'b>(
+    pub(super) fn source_file_type_arguments_contain_subtractive_guard<'b>(
         arena: &'b NodeArena,
         binder: &'b BinderState,
         args: &NodeList,
@@ -28,7 +34,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn source_file_type_node_is_subtractive_type_param_guard<'b>(
+    pub(super) fn source_file_type_node_is_subtractive_type_param_guard<'b>(
         arena: &'b NodeArena,
         binder: &'b BinderState,
         node_idx: NodeIndex,
@@ -82,15 +88,13 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         (name == "Exclude"
-            && Self::source_file_type_name_can_fall_back_to_global_type(
-                arena, binder, name, proof,
-            ))
+            && Self::source_file_type_name_can_fall_back_to_global_type(arena, binder, name, proof))
             || Self::source_file_type_ref_is_transparent_subtractive_alias(
                 arena, binder, name, proof,
             )
     }
 
-    fn source_file_type_ref_is_transparent_subtractive_alias<'b>(
+    pub(super) fn source_file_type_ref_is_transparent_subtractive_alias<'b>(
         arena: &'b NodeArena,
         binder: &'b BinderState,
         name: &str,
@@ -139,7 +143,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn source_file_pair_type_alias_param_names(
+    pub(super) fn source_file_pair_type_alias_param_names(
         arena: &NodeArena,
         type_alias: &TypeAliasData,
     ) -> Option<[String; 2]> {
@@ -152,7 +156,10 @@ impl<'a> CheckerState<'a> {
         (first != second).then(|| [first.to_string(), second.to_string()])
     }
 
-    fn source_file_type_param_name(arena: &NodeArena, node_idx: NodeIndex) -> Option<&str> {
+    pub(super) fn source_file_type_param_name(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<&str> {
         let param_node = arena.get(node_idx)?;
         let param = arena.get_type_parameter(param_node)?;
         let name_node = arena.get(param.name)?;
@@ -161,7 +168,7 @@ impl<'a> CheckerState<'a> {
             .map(|ident| ident.escaped_text.as_str())
     }
 
-    fn source_file_type_node_is_global_exclude_of_pair_params<'b>(
+    pub(super) fn source_file_type_node_is_global_exclude_of_pair_params<'b>(
         arena: &'b NodeArena,
         binder: &'b BinderState,
         node_idx: NodeIndex,
@@ -212,7 +219,10 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|name| name == param_names[1].as_str())
     }
 
-    fn source_file_bare_type_param_name(arena: &NodeArena, node_idx: NodeIndex) -> Option<&str> {
+    pub(super) fn source_file_bare_type_param_name(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<&str> {
         let node = arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
             let wrapped = arena.get_wrapped_type(node)?;
@@ -235,7 +245,7 @@ impl<'a> CheckerState<'a> {
             .map(|ident| ident.escaped_text.as_str())
     }
 
-    fn source_file_type_name_can_fall_back_to_global_type<'b>(
+    pub(super) fn source_file_type_name_can_fall_back_to_global_type<'b>(
         arena: &NodeArena,
         binder: &'b BinderState,
         name: &str,
@@ -248,7 +258,7 @@ impl<'a> CheckerState<'a> {
             && (proof.global_type_is_lowerable)(binder, name)
     }
 
-    fn source_file_type_node_contains_any_identifier_name(
+    pub(super) fn source_file_type_node_contains_any_identifier_name(
         arena: &NodeArena,
         root: NodeIndex,
         names: &[String],
