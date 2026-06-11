@@ -72,11 +72,15 @@ impl<'a> CheckerState<'a> {
 
             let class_name = class_symbol.escaped_name.as_str();
             let return_base_sym = self.resolve_lib_symbol_by_name(class_name)?;
+            // `resolve_lib_symbol_by_name` can answer with a SymbolId from a
+            // lib binder other than the first raw-id owner; resolve the def
+            // name-verified so the Lazy heritage target cannot collide with
+            // an unrelated def.
             let return_base = self
                 .ctx
                 .types
                 .factory()
-                .lazy(self.ctx.get_lib_def_id(return_base_sym));
+                .lazy(self.ctx.lib_def_id_verified(class_name, return_base_sym));
             let type_params = self.collect_scoped_lib_class_type_params(
                 base.arena,
                 class_symbol.primary_declaration()?,

@@ -834,11 +834,13 @@ impl TypeEnvironment {
             self.def_type_params.insert(def_id.0, params.clone());
         }
         // Write through to shared store for cross-checker visibility.
+        // Body and params go through the atomic single-entry-guard path:
+        // publishing them in two separate writes lets a concurrent reader
+        // observe a generic alias whose body is visible but whose parameter
+        // list is still missing (see `set_body_with_params`).
         if let Some(ref store) = self.definition_store {
-            store.set_body(def_id, type_id);
-            if !params.is_empty() {
-                store.set_type_params(def_id, params);
-            }
+            let store_params = (!params.is_empty()).then_some(params);
+            store.set_body_with_params(def_id, type_id, store_params);
         }
         self.bump_generation();
     }

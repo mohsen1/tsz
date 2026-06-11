@@ -971,25 +971,31 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             ),
         );
         shared_store.init_file_locks(program.files.len());
-        // Mutation-isolation campaign prototype: keep lib interface bodies
-        // immutable in the shared store after first materialization
-        // (first-writer-wins). Sequential checking order makes the first
-        // writer deterministic; the experiment measures republication
-        // suppression + diagnostic parity for this def class before the
-        // campaign promotes it to a pre-materialization pass.
-        // Two variants: `first` (default) freezes every lib interface def at
-        // its first body write; `finalize` lets the checker freeze each def
-        // at its finalized-body publication point instead (see
-        // `register_finalized_lib_body`).
-        match std::env::var("TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE") {
-            Ok(value) if value == "finalize" => {
-                tracing::info!("publish-once experiment: freeze-at-finalize variant");
-            }
-            Ok(_) => {
-                let marked = shared_store.mark_non_program_interface_defs_publish_once();
-                tracing::info!(marked, "publish-once experiment: lib interface defs marked");
-            }
-            Err(_) => {}
+        // Mutation-isolation campaign: lib interface defs are materialized
+        // once per program (prime checker + first-demand finalization under
+        // deterministic sequential order) and frozen at their finalized
+        // publication point (`freeze_finalized_lib_def`, default-on; kill
+        // switch `TSZ_DISABLE_LIB_DEF_FREEZE=1`). Deferred publication
+        // (default-on; kill switch `TSZ_DISABLE_LIB_DEF_DEFER_PUBLISH=1`)
+        // additionally drops the pre-finalize intermediate-stage overwrites
+        // so the shared store only observes `first form -> finalized form`
+        // for the class; per-file checkers keep refining through their own
+        // `TypeEnvironment` bodies.
+        //
+        // Declaration emit is out of scope (`!options.emit_declarations`,
+        // mirrored by `freeze_finalized_lib_def`): emit nameability analysis
+        // (TS7056 and friends) is sensitive to which checker's lib body
+        // TypeId the shared store carries.
+        // OPT-IN (TSZ_ENABLE_LIB_DEF_DEFER_PUBLISH=1): like the finalized-def
+        // freeze, deferred publication independently regresses the
+        // declare-global augmentation class (witness: importMeta.ts spurious
+        // TS2345) — pre-finalize forms it drops are load-bearing for
+        // augmented names. Needs augmentation-aware routing before default-on.
+        let defer_disabled = options.emit_declarations
+            || !std::env::var("TSZ_ENABLE_LIB_DEF_DEFER_PUBLISH").is_ok_and(|v| v == "1");
+        if !defer_disabled {
+            let marked = shared_store.mark_non_program_interface_defs_deferred();
+            tracing::debug!(marked, "lib interface defs marked deferred-publication");
         }
         program_context.shared_definition_store = Some(shared_store);
     }
@@ -1001,6 +1007,18 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // file checks. Tiny no-emit batches use the sequential reused-checker
     // path; that real checker primes itself before checking the first file, so
     // a separate prime checker would duplicate the same setup.
+    //
+    // Mutation-isolation campaign: this hook is also the once-per-program
+    // finalized lib-body materialization pre-pass. The prime checker resolves
+    // the boxed builtins (String/Number/Boolean/Object/Function/...) and the
+    // Array protocol through `resolve_lib_type_by_name`, which registers each
+    // def's *finalized* body (heritage-merged + augmented) and — default-on
+    // (`freeze_finalized_lib_def`, kill switch `TSZ_DISABLE_LIB_DEF_FREEZE=1`)
+    // — freezes it in the shared `DefinitionStore`. Lib interfaces the prime
+    // pass does not touch are materialized + frozen at first demand under the
+    // deterministic sequential checking order; per-file checkers afterwards
+    // consume the frozen bodies without republishing (different-body writes
+    // are dropped at the store).
     let has_js_input = program
         .files
         .iter()

@@ -56,13 +56,17 @@ pub enum PublicationOutcome {
     /// Different body `TypeId` *and* a different type-parameter list.
     DifferentBodyParamsChanged,
     /// A different-body publication that was *dropped* because the def is
-    /// marked publish-once (mutation-isolation prototype): the store kept
-    /// the first materialized form.
+    /// frozen (publish-once after its finalized materialization): the store
+    /// kept the finalized form.
     SuppressedDifferentBody,
+    /// A pre-finalize different-body overwrite that was *deferred* (dropped)
+    /// because the def belongs to the deferred-publication class: the store
+    /// keeps the first form until the finalize entry point overwrites it.
+    DeferredDifferentBody,
 }
 
 impl PublicationOutcome {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::First,
         Self::MintedMinimal,
         Self::SameBody,
@@ -70,6 +74,7 @@ impl PublicationOutcome {
         Self::DifferentBody,
         Self::DifferentBodyParamsChanged,
         Self::SuppressedDifferentBody,
+        Self::DeferredDifferentBody,
     ];
 
     const fn label(self) -> &'static str {
@@ -81,6 +86,7 @@ impl PublicationOutcome {
             Self::DifferentBody => "different-body",
             Self::DifferentBodyParamsChanged => "different-body+params-changed",
             Self::SuppressedDifferentBody => "suppressed-different-body",
+            Self::DeferredDifferentBody => "deferred-different-body",
         }
     }
 
@@ -108,8 +114,17 @@ const MAX_TRACKED_BODIES: usize = 16;
 struct CensusState {
     /// (caller file, caller line, outcome) -> count.
     by_site: FxHashMap<(&'static str, u32, PublicationOutcome), u64>,
+    /// Same key, restricted to **lib interface** defs (`DefKind::Interface`
+    /// with the non-program `u32::MAX` decl-file sentinel) — the def class
+    /// the mutation-isolation campaign freezes; this cross-tab attributes
+    /// the post-freeze residue to its write-through channels.
+    by_site_lib_interface: FxHashMap<(&'static str, u32, PublicationOutcome), u64>,
     by_def: FxHashMap<DefId, DefCensus>,
 }
+
+/// `tsz_binder` symbols without a program declaration file (every lib-binder
+/// symbol) carry `u32::MAX` as their declaration file index.
+const NON_PROGRAM_FILE_SENTINEL: u32 = u32::MAX;
 
 fn state() -> &'static Mutex<CensusState> {
     static STATE: OnceLock<Mutex<CensusState>> = OnceLock::new();
@@ -136,6 +151,12 @@ pub fn record_publication(
         .by_site
         .entry((caller.file(), caller.line(), outcome))
         .or_insert(0) += 1;
+    if kind == Some(DefKind::Interface) && file_id == Some(NON_PROGRAM_FILE_SENTINEL) {
+        *state
+            .by_site_lib_interface
+            .entry((caller.file(), caller.line(), outcome))
+            .or_insert(0) += 1;
+    }
     let entry = state.by_def.entry(def_id).or_insert_with(|| DefCensus {
         name,
         kind,
@@ -305,6 +326,23 @@ pub fn dump_to_string(
             "  {count:>8}  {:<32} {file}:{line}\n",
             outcome.label()
         ));
+    }
+
+    // ---- Lib-interface defs by call site x outcome ----
+    if !state.by_site_lib_interface.is_empty() {
+        out.push_str("\n--- lib-interface publications by call site ---\n");
+        let mut sites: Vec<_> = state
+            .by_site_lib_interface
+            .iter()
+            .map(|(&(file, line, outcome), &count)| (file, line, outcome, count))
+            .collect();
+        sites.sort_by(|a, b| b.3.cmp(&a.3).then(a.0.cmp(b.0)).then(a.1.cmp(&b.1)));
+        for (file, line, outcome, count) in sites {
+            out.push_str(&format!(
+                "  {count:>8}  {:<32} {file}:{line}\n",
+                outcome.label()
+            ));
+        }
     }
 
     // ---- By def kind x file ----

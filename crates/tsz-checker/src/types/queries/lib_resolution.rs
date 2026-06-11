@@ -213,11 +213,15 @@ pub(crate) fn lib_def_id_from_node(
     fallback_arena: &NodeArena,
 ) -> Option<tsz_solver::DefId> {
     let sym_id = resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)?;
-    if binder
+    if let Some(symbol) = binder
         .get_symbol_with_libs(sym_id, &[])
-        .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
+        .filter(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
     {
-        return Some(ctx.get_lib_def_id(sym_id));
+        // The owning binder says this is a type parameter; resolve the def
+        // name-verified against that binder's symbol name so a raw-id
+        // collision with another lib binder cannot answer with an unrelated
+        // def.
+        return Some(ctx.get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name));
     }
 
     if let Some(name) = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena) {
@@ -233,6 +237,11 @@ pub(crate) fn lib_def_id_from_node(
         return Some(ctx.get_canonical_lib_def_id(expected_name, sym_id));
     }
 
+    // No syntactic name available; verify against the owning binder's symbol
+    // name instead of trusting the raw-id resolution.
+    if let Some(symbol) = binder.get_symbol_with_libs(sym_id, &[]) {
+        return Some(ctx.get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name));
+    }
     Some(ctx.get_lib_def_id(sym_id))
 }
 
@@ -250,14 +259,13 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
 ) -> Option<tsz_solver::DefId> {
     let sym_id =
         resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)?;
-    if lib_contexts.iter().any(|ctx| {
-        ctx.binder
-            .get_symbol_with_libs(sym_id, &[])
-            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
-    }) {
-        return Some(ctx.get_lib_def_id(sym_id));
-    }
-
+    // NOTE: `resolve_lib_node_in_lib_contexts` only resolves through lib
+    // `file_locals` (name-keyed), which never hold type parameters. The old
+    // type-parameter probe here checked the raw SymbolId against *every* lib
+    // binder, so it could only fire on a raw-id collision with an unrelated
+    // binder's type-parameter symbol — and then resolved the def through the
+    // same context-agnostic raw-id path (the lib-def identity-collision
+    // family). Resolve by syntactic name instead.
     let name = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena)?;
     let expected_name = name
         .strip_prefix("globalThis.")
@@ -304,6 +312,11 @@ pub(crate) fn augmentation_def_id_from_node(
             .next()
             .unwrap_or(&name);
         Some(ctx.get_or_create_def_id_for_symbol_name(sym_id, expected_name))
+    } else if let Some(symbol) = binder.get_symbol_with_libs(sym_id, &[]) {
+        // No syntactic name; verify against the owning binder's symbol name
+        // instead of trusting the raw-id resolution (lib-def identity
+        // collision family).
+        Some(ctx.get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name))
     } else {
         Some(ctx.get_lib_def_id(sym_id))
     }
@@ -1222,6 +1235,33 @@ impl<'a> CheckerState<'a> {
 
         // `name` resolved completely; clear any in-progress / stale incomplete marker.
         clear_lib_resolution_mark(name);
+
+        // Mutation-isolation campaign: the body finalized above is the
+        // program-wide form for this lib def — freeze it so later checkers'
+        // re-finalizations (checker-relative TypeIds of the byte-identical
+        // semantic form) cannot republish a different body into the shared
+        // store. Only on clean completion (the heritage-incomplete recovery
+        // above must stay able to overwrite), and only for names without
+        // user-side augmentations (an augmented body is relative to the
+        // augmenting file set, so the program-wide form is owned by the
+        // augmentation-merging path, not this one). Unlike the shared-cache
+        // gate below, builtin-merged names (Array, `Intl.*`,
+        // iterator-return-dependent interfaces) are still frozen: within one
+        // program their finalized bodies are option-stable, and per-file
+        // checkers keep using their own `TypeEnvironment` bodies for local
+        // resolution.
+        // OPT-IN (TSZ_ENABLE_LIB_DEF_FREEZE=1): freezing still regresses the
+        // declare-global augmentation class even with the program-wide name
+        // gate (witness: importMeta.ts gains a spurious TS2345 — a def
+        // RELATED to the augmented name gets pinned through a channel the
+        // name gate does not cover). The mutation-isolation campaign needs
+        // augmentation-aware freeze invalidation before this can default on.
+        if super::lib::lib_def_freeze_enabled()
+            && lib_type_id.is_some()
+            && !self.any_program_file_augments_lib_name(name)
+        {
+            self.freeze_finalized_lib_def(name);
+        }
 
         // Generic lib interfaces had their type params cached above.
         self.ctx
