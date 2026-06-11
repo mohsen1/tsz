@@ -1,5 +1,6 @@
 pub mod class_type;
 pub mod computation;
+pub(crate) mod computed_names;
 pub mod function_iife_inference;
 pub mod function_type;
 pub(crate) mod function_type_circular;

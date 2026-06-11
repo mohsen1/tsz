@@ -86,41 +86,8 @@ pub(crate) fn get_literal_or_well_known_property_name(
     if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
         return None;
     }
-    let mut expr = arena.get_computed_property(name_node)?.expression;
-    // Peel parentheses.
-    while let Some(node) = arena.get(expr)
-        && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-    {
-        expr = arena.get_parenthesized(node)?.expression;
-    }
-    let node = arena.get(expr)?;
-    if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-    {
-        return None;
-    }
-    let access = arena.get_access_expr(node)?;
-    if arena
-        .get_identifier(arena.get(access.expression)?)?
-        .escaped_text
-        != "Symbol"
-    {
-        return None;
-    }
-    let name_node = arena.get(access.name_or_argument)?;
-    if let Some(ident) = arena.get_identifier(name_node) {
-        return Some(format!("[Symbol.{}]", ident.escaped_text));
-    }
-    if matches!(
-        name_node.kind,
-        k if k == SyntaxKind::StringLiteral as u16
-            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-    ) && let Some(lit) = arena.get_literal(name_node)
-        && !lit.text.is_empty()
-    {
-        return Some(format!("[Symbol.{}]", lit.text));
-    }
-    None
+    let expr = arena.get_computed_property(name_node)?.expression;
+    crate::types_domain::computed_names::well_known_symbol_access_shape(arena, expr)?.name
 }
 
 impl<'a> CheckerState<'a> {
