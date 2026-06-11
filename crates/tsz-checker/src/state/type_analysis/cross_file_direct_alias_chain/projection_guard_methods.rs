@@ -1,5 +1,13 @@
+//! Projection-lowerability guard helpers for source-file alias chains.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    pub(super) fn source_file_local_type_alias_application_is_projection_lowerable<'b>(
+    pub(in crate::state_domain::type_analysis) fn source_file_local_type_alias_application_is_projection_lowerable<
+        'b,
+    >(
         arena: &'b NodeArena,
         binder: &'b BinderState,
         symbol: &Symbol,
@@ -51,7 +59,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn source_file_type_alias_body_is_projection_transparent(
+    pub(super) fn source_file_type_alias_body_is_projection_transparent(
         arena: &NodeArena,
         node_idx: NodeIndex,
         type_param_names: &[String],

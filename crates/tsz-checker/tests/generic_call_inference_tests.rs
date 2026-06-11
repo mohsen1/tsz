@@ -201,6 +201,9 @@ fn has_diagnostic_message_containing(
 
 // Split into under-cap shards to satisfy the 2000-line limit (CLAUDE.md §19).
 // Each shard contains a contiguous slice of generic_call_inference_tests tests.
-include!("generic_call_inference_tests_parts/part_00.rs");
-include!("generic_call_inference_tests_parts/part_01.rs");
-include!("generic_call_inference_tests_parts/part_02.rs");
+#[path = "generic_call_inference_tests/part_00.rs"]
+mod part_00;
+#[path = "generic_call_inference_tests/part_01.rs"]
+mod part_01;
+#[path = "generic_call_inference_tests/part_02.rs"]
+mod part_02;

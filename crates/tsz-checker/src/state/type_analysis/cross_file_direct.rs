@@ -65,10 +65,10 @@ pub(crate) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
-include!("cross_file_direct/actual_lib_methods.rs");
-include!("cross_file_direct/source_shape_methods.rs");
-include!("cross_file_direct/source_alias_methods.rs");
-include!("cross_file_direct/interface_methods.rs");
+mod actual_lib_methods;
+mod interface_methods;
+mod source_alias_methods;
+mod source_shape_methods;
 
 #[cfg(test)]
 #[path = "cross_file_direct_actual_lib_tests.rs"]

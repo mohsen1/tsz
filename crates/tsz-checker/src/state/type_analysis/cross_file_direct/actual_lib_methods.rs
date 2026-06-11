@@ -1,5 +1,11 @@
+//! Actual-lib namespace and alias-body fast-path helpers.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn symbol_is_actual_lib_namespace_export(
+    pub(super) fn symbol_is_actual_lib_namespace_export(
         &self,
         namespace: &str,
         export_name: &str,
@@ -11,7 +17,7 @@ impl<'a> CheckerState<'a> {
 
     /// Namespace-qualifier of a lib interface symbol (e.g. `Temporal`), derived
     /// from the enclosing `module`/`namespace` declarations of its declarations.
-    fn lib_symbol_namespace_prefix(
+    pub(super) fn lib_symbol_namespace_prefix(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -30,7 +36,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Whether any declaration of a lib interface symbol has an `extends` clause.
-    fn lib_interface_declarations_have_heritage(
+    pub(super) fn lib_interface_declarations_have_heritage(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -53,7 +59,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn symbol_is_proven_direct_actual_lib_value_interface(
+    pub(super) fn symbol_is_proven_direct_actual_lib_value_interface(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -63,7 +69,7 @@ impl<'a> CheckerState<'a> {
             && self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, name)
     }
 
-    fn symbol_has_direct_actual_lib_interface_type_parameters(
+    pub(super) fn symbol_has_direct_actual_lib_interface_type_parameters(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -85,7 +91,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn direct_actual_lib_interface_has_type_parameters(
+    pub(super) fn direct_actual_lib_interface_has_type_parameters(
         arena: &NodeArena,
         decl_idx: NodeIndex,
     ) -> bool {
@@ -97,7 +103,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|params| !params.nodes.is_empty())
     }
 
-    fn symbol_has_direct_actual_lib_iterator_object_heritage(
+    pub(super) fn symbol_has_direct_actual_lib_iterator_object_heritage(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -118,7 +124,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn direct_actual_lib_interface_has_iterator_object_heritage(
+    pub(super) fn direct_actual_lib_interface_has_iterator_object_heritage(
         arena: &NodeArena,
         decl_idx: NodeIndex,
     ) -> bool {
@@ -153,7 +159,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn symbol_declares_direct_actual_lib_protocol_method(
+    pub(super) fn symbol_declares_direct_actual_lib_protocol_method(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -179,7 +185,7 @@ impl<'a> CheckerState<'a> {
         }) || self.actual_lib_context_declares_protocol_method(symbol.escaped_name.as_str())
     }
 
-    fn actual_lib_context_declares_protocol_method(&self, name: &str) -> bool {
+    pub(super) fn actual_lib_context_declares_protocol_method(&self, name: &str) -> bool {
         self.ctx
             .lib_contexts
             .iter()
@@ -216,7 +222,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn direct_actual_lib_interface_declares_protocol_method(
+    pub(super) fn direct_actual_lib_interface_declares_protocol_method(
         arena: &NodeArena,
         decl_idx: NodeIndex,
     ) -> bool {
@@ -246,7 +252,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn symbol_declarations_are_direct_actual_lib_only(
+    pub(super) fn symbol_declarations_are_direct_actual_lib_only(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -272,7 +278,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn symbol_type_alias_declarations_are_proven_builtin_lib_only(
+    pub(super) fn symbol_type_alias_declarations_are_proven_builtin_lib_only(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -298,7 +304,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    pub(super) fn lib_declaration_name_matches(
+    pub(in crate::state_domain::type_analysis) fn lib_declaration_name_matches(
         arena: &NodeArena,
         decl_idx: NodeIndex,
         name: &str,
@@ -323,7 +329,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    pub(super) fn lib_type_alias_declaration_name_matches(
+    pub(in crate::state_domain::type_analysis) fn lib_type_alias_declaration_name_matches(
         arena: &NodeArena,
         decl_idx: NodeIndex,
         name: &str,
@@ -340,7 +346,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|ident| ident.escaped_text == name)
     }
 
-    fn direct_actual_lib_value_annotation_symbol_type(
+    pub(super) fn direct_actual_lib_value_annotation_symbol_type(
         &mut self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -355,7 +361,8 @@ impl<'a> CheckerState<'a> {
 
         let decl_idx = symbol.declarations[0];
         let mut builtin_lib_arena = None;
-        if let Some(declaration_arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+        if let Some(declaration_arenas) =
+            self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
         {
             for arena in declaration_arenas.iter().map(AsRef::as_ref) {
                 if !is_builtin_lib_declaration_arena(arena) {
@@ -406,7 +413,7 @@ impl<'a> CheckerState<'a> {
         Some((lazy_type, Vec::new()))
     }
 
-    fn direct_actual_lib_type_alias_body(
+    pub(super) fn direct_actual_lib_type_alias_body(
         &mut self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
@@ -438,12 +445,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let def_id = if let Some(alias_type) = self.resolve_lib_type_by_name(name) {
-            let Some(def_id) =
-                crate::query_boundaries::definition_identity::lazy_def_id(
-                    self.ctx.types,
-                    alias_type,
-                )
-            else {
+            let Some(def_id) = crate::query_boundaries::definition_identity::lazy_def_id(
+                self.ctx.types,
+                alias_type,
+            ) else {
                 record_direct_actual_lib_alias_body_outcome(
                     DirectActualLibAliasBodyOutcome::ResolverNotLazyDef,
                 );
@@ -539,7 +544,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    pub(super) fn direct_actual_lib_symbol_type(
+    pub(in crate::state_domain::type_analysis) fn direct_actual_lib_symbol_type(
         &mut self,
         sym_id: SymbolId,
         delegate_arena_source: CrossArenaSymbolMissSource,
@@ -738,7 +743,9 @@ impl<'a> CheckerState<'a> {
         // qualified name so the base interface members are instantiated in.
         let (direct_type, params) = match heritage_merge_name {
             Some(merge_name) => {
-                let merged = self.merge_lib_interface_heritage(direct_type, &merge_name).0;
+                let merged = self
+                    .merge_lib_interface_heritage(direct_type, &merge_name)
+                    .0;
                 (merged, params)
             }
             None => (direct_type, params),

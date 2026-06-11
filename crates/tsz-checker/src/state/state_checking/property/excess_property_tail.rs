@@ -1,5 +1,15 @@
+//! Excess-property checking helpers for union and nested-literal targets.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
-    fn excess_property_union_target(&self, target: TypeId, resolved_target: TypeId) -> TypeId {
+    pub(super) fn excess_property_union_target(
+        &self,
+        target: TypeId,
+        resolved_target: TypeId,
+    ) -> TypeId {
         if query::union_members(self.ctx.types, resolved_target).is_some() {
             return resolved_target;
         }
@@ -27,7 +37,7 @@ impl<'a> CheckerState<'a> {
     /// `true` when `lazy_candidate` is a `Lazy(DefId)` whose definition is one of
     /// `outer_members`. Three lookups cover the different TypeId forms intersection
     /// members can take (Lazy, resolved body, or registered canonical TypeId).
-    fn lazy_def_is_recursive_member(
+    pub(super) fn lazy_def_is_recursive_member(
         &self,
         lazy_candidate: TypeId,
         outer_members: &[TypeId],
@@ -52,7 +62,7 @@ impl<'a> CheckerState<'a> {
     /// Property-access resolution can substitute `Recursive(0)` with the concrete body,
     /// so we must check resolved forms too; only Lazy members are scanned to avoid
     /// treating the literal extra-properties arm as a recursive self-reference.
-    fn resolved_lazy_is_recursive_member(
+    pub(super) fn resolved_lazy_is_recursive_member(
         &mut self,
         candidate: TypeId,
         outer_members: &[TypeId],
@@ -66,7 +76,11 @@ impl<'a> CheckerState<'a> {
     /// `true` when `candidate` is a recursive self-reference: a `Lazy(DefId)` member,
     /// a De Bruijn `Recursive(n)` (type aliases only; interfaces keep `Lazy`),
     /// or the resolved body of a Lazy member.
-    fn is_recursive_self_reference(&mut self, candidate: TypeId, outer_members: &[TypeId]) -> bool {
+    pub(super) fn is_recursive_self_reference(
+        &mut self,
+        candidate: TypeId,
+        outer_members: &[TypeId],
+    ) -> bool {
         self.lazy_def_is_recursive_member(candidate, outer_members)
             || crate::query_boundaries::type_predicates::is_recursive_type_reference(
                 self.ctx.types,
@@ -82,7 +96,7 @@ impl<'a> CheckerState<'a> {
     /// 2. Otherwise (`normalize_intersection` already merged the intersection into
     ///    `effective_target`), widen when `nested_target` is a `Lazy(DefId)` whose
     ///    body is a strict sub-shape of `effective_target`.
-    fn widen_nested_target_for_property(
+    pub(super) fn widen_nested_target_for_property(
         &mut self,
         nested_target: TypeId,
         target: TypeId,
@@ -103,7 +117,7 @@ impl<'a> CheckerState<'a> {
     /// against the whole intersection, suppressing false TS2353 errors for properties
     /// contributed by `Extra`. Also widens `Lazy | undefined` to
     /// `outer_intersection | undefined` for optional recursive properties.
-    fn widen_nested_target_if_recursive(
+    pub(super) fn widen_nested_target_if_recursive(
         &mut self,
         nested_target: TypeId,
         outer_intersection: TypeId,
@@ -130,7 +144,7 @@ impl<'a> CheckerState<'a> {
         nested_target
     }
 
-    fn single_non_undefined_member(&self, type_id: TypeId) -> Option<(TypeId, bool)> {
+    pub(super) fn single_non_undefined_member(&self, type_id: TypeId) -> Option<(TypeId, bool)> {
         let Some(members) = query::union_members(self.ctx.types, type_id) else {
             return (type_id != TypeId::UNDEFINED).then_some((type_id, false));
         };
@@ -144,9 +158,8 @@ impl<'a> CheckerState<'a> {
 
     /// Returns the `TypeId` of an enclosing intersection reachable from `target`:
     /// the type itself, its `Lazy` body, or an intersection member of a union wrapper.
-    fn recover_outer_intersection_from_target(&self, target: TypeId) -> Option<TypeId> {
-        let is_intersection =
-            |t: TypeId| query::intersection_members(self.ctx.types, t).is_some();
+    pub(super) fn recover_outer_intersection_from_target(&self, target: TypeId) -> Option<TypeId> {
+        let is_intersection = |t: TypeId| query::intersection_members(self.ctx.types, t).is_some();
         if is_intersection(target) {
             return Some(target);
         }
@@ -167,7 +180,7 @@ impl<'a> CheckerState<'a> {
     /// (the body itself contains a property that refers back to `Rec_DefId`), to avoid
     /// suppressing valid TS2353 errors for non-recursive types whose properties happen
     /// to be a name-subset of the outer object.
-    fn widen_nested_target_if_sub_shape(
+    pub(super) fn widen_nested_target_if_sub_shape(
         &mut self,
         nested_target: TypeId,
         outer_object: TypeId,
@@ -230,7 +243,7 @@ impl<'a> CheckerState<'a> {
     /// `true` when `type_id` directly encodes a reference back to `target_def_id`:
     /// a `Lazy(target_def_id)`, a De Bruijn `Recursive(n)` index (used by structural
     /// type-alias self-references), or a union/optional wrapper of either.
-    fn type_directly_references_def(
+    pub(super) fn type_directly_references_def(
         &self,
         type_id: TypeId,
         target_def_id: tsz_solver::def::DefId,
@@ -262,7 +275,7 @@ impl<'a> CheckerState<'a> {
             .filter(|&ty| query::union_members(self.ctx.types, ty).is_some())
     }
 
-    fn excess_property_annotation_union_type(
+    pub(super) fn excess_property_annotation_union_type(
         &mut self,
         type_node: NodeIndex,
         visited: &mut HashSet<NodeIndex>,
@@ -307,7 +320,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn excess_property_annotation_component_type(
+    pub(super) fn excess_property_annotation_component_type(
         &mut self,
         type_node: NodeIndex,
         visited: &mut HashSet<NodeIndex>,
@@ -347,7 +360,7 @@ impl<'a> CheckerState<'a> {
         self.get_type_from_type_node(type_node)
     }
 
-    fn annotation_node_contains_intersection(&self, type_node: NodeIndex) -> bool {
+    pub(super) fn annotation_node_contains_intersection(&self, type_node: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_node) else {
             return false;
         };
@@ -362,7 +375,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn raw_intersection_or_single(&self, members: Vec<TypeId>) -> TypeId {
+    pub(super) fn raw_intersection_or_single(&self, members: Vec<TypeId>) -> TypeId {
         let mut iter = members.into_iter();
         let Some(mut result) = iter.next() else {
             return TypeId::UNKNOWN;
@@ -373,7 +386,10 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn named_type_reference_lazy_type(&mut self, type_node: NodeIndex) -> Option<TypeId> {
+    pub(super) fn named_type_reference_lazy_type(
+        &mut self,
+        type_node: NodeIndex,
+    ) -> Option<TypeId> {
         let node = self.ctx.arena.get(type_node)?;
         let type_ref = self.ctx.arena.get_type_ref(node)?;
         if type_ref.type_arguments.is_some() {
@@ -389,7 +405,7 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.lazy(def_id))
     }
 
-    fn local_non_generic_type_alias_body_for_reference(
+    pub(super) fn local_non_generic_type_alias_body_for_reference(
         &self,
         type_node: NodeIndex,
     ) -> Option<NodeIndex> {
@@ -583,7 +599,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn discriminant_matching_union_member_indices(
+    pub(super) fn discriminant_matching_union_member_indices(
         &mut self,
         obj_literal_idx: NodeIndex,
         source_props: &[tsz_solver::PropertyInfo],
@@ -729,7 +745,7 @@ impl<'a> CheckerState<'a> {
     /// checking see intersection union members (e.g. `Common & A`,
     /// `BaseAttribute<string> & { type: 'string' }`) as if they were
     /// flat object shapes, matching tsc's apparent-type behavior.
-    fn apparent_intersection_object_shape(
+    pub(super) fn apparent_intersection_object_shape(
         &self,
         type_id: TypeId,
     ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
@@ -751,7 +767,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn try_emit_nested_discriminated_union_assignability_error(
+    pub(super) fn try_emit_nested_discriminated_union_assignability_error(
         &mut self,
         outer_source: TypeId,
         outer_target: TypeId,
@@ -822,7 +838,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    fn is_object_like_nested_target(&mut self, nested_target: TypeId) -> bool {
+    pub(super) fn is_object_like_nested_target(&mut self, nested_target: TypeId) -> bool {
         let nested_target = self.evaluate_type_with_env(nested_target);
         let nested_target = self.resolve_type_for_property_access(nested_target);
 
@@ -839,7 +855,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn nested_literal_rejected_fresh_property(
+    pub(super) fn nested_literal_rejected_fresh_property(
         &mut self,
         nested_literal_idx: NodeIndex,
         nested_target: TypeId,
@@ -896,7 +912,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(super) fn object_literal_property_name_and_value(
+    pub(in crate::state_domain::state_checking) fn object_literal_property_name_and_value(
         &self,
         obj_literal_idx: NodeIndex,
         prop_name: Atom,
@@ -932,7 +948,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn object_literal_direct_unit_discriminants(
+    pub(super) fn object_literal_direct_unit_discriminants(
         &mut self,
         obj_literal_idx: NodeIndex,
         explicit_property_names: Option<&HashSet<Atom>>,
@@ -971,7 +987,7 @@ impl<'a> CheckerState<'a> {
         discriminants
     }
 
-    fn narrow_union_target_by_object_literal_discriminants(
+    pub(super) fn narrow_union_target_by_object_literal_discriminants(
         &mut self,
         union_type: TypeId,
         obj_literal_idx: NodeIndex,
@@ -1029,14 +1045,17 @@ impl<'a> CheckerState<'a> {
     ///
     /// Delegates to the canonical boundary function
     /// `query_boundaries::assignability::is_global_object_or_function_shape`.
-    fn is_global_object_or_function_shape(&self, shape: &tsz_solver::ObjectShape) -> bool {
+    pub(super) fn is_global_object_or_function_shape(
+        &self,
+        shape: &tsz_solver::ObjectShape,
+    ) -> bool {
         crate::query_boundaries::assignability::is_global_object_or_function_shape_boundary(
             self.ctx.types,
             shape,
         )
     }
 
-    fn explicit_object_literal_property_names_for_spread(
+    pub(super) fn explicit_object_literal_property_names_for_spread(
         &self,
         obj_literal_idx: NodeIndex,
     ) -> Option<HashSet<Atom>> {
@@ -1060,7 +1079,7 @@ impl<'a> CheckerState<'a> {
         self.explicit_object_literal_property_names(obj_literal_idx)
     }
 
-    fn explicit_object_literal_property_names(
+    pub(super) fn explicit_object_literal_property_names(
         &self,
         obj_literal_idx: NodeIndex,
     ) -> Option<HashSet<Atom>> {
@@ -1109,7 +1128,10 @@ impl<'a> CheckerState<'a> {
         Some(explicit_names)
     }
 
-    fn const_assertion_object_literal_expression(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn const_assertion_object_literal_expression(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let idx = self.ctx.arena.skip_parenthesized(idx);
         let node = self.ctx.arena.get(idx)?;
         if node.kind != syntax_kind_ext::AS_EXPRESSION
@@ -1134,7 +1156,7 @@ impl<'a> CheckerState<'a> {
     /// This implements recursive excess property checking for nested object literals.
     /// For example, in `const p: { x: { y: number } } = { x: { y: 1, z: 2 } }`,
     /// the nested object literal `{ y: 1, z: 2 }` should be checked for excess property `z`.
-    fn check_nested_object_literal_excess_properties(
+    pub(super) fn check_nested_object_literal_excess_properties(
         &mut self,
         prop_name: tsz_common::interner::Atom,
         target_prop_type: Option<TypeId>,
@@ -1275,7 +1297,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn object_literal_property_initializer(&self, prop_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn object_literal_property_initializer(
+        &self,
+        prop_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let prop_node = self.ctx.arena.get(prop_idx)?;
         match prop_node.kind {
             syntax_kind_ext::PROPERTY_ASSIGNMENT => self
@@ -1455,7 +1480,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn object_binding_pattern_target_type_for_excess_checks(
+    pub(super) fn object_binding_pattern_target_type_for_excess_checks(
         &mut self,
         pattern_idx: NodeIndex,
     ) -> Option<TypeId> {

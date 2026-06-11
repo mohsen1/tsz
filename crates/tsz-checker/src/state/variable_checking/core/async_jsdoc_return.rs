@@ -1,3 +1,9 @@
+//! Async-function JSDoc return-type suppression helper.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
     /// Check whether an async function initializer's type differs from the
     /// declared JSDoc type only because of Promise wrapping on the return type.

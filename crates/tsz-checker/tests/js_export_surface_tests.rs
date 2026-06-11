@@ -131,5 +131,97 @@ fn check_commonjs_single_file(file_name: &str, source: &str) -> Vec<(u32, String
         .collect()
 }
 
-include!("js_export_surface_tests_parts/part_00.rs");
-include!("js_export_surface_tests_parts/part_01.rs");
+fn check_commonjs_file_with_prelude(
+    prelude_name: &str,
+    prelude_source: &str,
+    file_name: &str,
+    source: &str,
+) -> Vec<(u32, String)> {
+    let mut parser_a = ParserState::new(prelude_name.to_string(), prelude_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = ParserState::new(file_name.to_string(), source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let arena_a = Arc::new(parser_a.get_arena().clone());
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
+
+    let binder_a = Arc::new(binder_a);
+    let binder_b = Arc::new(binder_b);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_b.as_ref(),
+        binder_b.as_ref(),
+        &types,
+        file_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: false,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(1);
+
+    checker.check_source_file(root_b);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn format_commonjs_single_file_symbol_type(
+    file_name: &str,
+    source: &str,
+    symbol_name: &str,
+) -> String {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let sym_id = binder
+        .file_locals
+        .get(symbol_name)
+        .unwrap_or_else(|| panic!("missing symbol {symbol_name}"));
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.check_source_file(root);
+    let symbol_type = checker.get_type_of_symbol(sym_id);
+    checker.format_type(symbol_type)
+}
+
+#[path = "js_export_surface_tests/part_00.rs"]
+mod part_00;
+#[path = "js_export_surface_tests/part_01.rs"]
+mod part_01;

@@ -129,9 +129,36 @@ fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::Pat
     }
 }
 
-include!("architecture_contract_tests_parts/part_00.rs");
-include!("architecture_contract_tests_parts/part_01.rs");
-include!("architecture_contract_tests_parts/part_02.rs");
-include!("architecture_contract_tests_parts/part_03.rs");
-include!("architecture_contract_tests_parts/part_04.rs");
-include!("architecture_contract_tests_parts/part_05.rs");
+fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if name == "tests" {
+                continue;
+            }
+            walk_rs_files_recursive(&path, files);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            if path.file_name().is_some_and(|name| name == "tests.rs") {
+                continue;
+            }
+            files.push(path);
+        }
+    }
+}
+
+#[path = "architecture_contract_tests/part_00.rs"]
+mod part_00;
+#[path = "architecture_contract_tests/part_01.rs"]
+mod part_01;
+#[path = "architecture_contract_tests/part_02.rs"]
+mod part_02;
+#[path = "architecture_contract_tests/part_03.rs"]
+mod part_03;
+#[path = "architecture_contract_tests/part_04.rs"]
+mod part_04;
+#[path = "architecture_contract_tests/part_05.rs"]
+mod part_05;

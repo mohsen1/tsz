@@ -1,3 +1,9 @@
+//! Explicit-annotation implicit-any deferral helpers.
+//!
+//! Split out of the parent module to satisfy the source-file line cap.
+
+use super::*;
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn explicit_annotation_can_defer_implicit_any_context(
         &self,

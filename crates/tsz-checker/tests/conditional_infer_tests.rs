@@ -28,5 +28,7 @@ fn check_source_strict_with_default_libs(source: &str) -> Vec<Diagnostic> {
     )
 }
 
-include!("conditional_infer_tests_parts/part_00.rs");
-include!("conditional_infer_tests_parts/part_01.rs");
+#[path = "conditional_infer_tests/part_00.rs"]
+mod part_00;
+#[path = "conditional_infer_tests/part_01.rs"]
+mod part_01;

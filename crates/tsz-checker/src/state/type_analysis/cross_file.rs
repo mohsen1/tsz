@@ -1954,7 +1954,7 @@ impl<'a> CheckerState<'a> {
         derived_type
     }
 }
-include!("cross_file_miss_kind.rs");
+mod miss_kind;
 
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]

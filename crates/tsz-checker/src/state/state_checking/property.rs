@@ -1238,7 +1238,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-include!("property/excess_property_tail.rs");
+mod excess_property_tail;
 
 #[cfg(test)]
 mod tests {
