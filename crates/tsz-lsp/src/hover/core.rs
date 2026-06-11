@@ -137,26 +137,7 @@ impl<'a> HoverProvider<'a> {
         let symbol = self.binder.symbols.get(symbol_id)?;
 
         // 3. Compute Type Information
-        let compiler_options = self.checker_options();
-        let mut checker = if let Some(cache) = type_cache.take() {
-            CheckerState::with_cache(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            )
-        };
-        self.apply_lib_contexts(&mut checker);
+        let mut checker = self.checker_with_cache(type_cache);
 
         let decl_node_idx = self.find_best_declaration(symbol, node_idx);
 
@@ -280,27 +261,7 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
 
-        let compiler_options = self.checker_options();
-
-        let mut checker = if let Some(cache) = type_cache.take() {
-            CheckerState::with_cache(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            )
-        };
-        self.apply_lib_contexts(&mut checker);
+        let mut checker = self.checker_with_cache(type_cache);
 
         let name = self
             .arena
@@ -1380,14 +1341,8 @@ impl<'a> HoverProvider<'a> {
         symbol: &tsz_binder::Symbol,
         decl_node_idx: NodeIndex,
     ) -> Option<String> {
-        let mut checker = CheckerState::new(
-            self.arena,
-            self.binder,
-            self.interner,
-            self.file_name.clone(),
-            self.checker_options(),
-        );
-        self.apply_lib_contexts(&mut checker);
+        let mut empty_type_cache = None;
+        let mut checker = self.checker_with_cache(&mut empty_type_cache);
 
         let type_id = if decl_node_idx.is_some()
             && symbol.flags

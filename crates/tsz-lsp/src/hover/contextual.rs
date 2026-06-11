@@ -49,26 +49,7 @@ impl<'a> HoverProvider<'a> {
             .get_identifier_text(prop_assign.name)
             .map(std::string::ToString::to_string)?;
 
-        let compiler_options = self.checker_options();
-        let mut checker = if let Some(cache) = type_cache.take() {
-            CheckerState::with_cache(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            )
-        };
-        self.apply_lib_contexts(&mut checker);
+        let mut checker = self.checker_with_cache(type_cache);
 
         let contextual_type_idx =
             self.contextual_type_for_object_literal(object_literal_idx, prop_assign_idx);
@@ -897,15 +878,8 @@ impl<'a> HoverProvider<'a> {
             .get_identifier_text(access.name_or_argument)
             .map(str::to_string)?;
 
-        let compiler_options = self.checker_options();
-        let mut checker = CheckerState::new(
-            self.arena,
-            self.binder,
-            self.interner,
-            self.file_name.clone(),
-            compiler_options,
-        );
-        self.apply_lib_contexts(&mut checker);
+        let mut empty_type_cache = None;
+        let mut checker = self.checker_with_cache(&mut empty_type_cache);
 
         let expr_type_id = checker.get_type_of_node(access.expression);
         let member_type_id = self
@@ -963,15 +937,8 @@ impl<'a> HoverProvider<'a> {
                 .iter()
                 .position(|&idx| idx == fn_expr_idx)?;
 
-            let compiler_options = self.checker_options();
-            let mut checker = CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            );
-            self.apply_lib_contexts(&mut checker);
+            let mut empty_type_cache = None;
+            let mut checker = self.checker_with_cache(&mut empty_type_cache);
             let callee_type_id = checker.get_type_of_node(call.expression);
             if let Some(function_shape_id) =
                 tsz_solver::visitor::function_shape_id(self.interner, callee_type_id)

@@ -1,5 +1,6 @@
 use super::unicode_identifier::identifier_before_offset;
 use super::*;
+use tsz_checker::state::CheckerState;
 
 impl<'a> SignatureHelpProvider<'a> {
     pub(super) fn signature_help_for_contextual_variable_initializer(
@@ -89,26 +90,7 @@ impl<'a> SignatureHelpProvider<'a> {
             })
             .unwrap_or_else(|| var_name.clone());
 
-        let compiler_options = self.checker_options();
-        let mut checker = if let Some(cache) = type_cache.take() {
-            CheckerState::with_cache(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            )
-        };
-        self.apply_lib_contexts(&mut checker);
+        let mut checker = self.checker_with_cache(type_cache);
 
         let contextual_type = checker.get_type_of_node(decl.type_annotation);
         let contextual_type = checker.resolve_lazy_type(contextual_type);
@@ -1073,26 +1055,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = walker.resolve_node(root, callee_expr)?;
 
-        let compiler_options = self.checker_options();
-        let mut checker = if let Some(cache) = type_cache.take() {
-            CheckerState::with_cache(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            )
-        };
-        self.apply_lib_contexts(&mut checker);
+        let mut checker = self.checker_with_cache(type_cache);
 
         let docs = self.signature_documentation_for_symbol(root, symbol_id, trigger.call_kind);
         let callee_type = checker.get_type_of_symbol(symbol_id);
@@ -1208,26 +1171,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = walker.resolve_node(root, callee_expr)?;
 
-        let compiler_options = self.checker_options();
-        let mut checker = if let Some(cache) = type_cache.take() {
-            CheckerState::with_cache(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.arena,
-                self.binder,
-                self.interner,
-                self.file_name.clone(),
-                compiler_options,
-            )
-        };
-        self.apply_lib_contexts(&mut checker);
+        let mut checker = self.checker_with_cache(type_cache);
 
         let docs = self.signature_documentation_for_symbol(root, symbol_id, trigger.call_kind);
         let callee_type = checker.get_type_of_symbol(symbol_id);
