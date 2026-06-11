@@ -15,7 +15,7 @@
 use std::ops::ControlFlow;
 
 use crate::construction::TypeDatabase;
-use crate::types::{ObjectShape, ParamInfo, TypeParamInfo};
+use crate::types::{IndexSignature, ParamInfo, PropertyInfo, TypeParamInfo};
 use crate::{TypeData, TypeId};
 
 /// Which child `TypeId`s a traversal descends into for each `TypeData` variant.
@@ -93,9 +93,17 @@ impl ChildPolicy {
 
     /// Child set of the deep content-predicate walkers
     /// (`contains_type_matching` and the project-cached content walker):
-    /// no application bases, no write types, no index keys, no callable index
-    /// signatures, no signature predicate/metadata; bare type-parameter
-    /// `constraint` and `default` are both visited.
+    /// bare type-parameter `constraint` and `default` are both visited.
+    ///
+    /// `application_base: false` is semantic: the base definition's own type
+    /// parameters are bound by the application's arguments. The remaining
+    /// exclusions (write types, index keys, callable index signatures,
+    /// signature predicate/metadata) are the historical child set of the old
+    /// hand-rolled predicate walkers, preserved verbatim under this change's
+    /// behavior-preservation constraint — they are not known to be semantic.
+    /// Note the resulting asymmetry: an occurrence in an *object* index
+    /// signature value is found, the same occurrence in a *callable* index
+    /// signature value is not.
     pub const CONTENT_PREDICATE: Self = Self {
         application_base: false,
         type_param_constraint: true,
@@ -169,6 +177,16 @@ impl ChildPolicy {
         type_param_default: false,
         ..Self::FULL
     };
+
+    /// [`Self::STRUCTURAL_USES`] with bare `TypeParameter`/`Infer` as leaves:
+    /// no type-parameter declaration metadata anywhere (bare, mapped
+    /// iteration variable, or signature). Used by free-occurrence checks that
+    /// classify every parameter-declaration position as bound by the host.
+    pub const STRUCTURAL_USES_SHALLOW: Self = Self {
+        type_param_constraint: false,
+        type_param_default: false,
+        ..Self::STRUCTURAL_USES
+    };
 }
 
 /// Whether `key` has any children to enumerate under `policy`.
@@ -240,25 +258,27 @@ fn visit_signature<B, F: FnMut(TypeId) -> ControlFlow<B>>(
 }
 
 #[inline]
-fn visit_object_members<B, F: FnMut(TypeId) -> ControlFlow<B>>(
+fn visit_props_and_indexes<B, F: FnMut(TypeId) -> ControlFlow<B>>(
     policy: &ChildPolicy,
-    shape: &ObjectShape,
+    properties: &[PropertyInfo],
+    string_index: Option<&IndexSignature>,
+    number_index: Option<&IndexSignature>,
+    include_index_signatures: bool,
     f: &mut F,
 ) -> ControlFlow<B> {
-    for prop in &shape.properties {
+    for prop in properties {
         f(prop.type_id)?;
         if policy.property_write_types {
             f(prop.write_type)?;
         }
     }
-    for sig in [shape.string_index.as_ref(), shape.number_index.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        if policy.index_key_types {
-            f(sig.key_type)?;
+    if include_index_signatures {
+        for sig in [string_index, number_index].into_iter().flatten() {
+            if policy.index_key_types {
+                f(sig.key_type)?;
+            }
+            f(sig.value_type)?;
         }
-        f(sig.value_type)?;
     }
     ControlFlow::Continue(())
 }
@@ -293,7 +313,14 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
         // Object types with properties and index signatures
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = db.object_shape(*shape_id);
-            visit_object_members(policy, &shape, f)
+            visit_props_and_indexes(
+                policy,
+                &shape.properties,
+                shape.string_index.as_ref(),
+                shape.number_index.as_ref(),
+                true,
+                f,
+            )
         }
 
         TypeData::Tuple(tuple_id) => {
@@ -333,27 +360,14 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
                     f,
                 )?;
             }
-            for prop in &callable.properties {
-                f(prop.type_id)?;
-                if policy.property_write_types {
-                    f(prop.write_type)?;
-                }
-            }
-            if policy.callable_index_signatures {
-                for sig in [
-                    callable.string_index.as_ref(),
-                    callable.number_index.as_ref(),
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    if policy.index_key_types {
-                        f(sig.key_type)?;
-                    }
-                    f(sig.value_type)?;
-                }
-            }
-            ControlFlow::Continue(())
+            visit_props_and_indexes(
+                policy,
+                &callable.properties,
+                callable.string_index.as_ref(),
+                callable.number_index.as_ref(),
+                policy.callable_index_signatures,
+                f,
+            )
         }
 
         TypeData::Application(app_id) => {

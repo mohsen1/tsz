@@ -1517,12 +1517,7 @@ fn content_walk_agreement_corpus(interner: &TypeInterner) -> Vec<TypeId> {
         corpus.push(interner.array(leaf));
         corpus.push(interner.union(vec![TypeId::NUMBER, leaf]));
         corpus.push(interner.intersection(vec![interner.object(vec![]), leaf]));
-        corpus.push(interner.tuple(vec![TupleElement {
-            type_id: leaf,
-            name: None,
-            optional: false,
-            rest: false,
-        }]));
+        corpus.push(interner.tuple(vec![TupleElement::fixed(leaf)]));
         corpus.push(interner.object(vec![PropertyInfo::new(prop_name, leaf)]));
         corpus.push(interner.object_with_index(ObjectShape {
             properties: vec![],
@@ -1574,12 +1569,9 @@ fn content_walk_agreement_corpus(interner: &TypeInterner) -> Vec<TypeId> {
         corpus.push(interner.no_infer(leaf));
         corpus.push(interner.enum_type(crate::def::DefId(9), leaf));
         corpus.push(interner.array(interner.union(vec![
-            interner.tuple(vec![TupleElement {
-                type_id: interner.object(vec![PropertyInfo::new(prop_name, leaf)]),
-                name: None,
-                optional: false,
-                rest: false,
-            }]),
+            interner.tuple(vec![TupleElement::fixed(
+                interner.object(vec![PropertyInfo::new(prop_name, leaf)]),
+            )]),
             TypeId::NULL,
         ])));
     }
@@ -1686,6 +1678,10 @@ fn has_policy_children_matches_enumerator_on_corpus() {
         ("STRUCTURAL_USES", ChildPolicy::STRUCTURAL_USES),
         ("ERROR_CONTAINMENT", ChildPolicy::ERROR_CONTAINMENT),
         ("SHALLOW", ChildPolicy::SHALLOW),
+        (
+            "STRUCTURAL_USES_SHALLOW",
+            ChildPolicy::STRUCTURAL_USES_SHALLOW,
+        ),
     ];
     for &root in &corpus {
         let Some(key) = interner.lookup(root) else {

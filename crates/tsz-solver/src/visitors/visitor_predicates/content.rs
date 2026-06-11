@@ -10,7 +10,7 @@ use std::ops::ControlFlow;
 use crate::construction::TypeDatabase;
 use crate::types::IntrinsicKind;
 use crate::visitors::child_policy::{
-    ChildPolicy, has_policy_children, try_for_each_child_with_policy,
+    ChildPolicy, for_each_child_with_policy, has_policy_children, try_for_each_child_with_policy,
 };
 use crate::{TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -166,34 +166,43 @@ pub fn contains_type_parameter_named_shallow(
     type_id: TypeId,
     name: Atom,
 ) -> bool {
+    worklist_contains_matching(
+        types,
+        type_id,
+        &ChildPolicy::SHALLOW,
+        |_, data| matches!(data, Some(TypeData::TypeParameter(info)) if info.name == name),
+    )
+}
+
+/// Pooled-buffer worklist containment check over `policy`'s child set:
+/// returns `true` when `node_matches` holds for any reachable node. The
+/// per-walker leaf rule (e.g. "a bare `TypeParameter` is a leaf") lives in
+/// `policy`; `node_matches` receives the node's id and looked-up data so both
+/// id-level and shape-level predicates can drive it.
+fn worklist_contains_matching(
+    types: &dyn TypeDatabase,
+    root: TypeId,
+    policy: &ChildPolicy,
+    mut node_matches: impl FnMut(TypeId, Option<&TypeData>) -> bool,
+) -> bool {
     with_predicate_buffers(|visited, stack| {
-        stack.push(type_id);
+        stack.push(root);
         while let Some(current) = stack.pop() {
             if current.is_intrinsic() || !visited.insert(current) {
                 continue;
             }
-
-            let Some(data) = types.lookup(current) else {
-                continue;
-            };
-
-            // Check predicate
-            if matches!(&data, TypeData::TypeParameter(info) if info.name == name) {
+            let data = types.lookup(current);
+            if node_matches(current, data.as_ref()) {
                 return true;
             }
-
-            // SHALLOW treats TypeParameter/Infer as leaves: we only care
-            // about identity (name match), not what their constraints contain.
-            crate::visitors::child_policy::for_each_child_with_policy(
-                types,
-                &data,
-                &ChildPolicy::SHALLOW,
-                |child| {
-                    if !visited.contains(&child) {
-                        stack.push(child);
-                    }
-                },
-            );
+            let Some(data) = data else {
+                continue;
+            };
+            for_each_child_with_policy(types, &data, policy, |child| {
+                if !visited.contains(&child) {
+                    stack.push(child);
+                }
+            });
         }
         false
     })
@@ -219,33 +228,8 @@ pub fn contains_type_parameter_identity_shallow(
     type_id: TypeId,
     target: TypeId,
 ) -> bool {
-    with_predicate_buffers(|visited, stack| {
-        stack.push(type_id);
-        while let Some(current) = stack.pop() {
-            if current.is_intrinsic() || !visited.insert(current) {
-                continue;
-            }
-
-            if type_parameter_identity_matches(def_store, current, target) {
-                return true;
-            }
-
-            let Some(data) = types.lookup(current) else {
-                continue;
-            };
-
-            crate::visitors::child_policy::for_each_child_with_policy(
-                types,
-                &data,
-                &ChildPolicy::SHALLOW,
-                |child| {
-                    if !visited.contains(&child) {
-                        stack.push(child);
-                    }
-                },
-            );
-        }
-        false
+    worklist_contains_matching(types, type_id, &ChildPolicy::SHALLOW, |current, _| {
+        type_parameter_identity_matches(def_store, current, target)
     })
 }
 
@@ -475,7 +459,9 @@ where
         if !has_policy_children(&key, &self.policy) {
             return false;
         }
-        self.check(type_id)
+        let result = self.walk_children(type_id, &key);
+        self.memo.insert(type_id, result);
+        result
     }
 
     fn check(&mut self, type_id: TypeId) -> bool {
@@ -510,6 +496,14 @@ where
             return false;
         }
 
+        let result = self.walk_children(type_id, &key);
+        self.memo.insert(type_id, result);
+        result
+    }
+
+    /// Recursion-guarded descent into `type_id`'s children under the walker's
+    /// policy. `key` is the node's already-fetched data.
+    fn walk_children(&mut self, type_id: TypeId, key: &TypeData) -> bool {
         match self.guard.enter(type_id) {
             crate::recursion::RecursionResult::Entered => {}
             _ => return false,
@@ -517,7 +511,7 @@ where
 
         let types = self.types;
         let policy = self.policy;
-        let result = try_for_each_child_with_policy::<(), _>(types, &key, &policy, &mut |child| {
+        let result = try_for_each_child_with_policy::<(), _>(types, key, &policy, &mut |child| {
             if self.check(child) {
                 ControlFlow::Break(())
             } else {
@@ -527,8 +521,6 @@ where
         .is_break();
 
         self.guard.leave(type_id);
-        self.memo.insert(type_id, result);
-
         result
     }
 }
@@ -594,13 +586,18 @@ impl<'a> FreeTypeParamCollector<'a> {
         let Some(key) = self.types.lookup(type_id) else {
             return FxHashSet::default();
         };
+        // A `TypeParameter`/`Infer` is a free occurrence and a leaf: answer
+        // directly, skipping the recursion-guard/stacker bookkeeping.
+        if matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+            let mut set = FxHashSet::default();
+            set.insert(type_id);
+            self.memo.insert(type_id, set.clone());
+            return set;
+        }
         // Terminal-kind fast path: variants with no children under this
         // walker's policy contribute no free parameters, so skip the
-        // recursion-guard/memo bookkeeping entirely. `TypeParameter`/`Infer`
-        // are the leaves we collect, handled positively in `free_key`.
-        if !matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
-            && !has_policy_children(&key, &ChildPolicy::FREE_PARAM_COLLECT)
-        {
+        // recursion-guard/memo bookkeeping entirely.
+        if !has_policy_children(&key, &ChildPolicy::FREE_PARAM_COLLECT) {
             return FxHashSet::default();
         }
         // Cycle back-edges contribute no new free parameters (the parameter is
@@ -613,36 +610,27 @@ impl<'a> FreeTypeParamCollector<'a> {
         // Grow the native stack on demand: this walk runs *inside* the already
         // deep subtype-relation recursion, so a deeply nested type can otherwise
         // overflow. Mirrors `RecursiveTypeCollector::visit`.
-        let result =
-            stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.free_key(type_id, &key));
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.free_key(&key));
         self.guard.leave(type_id);
         self.memo.insert(type_id, result.clone());
         result
     }
 
-    /// Free parameters of one node. A `TypeParameter`/`Infer` is a free
-    /// occurrence and a leaf — its constraint/default are metadata, not free
-    /// uses. Everything else unions its children's free parameters under
-    /// [`ChildPolicy::FREE_PARAM_COLLECT`]: a *generic* signature binds its
-    /// own type parameters, so its body is skipped wholesale. This
-    /// intentionally does not descend into a generic signature to recover an
-    /// outer parameter threaded through it; that extra precision is
-    /// unnecessary for the identity-sharing decision this helper drives, and
-    /// descending makes the walk dramatically deeper on real-world recursive
-    /// signature graphs.
-    fn free_key(&mut self, type_id: TypeId, key: &TypeData) -> FxHashSet<TypeId> {
+    /// Free parameters of one node: the union of its children's free
+    /// parameters under [`ChildPolicy::FREE_PARAM_COLLECT`]. A *generic*
+    /// signature binds its own type parameters, so its body is skipped
+    /// wholesale. This intentionally does not descend into a generic
+    /// signature to recover an outer parameter threaded through it; that
+    /// extra precision is unnecessary for the identity-sharing decision this
+    /// helper drives, and descending makes the walk dramatically deeper on
+    /// real-world recursive signature graphs. (`TypeParameter`/`Infer` leaves
+    /// are answered in [`Self::free`] before this is reached.)
+    fn free_key(&mut self, key: &TypeData) -> FxHashSet<TypeId> {
         let mut set = FxHashSet::default();
-        if matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
-            set.insert(type_id);
-            return set;
-        }
         let types = self.types;
-        crate::visitors::child_policy::for_each_child_with_policy(
-            types,
-            key,
-            &ChildPolicy::FREE_PARAM_COLLECT,
-            |child| set.extend(self.free(child)),
-        );
+        for_each_child_with_policy(types, key, &ChildPolicy::FREE_PARAM_COLLECT, |child| {
+            set.extend(self.free(child))
+        });
         set
     }
 }
@@ -659,54 +647,18 @@ pub fn contains_free_type_parameters_except_name(
     type_id: TypeId,
     excluded_name: Atom,
 ) -> bool {
-    with_predicate_buffers(|visited, stack| {
-        stack.push(type_id);
-        while let Some(current) = stack.pop() {
-            if current.is_intrinsic() || !visited.insert(current) {
-                continue;
+    worklist_contains_matching(
+        types,
+        type_id,
+        &ChildPolicy::STRUCTURAL_USES_SHALLOW,
+        |_, data| match data {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+                info.name != excluded_name
             }
-            let Some(data) = types.lookup(current) else {
-                continue;
-            };
-            match &data {
-                TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                    if info.name != excluded_name {
-                        return true;
-                    }
-                    // Skip the parameter's `constraint`/`default` — those are
-                    // metadata for the parameter, not uses by the enclosing
-                    // type. Same reason applies to Mapped/Function/Callable
-                    // type-param lists handled in the visit_structural_children
-                    // path below.
-                    continue;
-                }
-                TypeData::ThisType | TypeData::BoundParameter(_) => return true,
-                _ => {}
-            }
-            visit_structural_children(types, &data, |child| {
-                if !visited.contains(&child) {
-                    stack.push(child);
-                }
-            });
-        }
-        false
-    })
-}
-
-/// Variant of [`crate::visitors::visitor::for_each_child_by_id`] that skips type-
-/// parameter `constraint`/`default` metadata on `Mapped`, `Function`, and
-/// `Callable` types. Used by free-type-parameter checks that must treat
-/// parameter-declaration metadata as bound by the host, not as free uses.
-fn visit_structural_children<F>(db: &dyn TypeDatabase, data: &TypeData, mut f: F)
-where
-    F: FnMut(TypeId),
-{
-    crate::visitors::child_policy::for_each_child_with_policy(
-        db,
-        data,
-        &ChildPolicy::STRUCTURAL_USES,
-        &mut f,
-    );
+            Some(TypeData::ThisType | TypeData::BoundParameter(_)) => true,
+            _ => false,
+        },
+    )
 }
 
 #[cfg(test)]
