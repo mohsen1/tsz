@@ -37,8 +37,9 @@ pub(crate) struct PackageJson {
 // `exports_imports` module). Keep only the CLI-specific compiler-version
 // plumbing here.
 
-// NOTE: Keep this in sync with the TypeScript version this compiler targets.
-// TODO: Make this configurable once CLI plumbing is available.
+// Default used when neither tsconfig `typesVersionsCompilerVersion`, CLI
+// `--typesVersionsCompilerVersion`, nor `TSZ_TYPES_VERSIONS_COMPILER_VERSION`
+// provides a non-empty override.
 pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer =
     tsz_common::module_resolution::types_versions::DEFAULT_COMPILER_VERSION;
 

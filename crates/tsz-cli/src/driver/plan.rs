@@ -1220,6 +1220,31 @@ mod tests {
     }
 
     #[test]
+    fn apply_cli_overrides_types_versions_compiler_version_sets_option() {
+        let mut options = ResolvedCompilerOptions::default();
+        let args =
+            CliArgs::try_parse_from(["tsz", "--typesVersionsCompilerVersion", "5.6.1"]).unwrap();
+        apply_cli_overrides(&mut options, &args).unwrap();
+        assert_eq!(
+            options.types_versions_compiler_version.as_deref(),
+            Some("5.6.1")
+        );
+    }
+
+    #[test]
+    fn apply_cli_overrides_types_versions_compiler_version_uses_env_fallback() {
+        let mut options = ResolvedCompilerOptions::default();
+        let args = CliArgs::try_parse_from(["tsz"]).unwrap();
+        crate::driver::with_types_versions_env(Some(" 5.5.4 "), || {
+            apply_cli_overrides(&mut options, &args).unwrap();
+        });
+        assert_eq!(
+            options.types_versions_compiler_version.as_deref(),
+            Some("5.5.4")
+        );
+    }
+
+    #[test]
     fn apply_cli_overrides_strict_expands_flags() {
         let mut options = ResolvedCompilerOptions::default();
         let args = CliArgs::try_parse_from(["tsz", "--strict"]).unwrap();
