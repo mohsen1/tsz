@@ -77,14 +77,23 @@ assert.match(
 
 assert.match(
   prepareCloudbuild,
-  /BENCH_RUST_TARGET_CPU=x86-64/,
-  "Cloud Build benchmark prep should build portable PGO binaries instead of target-cpu=native",
+  /BENCH_RUST_TARGET_CPU=x86-64-v3/,
+  "Cloud Build benchmark prep should build portable-but-representative (x86-64-v3) PGO binaries: " +
+    "target-cpu=native SIGILLs on older shard hosts and bare x86-64 costs hot rows ~1.7-1.9x (#13248)",
 );
 assert.match(
   shardCloudbuild,
-  /BENCH_RUST_TARGET_CPU=x86-64/,
+  /BENCH_RUST_TARGET_CPU=x86-64-v3/,
   "Cloud Build benchmark shards should inherit the same portable bench target CPU",
 );
+{
+  const targetCpuOf = (config) => config.match(/BENCH_RUST_TARGET_CPU=(\S+?)'/)?.[1] ?? null;
+  assert.equal(
+    targetCpuOf(prepareCloudbuild),
+    targetCpuOf(shardCloudbuild),
+    "prepare and shard Cloud Build configs must pin the identical bench target CPU",
+  );
+}
 
 assert.match(
   workflow,

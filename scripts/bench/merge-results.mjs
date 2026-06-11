@@ -302,6 +302,7 @@ function measurementProfileSignature(profile) {
       profile_fingerprint: pgo.profile_fingerprint || null,
       training_fingerprint: pgo.training_fingerprint || null,
       profile_data_source: pgo.profile_data_source || null,
+      rust_target_cpu: pgo.rust_target_cpu || null,
       training_metadata_available: pgo.training_metadata_available ?? null,
       training_input_count: pgo.training_input_count ?? null,
       training_failure_count: pgo.training_failure_count ?? null,

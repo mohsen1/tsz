@@ -9,7 +9,13 @@ steps:
       - 'BENCH_COLD=1'
       - 'BENCH_PGO=1'
       - 'BENCH_REQUIRE_PGO=1'
-      - 'BENCH_RUST_TARGET_CPU=x86-64'
+      # x86-64-v3 (AVX2/BMI2/FMA) is the portable-but-representative codegen
+      # baseline: every machine in the bench fleet (e2 hosts are Broadwell/
+      # EPYC Rome or newer) executes it, unlike `native` which SIGILLed when
+      # the build host was newer than a shard host, and unlike bare `x86-64`
+      # (SSE2-only) which silently cost type-fest/rxjs rows ~1.7-1.9x wall
+      # time (issue #13248). Keep prepare and shard pins identical.
+      - 'BENCH_RUST_TARGET_CPU=x86-64-v3'
       - 'TSC_NPM_SPEC=6.0.2'
       - 'CARGO_BUILD_JOBS=32'
       - 'CARGO_INCREMENTAL=0'

@@ -111,6 +111,7 @@ const SAMPLE_MEASUREMENT_PROFILE = {
     profile_fingerprint: "abcdef1234567890",
     training_fingerprint: "123456abcdef7890",
     profile_data_source: "fresh",
+    rust_target_cpu: "x86-64-v3",
     built_at: "2026-05-20T01:02:03Z",
     llvm_profdata: "/toolchain/bin/llvm-profdata",
     training_metadata_available: true,
@@ -169,6 +170,7 @@ withTempDir((dir) => {
   assert.match(result.stderr, /Measurement profile.*release-pgo/, "should show measurement profile mode");
   assert.match(result.stderr, /PGO profile.*abcdef123456/, "should show PGO profile fingerprint");
   assert.match(result.stderr, /PGO training.*123456abcdef/, "should show PGO training fingerprint");
+  assert.match(result.stderr, /Binary target CPU.*x86-64-v3/, "should show the binary codegen target CPU");
 });
 console.log("✅ complete all-green artifact exits 0");
 

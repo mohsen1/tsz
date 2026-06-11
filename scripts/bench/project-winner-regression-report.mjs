@@ -26,6 +26,22 @@ function sourceInfo(artifact, file) {
   };
 }
 
+// Timing deltas across a binary codegen-config change (e.g. target-cpu
+// x86-64 -> x86-64-v3) measure the build pipeline, not the source window;
+// the report surfaces the drift so regressions get attributed correctly
+// (issue #13248: an ISA downgrade read as a +89% row regression).
+function binaryCodegen(previous, current) {
+  const targetCpuOf = (artifact) =>
+    artifact?.measurement_profile?.profile_guided_optimization?.rust_target_cpu ?? null;
+  const previousCpu = targetCpuOf(previous);
+  const currentCpu = targetCpuOf(current);
+  return {
+    previous_rust_target_cpu: previousCpu,
+    current_rust_target_cpu: currentCpu,
+    changed: previousCpu !== null && currentCpu !== null && previousCpu !== currentCpu,
+  };
+}
+
 function indexedProjectRows(artifact) {
   const rows = new Map();
   const duplicateCounts = new Map();
@@ -107,6 +123,7 @@ function compareRegressions(previous, current, previousPath, currentPath) {
     generated_at: new Date().toISOString(),
     previous: sourceInfo(previous, previousPath),
     current: sourceInfo(current, currentPath),
+    binary_codegen: binaryCodegen(previous, current),
     totals: {
       known_project_rows: Object.keys(PROJECT_ROWS_BY_NAME).length,
       green_project_rows_compared: compared,
@@ -140,6 +157,17 @@ function markdownReport(report) {
     `| Duplicate project rows | ${report.totals.duplicate_project_rows} |`,
     "",
   ];
+
+  if (report.binary_codegen?.changed) {
+    lines.push(
+      "> ⚠️ Binary codegen target changed between artifacts " +
+        `(\`${report.binary_codegen.previous_rust_target_cpu}\` -> ` +
+        `\`${report.binary_codegen.current_rust_target_cpu}\`); ` +
+        "timing deltas across this boundary reflect the build configuration, " +
+        "not the source-commit window.",
+      "",
+    );
+  }
 
   if (report.duplicate_rows.length > 0) {
     lines.push("## Duplicate Project Rows", "");

@@ -911,6 +911,36 @@ withTempDir((dir) => {
   );
 });
 
+// Shards measured with binaries built for different target CPUs must be
+// flagged: their timings are not comparable (#13248).
+withTempDir((dir) => {
+  const firstProfile = cloneJson(SAMPLE_MEASUREMENT_PROFILE);
+  const secondProfile = cloneJson(SAMPLE_MEASUREMENT_PROFILE);
+  firstProfile.profile_guided_optimization.rust_target_cpu = "x86-64-v3";
+  secondProfile.profile_guided_optimization.rust_target_cpu = "x86-64";
+
+  const first = writeInput(
+    dir,
+    "bench-results-cpu-a.json",
+    [projectRow("first")],
+    { measurement_profile: firstProfile },
+  );
+  const second = writeInput(
+    dir,
+    "bench-results-cpu-b.json",
+    [projectRow("second")],
+    { measurement_profile: secondProfile },
+  );
+  const result = runMergeInputs(dir, [first, second]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.validation.measurement_profile_warnings.length, 1);
+  assert.deepEqual(
+    merged.validation.measurement_profile_warnings[0].mismatched_fields,
+    ["profile_guided_optimization.rust_target_cpu"],
+  );
+});
+
 // artifact_missing rows: accepted by merge step without a compatibility object
 // or without all required compatibility fields. They must not block the merge.
 withTempDir((dir) => {

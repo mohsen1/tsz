@@ -169,7 +169,7 @@ while [[ $# -gt 0 ]]; do
             echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"
             echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
             echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
-            echo "  BENCH_RUST_TARGET_CPU=<cpu>  Rust target-cpu for bench builds (default: native)"
+            echo "  BENCH_RUST_TARGET_CPU=<cpu>  Rust target-cpu for bench builds (default: native; CI pins x86-64-v3)"
             exit 0
             ;;
         *) shift ;;
