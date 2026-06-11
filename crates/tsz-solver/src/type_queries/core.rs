@@ -12,6 +12,84 @@ use crate::{TypeData, TypeId, TypeParamInfo};
 use super::classifiers::get_lazy_def_id;
 use super::traversal::collect_property_name_atoms_for_diagnostics;
 
+/// tsc-equivalent `isGenericType` for conditional-type branch decisions.
+///
+/// `getConditionalType` in tsc never resolves a conditional whose (effective)
+/// check type is still generic: `isGenericType` = instantiable flags
+/// (`TypeParameter` / `infer` / `this` / indexed access / `keyof` /
+/// string-mapping / deferred conditional) plus object types whose *type
+/// arguments* are generic (type references, tuples, arrays, and
+/// unions/intersections of those, and generic mapped types). Crucially it does
+/// NOT recurse through object members or function signatures — an anonymous
+/// object/function type containing a type parameter in a member position is
+/// not "generic" for deferral purposes, so `(x: T) => void extends Function`
+/// still resolves eagerly.
+///
+/// A `KeyOf` / `IndexAccess` / `StringIntrinsic` / `Conditional` node that
+/// *survived* evaluation is by construction still deferred (either its operand
+/// is generic or its reference could not be resolved yet), so those count as
+/// generic without inspecting the operand. This also keeps the decision
+/// schedule-independent under parallel fresh checking: an unresolved
+/// `keyof Lazy(D)` defers instead of feeding a definitive false branch.
+pub fn is_generic_conditional_check_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_generic_conditional_check_type_depth(db, type_id, 0)
+}
+
+fn is_generic_conditional_check_type_depth(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    // Conservative cap: beyond this depth keep the current eager behavior
+    // (treat as non-generic) so pathological nesting cannot flip resolution.
+    if depth > 64 || type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::ThisType
+            | TypeData::KeyOf(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::StringIntrinsic { .. }
+            | TypeData::Conditional(_),
+        ) => true,
+        Some(TypeData::TemplateLiteral(spans)) => db.template_list(spans).iter().any(|span| {
+            matches!(
+                span,
+                crate::types::TemplateSpan::Type(t)
+                    if is_generic_conditional_check_type_depth(db, *t, depth + 1)
+            )
+        }),
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            app.args
+                .iter()
+                .any(|&arg| is_generic_conditional_check_type_depth(db, arg, depth + 1))
+        }
+        Some(TypeData::Tuple(elements)) => db
+            .tuple_list(elements)
+            .iter()
+            .any(|el| is_generic_conditional_check_type_depth(db, el.type_id, depth + 1)),
+        Some(TypeData::Array(elem) | TypeData::ReadonlyType(elem) | TypeData::NoInfer(elem)) => {
+            is_generic_conditional_check_type_depth(db, elem, depth + 1)
+        }
+        Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&m| is_generic_conditional_check_type_depth(db, m, depth + 1)),
+        Some(TypeData::Mapped(mapped_id)) => {
+            // Generic mapped type: tsc's `isGenericMappedType` keys off a
+            // still-generic constraint (`[K in keyof T]`).
+            let mapped = db.get_mapped(mapped_id);
+            is_generic_conditional_check_type_depth(db, mapped.constraint, depth + 1)
+        }
+        _ => false,
+    }
+}
+
 pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::FxHashSet<String> {
     if let Some(exact) = super::data::collect_exact_literal_property_keys(db, type_id) {
         return exact.into_iter().map(|a| db.resolve_atom(a)).collect();

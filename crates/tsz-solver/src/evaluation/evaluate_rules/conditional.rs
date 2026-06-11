@@ -136,6 +136,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker
     }
 
+    /// tsc's permissive-instantiation false-branch gate (`getConditionalType`).
+    ///
+    /// When the check type is still generic, a failed relation against the
+    /// extends type is only *definitive* if it also fails under the permissive
+    /// instantiation — every named type parameter replaced by `any`
+    /// (tsc's `wildcardType`). `Exclude<keyof Params, never>` resolves its
+    /// false branch this way (`keyof any` is not assignable to `never`
+    /// regardless of `Params`), while genuinely indeterminate relations stay
+    /// deferred. Returns `true` when the false branch is definitive.
+    fn permissive_false_branch_is_definitive(
+        &mut self,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> bool {
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+        let mut params = self.extract_type_params_from_type(check_type);
+        for param in self.extract_type_params_from_type(extends_type) {
+            if !params.iter().any(|existing| existing.name == param.name) {
+                params.push(param);
+            }
+        }
+        if params.is_empty() {
+            // No named parameters to widen: the failed relation already used
+            // the most permissive forms available.
+            return true;
+        }
+        let mut substitution = TypeSubstitution::new();
+        for param in &params {
+            substitution.insert(param.name, TypeId::ANY);
+        }
+        let permissive_check =
+            self.evaluate(instantiate_type(self.interner(), check_type, &substitution));
+        let permissive_extends = self.evaluate(instantiate_type(
+            self.interner(),
+            extends_type,
+            &substitution,
+        ));
+        !self.check_conditional_subtype(permissive_check, permissive_extends)
+    }
+
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
     /// Algorithm:
@@ -873,6 +913,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     });
                 }
 
+                // Infer match failed. If the check type is still generic the
+                // failure is only definitive when it also fails under the
+                // permissive instantiation (every type parameter replaced by
+                // `any` — tsc's `getPermissiveInstantiation` gate in
+                // `getConditionalType`); otherwise instantiation could still
+                // make the pattern match, so the conditional stays deferred.
+                // The TS2589 depth-detection pass is exempt: it evaluates
+                // alias bodies with their parameters left free precisely so
+                // the recursive branch is driven and the recursion guard can
+                // observe the re-applied alias.
+                if !self.is_depth_detection_pass()
+                    && crate::type_queries::is_generic_conditional_check_type(
+                        self.interner(),
+                        check_type,
+                    )
+                    && !self.permissive_false_branch_is_definitive(check_type, extends_type)
+                {
+                    return self.interner().conditional(ConditionalType {
+                        check_type,
+                        extends_type,
+                        true_type: cond.true_type,
+                        false_type: cond.false_type,
+                        is_distributive: cond.is_distributive,
+                    });
+                }
+
                 // Infer match failed — take the false branch.
                 match self.try_dispatch_tail_call(
                     cond.false_type,
@@ -917,6 +983,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // T <: U -> true branch
                 cond.true_type
             } else if extends_has_type_params
+                // tsc parity (`getConditionalType`): a conditional whose
+                // effective check type is still generic — instantiable flags,
+                // or a type reference/tuple/template whose arguments are
+                // generic — only resolves to the false branch when the
+                // relation also fails under the permissive instantiation
+                // (every type parameter replaced by `any`, tsc's
+                // `getPermissiveInstantiation` gate); otherwise it stays
+                // deferred until instantiation makes the check type concrete.
+                // This also covers deferred wrappers over *unresolved*
+                // references (`keyof Lazy(D)`), which under parallel fresh
+                // checking must defer rather than yield a schedule-dependent
+                // definitive false. The TS2589 depth-detection pass is exempt
+                // so unconditionally-recursive aliases still drive their
+                // recursive branch and surface the depth error.
+                || (!self.is_depth_detection_pass()
+                    && crate::type_queries::is_generic_conditional_check_type(
+                        self.interner(),
+                        check_type,
+                    )
+                    && !self.permissive_false_branch_is_definitive(check_type, extends_type))
                 // Also check if the evaluated check_type is a direct Lazy reference
                 // (or a union/intersection of Lazy refs). Type parameters in generic
                 // function bodies are Lazy(DefId) and contains_type_parameters doesn't
