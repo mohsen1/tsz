@@ -14,7 +14,6 @@ use tsz_parser::parser::node::NodeAccess;
 
 use super::{ImportSpecifierPreference, Project};
 
-use tsz_common::file_extensions::TS_FAMILY_EXTENSIONS as TS_EXTENSION_SUFFIXES;
 use tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS_BARE as TS_EXTENSION_CANDIDATES;
 
 mod helpers;
@@ -757,8 +756,8 @@ impl Project {
             return None;
         }
 
-        let from_path = strip_ts_extension(&normalize_path(Path::new(from_file)));
-        let target_path = strip_ts_extension(&normalize_path(Path::new(target_file)));
+        let from_path = strip_ts_path_extension(&normalize_path(Path::new(from_file)));
+        let target_path = strip_ts_path_extension(&normalize_path(Path::new(target_file)));
         let style = self.relative_import_style(from_file);
         let mut best_spec: Option<String> = None;
 
@@ -1028,7 +1027,7 @@ impl Project {
         let from_dir = Path::new(from_file)
             .parent()
             .unwrap_or_else(|| Path::new(""));
-        let target_path = strip_ts_extension(Path::new(target_file));
+        let target_path = strip_ts_path_extension(Path::new(target_file));
         let relative = relative_path(from_dir, &target_path);
 
         let mut spec = path_to_string(&relative).replace('\\', "/");

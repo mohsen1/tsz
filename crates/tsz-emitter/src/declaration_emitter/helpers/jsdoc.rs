@@ -685,8 +685,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena_to_path
             .iter()
             .filter_map(|(&arena_addr, source_path)| {
-                let relative = self
-                    .strip_ts_extensions(&self.calculate_relative_path(current_path, source_path));
+                let relative = self.strip_module_path_extension(
+                    &self.calculate_relative_path(current_path, source_path),
+                );
                 if relative != module_specifier
                     && relative
                         .strip_suffix("/index")

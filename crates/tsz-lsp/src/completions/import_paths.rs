@@ -8,7 +8,9 @@
 //! This is separate from string literal completions which handle
 //! string arguments in function calls.
 
-use tsz_common::file_extensions::{KNOWN_MODULE_EXTENSIONS, strip_known_extension};
+use tsz_common::file_extensions::{
+    KNOWN_MODULE_EXTENSIONS, strip_known_extension as strip_ts_extension,
+};
 
 use super::{CompletionItem, CompletionItemKind, sort_priority};
 
@@ -115,17 +117,6 @@ fn is_importable_file(path: &str) -> bool {
     KNOWN_MODULE_EXTENSIONS
         .iter()
         .any(|ext| path.ends_with(ext))
-}
-
-/// Strip TypeScript/JavaScript extensions from a path for module specifiers.
-///
-/// Delegates to [`tsz_common::file_extensions::strip_known_extension`] which
-/// handles declaration extensions (`.d.ts`, `.d.mts`, `.d.cts`) correctly —
-/// longest suffix first — so `"types.d.ts"` → `"types"` while
-/// `"types.d.tsx"` → `"types.d"` (`.tsx` is a source extension, not a
-/// declaration extension, so only `.tsx` is stripped).
-fn strip_ts_extension(path: &str) -> &str {
-    strip_known_extension(path)
 }
 
 /// Compute a relative path from `from_dir` to `to_file`.

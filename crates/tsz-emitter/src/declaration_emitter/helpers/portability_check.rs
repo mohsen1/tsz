@@ -1150,8 +1150,9 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             let source = diagnostic_source.to_str()?;
-            let mut from_path =
-                self.strip_ts_extensions(&self.calculate_relative_path(current_file_path, source));
+            let mut from_path = self.strip_module_path_extension(
+                &self.calculate_relative_path(current_file_path, source),
+            );
             if from_path.ends_with("/index") {
                 from_path.truncate(from_path.len() - "/index".len());
             }
@@ -1629,7 +1630,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_none_or(|spec| spec.contains('/'))
         {
             references.push((
-                self.strip_ts_extensions(&self.calculate_relative_path(file, &source_path)),
+                self.strip_module_path_extension(&self.calculate_relative_path(file, &source_path)),
                 symbol.escaped_name.clone(),
             ));
         }
