@@ -1,4 +1,25 @@
 impl<'a> CheckerState<'a> {
+    /// Resolve an intersection member for excess-property probing.
+    ///
+    /// A deferred conditional member (e.g. a distributive conditional whose
+    /// check type was an unresolved `Lazy` semantic ref at interning time)
+    /// hides its eventual properties from raw lookups. Evaluate it through
+    /// the checker's `TypeEnvironment` so distribution runs before property
+    /// probing; otherwise every source property looks excess and a false
+    /// TS2353 preempts the real mismatch.
+    pub(super) fn excess_member_for_property_probe(&mut self, member: TypeId) -> TypeId {
+        let resolved_member = self.resolve_type_for_property_access(member);
+        if crate::query_boundaries::common::has_deferred_conditional_member(
+            self.ctx.types,
+            resolved_member,
+        ) {
+            let evaluated = self.evaluate_type_with_env(resolved_member);
+            self.resolve_type_for_property_access(evaluated)
+        } else {
+            resolved_member
+        }
+    }
+
     fn excess_property_union_target(&self, target: TypeId, resolved_target: TypeId) -> TypeId {
         if query::union_members(self.ctx.types, resolved_target).is_some() {
             return resolved_target;

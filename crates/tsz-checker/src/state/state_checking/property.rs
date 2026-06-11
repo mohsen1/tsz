@@ -396,7 +396,7 @@ impl<'a> CheckerState<'a> {
                 let mut uncertain = false;
 
                 for &member in &members {
-                    let resolved_member = self.resolve_type_for_property_access(member);
+                    let resolved_member = self.excess_member_for_property_probe(member);
                     if self.target_index_signature_accepts_source_property_with_env(
                         resolved_member,
                         source_prop,

@@ -273,6 +273,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
             }
 
+            // A distributive conditional cannot be decided while its check type
+            // is an unresolved semantic ref (`Lazy(DefId)`): the ref may resolve
+            // to a union, which must distribute member-by-member (tsc resolves
+            // the check type before deciding distribution in
+            // `getConditionalType`). Committing a branch here would bake the
+            // non-distributed instantiation (e.g. `Pick<A | B, keyof (A | B)>`
+            // instead of `Pick<A, keyof A> | Pick<B, keyof B>`) into shared
+            // caches that later resolver-capable evaluations reuse. When the
+            // active resolver cannot resolve the ref, defer so a
+            // resolver-capable evaluation (checker `TypeEnvironment`) decides
+            // distribution. When the ref does resolve here, keep the
+            // established commit path: the with-resolver `evaluate` above has
+            // already folded resolvable refs, so reaching this point with a
+            // still-`Lazy` check means the surrounding evaluation pipeline
+            // owns the distribution decision.
+            if cond.is_distributive
+                && let Some(TypeData::Lazy(def_id)) = self.interner().lookup(check_type)
+                && self
+                    .resolver()
+                    .resolve_lazy(def_id, self.interner())
+                    .is_none()
+            {
+                return self.interner().conditional(*cond);
+            }
+
             if let Some(TypeData::Infer(info)) = self.interner().lookup(extends_type) {
                 // A bare `infer X` extends clause always matches, so tsc takes the
                 // true branch with `X` bound to the check type. Normal evaluation
