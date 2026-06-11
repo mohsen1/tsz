@@ -466,6 +466,22 @@ pub(super) fn weighted_shard_files(
     shard_count: usize,
     weights: Option<&ShardWeights>,
 ) -> Vec<PathBuf> {
+    weighted_shards(files, test_dir, shard_count, weights)
+        .into_iter()
+        .nth(shard_index)
+        // Keep the weighted assignment order. The runner feeds this list into a
+        // bounded concurrent stream, so starting heavier tests first avoids
+        // leaving a slow test to extend the tail after lighter work has drained.
+        .map(|(_, selected)| selected)
+        .unwrap_or_default()
+}
+
+pub(super) fn weighted_shards(
+    files: Vec<PathBuf>,
+    test_dir: &Path,
+    shard_count: usize,
+    weights: Option<&ShardWeights>,
+) -> Vec<(f64, Vec<PathBuf>)> {
     let mut weighted: Vec<(PathBuf, String, f64)> = files
         .into_iter()
         .map(|path| {
@@ -485,6 +501,10 @@ pub(super) fn weighted_shard_files(
 
     let mut shards: Vec<(f64, Vec<PathBuf>)> =
         (0..shard_count).map(|_| (0.0, Vec::new())).collect();
+    if shards.is_empty() {
+        return shards;
+    }
+
     for (path, _key, weight) in weighted {
         let mut best = 0;
         for idx in 1..shards.len() {
@@ -499,11 +519,4 @@ pub(super) fn weighted_shard_files(
     }
 
     shards
-        .into_iter()
-        .nth(shard_index)
-        // Keep the weighted assignment order. The runner feeds this list into a
-        // bounded concurrent stream, so starting heavier tests first avoids
-        // leaving a slow test to extend the tail after lighter work has drained.
-        .map(|(_, selected)| selected)
-        .unwrap_or_default()
 }

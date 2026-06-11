@@ -4,9 +4,8 @@
 
 use crate::batch_pool::{BatchOutcome, ProcessPool};
 use crate::cache::{self, load_cache};
-use crate::cli::{Args, RunMode, ShardStrategy};
+use crate::cli::{Args, RunMode};
 use crate::server_pool::{ServerOutcome, ServerPool};
-use crate::test_filter::{is_conformance_source_file, matches_path_filter};
 use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
     should_skip_test,
@@ -29,6 +28,8 @@ use tracing::{debug, info, warn};
 #[path = "runner/helpers.rs"]
 mod runner_helpers;
 use runner_helpers::*;
+#[path = "runner/plan.rs"]
+pub mod plan;
 
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
@@ -49,28 +50,6 @@ pub struct Runner {
 }
 
 impl Runner {
-    fn parse_shard_spec(&self) -> anyhow::Result<Option<(usize, usize)>> {
-        let Some(spec) = self.args.shard.as_deref() else {
-            return Ok(None);
-        };
-        let Some((index, count)) = spec.split_once('/') else {
-            anyhow::bail!("--shard must be formatted as index/count, got {spec:?}");
-        };
-        let index = index
-            .parse::<usize>()
-            .with_context(|| format!("invalid --shard index in {spec:?}"))?;
-        let count = count
-            .parse::<usize>()
-            .with_context(|| format!("invalid --shard count in {spec:?}"))?;
-        if count == 0 {
-            anyhow::bail!("--shard count must be greater than zero");
-        }
-        if index >= count {
-            anyhow::bail!("--shard index {index} must be less than count {count}");
-        }
-        Ok(Some((index, count)))
-    }
-
     fn absolutize_binary_path(path: &Path) -> String {
         let absolute = if path.is_absolute() {
             path.to_path_buf()
@@ -129,7 +108,7 @@ impl Runner {
 
     /// Run all tests
     pub async fn run(&self) -> anyhow::Result<TestStats> {
-        let test_files = self.discover_tests()?;
+        let test_files = plan::discover_tests(&self.args)?;
 
         if test_files.is_empty() {
             warn!("No test files found!");
@@ -586,91 +565,6 @@ impl Runner {
             known_failures: AtomicUsize::new(stats.known_failures.load(Ordering::SeqCst)),
             fingerprint_only: AtomicUsize::new(stats.fingerprint_only.load(Ordering::SeqCst)),
         })
-    }
-
-    /// Discover all test files recursively using walkdir
-    fn discover_tests(&self) -> anyhow::Result<Vec<PathBuf>> {
-        use walkdir::WalkDir;
-
-        let test_dir = &self.args.test_dir;
-        let mut files = Vec::new();
-
-        // Walk directory tree recursively
-        for entry in WalkDir::new(test_dir)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
-            let path = entry.path();
-
-            // Skip directories
-            if path.is_dir() {
-                continue;
-            }
-
-            if is_appledouble_file(path) {
-                continue;
-            }
-
-            if !is_conformance_source_file(path) {
-                continue;
-            }
-
-            if !matches_path_filter(path, self.args.filter.as_deref()) {
-                continue;
-            }
-
-            files.push(path.to_path_buf());
-        }
-
-        // Sort for deterministic order
-        files.sort();
-
-        if let Some((shard_index, shard_count)) = self.parse_shard_spec()? {
-            let test_dir_path = std::path::Path::new(test_dir);
-            files = match self.args.shard_strategy {
-                ShardStrategy::Hash => files
-                    .into_iter()
-                    .filter_map(|path| {
-                        if stable_shard_for_path(&path, test_dir_path, shard_count) == shard_index {
-                            Some(path)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                ShardStrategy::Weighted => {
-                    let weights = self
-                        .args
-                        .shard_weights
-                        .as_deref()
-                        .and_then(|path| load_json_weights(Path::new(path)));
-                    weighted_shard_files(
-                        files,
-                        test_dir_path,
-                        shard_index,
-                        shard_count,
-                        weights.as_ref(),
-                    )
-                }
-            };
-        }
-
-        // Apply offset (skip first N tests)
-        if self.args.offset > 0 {
-            if self.args.offset >= files.len() {
-                files.clear();
-            } else {
-                files = files.split_off(self.args.offset);
-            }
-        }
-
-        // Apply max limit
-        if files.len() > self.args.max {
-            files.truncate(self.args.max);
-        }
-
-        Ok(files)
     }
 
     /// Run a single test.

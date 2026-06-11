@@ -67,151 +67,20 @@ run_with_heartbeat() {
 
 conformance_shard_plan() {
   local shard_index="$1" shard_count="$2" strategy="${3:-hash}" weights_file="${4:-}"
-  python3 - "$shard_index" "$shard_count" "$strategy" "$weights_file" <<'PY'
-import json
-import sys
-from pathlib import Path
+  local root="${ROOT_DIR:-$(pwd)}"
+  local runner_bin="$root/.target/dist-fast/tsz-conformance"
+  local plan_args=(--plan "$shard_count" --test-dir "$root/TypeScript/tests/cases" --shard-strategy "$strategy")
+  if [[ -n "$weights_file" ]]; then
+    plan_args+=(--shard-weights "$weights_file")
+  fi
+  if [[ ! -x "$runner_bin" ]]; then
+    echo "error: missing conformance runner for shard planning: $runner_bin" >&2
+    return 1
+  fi
 
-index = int(sys.argv[1])
-count = int(sys.argv[2])
-strategy = sys.argv[3]
-weights_file = Path(sys.argv[4]) if sys.argv[4] else None
-baseline = Path("scripts/conformance/conformance-baseline.txt")
-if count < 1:
-    count = 1
-if index < 0 or index >= count:
-    raise SystemExit(f"invalid conformance shard {index}/{count}")
-
-baseline_status = {}
-for line in baseline.read_text(encoding="utf-8", errors="replace").splitlines():
-    status, _, rest = line.partition(" ")
-    if status not in {"PASS", "FAIL", "XFAIL", "CRASH", "TIMEOUT"} or not rest:
-        continue
-    path = rest.split(" | ", 1)[0]
-    baseline_status[path] = status
-
-test_dir = Path("TypeScript/tests/cases")
-files = []
-source_suffixes = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
-declaration_suffixes = (".d.ts", ".d.mts", ".d.cts")
-
-def has_skip_directive(path):
-    # Keep shard-plan totals aligned with the Rust runner, which discovers the
-    # file but excludes it from result totals when `@skip` is present.
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if not stripped.startswith("//"):
-            continue
-        directive = stripped[2:].lstrip().lower()
-        if directive.startswith("@skip") and (
-            len(directive) == len("@skip")
-            or not (
-                directive[len("@skip")].isalnum()
-                or directive[len("@skip")] == "_"
-            )
-        ):
-            return True
-    return False
-
-for path in test_dir.rglob("*"):
-    if not path.is_file():
-        continue
-    path_str = path.as_posix()
-    if path.name.startswith("._"):
-        continue
-    if path.suffix not in source_suffixes:
-        continue
-    if path_str.endswith(declaration_suffixes):
-        continue
-    if "/fourslash/" in path_str:
-        continue
-    if "APISample" in path_str or "APILibCheck" in path_str:
-        continue
-    if has_skip_directive(path):
-        continue
-    files.append(path)
-
-files.sort()
-
-def stable_shard(path):
-    rel = path.relative_to(test_dir).as_posix()
-    h = 1469598103934665603
-    for byte in rel.encode("utf-8"):
-        h ^= byte
-        h = (h * 1099511628211) & 0xffffffffffffffff
-    return h % count
-
-def stable_shard_count(path, bucket_count):
-    rel = path.relative_to(test_dir).as_posix()
-    h = 1469598103934665603
-    for byte in rel.encode("utf-8"):
-        h ^= byte
-        h = (h * 1099511628211) & 0xffffffffffffffff
-    return h % bucket_count
-
-weights = {}
-default_weight = 1.0
-hash_bucket = None
-if weights_file and weights_file.is_file():
-    try:
-        data = json.loads(weights_file.read_text(encoding="utf-8"))
-        default_weight = float(data.get("default_weight", default_weight) or default_weight)
-        weights.update({
-            str(key).replace("\\", "/"): float(value)
-            for key, value in (data.get("path_weights") or {}).items()
-            if float(value) > 0
-        })
-        for result in data.get("results") or []:
-            file = str(result.get("file") or "").replace("\\", "/")
-            value = result.get("elapsed_ms", result.get("elapsed"))
-            if file and value is not None and float(value) > 0:
-                weights[file] = float(value)
-        hb = data.get("hash_bucket_weights") or {}
-        hb_count = int(hb.get("shard_count") or 0)
-        hb_weights = [float(value) for value in hb.get("weights") or []]
-        if hb_count > 0 and len(hb_weights) >= hb_count:
-            hash_bucket = (hb_count, hb_weights)
-    except Exception as exc:
-        print(f"warning: failed to read conformance shard weights {weights_file}: {exc}", file=sys.stderr)
-
-def path_keys(path):
-    rel = path.relative_to(test_dir).as_posix()
-    return [rel, f"TypeScript/tests/cases/{rel}", path.as_posix()]
-
-def weight_for(path):
-    for key in path_keys(path):
-        if key in weights:
-            return weights[key]
-    if hash_bucket:
-        hb_count, hb_weights = hash_bucket
-        return hb_weights[stable_shard_count(path, hb_count)]
-    try:
-        return min(max(path.stat().st_size / 4096.0, 1.0), 100.0)
-    except OSError:
-        return default_weight
-
-if strategy == "weighted":
-    shards = [{"weight": 0.0, "tests": []} for _ in range(count)]
-    weighted = [(weight_for(path), path.relative_to(test_dir).as_posix(), path) for path in files]
-    weighted.sort(key=lambda item: (-item[0], item[1]))
-    for weight, _rel, path in weighted:
-        best = min(range(count), key=lambda shard: (shards[shard]["weight"], len(shards[shard]["tests"]), shard))
-        shards[best]["weight"] += weight
-        shards[best]["tests"].append(path)
-    selected_paths = sorted(shards[index]["tests"])
-    selected_weight = shards[index]["weight"]
-else:
-    selected_paths = [path for path in files if stable_shard(path) == index]
-    selected_weight = sum(weight_for(path) for path in selected_paths)
-
-selected = [path.as_posix() for path in selected_paths]
-passed = sum(1 for path in selected if baseline_status.get(path) == "PASS")
-print(passed, len(selected), int(selected_weight))
-PY
+  "$runner_bin" "${plan_args[@]}" \
+    | jq -r --argjson index "$shard_index" \
+        '.shards[$index] // error("missing conformance shard plan entry") | "\(.passed) \(.total) \(.weight)"'
 }
 
 run_conformance() {

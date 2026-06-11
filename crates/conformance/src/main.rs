@@ -44,6 +44,12 @@ async fn main() -> anyhow::Result<()> {
         return handle_cache_clear(&args.cache_file);
     }
 
+    if let Some(shard_count) = args.plan {
+        let plan = runner::plan::build_shard_plan(&args, shard_count)?;
+        println!("{}", serde_json::to_string(&plan)?);
+        return Ok(());
+    }
+
     // Run tests
     let runner = Runner::new(args.clone())?;
     let stats = runner.run().await?;
