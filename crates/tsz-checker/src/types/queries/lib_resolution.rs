@@ -1196,7 +1196,19 @@ impl<'a> CheckerState<'a> {
             //      (first call to this function for this name)
             // This preserves user-file augmentations while fixing the
             // mismatch between annotation and literal type resolution paths.
+            // Never overwrite an IMPORT ALIAS's cached type: `file_locals`
+            // is name-keyed, so a user import named like a lib type (e.g.
+            // `import { Channel } from 'pkg'` while resolving another
+            // module's `Channel`) would otherwise have its VALUE-side type
+            // replaced with this lib TYPE-position type — flipping class
+            // constructor/instance identity for the unrelated import
+            // (#13185).
             if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                && self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
                 && let Some(&old) = self.ctx.symbol_types.get(&sym_id)
                 && old != ty
                 && old != TypeId::ERROR

@@ -241,6 +241,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let cross_file_symbol_is_class =
+            cross_file_symbol.is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS));
         let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
 
         if !is_known_cross_file
@@ -497,12 +499,47 @@ impl<'a> CheckerState<'a> {
                         symbol_type_cache_from_symbol_arena,
                     )
             {
-                if let Some(p) = perf {
-                    p.delegate_cross_arena_cache_hits_cross_file
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // For CLASS symbols the SYMBOL bucket entry is the value-side
+                // (constructor) type only. Serving it while this checker has
+                // no INSTANCE type registered leaves later type-position
+                // references of the class resolving to the constructor — the
+                // co-included-root instance/constructor identity flip
+                // (#13185). Recover the instance from the ClassInstance
+                // bucket, or skip the shortcut so the full computation below
+                // registers both sides.
+                let class_instance_gate_ok = if cross_file_symbol_is_class {
+                    self.ctx
+                        .symbol_instance_types
+                        .get(&sym_id)
+                        .copied()
+                        .is_some_and(|t| t != TypeId::ANY && t != TypeId::ERROR)
+                        || {
+                            let bucket_instance = self
+                                .ctx
+                                .cached_cross_file_class_instance_type(
+                                    sym_id,
+                                    cache_file_idx as u32,
+                                )
+                                .map(|(inst, _)| inst)
+                                .filter(|&inst| inst != TypeId::ANY && inst != TypeId::ERROR);
+                            if let Some(inst) = bucket_instance {
+                                self.ctx.symbol_instance_types.insert(sym_id, inst);
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                } else {
+                    true
+                };
+                if class_instance_gate_ok {
+                    if let Some(p) = perf {
+                        p.delegate_cross_arena_cache_hits_cross_file
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    self.ctx.symbol_types.insert(sym_id, cached_type);
+                    return Some((cached_type, cached_params));
                 }
-                self.ctx.symbol_types.insert(sym_id, cached_type);
-                return Some((cached_type, cached_params));
             }
 
             if let Some((result, params)) =
@@ -973,6 +1010,31 @@ impl<'a> CheckerState<'a> {
                     result,
                     result_params.clone(),
                 );
+                // Publish the class INSTANCE type next to the SYMBOL (value)
+                // entry. A SYMBOL bucket entry without its ClassInstance
+                // counterpart cannot satisfy class reads (see the
+                // class-instance gate on the read path above, #13185).
+                if !symbol_type_cache_from_symbol_arena
+                    && self.ctx.share_owner_symbol_type_results
+                    && cross_file_symbol_is_class
+                    && let Some(inst) = self
+                        .ctx
+                        .symbol_instance_types
+                        .get(&sym_id)
+                        .copied()
+                        .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR && t != TypeId::UNKNOWN)
+                {
+                    self.ctx.definition_store.cache_resolved_cross_file_query(
+                        super::cross_file_query_types::CrossFileQueryKind::ClassInstance
+                            .as_storage_kind(),
+                        target_file_idx as u32,
+                        sym_id.0,
+                        0,
+                        0,
+                        inst,
+                        result_params.clone(),
+                    );
+                }
             }
 
             // Record completed *sentinel* results in the session memo so

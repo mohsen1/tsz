@@ -1113,7 +1113,45 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .cached_cross_file_symbol_type(sym_id, file_idx as u32)
         {
-            return cached;
+            // For class symbols the SYMBOL bucket holds only the value-side
+            // (constructor) type. Short-circuiting on it while this checker
+            // has no INSTANCE type registered would leave every later
+            // type-position resolution of the class falling back to the
+            // constructor (instance/constructor identity flip, #13185).
+            // Recover the instance from the ClassInstance bucket when
+            // available; otherwise skip the shortcut and run the full
+            // computation, which registers both sides.
+            let symbol_is_class = self
+                .ctx
+                .get_binder_for_file(file_idx)
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS));
+            if !symbol_is_class {
+                return cached;
+            }
+            let instance_known = self
+                .ctx
+                .symbol_instance_types
+                .get(&sym_id)
+                .copied()
+                .is_some_and(|t| t != TypeId::ANY && t != TypeId::ERROR)
+                || {
+                    let bucket_instance = self
+                        .ctx
+                        .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
+                        .map(|(inst, _)| inst)
+                        .filter(|&inst| inst != TypeId::ANY && inst != TypeId::ERROR);
+                    if let Some(inst) = bucket_instance {
+                        self.ctx.symbol_instance_types.insert(sym_id, inst);
+                        true
+                    } else {
+                        false
+                    }
+                };
+            if instance_known {
+                return cached;
+            }
         }
 
         // Check cache first
