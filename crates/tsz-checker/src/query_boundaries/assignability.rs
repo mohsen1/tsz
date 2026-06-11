@@ -1224,7 +1224,7 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     } else {
         policy
     };
-    let solver_outcome = query_assignability_with_failure_analysis(RelationQueryInputs {
+    let inputs = RelationQueryInputs {
         interner: db.as_type_database(),
         resolver,
         source: request.source,
@@ -1233,7 +1233,14 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
         policy,
         context,
         overrides,
-    });
+    };
+    let solver_outcome = if request.decision_only {
+        // The caller reads only the pass/fail bit: run the identical decision
+        // pass but skip the failure-reason walk on failure.
+        tsz_solver::relations::relation_queries::query_assignability_decision_only(inputs)
+    } else {
+        query_assignability_with_failure_analysis(inputs)
+    };
 
     let related = solver_outcome.result.is_related();
     let depth_exceeded = solver_outcome.result.depth_exceeded;
@@ -1260,11 +1267,12 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
         None => (false, None),
     };
 
-    let property_classification = if request.requires_property_classification() {
-        classify_object_properties(db.as_type_database(), request.source, request.target)
-    } else {
-        None
-    };
+    let property_classification =
+        if !request.decision_only && request.requires_property_classification() {
+            classify_object_properties(db.as_type_database(), request.source, request.target)
+        } else {
+            None
+        };
 
     // Suppress ExcessProperty failure when the target has structural features
     // that make EPC inapplicable.

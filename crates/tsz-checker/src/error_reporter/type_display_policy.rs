@@ -79,6 +79,13 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         role: DiagnosticTypeDisplayRole,
     ) -> String {
+        // Discarded-diagnostics children never surface their messages: skip
+        // the role-specific display policy and the type formatter entirely.
+        // The placeholder embeds the type id so different types still format
+        // to different strings (message-hash dedup keys stay distinct).
+        if self.ctx.diagnostics_discarded {
+            return format!("[discarded #{}]", ty.0);
+        }
         // Only apply the indexed-access alias resolution for roles where the
         // alias would otherwise leak through unresolved (call parameters /
         // arguments / direct assignability). For declaration-emit-adjacent

@@ -869,6 +869,19 @@ pub struct CheckerContext<'a> {
     /// Excludes `!T` / `T!` errors which should not trigger widening.
     pub nullable_type_parse_error_positions: Vec<u32>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Whether this context's `diagnostics` are never surfaced to the user.
+    ///
+    /// Set for transient cross-arena delegation child checkers (the parent
+    /// consumes only the delegated symbol's type and drops the child's
+    /// diagnostics at teardown) and inherited by their descendants via
+    /// [`Self::with_parent_cache`]. When set, the expensive diagnostic
+    /// *presentation* work — solver failure-reason elaboration
+    /// (`explain_failure`), diagnostic type formatting, and related-info
+    /// chains — is skipped; diagnostics are still recorded with the correct
+    /// code and span so child-internal counting/dedup predicates keep
+    /// working. This flag must never change which checks run or what types
+    /// are computed.
+    pub diagnostics_discarded: bool,
     pub(crate) diagnostic_indices: DiagnosticIndices,
     /// Call-expression nodes that resolved to TS2769 during the current
     /// speculative context. Used so overload resolution can reject outer

@@ -767,6 +767,11 @@ impl<'a> CheckerState<'a> {
                 self, // Share parent's cache to fix Cache Isolation Bug
                 tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
             ));
+            // The parent consumes only the delegated symbol's type; the
+            // child's diagnostics are dropped at teardown. Skip diagnostic
+            // presentation work (failure elaboration, type formatting) in
+            // this subtree.
+            checker.ctx.diagnostics_discarded = true;
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
             // Copy all cross-file state: arenas, binders, all 6 global indices,
@@ -1140,6 +1145,8 @@ impl<'a> CheckerState<'a> {
             self,
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
+        // Transient delegation child: diagnostics are discarded at teardown.
+        checker.ctx.diagnostics_discarded = true;
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.current_file_idx = query_file_idx
             .or(delegate_file_idx)
@@ -1351,6 +1358,8 @@ impl<'a> CheckerState<'a> {
             self,
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaInterface,
         ));
+        // Transient delegation child: diagnostics are discarded at teardown.
+        checker.ctx.diagnostics_discarded = true;
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         self.ctx.copy_symbol_file_targets_to_attributed(
@@ -1578,6 +1587,8 @@ impl<'a> CheckerState<'a> {
             self,
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
         ));
+        // Transient delegation child: diagnostics are discarded at teardown.
+        checker.ctx.diagnostics_discarded = true;
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         self.ctx.copy_symbol_file_targets_to_attributed(

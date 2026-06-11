@@ -670,6 +670,33 @@ impl<'a> CheckerState<'a> {
     ) -> Diagnostic {
         use crate::query_boundaries::common::SubtypeFailureReason;
 
+        // Discarded-diagnostics children (transient cross-arena delegation
+        // subtrees) never surface their diagnostics: keep the code and span
+        // (so child-internal counting/dedup predicates behave the same) but
+        // skip the expensive presentation work — diagnostic type formatting,
+        // nested-reason elaboration, and related-info chains. The placeholder
+        // message embeds the type ids so distinct failures keep distinct
+        // message-hash dedup keys, mirroring distinct rendered messages.
+        if self.ctx.diagnostics_discarded {
+            let (start, length) = self
+                .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)
+                .map(|anchor| (anchor.start, anchor.length))
+                .unwrap_or_else(|| {
+                    let (pos, end) = self.get_node_span(idx).unwrap_or((0, 0));
+                    self.normalized_anchor_span(idx, pos, end.saturating_sub(pos))
+                });
+            return Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                format!(
+                    "[discarded diagnostic: type '#{}' is not assignable to type '#{}']",
+                    source.0, target.0
+                ),
+                reason.diagnostic_code(),
+            );
+        }
+
         let source = self.recover_unknown_array_source_type_for_display(source, idx, depth);
         let (start, length) = self
             .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)
