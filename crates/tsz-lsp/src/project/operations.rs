@@ -12,7 +12,7 @@ use crate::rename::{RenameProvider, TextEdit, WorkspaceEdit};
 use crate::resolver::ScopeCacheStats;
 use crate::utils::find_node_at_offset;
 use tsz_common::position::{Location, Position, Range};
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{ExportDeclData, ImportDeclData, Node, NodeAccess};
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -21,67 +21,58 @@ use super::{
     ProjectRequestKind,
 };
 
+enum ImportExportDecl<'a> {
+    Import(&'a ImportDeclData),
+    Export(&'a ExportDeclData),
+}
+
+impl ImportExportDecl<'_> {
+    const fn module_specifier(&self) -> NodeIndex {
+        match self {
+            Self::Import(import) => import.module_specifier,
+            Self::Export(export) => export.module_specifier,
+        }
+    }
+}
+
 impl Project {
     pub fn find_file_references(&self, file_name: &str) -> Vec<Location> {
         let mut locations = Vec::new();
 
         for file in self.files.values() {
             let arena = file.arena();
-            let Some(source_file) = arena.get_source_file_at(file.root()) else {
-                continue;
-            };
-
-            for &stmt_idx in &source_file.statements.nodes {
-                let Some(stmt_node) = arena.get(stmt_idx) else {
-                    continue;
-                };
-
-                let module_specifier = if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
-                    || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                {
-                    arena
-                        .get_import_decl(stmt_node)
-                        .map(|import| import.module_specifier)
-                } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                    arena
-                        .get_export_decl(stmt_node)
-                        .map(|export| export.module_specifier)
-                } else {
-                    None
-                };
-                let Some(module_specifier) = module_specifier else {
-                    continue;
-                };
+            Self::for_each_import_export_statement(file, |_, _, decl| {
+                let module_specifier = decl.module_specifier();
                 if module_specifier.is_none() {
-                    continue;
+                    return;
                 }
 
                 let Some(module_text) = arena.get_literal_text(module_specifier) else {
-                    continue;
+                    return;
                 };
                 let Some(resolved) = self.resolve_module_specifier(file.file_name(), module_text)
                 else {
-                    continue;
+                    return;
                 };
                 if resolved != file_name {
-                    continue;
+                    return;
                 }
 
                 let Some(spec_node) = arena.get(module_specifier) else {
-                    continue;
+                    return;
                 };
                 let source_text = file.parser.get_source_text();
                 let start_offset = spec_node.pos.saturating_add(1);
                 let end_offset = spec_node.end.saturating_sub(1);
                 if start_offset > end_offset || end_offset as usize > source_text.len() {
-                    continue;
+                    return;
                 }
                 let range = Range::new(
                     file.line_map.offset_to_position(start_offset, source_text),
                     file.line_map.offset_to_position(end_offset, source_text),
                 );
                 locations.push(Location::new(file.file_name().to_string(), range));
-            }
+            });
         }
 
         locations.sort_by(|a, b| {
@@ -107,6 +98,55 @@ impl Project {
         arena
             .get_identifier_text(node_idx)
             .or_else(|| arena.get_literal_text(node_idx))
+    }
+
+    fn for_each_import_export_statement<'a>(
+        file: &'a ProjectFile,
+        mut visitor: impl FnMut(NodeIndex, &'a Node, ImportExportDecl<'a>),
+    ) {
+        let arena = file.arena();
+        let Some(source_file) = arena.get_source_file_at(file.root()) else {
+            return;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
+                if let Some(import) = arena.get_import_decl(stmt_node) {
+                    visitor(stmt_idx, stmt_node, ImportExportDecl::Import(import));
+                }
+            } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = arena.get_export_decl(stmt_node)
+            {
+                visitor(stmt_idx, stmt_node, ImportExportDecl::Export(export));
+            }
+        }
+    }
+
+    fn for_each_import_declaration<'a>(
+        file: &'a ProjectFile,
+        mut visitor: impl FnMut(NodeIndex, &'a Node, &'a ImportDeclData),
+    ) {
+        Self::for_each_import_export_statement(file, |stmt_idx, stmt_node, decl| {
+            if let ImportExportDecl::Import(import) = decl {
+                visitor(stmt_idx, stmt_node, import);
+            }
+        });
+    }
+
+    fn for_each_export_declaration<'a>(
+        file: &'a ProjectFile,
+        mut visitor: impl FnMut(NodeIndex, &'a Node, &'a ExportDeclData),
+    ) {
+        Self::for_each_import_export_statement(file, |stmt_idx, stmt_node, decl| {
+            if let ImportExportDecl::Export(export) = decl {
+                visitor(stmt_idx, stmt_node, export);
+            }
+        });
     }
 
     fn collect_file_references(
@@ -208,40 +248,24 @@ impl Project {
         let mut bindings = Vec::new();
         let arena = file.arena();
 
-        let Some(source_file) = arena.get_source_file_at(file.root()) else {
-            return bindings;
-        };
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION
-                && stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            {
-                continue;
-            }
-
-            let Some(import) = arena.get_import_decl(stmt_node) else {
-                continue;
-            };
+        Self::for_each_import_declaration(file, |_, _, import| {
             let Some(module_specifier) = arena.get_literal_text(import.module_specifier) else {
-                continue;
+                return;
             };
             let Some(resolved) = self.resolve_module_specifier(file.file_name(), module_specifier)
             else {
-                continue;
+                return;
             };
             if resolved != target_file {
-                continue;
+                return;
             }
 
             if import.import_clause.is_none() {
-                continue;
+                return;
             }
 
             let Some(clause) = arena.get_import_clause_at(import.import_clause) else {
-                continue;
+                return;
             };
 
             if export_name == "default" && clause.name.is_some() {
@@ -249,11 +273,11 @@ impl Project {
             }
 
             if clause.named_bindings.is_none() {
-                continue;
+                return;
             }
 
             let Some(named) = arena.get_named_imports_at(clause.named_bindings) else {
-                continue;
+                return;
             };
 
             for &spec_idx in &named.elements.nodes {
@@ -275,7 +299,7 @@ impl Project {
 
                 bindings.push(spec_idx);
             }
-        }
+        });
 
         bindings
     }
@@ -289,55 +313,39 @@ impl Project {
         let mut targets = Vec::new();
         let arena = file.arena();
 
-        let Some(source_file) = arena.get_source_file_at(file.root()) else {
-            return targets;
-        };
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION
-                && stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            {
-                continue;
-            }
-
-            let Some(import) = arena.get_import_decl(stmt_node) else {
-                continue;
-            };
+        Self::for_each_import_declaration(file, |_, _, import| {
             let Some(module_specifier) = arena.get_literal_text(import.module_specifier) else {
-                continue;
+                return;
             };
             let Some(resolved) = self.resolve_module_specifier(file.file_name(), module_specifier)
             else {
-                continue;
+                return;
             };
             if resolved != target_file {
-                continue;
+                return;
             }
 
             if import.import_clause.is_none() {
-                continue;
+                return;
             }
 
             let Some(clause) = arena.get_import_clause_at(import.import_clause) else {
-                continue;
+                return;
             };
 
             if clause.named_bindings.is_none() {
-                continue;
+                return;
             }
 
             let Some(bindings_node) = arena.get(clause.named_bindings) else {
-                continue;
+                return;
             };
             if bindings_node.kind == SyntaxKind::Identifier as u16 {
-                continue;
+                return;
             }
 
             let Some(named) = arena.get_named_imports(bindings_node) else {
-                continue;
+                return;
             };
 
             for &spec_idx in &named.elements.nodes {
@@ -369,7 +377,7 @@ impl Project {
                     property_name,
                 });
             }
-        }
+        });
 
         targets
     }
@@ -383,55 +391,39 @@ impl Project {
         let mut locals = Vec::new();
         let arena = file.arena();
 
-        let Some(source_file) = arena.get_source_file_at(file.root()) else {
-            return locals;
-        };
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION
-                && stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            {
-                continue;
-            }
-
-            let Some(import) = arena.get_import_decl(stmt_node) else {
-                continue;
-            };
+        Self::for_each_import_declaration(file, |_, _, import| {
             let Some(module_specifier) = arena.get_literal_text(import.module_specifier) else {
-                continue;
+                return;
             };
             let Some(resolved) = self.resolve_module_specifier(file.file_name(), module_specifier)
             else {
-                continue;
+                return;
             };
             if resolved != target_file {
-                continue;
+                return;
             }
 
             if import.import_clause.is_none() {
-                continue;
+                return;
             }
 
             let Some(clause) = arena.get_import_clause_at(import.import_clause) else {
-                continue;
+                return;
             };
 
             if clause.named_bindings.is_none() {
-                continue;
+                return;
             }
 
             let Some(bindings_node) = arena.get(clause.named_bindings) else {
-                continue;
+                return;
             };
             if bindings_node.kind == SyntaxKind::Identifier as u16 {
-                continue;
+                return;
             }
 
             let Some(named) = arena.get_named_imports(bindings_node) else {
-                continue;
+                return;
             };
 
             for &spec_idx in &named.elements.nodes {
@@ -461,7 +453,7 @@ impl Project {
                 };
                 locals.push(local_text.to_string());
             }
-        }
+        });
 
         locals
     }
@@ -477,46 +469,33 @@ impl Project {
 
         for (file_name, file) in &self.files {
             let arena = file.arena();
-            let Some(source_file_node) = arena.get_source_file_at(file.root()) else {
-                continue;
-            };
 
-            for &stmt_idx in &source_file_node.statements.nodes {
-                let Some(stmt_node) = arena.get(stmt_idx) else {
-                    continue;
-                };
-                if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                    continue;
-                }
-
-                let Some(export) = arena.get_export_decl(stmt_node) else {
-                    continue;
-                };
+            Self::for_each_export_declaration(file, |_, _, export| {
                 if export.module_specifier.is_none() {
-                    continue;
+                    return;
                 }
 
                 let Some(module_specifier) = arena.get_literal_text(export.module_specifier) else {
-                    continue;
+                    return;
                 };
                 let Some(resolved) =
                     self.resolve_module_specifier(file.file_name(), module_specifier)
                 else {
-                    continue;
+                    return;
                 };
                 if resolved != source_file {
-                    continue;
+                    return;
                 }
 
                 if export.export_clause.is_none() {
                     if export_name != "default" {
                         targets.push((file_name.clone(), export_name.to_string()));
                     }
-                    continue;
+                    return;
                 }
 
                 let Some(clause_node) = arena.get(export.export_clause) else {
-                    continue;
+                    return;
                 };
                 if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
                     if clause_node.kind == SyntaxKind::Identifier as u16
@@ -528,11 +507,11 @@ impl Project {
                             member: export_name.to_string(),
                         });
                     }
-                    continue;
+                    return;
                 }
 
                 let Some(named) = arena.get_named_imports(clause_node) else {
-                    continue;
+                    return;
                 };
                 for &spec_idx in &named.elements.nodes {
                     let Some(spec) = arena.get_specifier_at(spec_idx) else {
@@ -564,7 +543,7 @@ impl Project {
                         targets.push((file_name.clone(), export_text.to_string()));
                     }
                 }
-            }
+            });
         }
 
         (targets, namespace_targets)
@@ -574,60 +553,44 @@ impl Project {
         let mut names = Vec::new();
         let arena = file.arena();
 
-        let Some(source_file) = arena.get_source_file_at(file.root()) else {
-            return names;
-        };
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION
-                && stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            {
-                continue;
-            }
-
-            let Some(import) = arena.get_import_decl(stmt_node) else {
-                continue;
-            };
+        Self::for_each_import_declaration(file, |_, _, import| {
             let Some(module_specifier) = arena.get_literal_text(import.module_specifier) else {
-                continue;
+                return;
             };
             let Some(resolved) = self.resolve_module_specifier(file.file_name(), module_specifier)
             else {
-                continue;
+                return;
             };
             if resolved != target_file {
-                continue;
+                return;
             }
 
             if import.import_clause.is_none() {
-                continue;
+                return;
             }
 
             let Some(clause) = arena.get_import_clause_at(import.import_clause) else {
-                continue;
+                return;
             };
 
             if clause.named_bindings.is_none() {
-                continue;
+                return;
             }
 
             let Some(bindings_node) = arena.get(clause.named_bindings) else {
-                continue;
+                return;
             };
             if bindings_node.kind != syntax_kind_ext::NAMESPACE_IMPORT {
-                continue;
+                return;
             }
 
             let Some(bindings) = arena.get_named_imports(bindings_node) else {
-                continue;
+                return;
             };
             if let Some(name) = arena.get_identifier_text(bindings.name) {
                 names.push(name.to_string());
             }
-        }
+        });
 
         names
     }
@@ -1819,6 +1782,35 @@ c.member;
         assert!(
             !refs.is_empty(),
             "expected at least the declaration to be returned"
+        );
+    }
+
+    #[test]
+    fn find_file_references_visits_import_and_export_module_specifiers() {
+        let dep = "export const value = 1;";
+        let source = r#"import { value } from "./dep";
+export { value as renamed } from "./dep";
+export * as namespace from "./dep";
+const local = value;
+"#;
+        let mut project = Project::new();
+        project.set_file("/dep.ts".to_string(), dep.to_string());
+        project.set_file("/index.ts".to_string(), source.to_string());
+
+        let locations = project.find_file_references("/dep.ts");
+        let refs: Vec<_> = locations
+            .iter()
+            .filter(|location| location.file_path == "/index.ts")
+            .map(|location| location.range.start)
+            .collect();
+
+        assert_eq!(
+            refs,
+            vec![
+                position_of_nth(source, "./dep", 0),
+                position_of_nth(source, "./dep", 1),
+                position_of_nth(source, "./dep", 2),
+            ]
         );
     }
 }
