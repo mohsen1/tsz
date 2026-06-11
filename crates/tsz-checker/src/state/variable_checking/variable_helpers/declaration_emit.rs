@@ -8,6 +8,7 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_common::comments::is_jsdoc_comment;
+use tsz_common::module_resolution::package_exports::reverse_export_specifier_for_runtime_path as reverse_package_export_specifier_for_runtime_path;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1721,114 +1722,6 @@ impl<'a> CheckerState<'a> {
         package_root: &std::path::Path,
         runtime_relative_path: &str,
     ) -> Option<String> {
-        let package_json_path = package_root.join("package.json");
-        let package_json = std::fs::read_to_string(package_json_path).ok()?;
-        let package_json: serde_json::Value = serde_json::from_str(&package_json).ok()?;
-        let exports = package_json.get("exports")?;
-        let runtime_relative_path = format!("./{}", runtime_relative_path.trim_start_matches("./"));
-        self.reverse_match_exports_subpath(exports, &runtime_relative_path)
-    }
-
-    fn reverse_match_exports_subpath(
-        &self,
-        exports: &serde_json::Value,
-        runtime_path: &str,
-    ) -> Option<String> {
-        match exports {
-            serde_json::Value::String(target) => {
-                self.match_export_target(".", target, runtime_path)
-            }
-            serde_json::Value::Array(entries) => entries
-                .iter()
-                .find_map(|entry| self.reverse_match_exports_subpath(entry, runtime_path)),
-            serde_json::Value::Object(map) => {
-                for (key, value) in map {
-                    if key == "." || key.starts_with("./") {
-                        if let Some(specifier) =
-                            self.reverse_match_export_entry(key, value, runtime_path)
-                        {
-                            return Some(specifier);
-                        }
-                        continue;
-                    }
-
-                    if let Some(specifier) = self.reverse_match_exports_subpath(value, runtime_path)
-                    {
-                        return Some(specifier);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn reverse_match_export_entry(
-        &self,
-        subpath_key: &str,
-        value: &serde_json::Value,
-        runtime_path: &str,
-    ) -> Option<String> {
-        match value {
-            serde_json::Value::String(target) => {
-                self.match_export_target(subpath_key, target, runtime_path)
-            }
-            serde_json::Value::Array(entries) => entries.iter().find_map(|entry| {
-                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
-            }),
-            serde_json::Value::Object(map) => map.values().find_map(|entry| {
-                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
-            }),
-            _ => None,
-        }
-    }
-
-    fn match_export_target(
-        &self,
-        subpath_key: &str,
-        target: &str,
-        runtime_path: &str,
-    ) -> Option<String> {
-        let target = target.trim();
-        let runtime_path = runtime_path.trim();
-
-        if target.contains('*') {
-            let wildcard = self.match_export_wildcard(target, runtime_path)?;
-            return Some(self.apply_export_wildcard(subpath_key, &wildcard));
-        }
-
-        if target.ends_with('/') && subpath_key.ends_with('/') {
-            let remainder = runtime_path.strip_prefix(target)?;
-            return Some(format!(
-                "{}{}",
-                subpath_key.trim_start_matches("./"),
-                remainder
-            ));
-        }
-
-        if target != runtime_path {
-            return None;
-        }
-
-        if subpath_key == "." {
-            return Some(String::new());
-        }
-
-        Some(subpath_key.trim_start_matches("./").to_string())
-    }
-
-    fn match_export_wildcard(&self, pattern: &str, value: &str) -> Option<String> {
-        let star_idx = pattern.find('*')?;
-        let prefix = &pattern[..star_idx];
-        let suffix = &pattern[star_idx + 1..];
-        let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
-        Some(middle.to_string())
-    }
-
-    fn apply_export_wildcard(&self, pattern: &str, wildcard: &str) -> String {
-        pattern
-            .replace('*', wildcard)
-            .trim_start_matches("./")
-            .to_string()
+        reverse_package_export_specifier_for_runtime_path(package_root, runtime_relative_path)
     }
 }

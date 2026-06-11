@@ -17,6 +17,8 @@ use tsz_binder::{BinderState, SymbolId, symbol_flags};
 #[allow(unused_imports)]
 use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 #[allow(unused_imports)]
+use tsz_common::module_resolution::package_exports::{match_export_target, match_exports_wildcard};
+#[allow(unused_imports)]
 use tsz_parser::parser::ParserState;
 #[allow(unused_imports)]
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
@@ -1600,7 +1602,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         match exports {
             serde_json::Value::String(target) => {
-                subpath == "." || self.match_export_target(".", target, subpath).is_some()
+                subpath == "." || match_export_target(".", target, subpath).is_some()
             }
             serde_json::Value::Array(entries) => entries
                 .iter()
@@ -1630,7 +1632,7 @@ impl<'a> DeclarationEmitter<'a> {
         if key == subpath {
             return true;
         }
-        if key.contains('*') && self.match_exports_wildcard(key, subpath).is_some() {
+        if key.contains('*') && match_exports_wildcard(key, subpath).is_some() {
             return true;
         }
         if key.ends_with('/') && subpath.starts_with(key) {
