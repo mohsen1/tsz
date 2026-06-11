@@ -1161,14 +1161,21 @@ impl<'a> NarrowingContext<'a> {
             // Never collapse a wide `symbol` to a `unique symbol` (see helper).
             trace!("Keeping wide symbol over unique-symbol value");
             source_type
-        } else if crate::relations::subtype::is_subtype_of_with_db(
-            self.db,
-            resolved_target,
-            resolved_source,
-        ) {
-            // CRITICAL FIX: Check if target is a subtype of source (reverse narrowing)
-            // This handles cases like narrowing string to "hello" where "hello" is a subtype of string
-            // The inference engine uses this to narrow upper bounds by lower bounds
+        } else if self.is_subtype_for_narrowing(resolved_target, resolved_source) {
+            // Check if target is a subtype of source (reverse narrowing).
+            // This handles cases like narrowing string to "hello" where "hello"
+            // is a subtype of string. The inference engine uses this to narrow
+            // upper bounds by lower bounds.
+            //
+            // Use the resolver-backed subtype check, not the bare
+            // `is_subtype_of_with_db`: without a resolver, named class/interface
+            // shapes can't be mapped to a `DefId`, so
+            // `requires_explicit_declared_index_signature` degrades and an
+            // interface target (e.g. a user predicate's `is NodeSource`) is
+            // wrongly judged a subtype of an index-signature record source
+            // (`{ [P in string]: unknown }`). That replaced the record with the
+            // interface instead of intersecting, dropping the index signature
+            // accumulated by an earlier guard (kysely dynamic/* TS2339s).
             trace!("Target is subtype of source, returning target");
             target_type
         } else {
