@@ -286,119 +286,70 @@ perf_counter_enum! {
     pub const DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_NAMES;
 }
 
-/// How `compute_type_of_symbol` found the symbol payload for a call.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolSourceOutcome {
-    GlobalSymbol = 0,
-    CrossFileSymbol = 1,
-    MissingSymbol = 2,
-}
-
-pub const COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_COUNT: usize = 3;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_NAMES: [&str;
-    COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_COUNT] =
-    ["global_symbol", "cross_file_symbol", "missing_symbol"];
-
-impl ComputeTypeOfSymbolSourceOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// How `compute_type_of_symbol` found the symbol payload for a call.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolSourceOutcome {
+        GlobalSymbol = 0 => "global_symbol",
+        CrossFileSymbol = 1 => "cross_file_symbol",
+        MissingSymbol = 2 => "missing_symbol",
     }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_NAMES;
 }
 
-/// Coarse symbol-kind bucket for `compute_type_of_symbol` calls.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolKindOutcome {
-    Alias = 0,
-    TypeAlias = 1,
-    Interface = 2,
-    Class = 3,
-    Function = 4,
-    Variable = 5,
-    Module = 6,
-    Property = 7,
-    Method = 8,
-    Accessor = 9,
-    Enum = 10,
-    TypeParameter = 11,
-    TypeLiteral = 12,
-    ObjectLiteral = 13,
-    Signature = 14,
-    Other = 15,
-}
-
-pub const COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT: usize = 16;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_NAMES: [&str;
-    COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT] = [
-    "alias",
-    "type_alias",
-    "interface",
-    "class",
-    "function",
-    "variable",
-    "module",
-    "property",
-    "method",
-    "accessor",
-    "enum",
-    "type_parameter",
-    "type_literal",
-    "object_literal",
-    "signature",
-    "other",
-];
-
-impl ComputeTypeOfSymbolKindOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Coarse symbol-kind bucket for `compute_type_of_symbol` calls.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolKindOutcome {
+        Alias = 0 => "alias",
+        TypeAlias = 1 => "type_alias",
+        Interface = 2 => "interface",
+        Class = 3 => "class",
+        Function = 4 => "function",
+        Variable = 5 => "variable",
+        Module = 6 => "module",
+        Property = 7 => "property",
+        Method = 8 => "method",
+        Accessor = 9 => "accessor",
+        Enum = 10 => "enum",
+        TypeParameter = 11 => "type_parameter",
+        TypeLiteral = 12 => "type_literal",
+        ObjectLiteral = 13 => "object_literal",
+        Signature = 14 => "signature",
+        Other = 15 => "other",
     }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_NAMES;
 }
 
-/// Fast-path combination used for an interface symbol in
-/// `compute_type_of_symbol`.
-///
-/// The three skip gates are:
-/// - computed-name precompute map
-/// - member type-param prewarm scan
-/// - local heritage merge
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolInterfaceFastPathOutcome {
-    FullPath = 0,
-    SkipComputedNameMap = 1,
-    SkipPrewarm = 2,
-    SkipLocalHeritageMerge = 3,
-    SkipComputedNameMapAndPrewarm = 4,
-    SkipComputedNameMapAndLocalHeritageMerge = 5,
-    SkipPrewarmAndLocalHeritageMerge = 6,
-    SkipAllThree = 7,
+perf_counter_enum! {
+    /// Fast-path combination used for an interface symbol in
+    /// `compute_type_of_symbol`.
+    ///
+    /// The three skip gates are:
+    /// - computed-name precompute map
+    /// - member type-param prewarm scan
+    /// - local heritage merge
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolInterfaceFastPathOutcome {
+        FullPath = 0 => "full_path",
+        SkipComputedNameMap = 1 => "skip_computed_name_map",
+        SkipPrewarm = 2 => "skip_prewarm",
+        SkipLocalHeritageMerge = 3 => "skip_local_heritage_merge",
+        SkipComputedNameMapAndPrewarm = 4 => "skip_computed_name_map_and_prewarm",
+        SkipComputedNameMapAndLocalHeritageMerge = 5 => "skip_computed_name_map_and_local_heritage_merge",
+        SkipPrewarmAndLocalHeritageMerge = 6 => "skip_prewarm_and_local_heritage_merge",
+        SkipAllThree = 7 => "skip_all_three",
+    }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES;
 }
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT: usize = 8;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES: [&str;
-    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT] = [
-    "full_path",
-    "skip_computed_name_map",
-    "skip_prewarm",
-    "skip_local_heritage_merge",
-    "skip_computed_name_map_and_prewarm",
-    "skip_computed_name_map_and_local_heritage_merge",
-    "skip_prewarm_and_local_heritage_merge",
-    "skip_all_three",
-];
 
 impl ComputeTypeOfSymbolInterfaceFastPathOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
-    }
-
     #[inline(always)]
     pub const fn from_skips(
         skip_computed_name_map: bool,
@@ -422,571 +373,334 @@ impl ComputeTypeOfSymbolInterfaceFastPathOutcome {
     }
 }
 
-/// Call-site parent classification for interface-symbol calls in
-/// `compute_type_of_symbol`.
-///
-/// Uses the caller frame from `symbol_resolution_stack`:
-/// - `root`: no parent symbol in the current resolution chain
-/// - `parent_*`: parent symbol kind bucket
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolInterfaceCallsiteOutcome {
-    Root = 0,
-    ParentInterface = 1,
-    ParentTypeAlias = 2,
-    ParentAlias = 3,
-    ParentOther = 4,
-    ParentMissing = 5,
-}
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT: usize = 6;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES: [&str;
-    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT] = [
-    "root",
-    "parent_interface",
-    "parent_type_alias",
-    "parent_alias",
-    "parent_other",
-    "parent_missing",
-];
-
-impl ComputeTypeOfSymbolInterfaceCallsiteOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Call-site parent classification for interface-symbol calls in
+    /// `compute_type_of_symbol`.
+    ///
+    /// Uses the caller frame from `symbol_resolution_stack`:
+    /// - `root`: no parent symbol in the current resolution chain
+    /// - `parent_*`: parent symbol kind bucket
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolInterfaceCallsiteOutcome {
+        Root = 0 => "root",
+        ParentInterface = 1 => "parent_interface",
+        ParentTypeAlias = 2 => "parent_type_alias",
+        ParentAlias = 3 => "parent_alias",
+        ParentOther = 4 => "parent_other",
+        ParentMissing = 5 => "parent_missing",
     }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES;
 }
 
-/// Outcome of the actual-lib alias-body helper inside the direct
-/// `DelegateCrossArenaSymbol` path. This is intentionally separate from the
-/// older source-file alias shortcut counters: it classifies bundled-lib aliases
-/// by why the typed alias-body proof did or did not admit them.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum DirectActualLibAliasBodyOutcome {
-    Success = 0,
-    NameNotAdmitted = 1,
-    NotTypeAlias = 2,
-    ValueMerge = 3,
-    UnprovenActualLibDeclarations = 4,
-    MissingResolverType = 5,
-    ResolverNotLazyDef = 6,
-    MissingDefinition = 7,
-    NonTypeAliasDefinition = 8,
-    MissingBody = 9,
-    GenericAlias = 10,
-}
-
-pub const DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT: usize = 11;
-
-pub const DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES: [&str;
-    DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT] = [
-    "success",
-    "name_not_admitted",
-    "not_type_alias",
-    "value_merge",
-    "unproven_actual_lib_declarations",
-    "missing_resolver_type",
-    "resolver_not_lazy_def",
-    "missing_definition",
-    "non_type_alias_definition",
-    "missing_body",
-    "generic_alias",
-];
-
-impl DirectActualLibAliasBodyOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Outcome of the actual-lib alias-body helper inside the direct
+    /// `DelegateCrossArenaSymbol` path. This is intentionally separate from
+    /// the older source-file alias shortcut counters: it classifies bundled-lib
+    /// aliases by why the typed alias-body proof did or did not admit them.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectActualLibAliasBodyOutcome {
+        Success = 0 => "success",
+        NameNotAdmitted = 1 => "name_not_admitted",
+        NotTypeAlias = 2 => "not_type_alias",
+        ValueMerge = 3 => "value_merge",
+        UnprovenActualLibDeclarations = 4 => "unproven_actual_lib_declarations",
+        MissingResolverType = 5 => "missing_resolver_type",
+        ResolverNotLazyDef = 6 => "resolver_not_lazy_def",
+        MissingDefinition = 7 => "missing_definition",
+        NonTypeAliasDefinition = 8 => "non_type_alias_definition",
+        MissingBody = 9 => "missing_body",
+        GenericAlias = 10 => "generic_alias",
     }
+
+    pub const DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT;
+    pub const DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES;
 }
 
-/// Outcome of the direct source-file type-alias lowering shortcut attempted
-/// before a `DelegateCrossArenaSymbol` miss constructs a child checker.
-///
-/// This classifies the regular source-file alias lane separately from
-/// declaration-file and actual-lib shortcuts. The buckets identify which
-/// structural proof failed, so performance work can decide whether to widen a
-/// guard, cache a result, or leave the alias on the exact child-checker path.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum DirectSourceFileTypeAliasLoweringOutcome {
-    Success = 0,
-    MissingTargetFile = 1,
-    MissingArenaOrBinder = 2,
-    SourceFileArenaNotAllowed = 3,
-    MissingSymbol = 4,
-    NotTypeAlias = 5,
-    DisallowedMergeFlags = 6,
-    MultipleDeclarations = 7,
-    NameMismatch = 8,
-    MissingTypeAliasNode = 9,
-    BodyNotDirectLowerable = 10,
-    TypeQueryOrSelfReference = 11,
-    UnknownOrError = 12,
-}
-
-pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT: usize = 13;
-
-pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_NAMES: [&str;
-    DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT] = [
-    "success",
-    "missing_target_file",
-    "missing_arena_or_binder",
-    "source_file_arena_not_allowed",
-    "missing_symbol",
-    "not_type_alias",
-    "disallowed_merge_flags",
-    "multiple_declarations",
-    "name_mismatch",
-    "missing_type_alias_node",
-    "body_not_direct_lowerable",
-    "type_query_or_self_reference",
-    "unknown_or_error",
-];
-
-impl DirectSourceFileTypeAliasLoweringOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Outcome of the direct source-file type-alias lowering shortcut attempted
+    /// before a `DelegateCrossArenaSymbol` miss constructs a child checker.
+    ///
+    /// This classifies the regular source-file alias lane separately from
+    /// declaration-file and actual-lib shortcuts. The buckets identify which
+    /// structural proof failed, so performance work can decide whether to widen
+    /// a guard, cache a result, or leave the alias on the exact child-checker
+    /// path.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectSourceFileTypeAliasLoweringOutcome {
+        Success = 0 => "success",
+        MissingTargetFile = 1 => "missing_target_file",
+        MissingArenaOrBinder = 2 => "missing_arena_or_binder",
+        SourceFileArenaNotAllowed = 3 => "source_file_arena_not_allowed",
+        MissingSymbol = 4 => "missing_symbol",
+        NotTypeAlias = 5 => "not_type_alias",
+        DisallowedMergeFlags = 6 => "disallowed_merge_flags",
+        MultipleDeclarations = 7 => "multiple_declarations",
+        NameMismatch = 8 => "name_mismatch",
+        MissingTypeAliasNode = 9 => "missing_type_alias_node",
+        BodyNotDirectLowerable = 10 => "body_not_direct_lowerable",
+        TypeQueryOrSelfReference = 11 => "type_query_or_self_reference",
+        UnknownOrError = 12 => "unknown_or_error",
     }
+
+    pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT;
+    pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_NAMES;
 }
 
-/// Root syntax family for source-file type-alias bodies rejected by the direct
-/// lowering shortcut.
-///
-/// These buckets are intentionally coarse. They classify the structural
-/// operation that needs a proof before the `body_not_direct_lowerable` gate can
-/// be safely widened, without naming user aliases or benchmark files.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum DirectSourceFileTypeAliasBodyRejectionKind {
-    TypeReference = 0,
-    ConditionalType = 1,
-    TypeOperator = 2,
-    IndexedAccessType = 3,
-    MappedType = 4,
-    TypeLiteral = 5,
-    TemplateLiteralType = 6,
-    UnionOrIntersectionType = 7,
-    ArrayOrTupleType = 8,
-    WrappedType = 9,
-    InferType = 10,
-    Other = 11,
-}
-
-pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_COUNT: usize = 12;
-
-pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_NAMES: [&str;
-    DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_COUNT] = [
-    "type_reference",
-    "conditional_type",
-    "type_operator",
-    "indexed_access_type",
-    "mapped_type",
-    "type_literal",
-    "template_literal_type",
-    "union_or_intersection_type",
-    "array_or_tuple_type",
-    "wrapped_type",
-    "infer_type",
-    "other",
-];
-
-impl DirectSourceFileTypeAliasBodyRejectionKind {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Root syntax family for source-file type-alias bodies rejected by the
+    /// direct lowering shortcut.
+    ///
+    /// These buckets are intentionally coarse. They classify the structural
+    /// operation that needs a proof before the `body_not_direct_lowerable` gate
+    /// can be safely widened, without naming user aliases or benchmark files.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectSourceFileTypeAliasBodyRejectionKind {
+        TypeReference = 0 => "type_reference",
+        ConditionalType = 1 => "conditional_type",
+        TypeOperator = 2 => "type_operator",
+        IndexedAccessType = 3 => "indexed_access_type",
+        MappedType = 4 => "mapped_type",
+        TypeLiteral = 5 => "type_literal",
+        TemplateLiteralType = 6 => "template_literal_type",
+        UnionOrIntersectionType = 7 => "union_or_intersection_type",
+        ArrayOrTupleType = 8 => "array_or_tuple_type",
+        WrappedType = 9 => "wrapped_type",
+        InferType = 10 => "infer_type",
+        Other = 11 => "other",
     }
+
+    pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_COUNT;
+    pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_NAMES;
 }
 
-/// Structural bucket for root `TypeReference` alias bodies rejected by the
-/// source-file direct-lowering proof.
-///
-/// This intentionally records symbol shape and type-argument shape, not the
-/// user-written type name. The goal is to decide whether the next safe widening
-/// target is alias applications, interface refs, unresolved names, or a parser
-/// shape such as qualified names.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum DirectSourceFileTypeAliasTypeReferenceRejectionKind {
-    OwnTypeParamWithTypeArguments = 0,
-    BuiltinArrayWrongArity = 1,
-    BuiltinArrayNonDirectArgument = 2,
-    LocalTypeAliasNoArguments = 3,
-    LocalTypeAliasWithArguments = 4,
-    LocalInterfaceNoArguments = 5,
-    LocalInterfaceWithArguments = 6,
-    LocalTypeParameter = 7,
-    LocalAliasSymbol = 8,
-    LocalNamespaceSymbol = 9,
-    LocalValueSymbol = 10,
-    LocalTypeLiteralSymbol = 11,
-    LocalTransientSymbol = 12,
-    LocalOtherSymbol = 13,
-    UnresolvedIdentifier = 14,
-    QualifiedName = 15,
-    Other = 16,
-}
-
-pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT: usize = 17;
-
-pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES: [&str;
-    DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT] = [
-    "own_type_param_with_type_arguments",
-    "builtin_array_wrong_arity",
-    "builtin_array_non_direct_argument",
-    "local_type_alias_no_arguments",
-    "local_type_alias_with_arguments",
-    "local_interface_no_arguments",
-    "local_interface_with_arguments",
-    "local_type_parameter",
-    "local_alias_symbol",
-    "local_namespace_symbol",
-    "local_value_symbol",
-    "local_type_literal_symbol",
-    "local_transient_symbol",
-    "local_other_symbol",
-    "unresolved_identifier",
-    "qualified_name",
-    "other",
-];
-
-impl DirectSourceFileTypeAliasTypeReferenceRejectionKind {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Structural bucket for root `TypeReference` alias bodies rejected by the
+    /// source-file direct-lowering proof.
+    ///
+    /// This intentionally records symbol shape and type-argument shape, not the
+    /// user-written type name. The goal is to decide whether the next safe
+    /// widening target is alias applications, interface refs, unresolved names,
+    /// or a parser shape such as qualified names.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectSourceFileTypeAliasTypeReferenceRejectionKind {
+        OwnTypeParamWithTypeArguments = 0 => "own_type_param_with_type_arguments",
+        BuiltinArrayWrongArity = 1 => "builtin_array_wrong_arity",
+        BuiltinArrayNonDirectArgument = 2 => "builtin_array_non_direct_argument",
+        LocalTypeAliasNoArguments = 3 => "local_type_alias_no_arguments",
+        LocalTypeAliasWithArguments = 4 => "local_type_alias_with_arguments",
+        LocalInterfaceNoArguments = 5 => "local_interface_no_arguments",
+        LocalInterfaceWithArguments = 6 => "local_interface_with_arguments",
+        LocalTypeParameter = 7 => "local_type_parameter",
+        LocalAliasSymbol = 8 => "local_alias_symbol",
+        LocalNamespaceSymbol = 9 => "local_namespace_symbol",
+        LocalValueSymbol = 10 => "local_value_symbol",
+        LocalTypeLiteralSymbol = 11 => "local_type_literal_symbol",
+        LocalTransientSymbol = 12 => "local_transient_symbol",
+        LocalOtherSymbol = 13 => "local_other_symbol",
+        UnresolvedIdentifier = 14 => "unresolved_identifier",
+        QualifiedName = 15 => "qualified_name",
+        Other = 16 => "other",
     }
+
+    pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT;
+    pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES;
 }
 
-/// Outcome buckets for direct actual-lib Intl interface attempts in
-/// `direct_actual_lib_symbol_type`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum DirectActualLibIntlInterfaceOutcome {
-    SuccessByName = 0,
-    SuccessNamespaceExport = 1,
-    ValueInterfaceNotAdmitted = 2,
-    DeclarationNotProven = 3,
-    IntlNameNotAdmitted = 4,
-    MissingNamespaceExport = 5,
-    NamespaceSymbolMismatch = 6,
-    MissingNamespaceInterfaceType = 7,
-    UnknownOrError = 8,
-}
-
-pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT: usize = 9;
-
-pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES: [&str;
-    DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT] = [
-    "success_by_name",
-    "success_namespace_export",
-    "value_interface_not_admitted",
-    "declaration_not_proven",
-    "intl_name_not_admitted",
-    "missing_namespace_export",
-    "namespace_symbol_mismatch",
-    "missing_namespace_interface_type",
-    "unknown_or_error",
-];
-
-impl DirectActualLibIntlInterfaceOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Outcome buckets for direct actual-lib Intl interface attempts in
+    /// `direct_actual_lib_symbol_type`.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectActualLibIntlInterfaceOutcome {
+        SuccessByName = 0 => "success_by_name",
+        SuccessNamespaceExport = 1 => "success_namespace_export",
+        ValueInterfaceNotAdmitted = 2 => "value_interface_not_admitted",
+        DeclarationNotProven = 3 => "declaration_not_proven",
+        IntlNameNotAdmitted = 4 => "intl_name_not_admitted",
+        MissingNamespaceExport = 5 => "missing_namespace_export",
+        NamespaceSymbolMismatch = 6 => "namespace_symbol_mismatch",
+        MissingNamespaceInterfaceType = 7 => "missing_namespace_interface_type",
+        UnknownOrError = 8 => "unknown_or_error",
     }
+
+    pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT;
+    pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES;
 }
 
-/// Outcome buckets for the simple local-interface object shortcut in
-/// `compute_type_of_symbol`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolInterfaceSimpleObjectOutcome {
-    Success = 0,
-    RejectOutOfArenaDecl = 1,
-    RejectCrossFileSameIndex = 2,
-    RejectDeclarationCount = 3,
-    RejectMissingInterfaceDecl = 4,
-    RejectTypeParameters = 5,
-    RejectHeritageExtends = 6,
-    RejectNonPropertyMember = 7,
-    RejectComputedName = 8,
-    RejectUnresolvedPropertyName = 9,
-    RejectNonPrimitiveAnnotation = 10,
-}
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT: usize = 11;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES: [&str;
-    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT] = [
-    "success",
-    "reject_out_of_arena_decl",
-    "reject_cross_file_same_index",
-    "reject_declaration_count",
-    "reject_missing_interface_decl",
-    "reject_type_parameters",
-    "reject_heritage_extends",
-    "reject_non_property_member",
-    "reject_computed_name",
-    "reject_unresolved_property_name",
-    "reject_non_primitive_annotation",
-];
-
-impl ComputeTypeOfSymbolInterfaceSimpleObjectOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Outcome buckets for the simple local-interface object shortcut in
+    /// `compute_type_of_symbol`.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolInterfaceSimpleObjectOutcome {
+        Success = 0 => "success",
+        RejectOutOfArenaDecl = 1 => "reject_out_of_arena_decl",
+        RejectCrossFileSameIndex = 2 => "reject_cross_file_same_index",
+        RejectDeclarationCount = 3 => "reject_declaration_count",
+        RejectMissingInterfaceDecl = 4 => "reject_missing_interface_decl",
+        RejectTypeParameters = 5 => "reject_type_parameters",
+        RejectHeritageExtends = 6 => "reject_heritage_extends",
+        RejectNonPropertyMember = 7 => "reject_non_property_member",
+        RejectComputedName = 8 => "reject_computed_name",
+        RejectUnresolvedPropertyName = 9 => "reject_unresolved_property_name",
+        RejectNonPrimitiveAnnotation = 10 => "reject_non_primitive_annotation",
     }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES;
 }
 
-/// Annotation-kind buckets for `RejectNonPrimitiveAnnotation` outcomes in the
-/// simple local-interface object shortcut.
-///
-/// These buckets preserve behavioral parity (the shortcut still rejects all
-/// non-primitive annotation nodes) while making the reject residue actionable
-/// for conformance-proven guard relaxation.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind {
-    TypeReference = 0,
-    UnionOrIntersection = 1,
-    TypeLiteral = 2,
-    ArrayOrTuple = 3,
-    FunctionOrConstructor = 4,
-    ConditionalOrInfer = 5,
-    IndexedOrMapped = 6,
-    ImportOrTypeQuery = 7,
-    LiteralOrTemplateLiteral = 8,
-    OperatorOrParenthesized = 9,
-    OptionalRestOrThis = 10,
-    Other = 11,
-}
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT:
-    usize = 12;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_NAMES:
-    [&str; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT] = [
-    "type_reference",
-    "union_or_intersection",
-    "type_literal",
-    "array_or_tuple",
-    "function_or_constructor",
-    "conditional_or_infer",
-    "indexed_or_mapped",
-    "import_or_type_query",
-    "literal_or_template_literal",
-    "operator_or_parenthesized",
-    "optional_rest_or_this",
-    "other",
-];
-
-impl ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Annotation-kind buckets for `RejectNonPrimitiveAnnotation` outcomes in
+    /// the simple local-interface object shortcut.
+    ///
+    /// These buckets preserve behavioral parity (the shortcut still rejects all
+    /// non-primitive annotation nodes) while making the reject residue
+    /// actionable for conformance-proven guard relaxation.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind {
+        TypeReference = 0 => "type_reference",
+        UnionOrIntersection = 1 => "union_or_intersection",
+        TypeLiteral = 2 => "type_literal",
+        ArrayOrTuple = 3 => "array_or_tuple",
+        FunctionOrConstructor = 4 => "function_or_constructor",
+        ConditionalOrInfer = 5 => "conditional_or_infer",
+        IndexedOrMapped = 6 => "indexed_or_mapped",
+        ImportOrTypeQuery = 7 => "import_or_type_query",
+        LiteralOrTemplateLiteral = 8 => "literal_or_template_literal",
+        OperatorOrParenthesized = 9 => "operator_or_parenthesized",
+        OptionalRestOrThis = 10 => "optional_rest_or_this",
+        Other = 11 => "other",
     }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_NAMES;
 }
 
-/// Attribution split for `type_reference` rows inside
-/// `RejectNonPrimitiveAnnotation` of the simple local-interface object
-/// shortcut.
-///
-/// This keeps runtime behavior unchanged (the shortcut still rejects all
-/// non-primitive annotations) while exposing why `type_reference` rows are
-/// rejected.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
-    IdentifierResolvableSymbol = 0,
-    IdentifierValueOnlySymbol = 1,
-    IdentifierNotFoundSymbol = 2,
-    IdentifierCompilerManagedType = 3,
-    QualifiedNameResolvableSymbol = 4,
-    QualifiedNameValueOnlySymbol = 5,
-    QualifiedNameNotFoundSymbol = 6,
-    OtherTypeNameSyntax = 7,
-    MalformedTypeReference = 8,
-}
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT:
-    usize = 9;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES:
-    [&str; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT] = [
-    "identifier_resolvable_symbol",
-    "identifier_value_only_symbol",
-    "identifier_not_found_symbol",
-    "identifier_compiler_managed_type",
-    "qualified_name_resolvable_symbol",
-    "qualified_name_value_only_symbol",
-    "qualified_name_not_found_symbol",
-    "other_type_name_syntax",
-    "malformed_type_reference",
-];
-
-impl ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Attribution split for `type_reference` rows inside
+    /// `RejectNonPrimitiveAnnotation` of the simple local-interface object
+    /// shortcut.
+    ///
+    /// This keeps runtime behavior unchanged (the shortcut still rejects all
+    /// non-primitive annotations) while exposing why `type_reference` rows are
+    /// rejected.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
+        IdentifierResolvableSymbol = 0 => "identifier_resolvable_symbol",
+        IdentifierValueOnlySymbol = 1 => "identifier_value_only_symbol",
+        IdentifierNotFoundSymbol = 2 => "identifier_not_found_symbol",
+        IdentifierCompilerManagedType = 3 => "identifier_compiler_managed_type",
+        QualifiedNameResolvableSymbol = 4 => "qualified_name_resolvable_symbol",
+        QualifiedNameValueOnlySymbol = 5 => "qualified_name_value_only_symbol",
+        QualifiedNameNotFoundSymbol = 6 => "qualified_name_not_found_symbol",
+        OtherTypeNameSyntax = 7 => "other_type_name_syntax",
+        MalformedTypeReference = 8 => "malformed_type_reference",
     }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES;
 }
 
-/// Fine-grained outcome buckets for
-/// `try_lower_simple_actual_lib_type_reference`.
-///
-/// The broader `type_reference` reject counters say whether a reference was
-/// syntactically resolvable. These buckets say why the actual-lib lazy-ref
-/// lowering helper did or did not accept it.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum ComputeTypeOfSymbolInterfaceSimpleObjectActualLibTypeReferenceOutcome {
-    Success = 0,
-    Disabled = 1,
-    NotTypeReference = 2,
-    HasTypeArguments = 3,
-    NonIdentifierName = 4,
-    CompilerManagedType = 5,
-    FileLocalShadow = 6,
-    SymbolNotType = 7,
-    NotActualLibSymbol = 8,
-    GenericSymbol = 9,
-}
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT:
-    usize = 10;
-
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES:
-    [&str; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT] = [
-    "success",
-    "disabled",
-    "not_type_reference",
-    "has_type_arguments",
-    "non_identifier_name",
-    "compiler_managed_type",
-    "file_local_shadow",
-    "symbol_not_type",
-    "not_actual_lib_symbol",
-    "generic_symbol",
-];
-
-impl ComputeTypeOfSymbolInterfaceSimpleObjectActualLibTypeReferenceOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Fine-grained outcome buckets for
+    /// `try_lower_simple_actual_lib_type_reference`.
+    ///
+    /// The broader `type_reference` reject counters say whether a reference was
+    /// syntactically resolvable. These buckets say why the actual-lib lazy-ref
+    /// lowering helper did or did not accept it.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum ComputeTypeOfSymbolInterfaceSimpleObjectActualLibTypeReferenceOutcome {
+        Success = 0 => "success",
+        Disabled = 1 => "disabled",
+        NotTypeReference = 2 => "not_type_reference",
+        HasTypeArguments = 3 => "has_type_arguments",
+        NonIdentifierName = 4 => "non_identifier_name",
+        CompilerManagedType = 5 => "compiler_managed_type",
+        FileLocalShadow = 6 => "file_local_shadow",
+        SymbolNotType = 7 => "symbol_not_type",
+        NotActualLibSymbol = 8 => "not_actual_lib_symbol",
+        GenericSymbol = 9 => "generic_symbol",
     }
+
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT;
+    pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES;
 }
 
-/// Why a cross-file cache reader (`cached_cross_file_*` in
-/// `crates/tsz-checker/src/context/cross_file_query.rs`) returned `None`.
-///
-/// The 2026-05-11 attribution decision record locked in
-/// `delegate.cache_hits_cross_file = 0` on the cliff (1107 calls,
-/// 0 hits on `monorepo-006`). The flat miss counter does not say
-/// **why** each miss happens. Splitting the cause buckets lets the
-/// next T2.2 architecture PR target the dominant root cause directly
-/// instead of guessing between the gate state, the cache-key
-/// collision, and `TypeId` namespacing.
-///
-/// The four root causes the buckets distinguish:
-///
-/// - **`GateOff`** — `CheckerContext::share_owner_symbol_type_results`
-///   is `false`. The reader short-circuits before touching the
-///   `DefinitionStore`. A high count here means the gate is wrong
-///   for the workload, not that the cache is empty.
-/// - **`BucketEmpty`** — the `DefinitionStore` lookup returned `None`
-///   for the composite key. Either no writer has run yet, or the
-///   writer and reader disagree on the key shape (e.g. caller's
-///   `SymbolId` vs. owner's `SymbolId`).
-/// - **`SentinelErrorUnknown`** — the bucket has an entry but the
-///   cached `TypeId` is `TypeId::ERROR` or `TypeId::UNKNOWN`. The
-///   reader treats those as "not a real answer" so the call re-runs
-///   the slow path.
-/// - **`TypeIdNotInterned`** — the cached non-intrinsic `TypeId` is
-///   not interned in the reader's `TypeInterner`. This happens when
-///   a child checker allocated the `TypeId` and the parent's
-///   interner doesn't share it. The cache entry is stale.
-///
-/// `as_index` matches the `*_NAMES` array ordering; new variants
-/// MUST append, never re-order.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossFileCacheMissCause {
-    GateOff = 0,
-    BucketEmpty = 1,
-    SentinelErrorUnknown = 2,
-    TypeIdNotInterned = 3,
-}
-
-pub const CROSS_FILE_CACHE_MISS_CAUSE_COUNT: usize = 4;
-
-pub const CROSS_FILE_CACHE_MISS_CAUSE_NAMES: [&str; CROSS_FILE_CACHE_MISS_CAUSE_COUNT] = [
-    "gate_off",
-    "bucket_empty",
-    "sentinel_error_unknown",
-    "type_id_not_interned",
-];
-
-impl CrossFileCacheMissCause {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Why a cross-file cache reader (`cached_cross_file_*` in
+    /// `crates/tsz-checker/src/context/cross_file_query.rs`) returned `None`.
+    ///
+    /// The 2026-05-11 attribution decision record locked in
+    /// `delegate.cache_hits_cross_file = 0` on the cliff (1107 calls,
+    /// 0 hits on `monorepo-006`). The flat miss counter does not say
+    /// **why** each miss happens. Splitting the cause buckets lets the
+    /// next T2.2 architecture PR target the dominant root cause directly
+    /// instead of guessing between the gate state, the cache-key
+    /// collision, and `TypeId` namespacing.
+    ///
+    /// The four root causes the buckets distinguish:
+    ///
+    /// - **`GateOff`** — `CheckerContext::share_owner_symbol_type_results`
+    ///   is `false`. The reader short-circuits before touching the
+    ///   `DefinitionStore`. A high count here means the gate is wrong
+    ///   for the workload, not that the cache is empty.
+    /// - **`BucketEmpty`** — the `DefinitionStore` lookup returned `None`
+    ///   for the composite key. Either no writer has run yet, or the
+    ///   writer and reader disagree on the key shape (e.g. caller's
+    ///   `SymbolId` vs. owner's `SymbolId`).
+    /// - **`SentinelErrorUnknown`** — the bucket has an entry but the
+    ///   cached `TypeId` is `TypeId::ERROR` or `TypeId::UNKNOWN`. The
+    ///   reader treats those as "not a real answer" so the call re-runs
+    ///   the slow path.
+    /// - **`TypeIdNotInterned`** — the cached non-intrinsic `TypeId` is
+    ///   not interned in the reader's `TypeInterner`. This happens when
+    ///   a child checker allocated the `TypeId` and the parent's
+    ///   interner doesn't share it. The cache entry is stale.
+    ///
+    /// New variants must append, never re-order.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossFileCacheMissCause {
+        GateOff = 0 => "gate_off",
+        BucketEmpty = 1 => "bucket_empty",
+        SentinelErrorUnknown = 2 => "sentinel_error_unknown",
+        TypeIdNotInterned = 3 => "type_id_not_interned",
     }
+
+    pub const CROSS_FILE_CACHE_MISS_CAUSE_COUNT;
+    pub const CROSS_FILE_CACHE_MISS_CAUSE_NAMES;
 }
 
-/// Why a `DelegateCrossArenaSymbol` symbol-arena delegation did or did not
-/// become eligible for the source-file symbol-arena cache.
-///
-/// This is the next-level split after `delegate_miss_classification.by_source`
-/// says `symbol_arenas` dominates. It distinguishes cacheable first misses
-/// (`cacheable`, which may still appear as `cross_file_cache_miss_causes.bucket_empty`)
-/// from the structural reasons a symbol-arena delegation never reaches that
-/// cache at all.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum SourceFileSymbolArenaCacheEligibilityOutcome {
-    Cacheable = 0,
-    CrossFileTarget = 1,
-    NonSymbolArena = 2,
-    ModuleAugmentation = 3,
-    MissingDelegateArena = 4,
-    CurrentArena = 5,
-    MissingSourceFile = 6,
-    TargetDeclarationFile = 7,
-    MissingSymbol = 8,
-    NotClassOrInterface = 9,
-    MultipleDeclarations = 10,
-    DeclarationArenaMismatch = 11,
-    MissingFileIndex = 12,
-    CacheableDeclarationFile = 13,
-}
-
-pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT: usize = 14;
-
-pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES: [&str;
-    SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT] = [
-    "cacheable",
-    "cross_file_target",
-    "non_symbol_arena",
-    "module_augmentation",
-    "missing_delegate_arena",
-    "current_arena",
-    "missing_source_file",
-    "target_declaration_file",
-    "missing_symbol",
-    "not_class_or_interface",
-    "multiple_declarations",
-    "declaration_arena_mismatch",
-    "missing_file_index",
-    "cacheable_declaration_file",
-];
-
-impl SourceFileSymbolArenaCacheEligibilityOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Why a `DelegateCrossArenaSymbol` symbol-arena delegation did or did not
+    /// become eligible for the source-file symbol-arena cache.
+    ///
+    /// This is the next-level split after
+    /// `delegate_miss_classification.by_source` says `symbol_arenas`
+    /// dominates. It distinguishes cacheable first misses (`cacheable`, which
+    /// may still appear as `cross_file_cache_miss_causes.bucket_empty`) from
+    /// the structural reasons a symbol-arena delegation never reaches that
+    /// cache at all.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum SourceFileSymbolArenaCacheEligibilityOutcome {
+        Cacheable = 0 => "cacheable",
+        CrossFileTarget = 1 => "cross_file_target",
+        NonSymbolArena = 2 => "non_symbol_arena",
+        ModuleAugmentation = 3 => "module_augmentation",
+        MissingDelegateArena = 4 => "missing_delegate_arena",
+        CurrentArena = 5 => "current_arena",
+        MissingSourceFile = 6 => "missing_source_file",
+        TargetDeclarationFile = 7 => "target_declaration_file",
+        MissingSymbol = 8 => "missing_symbol",
+        NotClassOrInterface = 9 => "not_class_or_interface",
+        MultipleDeclarations = 10 => "multiple_declarations",
+        DeclarationArenaMismatch = 11 => "declaration_arena_mismatch",
+        MissingFileIndex = 12 => "missing_file_index",
+        CacheableDeclarationFile = 13 => "cacheable_declaration_file",
     }
+
+    pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT;
+    pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES;
 }
 
 pub const DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT: usize = 128;
