@@ -1335,16 +1335,7 @@ impl<'a> Printer<'a> {
 
     /// Get the text of an identifier node.
     pub(super) fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if idx.is_none() {
-            return String::new();
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return String::new();
-        };
-        if let Some(ident) = self.arena.get_identifier(node) {
-            return ident.escaped_text.clone();
-        }
-        String::new()
+        self.arena.identifier_text_owned(idx).unwrap_or_default()
     }
 
     // =========================================================================

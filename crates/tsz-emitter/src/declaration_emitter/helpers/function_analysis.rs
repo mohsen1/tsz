@@ -1403,13 +1403,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Get the text of an identifier node.
     pub(crate) fn get_identifier_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        self.arena
-            .get_identifier(node)
-            .map(|id| id.escaped_text.clone())
+        self.arena.identifier_text(idx).map(str::to_owned)
     }
 
     /// Format a literal value as an initializer string for `const` declarations in .d.ts.

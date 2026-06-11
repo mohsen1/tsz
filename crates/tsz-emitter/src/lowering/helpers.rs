@@ -950,17 +950,7 @@ impl<'a> LoweringPass<'a> {
     }
 
     pub(super) fn get_identifier_text_ref(&self, idx: NodeIndex) -> Option<&str> {
-        if idx.is_none() {
-            return None;
-        }
-
-        let node = self.arena.get(idx)?;
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-
-        let ident = self.arena.get_identifier(node)?;
-        Some(&ident.escaped_text)
+        self.arena.identifier_text(idx)
     }
 
     pub(super) fn resolve_class_expr_binding_name(&self, class_idx: NodeIndex) -> Option<&str> {

@@ -674,7 +674,7 @@ impl<'a> Printer<'a> {
     fn identifier_text_of(&self, node: &Node) -> Option<&str> {
         self.arena
             .get_identifier(node)
-            .map(|id| id.escaped_text.as_str())
+            .map(|id| self.arena.resolve_identifier_text(id))
     }
 
     /// Check if an expression is a CJS module pattern.

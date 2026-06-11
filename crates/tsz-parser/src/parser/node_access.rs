@@ -176,20 +176,29 @@ impl NodeArenaInner {
         ident.atom == tsz_common::interner::Atom::NONE && ident.escaped_text.is_empty()
     }
 
-    /// Get the owned text of an `Identifier` node. Returns `None` for any
-    /// other kind, including `PrivateIdentifier` — mirrors the common
+    /// Get the borrowed text of an `Identifier` node. Returns `None` for any
+    /// other kind, including `PrivateIdentifier` -- mirrors the common
     /// caller-side pattern that pre-filters on `SyntaxKind::Identifier`
-    /// before extracting `escaped_text`.
+    /// before extracting identifier text.
     #[inline]
     #[must_use]
-    pub fn identifier_text_owned(&self, index: NodeIndex) -> Option<String> {
+    pub fn identifier_text(&self, index: NodeIndex) -> Option<&str> {
         use tsz_scanner::SyntaxKind;
         let node = self.get(index)?;
         if node.kind == SyntaxKind::Identifier as u16 {
-            self.get_identifier(node).map(|id| id.escaped_text.clone())
+            self.get_identifier(node)
+                .map(|id| self.resolve_identifier_text(id))
         } else {
             None
         }
+    }
+
+    /// Get the owned text of an `Identifier` node. Returns `None` for any
+    /// other kind, including `PrivateIdentifier`.
+    #[inline]
+    #[must_use]
+    pub fn identifier_text_owned(&self, index: NodeIndex) -> Option<String> {
+        self.identifier_text(index).map(str::to_owned)
     }
 
     /// Get literal data for a node.
