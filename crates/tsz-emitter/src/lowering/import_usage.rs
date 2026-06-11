@@ -230,40 +230,7 @@ impl<'a> LoweringPass<'a> {
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
     ) -> bool {
-        let mut names = Vec::new();
-        if clause.name.is_some() {
-            let default_name = emit_utils::identifier_text_or_empty(self.arena, clause.name);
-            if !default_name.is_empty() {
-                names.push((clause.name, default_name));
-            }
-        }
-        if clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-        {
-            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-                let ns_name = emit_utils::identifier_text_or_empty(self.arena, named_imports.name);
-                if !ns_name.is_empty() {
-                    names.push((named_imports.name, ns_name));
-                }
-            } else {
-                for &spec_idx in &named_imports.elements.nodes {
-                    let Some(spec_node) = self.arena.get(spec_idx) else {
-                        continue;
-                    };
-                    let Some(spec) = self.arena.get_specifier(spec_node) else {
-                        continue;
-                    };
-                    if spec.is_type_only {
-                        continue;
-                    }
-                    let local_name = emit_utils::identifier_text_or_empty(self.arena, spec.name);
-                    if !local_name.is_empty() {
-                        names.push((spec.name, local_name));
-                    }
-                }
-            }
-        }
+        let names = emit_utils::collect_import_clause_value_binding_names(self.arena, clause);
         if names.is_empty() {
             return true;
         }

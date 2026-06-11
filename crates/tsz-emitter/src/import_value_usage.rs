@@ -110,10 +110,51 @@ struct Binding {
     exported_import_equals: bool,
 }
 
+/// Which import bindings a resolved reference denotes.
+#[derive(Clone, Copy)]
+enum ReferenceTarget {
+    /// A shadowing local or unrelated symbol: no binding matches.
+    None,
+    /// Resolved to exactly this binding.
+    Binding(usize),
+    /// Unresolvable reference: every same-named binding conservatively
+    /// matches so the import is preserved.
+    AllSameName,
+    /// Resolved to a foreign symbol: only same-named bindings whose own
+    /// symbol is unknown conservatively match.
+    SameNameWithUnknownSymbol,
+}
+
+/// Invoke `apply` with the binding index of every binding matched by
+/// `target`. Free function (rather than a `UsageScan` method) so callers can
+/// mutate sibling `UsageScan` fields from `apply`.
+fn for_each_matching_binding(
+    target: ReferenceTarget,
+    name: &str,
+    by_name: &FxHashMap<String, Vec<usize>>,
+    bindings: &[Binding],
+    mut apply: impl FnMut(usize, &Binding),
+) {
+    match target {
+        ReferenceTarget::None => {}
+        ReferenceTarget::Binding(idx) => apply(idx, &bindings[idx]),
+        ReferenceTarget::AllSameName | ReferenceTarget::SameNameWithUnknownSymbol => {
+            let unknown_only = matches!(target, ReferenceTarget::SameNameWithUnknownSymbol);
+            for &idx in by_name.get(name).map_or(&[][..], Vec::as_slice) {
+                if !unknown_only || bindings[idx].symbol.is_none() {
+                    apply(idx, &bindings[idx]);
+                }
+            }
+        }
+    }
+}
+
 struct UsageScan<'a> {
     arena: &'a NodeArena,
     binder: &'a BinderState,
     bindings: Vec<Binding>,
+    /// All binding name nodes, for skipping the declarations themselves.
+    binding_name_nodes: FxHashSet<NodeIndex>,
     /// Binding indices grouped by local name for the identifier pre-filter.
     by_name: FxHashMap<String, Vec<usize>>,
     /// Binding index by binder symbol for shadow-aware matching.
@@ -142,6 +183,7 @@ pub fn compute_import_value_usage_facts(
         arena,
         binder,
         bindings: Vec::new(),
+        binding_name_nodes: FxHashSet::default(),
         by_name: FxHashMap::default(),
         by_symbol: FxHashMap::default(),
         value_used: FxHashSet::default(),
@@ -158,7 +200,7 @@ pub fn compute_import_value_usage_facts(
     scan.propagate_alias_edges();
 
     ImportValueUsageFacts {
-        known_bindings: scan.bindings.iter().map(|b| b.name_node).collect(),
+        known_bindings: scan.binding_name_nodes,
         value_used: scan.value_used,
     }
 }
@@ -254,6 +296,7 @@ impl<'a> UsageScan<'a> {
         if let Some(sym) = symbol {
             self.by_symbol.insert(sym, binding_idx);
         }
+        self.binding_name_nodes.insert(name_idx);
         self.by_name.entry(name).or_default().push(binding_idx);
         self.bindings.push(Binding {
             name_node: name_idx,
@@ -268,68 +311,64 @@ impl<'a> UsageScan<'a> {
     // =========================================================================
 
     fn scan_references(&mut self) {
-        for idx in 0..self.arena.nodes.len() {
+        let arena = self.arena;
+        for idx in 0..arena.nodes.len() {
             let node_idx = NodeIndex(idx as u32);
-            let Some(node) = self.arena.get(node_idx) else {
+            let Some(node) = arena.get(node_idx) else {
                 continue;
             };
             if node.kind != SyntaxKind::Identifier as u16 {
                 continue;
             }
-            let Some(ident) = self.arena.get_identifier(node) else {
+            let Some(ident) = arena.get_identifier(node) else {
                 continue;
             };
-            if ident.escaped_text.is_empty() || !self.by_name.contains_key(&ident.escaped_text) {
+            let name = ident.escaped_text.as_str();
+            if name.is_empty() || !self.by_name.contains_key(name) {
                 continue;
             }
             // Skip the binding declarations themselves.
-            if self
-                .bindings
-                .iter()
-                .any(|binding| binding.name_node == node_idx)
-            {
+            if self.binding_name_nodes.contains(&node_idx) {
                 continue;
             }
-            let name = ident.escaped_text.clone();
-            match self.classify_reference(node_idx, &name) {
+            match self.classify_reference(node_idx, name) {
                 ReferencePosition::NotAReference | ReferencePosition::Erased => {}
                 ReferencePosition::Value => {
-                    self.record_value_reference(node_idx, &name);
+                    let target = self.resolve_reference_target(node_idx, name);
+                    let value_used = &mut self.value_used;
+                    for_each_matching_binding(
+                        target,
+                        name,
+                        &self.by_name,
+                        &self.bindings,
+                        |_, binding| {
+                            value_used.insert(binding.name_node);
+                        },
+                    );
                 }
                 ReferencePosition::ImportEqualsRhs(alias_decl) => {
-                    self.record_alias_rhs_reference(node_idx, &name, alias_decl);
+                    let target = self.resolve_reference_target(node_idx, name);
+                    let alias_edges = &mut self.alias_edges;
+                    for_each_matching_binding(
+                        target,
+                        name,
+                        &self.by_name,
+                        &self.bindings,
+                        |binding_idx, _| {
+                            alias_edges.push((alias_decl, binding_idx));
+                        },
+                    );
                 }
             }
         }
     }
 
-    fn record_value_reference(&mut self, ref_idx: NodeIndex, name: &str) {
-        for binding_idx in self.matching_bindings(ref_idx, name) {
-            let name_node = self.bindings[binding_idx].name_node;
-            self.value_used.insert(name_node);
-        }
-    }
-
-    fn record_alias_rhs_reference(
-        &mut self,
-        ref_idx: NodeIndex,
-        name: &str,
-        alias_decl: NodeIndex,
-    ) {
-        for binding_idx in self.matching_bindings(ref_idx, name) {
-            self.alias_edges.push((alias_decl, binding_idx));
-        }
-    }
-
-    /// Resolve a reference to the import bindings it can denote.
+    /// Resolve a reference to the binding population it can denote.
     ///
     /// Uses shadow-aware scope resolution; when the reference cannot be
-    /// resolved (or the binding's own symbol is unknown), every same-named
-    /// binding matches so the import is conservatively preserved.
-    fn matching_bindings(&self, ref_idx: NodeIndex, name: &str) -> Vec<usize> {
-        let Some(candidates) = self.by_name.get(name) else {
-            return Vec::new();
-        };
+    /// resolved (or a binding's own symbol is unknown), same-named bindings
+    /// conservatively match so the import is preserved.
+    fn resolve_reference_target(&self, ref_idx: NodeIndex, name: &str) -> ReferenceTarget {
         // Scope resolution first: `node_symbols` keys *declaration* sites
         // (e.g. `export default expr` maps to the default-export symbol), so
         // it is only a fallback for references the scope walk cannot reach.
@@ -340,26 +379,24 @@ impl<'a> UsageScan<'a> {
         match resolved {
             Some(sym) => {
                 if let Some(&binding_idx) = self.by_symbol.get(&sym) {
-                    return vec![binding_idx];
+                    return ReferenceTarget::Binding(binding_idx);
                 }
-                // The reference resolved to a different symbol. Only trust the
-                // mismatch (i.e. treat it as a shadowing local) when every
-                // same-named binding has a known symbol to compare against.
-                if candidates
-                    .iter()
-                    .all(|&idx| self.bindings[idx].symbol.is_some())
-                {
-                    return Vec::new();
+                // The reference resolved to a different symbol (a shadowing
+                // local). Only same-named bindings whose own symbol is
+                // unknown still conservatively match.
+                if self.by_name.get(name).is_some_and(|candidates| {
+                    candidates
+                        .iter()
+                        .any(|&idx| self.bindings[idx].symbol.is_none())
+                }) {
+                    ReferenceTarget::SameNameWithUnknownSymbol
+                } else {
+                    ReferenceTarget::None
                 }
-                candidates
-                    .iter()
-                    .copied()
-                    .filter(|&idx| self.bindings[idx].symbol.is_none())
-                    .collect()
             }
             // Unresolvable reference: conservatively match every same-named
             // binding so the import is preserved.
-            None => candidates.clone(),
+            None => ReferenceTarget::AllSameName,
         }
     }
 

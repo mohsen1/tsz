@@ -52,40 +52,9 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let mut names = Vec::new();
-        if clause.name.is_some() {
-            let default_name = self.get_identifier_text_idx(clause.name);
-            if !default_name.is_empty() {
-                names.push((clause.name, default_name));
-            }
-        }
-        if clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-        {
-            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-                let ns_name = self.get_identifier_text_idx(named_imports.name);
-                if !ns_name.is_empty() {
-                    names.push((named_imports.name, ns_name));
-                }
-            } else {
-                for &spec_idx in &named_imports.elements.nodes {
-                    let Some(spec_node) = self.arena.get(spec_idx) else {
-                        continue;
-                    };
-                    let Some(spec) = self.arena.get_specifier(spec_node) else {
-                        continue;
-                    };
-                    if spec.is_type_only {
-                        continue;
-                    }
-                    let local_name = self.get_identifier_text_idx(spec.name);
-                    if !local_name.is_empty() {
-                        names.push((spec.name, local_name));
-                    }
-                }
-            }
-        }
+        let names = crate::transforms::emit_utils::collect_import_clause_value_binding_names(
+            self.arena, clause,
+        );
         if names.is_empty() {
             return !self.import_clause_is_empty_named_import(clause);
         }
@@ -424,31 +393,6 @@ impl<'a> Printer<'a> {
             && self.async_return_type_uses_imported_promise_constructor(&[local_name])
     }
 
-    /// Whether the default binding of an import clause is referenced as a
-    /// value in the rest of the file. Mirrors `filter_value_specs_by_usage`
-    /// for the default binding so that an unused default beside a used named
-    /// or namespace binding is elided (matching tsc).
-    fn default_binding_has_value_usage(
-        &self,
-        import_node: &Node,
-        default_name_idx: NodeIndex,
-    ) -> bool {
-        self.import_binding_has_value_usage(import_node, default_name_idx)
-    }
-
-    /// Whether the namespace binding of an import clause (`import * as ns`) is
-    /// referenced as a value in the rest of the file. Mirrors
-    /// `default_binding_has_value_usage` for the namespace binding so that an
-    /// unused namespace beside a surviving default or named binding is elided
-    /// (matching tsc).
-    fn namespace_binding_has_value_usage(
-        &self,
-        import_node: &Node,
-        namespace_name_idx: NodeIndex,
-    ) -> bool {
-        self.import_binding_has_value_usage(import_node, namespace_name_idx)
-    }
-
     /// Filter named import specifiers to only those with value-level usage
     /// in the rest of the file.
     fn filter_value_specs_by_usage(
@@ -484,15 +428,6 @@ impl<'a> Printer<'a> {
                 self.import_binding_has_value_usage(import_node, spec.name)
             })
             .collect()
-    }
-
-    fn default_import_has_value_usage_after_node(
-        &self,
-        import_node: &Node,
-        _import_data: &tsz_parser::parser::node::ImportDeclData,
-        name_idx: NodeIndex,
-    ) -> bool {
-        self.import_binding_has_value_usage(import_node, name_idx)
     }
 
     /// Check if an import-equals declaration's identifier is used after the import.
@@ -756,7 +691,7 @@ impl<'a> Printer<'a> {
                 && !self.ctx.options.verbatim_module_syntax
                 && !self.is_jsx_factory_import_clause(clause)
             {
-                self.default_import_has_value_usage_after_node(node, import, clause.name)
+                self.import_binding_has_value_usage(node, clause.name)
             } else {
                 true
             };
@@ -780,7 +715,7 @@ impl<'a> Printer<'a> {
                         && !preserve_invalid_module_syntax
                         && !self.is_jsx_factory_import_clause(clause);
                     if !gate_namespace
-                        || self.namespace_binding_has_value_usage(node, named_imports.name)
+                        || self.import_binding_has_value_usage(node, named_imports.name)
                     {
                         namespace_name = Some(named_imports.name);
                     }
@@ -817,7 +752,7 @@ impl<'a> Printer<'a> {
             && !self.source_is_js_file
             && !self.ctx.options.verbatim_module_syntax
             && !self.is_jsx_factory_import_clause(clause)
-            && !self.default_binding_has_value_usage(node, clause.name)
+            && !self.import_binding_has_value_usage(node, clause.name)
         {
             has_default = false;
         }
