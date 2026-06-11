@@ -5,15 +5,35 @@ use crate::state::CheckerState;
 use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
+    /// Structural display for an *effective rest slice*: a tuple whose first
+    /// element is a rest element followed by a fixed tail, e.g.
+    /// `[...string[], number]`. tsc derives this parameter surface through
+    /// `getEffectiveRestType`/`sliceTupleType`, which always synthesizes an
+    /// anonymous tuple — so the displayed parameter never borrows the name of
+    /// a structurally identical user alias (`V01`), even though interning
+    /// would otherwise share the alias's display.
+    pub(crate) fn effective_rest_slice_parameter_display(
+        &mut self,
+        param_type: TypeId,
+    ) -> Option<String> {
+        let readonly =
+            crate::query_boundaries::common::readonly_inner_type(self.ctx.types, param_type)
+                .is_some();
+        let unwrapped = query_common::unwrap_readonly(self.ctx.types, param_type);
+        let elements = query_common::tuple_elements(self.ctx.types, unwrapped)?;
+        let (first, tail) = elements.split_first()?;
+        if !first.rest || tail.is_empty() || tail.iter().any(|element| element.rest) {
+            return None;
+        }
+        Some(self.format_tuple_element_display(&elements, readonly))
+    }
+
     pub(crate) fn constrained_variadic_tuple_parameter_display(
         &mut self,
         param_type: TypeId,
         arg_type: TypeId,
     ) -> Option<String> {
         self.constrained_variadic_tuple_parameter_display_structured(param_type, arg_type)
-            .or_else(|| {
-                self.constrained_variadic_tuple_parameter_display_from_surface(param_type, arg_type)
-            })
     }
 
     fn constrained_variadic_tuple_parameter_display_structured(
@@ -78,25 +98,6 @@ impl<'a> CheckerState<'a> {
         display_elements.extend(constraint_elements[consumed..].iter().copied());
         display_elements.extend(outer_tail.iter().copied());
         Some(self.format_tuple_element_display(&display_elements, false))
-    }
-
-    fn constrained_variadic_tuple_parameter_display_from_surface(
-        &mut self,
-        param_type: TypeId,
-        arg_type: TypeId,
-    ) -> Option<String> {
-        let display = self.format_type_diagnostic(param_type);
-        let rest = display
-            .strip_prefix("readonly [...readonly [")
-            .or_else(|| display.strip_prefix("[...["))?;
-        let (constraint, outer_tail) = rest.rsplit_once("], ")?;
-        let outer_tail = outer_tail.strip_suffix(']')?;
-        let (fixed, variadic) = constraint.split_once(", ...")?;
-        if query_common::tuple_elements(self.ctx.types, arg_type).is_some() {
-            Some(format!("[...{variadic}, {outer_tail}]"))
-        } else {
-            Some(fixed.to_string())
-        }
     }
 
     pub(crate) fn underfilled_generic_variadic_tuple_parameter_display(

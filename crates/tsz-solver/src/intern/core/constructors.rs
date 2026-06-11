@@ -1163,10 +1163,14 @@ impl TypeInterner {
     ///
     /// A **fixed** inner tuple (no rest of its own) is always spliced. A
     /// **variadic** inner tuple (carrying its own rest, e.g. `[B, ...C[]]`) is
-    /// spliced only when it is the parent's sole rest element and its last
-    /// element, so the result still carries at most one rest — this is the shape
-    /// recursive list utilities (`[H, ...Util<R>]`) build, and it can never
-    /// produce an illegal two-rest tuple. Rest *arrays* (`...X[]`) and generic
+    /// spliced only when it is the parent's sole rest element, so the result
+    /// still carries at most one rest — the inner rest simply replaces the
+    /// parent's. This covers recursive list utilities (`[H, ...Util<R>]`) and
+    /// middle-position spreads with a fixed suffix (`[...S, number]` with `S`
+    /// instantiated to `[string, ...string[]]`, which tsc normalizes to
+    /// `[string, ...string[], number]`). A middle-position inner tuple that
+    /// itself carries more than one rest (parser-recovered shapes) is left as
+    /// written. Rest *arrays* (`...X[]`) and generic
     /// spreads (`...T`, `...Application`, `...Lazy`) are left as written; a
     /// self-referential `type T = [x, ...T]` never resolves its spread to a
     /// concrete tuple, so this cannot recurse. Optional outer spreads are left
@@ -1207,8 +1211,17 @@ impl TypeInterner {
                 && let Some(inner_list) = self.concrete_tuple_list(elem.type_id)
             {
                 let inner = self.tuple_list(inner_list);
-                let inner_is_variadic = inner.iter().any(|inner_elem| inner_elem.rest);
-                if !inner_is_variadic || (parent_rest_count == 1 && index == last_index) {
+                let (inner_rest_count, inner_has_optional) =
+                    inner.iter().fold((0usize, false), |(rests, optional), e| {
+                        (rests + usize::from(e.rest), optional || e.optional)
+                    });
+                // Splicing into a middle position must not move an optional
+                // element in front of the parent's required suffix (an illegal
+                // tuple shape), so only rest+required inner shapes splice there.
+                let splice_middle = inner_rest_count == 1 && !inner_has_optional;
+                let splice_variadic =
+                    parent_rest_count == 1 && (index == last_index || splice_middle);
+                if inner_rest_count == 0 || splice_variadic {
                     out.extend(inner.iter().copied());
                     continue;
                 }

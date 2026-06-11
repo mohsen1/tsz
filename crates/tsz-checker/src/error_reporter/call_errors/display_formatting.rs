@@ -765,14 +765,34 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let raw_param_type = raw_sig
+        let (raw_param_type, param_is_rest) = raw_sig
             .params
             .get(arg_index)
-            .map(|param| param.type_id)
+            .map(|param| (param.type_id, param.rest))
             .or_else(|| {
                 let last = raw_sig.params.last()?;
-                last.rest.then_some(last.type_id)
+                last.rest.then_some((last.type_id, true))
             })?;
+        // An argument that maps into a rest parameter of *tuple* type is
+        // related against the tuple's per-position element type (leading fixed
+        // positions) or the sliced remainder (the aggregate check), never the
+        // whole rest tuple — tsc's getTypeAtPosition/getEffectiveRestType
+        // model. The caller's `param_type` already carries that solver-computed
+        // expected type, so reconstructing the whole instantiated tuple here
+        // would misreport the parameter surface.
+        if param_is_rest {
+            let raw_unwrapped = query_common::unwrap_readonly(self.ctx.types, raw_param_type);
+            if query_common::tuple_elements(self.ctx.types, raw_unwrapped).is_some() {
+                return None;
+            }
+            // The raw type may hide the tuple behind an alias/application;
+            // only then pay for an environment evaluation.
+            let instantiated_probe = self.evaluate_type_with_env(raw_param_type);
+            let unwrapped = query_common::unwrap_readonly(self.ctx.types, instantiated_probe);
+            if query_common::tuple_elements(self.ctx.types, unwrapped).is_some() {
+                return None;
+            }
+        }
 
         let mut replacements = FxHashMap::default();
         for (raw_param, &call_arg_idx) in raw_sig.params.iter().zip(args.nodes.iter()) {

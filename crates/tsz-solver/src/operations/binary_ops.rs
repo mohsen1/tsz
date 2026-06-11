@@ -936,8 +936,8 @@ impl<'a> BinaryOpEvaluator<'a> {
             // left || right
             // tsc uses UnionReduction.Subtype for || result types, which removes
             // structural subtypes (e.g., never[] from number[] | never[] → number[]).
-            let truthy_left =
-                self.non_nullable_type_parameter_result(left, ctx.narrow_by_truthiness(left));
+            let plain_truthy_left = ctx.narrow_by_truthiness(left);
+            let truthy_left = self.non_nullable_type_parameter_result(left, plain_truthy_left);
             let falsy_left = ctx.narrow_to_falsy(left);
 
             if falsy_left == TypeId::NEVER && !self.is_type_parameter_like(left) {
@@ -946,13 +946,21 @@ impl<'a> BinaryOpEvaluator<'a> {
                 right
             } else {
                 let result = self.union2_subtype_reduce(truthy_left, right);
-                // tsc displays the truthy-narrowed left first, then the right
-                // operand: `(options || {}).a` produces
-                //   `{ a: string; b: number; } | {}`
-                // (not the reverse). Record that order as the union origin so
-                // diagnostic display follows source order.
+                // tsc orders union members by type creation: `(options || {}).a`
+                // displays `{ a: string; b: number; } | {}` because both operand
+                // types already exist when the union forms. When the truthy side
+                // is a `NonNullable<T>` approximation *synthesized by this very
+                // operation* (`T & {}` for a type-parameter left), it is the
+                // newest type in tsc's id order and therefore displays last:
+                // `t || u` renders `U | NonNullable<T>`. Record the matching
+                // origin order so diagnostic display agrees.
+                let display_origin = if truthy_left == plain_truthy_left {
+                    vec![truthy_left, right]
+                } else {
+                    vec![right, truthy_left]
+                };
                 self.interner
-                    .replace_union_origin_for_display(result, vec![truthy_left, right]);
+                    .replace_union_origin_for_display(result, display_origin);
                 result
             }
         } else {
