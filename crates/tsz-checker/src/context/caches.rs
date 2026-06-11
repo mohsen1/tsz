@@ -69,6 +69,38 @@ pub struct TypeReferenceValidationCaches {
     pub assignability_eval_memo: AssignabilityEvalMemo,
 }
 
+/// Program-wide success tier for generic type-argument constraint proofs,
+/// shared by every file checker of a multi-file program.
+///
+/// In project mode each file checker re-proves the same constraint pairs for
+/// the generic aliases it imports (the per-file
+/// [`TypeReferenceValidationCaches`] start empty for every file), so the same
+/// `(TypeId, TypeId)` proof is recomputed once per referencing file. `TypeId`s
+/// are interned program-wide, so a proof over file-independent types has one
+/// program-wide answer — mirror of the solver's shared relation cache, lifted
+/// to the checker's TS2344 proof orchestration.
+///
+/// Soundness contract (enforced at the publish sites):
+/// - only **successes** are published; failures stay file-local so diagnostic
+///   relation requests re-run with full failure analysis;
+/// - both key types must be free of generic type parameters and of
+///   file-relative content (`contains_file_relative_content`), so the proof
+///   does not depend on the publishing file's scope;
+/// - proofs that observed an unresolved `Lazy` def
+///   (`lazy_resolve_failure_count` advanced) or ran with exhausted evaluation
+///   fuel are not published.
+#[derive(Debug, Default)]
+pub struct SharedConstraintProofCache {
+    /// Mirror of `type_arg_constraint_relation_successes`: successful TS2344
+    /// constraint relations keyed by prepared source/target plus the packed
+    /// relation flags and sound-mode bit.
+    pub type_arg_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
+    /// Mirror of `conditional_branch_constraint`, `true` results only.
+    pub conditional_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
+    /// Mirror of `indexed_object_map_branch_constraint`, `true` results only.
+    pub indexed_object_map_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
+}
+
 /// Sparse cache for node-index-keyed `TypeId` lookups.
 ///
 /// `NodeIndex` values are arena-local, so this cache is never shared across

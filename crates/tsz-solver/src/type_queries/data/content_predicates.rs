@@ -628,6 +628,72 @@ pub fn contains_generic_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeI
     result
 }
 
+struct FileRelativePredicate;
+impl ContentPredicate for FileRelativePredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(
+            key,
+            TypeData::UnresolvedTypeName(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::ThisType
+                | TypeData::Recursive(_)
+        )
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_file_relative_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_file_relative_cache(type_id, result);
+    }
+}
+
+/// Check if a type contains content whose meaning is relative to the file or
+/// lexical scope that produced it, rather than to the program-wide type
+/// universe.
+///
+/// Returns `true` when the type (transitively) contains:
+/// - `UnresolvedTypeName`: resolved by name against the *current* file, so the
+///   same `TypeId` can denote different declarations in different files;
+/// - `TypeQuery` / `UniqueSymbol` / `ModuleNamespace`: carry raw `SymbolRef`
+///   ids, which are arena-local in project checks;
+/// - `ThisType`: bound by the enclosing class/interface context;
+/// - `Recursive`: a structural back-reference that is only meaningful relative
+///   to an enclosing type, so a bare subtree containing one is not closed.
+///
+/// `Lazy(DefId)` and `Enum(DefId, _)` references are *not* file-relative: the
+/// shared `DefinitionStore` gives them one program-wide meaning. This walk
+/// does not chase def bodies; callers that resolve lazily must pair this
+/// predicate with an unresolved-`Lazy` taint snapshot
+/// (`lazy_resolve_failure_count`) to detect bodies that were not yet
+/// registered while a result was computed.
+///
+/// Used to decide whether a per-file proof (e.g. a TS2344 constraint
+/// validation success) may be published to a program-wide cache shared by all
+/// file checkers. The answer is immutable per `TypeId`, so the deep walk's
+/// per-node results are memoized project-wide.
+pub fn contains_file_relative_content_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(
+            TypeData::UnresolvedTypeName(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::ThisType
+            | TypeData::Recursive(_),
+        ) => return true,
+        Some(
+            TypeData::Literal(_) | TypeData::Intrinsic(_) | TypeData::Error | TypeData::Enum(_, _),
+        ) => return false,
+        _ => {}
+    }
+    contains_content_cached(db, type_id, &FileRelativePredicate)
+}
+
 /// Check if a type is directly an `Infer` type (not recursive).
 ///
 /// This is a lightweight O(1) check that only inspects the top-level type.

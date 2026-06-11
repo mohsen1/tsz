@@ -62,8 +62,12 @@ pub(crate) fn note_lazy_resolve_failure() {
 /// Current value of the unresolved-`Lazy` counter; compare a snapshot taken
 /// before computing a result with the value after to detect whether the
 /// computation depended on an unresolved `Lazy`.
+///
+/// Public so checker-side proof caches shared across file checkers can apply
+/// the same "don't publish results that depended on an unresolved `Lazy`"
+/// suppression the solver's shared relation cache uses.
 #[inline]
-pub(crate) fn lazy_resolve_failure_count() -> u64 {
+pub fn lazy_resolve_failure_count() -> u64 {
     LAZY_RESOLVE_FAILURES.with(std::cell::Cell::get)
 }
 

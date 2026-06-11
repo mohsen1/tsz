@@ -12,7 +12,8 @@ mod cross_file_type_params_cache;
 pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
     AssignabilityEvalMemo, AssignabilityEvalStamp, NarrowableIdentifierCache, NodeTypeCache,
-    SymbolTypeCache, TypeNodeSurfaceCaches, TypeReferenceValidationCaches,
+    SharedConstraintProofCache, SymbolTypeCache, TypeNodeSurfaceCaches,
+    TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
@@ -499,6 +500,13 @@ pub struct CheckerContext<'a> {
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,
+
+    /// Program-wide success tier for generic type-argument constraint proofs,
+    /// shared across parallel file checks. Consulted on local
+    /// `type_reference_validation_caches` misses; only file-independent
+    /// successes are published. See
+    /// [`crate::context::SharedConstraintProofCache`].
+    pub shared_constraint_proofs: Option<Arc<crate::context::SharedConstraintProofCache>>,
     // T2.2 cross-file type-parameter cache type alias is defined just below.
     /// Program-wide memoization for `extract_type_params_from_decl` slow-path
     /// results, keyed by `(target_file_idx, decl_idx)`. T2.2: collapses

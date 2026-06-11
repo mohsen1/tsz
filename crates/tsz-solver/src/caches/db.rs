@@ -166,6 +166,16 @@ pub trait TypePredicateCache {
     /// Only cycle-untainted (fully explored) results may be stored.
     /// Default impl is a no-op.
     fn set_eval_contains_infer_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_file_relative_content_db(type_id)` result.
+    /// Default impl returns `None` (no caching).
+    fn contains_file_relative_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_file_relative_content_db(type_id)` in
+    /// the shared interner cache. Default impl is a no-op.
+    fn set_contains_file_relative_cache(&self, _type_id: TypeId, _result: bool) {}
 }
 
 /// Narrow signal for tuple-size overflow discovered during solver evaluation.
@@ -691,6 +701,14 @@ impl TypePredicateCache for TypeInterner {
 
     fn set_eval_contains_infer_cache(&self, type_id: TypeId, result: bool) {
         self.eval_contains_infer_cache.insert(type_id, result);
+    }
+
+    fn contains_file_relative_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_file_relative_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_file_relative_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_file_relative_cache.insert(type_id, result);
     }
 }
 

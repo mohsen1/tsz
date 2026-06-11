@@ -1541,6 +1541,14 @@ impl TypeInterner {
         });
     }
 
+    /// TS2590 pairwise-iteration budget for subtype reduction, matching tsc's
+    /// `removeSubtypes` bail-out at 1,000,000 pairwise checks. When `len *
+    /// (len - 1)` reaches this limit, reduction is skipped and the sticky
+    /// `union_too_complex` flag is set. `UNION_NORMALIZE_CACHE_MAX_LEN` is
+    /// derived from this value at compile time so the `normalize_union` memo
+    /// can never cache (and thus never swallow) a flag-setting input.
+    pub(crate) const UNION_SUBTYPE_PAIRWISE_LIMIT: u64 = 1_000_000;
+
     /// Remove redundant types from a union using shallow subtype checks.
     /// If A <: B, then A | B = B (A is redundant).
     pub(crate) fn reduce_union_subtypes(&self, flat: &mut TypeListBuffer) {
@@ -1633,7 +1641,7 @@ impl TypeInterner {
         // internal type construction (template literals, etc.) may legitimately create
         // large unions. The checker decides whether to treat it as a diagnostic.
         let pairwise = (len as u64) * (len as u64 - 1);
-        if pairwise >= 1_000_000 {
+        if pairwise >= Self::UNION_SUBTYPE_PAIRWISE_LIMIT {
             self.set_union_too_complex();
             return; // skip reduction, preserve the union members as-is
         }

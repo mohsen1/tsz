@@ -94,6 +94,17 @@ pub(crate) fn contains_generic_type_parameters(db: &dyn TypeDatabase, type_id: T
     tsz_solver::type_queries::contains_generic_type_parameters_db(db, type_id)
 }
 
+pub(crate) fn contains_file_relative_content(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_file_relative_content_db(db, type_id)
+}
+
+/// Current value of the solver's unresolved-`Lazy` taint counter. Snapshot it
+/// around a proof computation to detect a dependency on a def body that was
+/// not yet registered; such proofs must not be published program-wide.
+pub(crate) fn lazy_resolve_failure_count() -> u64 {
+    tsz_solver::relations::subtype::lazy_resolve_failure_count()
+}
+
 pub(crate) fn contains_lazy_or_recursive(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_lazy_or_recursive_db(db, type_id)
 }
