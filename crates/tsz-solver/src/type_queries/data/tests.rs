@@ -1467,3 +1467,238 @@ fn type_id_list_iter_reports_exact_remaining_len() {
     it.next();
     assert_eq!(it.len(), 0);
 }
+
+use crate::TypeData;
+use crate::visitors::visitor_predicates::contains_type_matching;
+
+/// Corpus of roots covering every `TypeData` variant reachable from test
+/// construction, with predicate-relevant leaves planted at varying depths.
+/// Used to pin the project-cached content walker to the generic uncached
+/// walker: both must descend the same `ChildPolicy::CONTENT_PREDICATE` child
+/// set, so their answers must agree on every root for every predicate.
+fn content_walk_agreement_corpus(interner: &TypeInterner) -> Vec<TypeId> {
+    use crate::types::{
+        CallableShape, ConditionalType, IndexSignature, ObjectShape, PropertyInfo, TemplateSpan,
+        TupleElement,
+    };
+
+    let t_name = interner.intern_string("T");
+    let v_name = interner.intern_string("V");
+    let prop_name = interner.intern_string("p");
+
+    let plain_param = interner.type_param(TypeParamInfo::simple(t_name));
+    let infer_v = interner.infer(TypeParamInfo::simple(v_name));
+    let constrained_param = interner.type_param(TypeParamInfo {
+        constraint: Some(infer_v),
+        default: Some(TypeId::STRING),
+        ..TypeParamInfo::simple(t_name)
+    });
+    let lazy = interner.lazy(crate::def::DefId(7));
+    let type_query = interner.type_query(crate::types::SymbolRef(3));
+    let this_obj = interner.object(vec![PropertyInfo::new(prop_name, interner.this_type())]);
+
+    let leaves = [
+        TypeId::STRING,
+        plain_param,
+        infer_v,
+        constrained_param,
+        lazy,
+        type_query,
+        this_obj,
+        interner.conditional(ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: plain_param,
+            true_type: type_query,
+            false_type: TypeId::NEVER,
+            is_distributive: false,
+        }),
+    ];
+
+    let mut corpus = Vec::new();
+    for leaf in leaves {
+        corpus.push(leaf);
+        corpus.push(interner.array(leaf));
+        corpus.push(interner.union(vec![TypeId::NUMBER, leaf]));
+        corpus.push(interner.intersection(vec![interner.object(vec![]), leaf]));
+        corpus.push(interner.tuple(vec![TupleElement {
+            type_id: leaf,
+            name: None,
+            optional: false,
+            rest: false,
+        }]));
+        corpus.push(interner.object(vec![PropertyInfo::new(prop_name, leaf)]));
+        corpus.push(interner.object_with_index(ObjectShape {
+            properties: vec![],
+            string_index: Some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: leaf,
+                readonly: false,
+                param_name: None,
+            }),
+            ..ObjectShape::default()
+        }));
+        corpus.push(interner.function(crate::types::FunctionShape::new(
+            vec![ParamInfo {
+                name: None,
+                type_id: leaf,
+                optional: false,
+                rest: false,
+            }],
+            TypeId::VOID,
+        )));
+        corpus.push(interner.callable(CallableShape {
+            call_signatures: vec![CallSignature::new(vec![], leaf)],
+            ..CallableShape::default()
+        }));
+        corpus.push(interner.application(lazy, vec![leaf]));
+        corpus.push(interner.application(leaf, vec![TypeId::STRING]));
+        corpus.push(interner.conditional(ConditionalType {
+            check_type: leaf,
+            extends_type: TypeId::UNKNOWN,
+            true_type: TypeId::STRING,
+            false_type: TypeId::NEVER,
+            is_distributive: true,
+        }));
+        corpus.push(interner.mapped(MappedType {
+            type_param: TypeParamInfo::simple(interner.intern_string("K")),
+            constraint: interner.keyof(leaf),
+            name_type: None,
+            template: leaf,
+            readonly_modifier: None,
+            optional_modifier: None,
+        }));
+        corpus.push(interner.index_access(leaf, TypeId::STRING));
+        corpus.push(interner.template_literal(vec![
+            TemplateSpan::Text(interner.intern_string("a")),
+            TemplateSpan::Type(leaf),
+        ]));
+        corpus.push(interner.keyof(leaf));
+        corpus.push(interner.readonly_type(leaf));
+        corpus.push(interner.no_infer(leaf));
+        corpus.push(interner.enum_type(crate::def::DefId(9), leaf));
+        corpus.push(interner.array(interner.union(vec![
+            interner.tuple(vec![TupleElement {
+                type_id: interner.object(vec![PropertyInfo::new(prop_name, leaf)]),
+                name: None,
+                optional: false,
+                rest: false,
+            }]),
+            TypeId::NULL,
+        ])));
+    }
+    corpus
+}
+
+/// The project-cached content walker (`contains_*_db`) and the generic
+/// uncached `contains_type_matching` walk must give identical answers: both
+/// are drivers over the same canonical `CONTENT_PREDICATE` child enumeration.
+/// This replaces the old "must mirror `check_key` exactly" comment contract
+/// with an executable check over a generated shape corpus.
+#[test]
+fn cached_content_walker_agrees_with_generic_walker_on_corpus() {
+    let interner = TypeInterner::new();
+    let corpus = content_walk_agreement_corpus(&interner);
+    assert!(corpus.len() > 100);
+
+    for &root in &corpus {
+        let infer_cached = contains_infer_types_db(&interner, root);
+        let infer_generic = contains_type_matching(&interner, root, |key| match key {
+            TypeData::Infer(_) => true,
+            TypeData::TypeParameter(tp) => {
+                let name = interner.resolve_atom_ref(tp.name);
+                name.starts_with("__infer_") || name.starts_with("__infer_src_")
+            }
+            _ => false,
+        });
+        assert_eq!(
+            infer_cached, infer_generic,
+            "contains_infer mismatch on {root:?}"
+        );
+
+        let query_cached = contains_type_query_db(&interner, root);
+        let query_generic =
+            contains_type_matching(&interner, root, |key| matches!(key, TypeData::TypeQuery(_)));
+        assert_eq!(
+            query_cached, query_generic,
+            "contains_type_query mismatch on {root:?}"
+        );
+
+        let lazy_cached = contains_lazy_or_recursive_db(&interner, root);
+        let lazy_generic = contains_type_matching(&interner, root, |key| {
+            matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_))
+        });
+        assert_eq!(
+            lazy_cached, lazy_generic,
+            "contains_lazy mismatch on {root:?}"
+        );
+
+        let this_cached = contains_this_type_db(&interner, root);
+        let this_generic =
+            contains_type_matching(&interner, root, |key| matches!(key, TypeData::ThisType));
+        assert_eq!(
+            this_cached, this_generic,
+            "contains_this mismatch on {root:?}"
+        );
+
+        let cond_cached = contains_conditional_type(&interner, root);
+        let cond_generic = contains_type_matching(&interner, root, |key| {
+            matches!(key, TypeData::Conditional(_))
+        });
+        assert_eq!(
+            cond_cached, cond_generic,
+            "contains_conditional mismatch on {root:?}"
+        );
+
+        let subst_cached = is_substitution_dependent_type(&interner, root);
+        let subst_generic = contains_type_matching(&interner, root, |key| {
+            matches!(
+                key,
+                TypeData::TypeParameter(_)
+                    | TypeData::Infer(_)
+                    | TypeData::ThisType
+                    | TypeData::BoundParameter(_)
+            )
+        });
+        assert_eq!(
+            subst_cached, subst_generic,
+            "substitution-dependent mismatch on {root:?}"
+        );
+    }
+}
+
+/// `contains_error_type_db` and the visitor-side `contains_error_type` are one
+/// canonical walk: every nested error position — application args, application
+/// bases, the raw `TypeId::ERROR` sentinel, and wrapper kinds — must be
+/// detected identically through both entry points.
+#[test]
+fn error_containment_is_unified_across_query_paths() {
+    let interner = TypeInterner::new();
+
+    let cases = [
+        (TypeId::ERROR, true),
+        (
+            interner.application(interner.lazy(crate::def::DefId(7)), vec![TypeId::ERROR]),
+            true,
+        ),
+        (
+            interner.application(TypeId::ERROR, vec![TypeId::STRING]),
+            true,
+        ),
+        (interner.keyof(TypeId::ERROR), true),
+        (interner.array(TypeId::ERROR), true),
+        (interner.union(vec![TypeId::STRING, TypeId::NUMBER]), false),
+        (interner.array(TypeId::STRING), false),
+    ];
+    for (root, expected) in cases {
+        assert_eq!(
+            contains_error_type_db(&interner, root),
+            expected,
+            "contains_error_type_db on {root:?}"
+        );
+        assert_eq!(
+            crate::visitors::visitor_predicates::contains_error_type(&interner, root),
+            expected,
+            "visitor contains_error_type on {root:?}"
+        );
+    }
+}

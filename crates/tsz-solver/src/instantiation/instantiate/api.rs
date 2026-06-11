@@ -692,19 +692,6 @@ pub(super) fn type_contains_lazy_application(interner: &dyn TypeDatabase, type_i
     })
 }
 
-/// Whether `type_id` contains an `infer` placeholder (`TypeData::Infer`).
-///
-/// A conditional whose `extends` clause introduces `infer` types is an
-/// extraction (`P[K] extends V<infer X> ? … : …`), not a resolver-less
-/// collapse-to-`never` filter. The instantiator already evaluates such
-/// conditionals correctly; deferring them only leaves the surrounding mapped
-/// un-reduced, so callers use this to keep infer-bearing conditions eager.
-pub(super) fn type_contains_infer(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
-        matches!(key, TypeData::Infer(_))
-    })
-}
-
 /// Whether a mapped template's conditional condition references a body the
 /// instantiator's `NoopResolver` cannot expand, so eager evaluation would
 /// collapse or garble it and the mapped must be deferred to the resolver-backed
@@ -729,9 +716,13 @@ pub(super) fn conditional_condition_needs_resolver(
     };
     let bare_lazy = matches!(interner.lookup(cond.extends_type), Some(TypeData::Lazy(_)))
         || matches!(interner.lookup(cond.check_type), Some(TypeData::Lazy(_)));
-    let lazy_application = !type_contains_infer(interner, cond.extends_type)
-        && (type_contains_lazy_application(interner, cond.extends_type)
-            || type_contains_lazy_application(interner, cond.check_type));
+    // A conditional whose `extends` clause introduces `infer` types is an
+    // extraction (`P[K] extends V<infer X> ? … : …`), not a resolver-less
+    // collapse-to-`never` filter; keep infer-bearing conditions eager.
+    let lazy_application =
+        !crate::visitors::visitor_predicates::contains_infer_types(interner, cond.extends_type)
+            && (type_contains_lazy_application(interner, cond.extends_type)
+                || type_contains_lazy_application(interner, cond.check_type));
     bare_lazy || lazy_application
 }
 

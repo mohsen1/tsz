@@ -3,10 +3,13 @@
 //! Contains `contains_*`, `is_*` predicates, union/intersection member access,
 //! array/tuple extraction, and compound member mapping.
 
+use std::ops::ControlFlow;
+
 use super::type_id_list::TypeIdList;
 use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
+use crate::visitors::child_policy::{ChildPolicy, try_for_each_child_with_policy};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -226,12 +229,12 @@ pub fn is_substitution_dependent_type(db: &dyn TypeDatabase, type_id: TypeId) ->
 
 /// Run a deep, project-cached content walk for `predicate` over `type_id`.
 ///
-/// Mirrors the child enumeration of `ContainsTypeChecker.check_key` (the generic
-/// walker) but consults and populates the predicate's persistent project-wide
-/// cache at every node. A subtree result is only written to the persistent cache
-/// when its computation did NOT touch an in-progress (cycle) node — the
-/// `cycle_tainted` flag tracks this so a provisional cycle-break answer is never
-/// cached as if it were final.
+/// Descends the same [`ChildPolicy::CONTENT_PREDICATE`] child set as the
+/// generic `contains_type_matching` walker, but consults and populates the
+/// predicate's persistent project-wide cache at every node. A subtree result is
+/// only written to the persistent cache when its computation did NOT touch an
+/// in-progress (cycle) node — the `cycle_tainted` flag tracks this so a
+/// provisional cycle-break answer is never cached as if it were final.
 fn contains_content_cached<P: ContentPredicate>(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -295,136 +298,31 @@ impl<P: ContentPredicate> CachedContentWalker<'_, P> {
         if self.predicate.matches_node(self.db, &key) {
             return (true, false);
         }
-        // Collect children, then walk with a short-circuiting loop. Collecting
-        // first keeps the borrow of `self.db` out of the recursive `self`
-        // mutation that follows.
-        let children = self.collect_children(&key);
+        // Same child set as the generic uncached walker, by construction.
+        let db = self.db;
         let mut tainted = false;
-        for child in children {
-            let (child_found, child_tainted) = self.check_tracked(child);
-            tainted |= child_tainted;
-            if child_found {
-                // A `true` answer is never tainted: a found match is a
-                // definite fact independent of any in-flight cycle node.
-                return (true, false);
-            }
+        let found = try_for_each_child_with_policy::<()>(
+            db,
+            &key,
+            &ChildPolicy::CONTENT_PREDICATE,
+            &mut |child| {
+                let (child_found, child_tainted) = self.check_tracked(child);
+                tainted |= child_tainted;
+                if child_found {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            },
+        )
+        .is_break();
+        if found {
+            // A `true` answer is never tainted: a found match is a definite
+            // fact independent of any in-flight cycle node.
+            (true, false)
+        } else {
+            (false, tainted)
         }
-        (false, tainted)
-    }
-
-    /// Enumerate the child `TypeId`s a cached content walk must descend into for
-    /// a given node. Mirrors `ContainsTypeChecker.check_key`'s child set exactly
-    /// so the cached walker stays semantically identical to the generic walker.
-    fn collect_children(&self, key: &TypeData) -> Vec<TypeId> {
-        let mut out = Vec::new();
-        match key {
-            TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::UnresolvedTypeName(_) => {}
-            // `ContainsTypeChecker` descends into a type parameter's constraint
-            // and default (e.g. `infer V` inside `T extends Bar<infer V>`). The
-            // self-match short-circuit in `check_key_tracked` already handles
-            // predicates for which the parameter node itself matches.
-            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                if let Some(c) = info.constraint {
-                    out.push(c);
-                }
-                if let Some(d) = info.default {
-                    out.push(d);
-                }
-            }
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.db.object_shape(*shape_id);
-                out.extend(shape.properties.iter().map(|p| p.type_id));
-                if let Some(i) = shape.string_index.as_ref() {
-                    out.push(i.value_type);
-                }
-                if let Some(i) = shape.number_index.as_ref() {
-                    out.push(i.value_type);
-                }
-            }
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                out.extend(self.db.type_list(*list_id).iter().copied());
-            }
-            TypeData::Array(elem) => out.push(*elem),
-            TypeData::Tuple(list_id) => {
-                out.extend(self.db.tuple_list(*list_id).iter().map(|e| e.type_id));
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.db.function_shape(*shape_id);
-                out.extend(shape.params.iter().map(|p| p.type_id));
-                out.push(shape.return_type);
-                if let Some(t) = shape.this_type {
-                    out.push(t);
-                }
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.db.callable_shape(*shape_id);
-                for s in shape
-                    .call_signatures
-                    .iter()
-                    .chain(shape.construct_signatures.iter())
-                {
-                    out.extend(s.params.iter().map(|p| p.type_id));
-                    out.push(s.return_type);
-                    if let Some(t) = s.this_type {
-                        out.push(t);
-                    }
-                }
-                out.extend(shape.properties.iter().map(|p| p.type_id));
-            }
-            TypeData::Application(app_id) => {
-                // Only check args, not base. The base type's own type parameters
-                // are bound by the application arguments.
-                out.extend(self.db.type_application(*app_id).args.iter().copied());
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.db.get_conditional(*cond_id);
-                out.push(cond.check_type);
-                out.push(cond.extends_type);
-                out.push(cond.true_type);
-                out.push(cond.false_type);
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.db.get_mapped(*mapped_id);
-                if let Some(c) = mapped.type_param.constraint {
-                    out.push(c);
-                }
-                if let Some(d) = mapped.type_param.default {
-                    out.push(d);
-                }
-                out.push(mapped.constraint);
-                out.push(mapped.template);
-                if let Some(n) = mapped.name_type {
-                    out.push(n);
-                }
-            }
-            TypeData::IndexAccess(obj, idx) => {
-                out.push(*obj);
-                out.push(*idx);
-            }
-            TypeData::TemplateLiteral(list_id) => {
-                for span in self.db.template_list(*list_id).iter() {
-                    if let crate::types::TemplateSpan::Type(child) = span {
-                        out.push(*child);
-                    }
-                }
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                out.push(*inner);
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => out.push(*type_arg),
-            TypeData::Enum(_def_id, member_type) => out.push(*member_type),
-        }
-        out
     }
 }
 
@@ -863,34 +761,12 @@ pub fn contains_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: Typ
 
 /// Check if a type contains the error type.
 ///
-/// Delegates to `visitor_predicates::contains_type_matching` with an `Error`-only
-/// predicate, plus a fast path for the well-known `TypeId::ERROR`.
+/// Delegates to the canonical `visitor_predicates::contains_error_type` walk,
+/// so this checker-facing query and the visitor query give one answer: an
+/// error is detected anywhere in the full structural surface, including
+/// `Application` bases and the nested raw `TypeId::ERROR` sentinel.
 pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if type_id == TypeId::ERROR {
-        return true;
-    }
-    // Fast path: intrinsic and leaf types can't contain Error
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    if matches!(
-        db.lookup(type_id),
-        Some(
-            TypeData::Literal(_)
-                | TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::ThisType
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::BoundParameter(_)
-                | TypeData::Recursive(_)
-        )
-    ) {
-        return false;
-    }
-    contains_type_matching(db, type_id, |key| {
-        matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_))
-    })
+    crate::visitors::visitor_predicates::contains_error_type(db, type_id)
 }
 
 /// Check if a type contains a generic application with an `unknown` argument.

@@ -1,7 +1,17 @@
 //! Deep content predicate walkers for solver `TypeData` graphs.
+//!
+//! Every deep walker here is a thin driver over the canonical
+//! policy-parameterized child enumerator in [`crate::visitors::child_policy`]:
+//! memoization, recursion guards, and short-circuiting are per-driver; the
+//! child set each walker descends into is an explicit [`ChildPolicy`].
+
+use std::ops::ControlFlow;
 
 use crate::construction::TypeDatabase;
 use crate::types::IntrinsicKind;
+use crate::visitors::child_policy::{
+    ChildPolicy, has_policy_children, try_for_each_child_with_policy,
+};
 use crate::{TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
@@ -32,14 +42,16 @@ pub fn contains_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bo
 /// enclosing function/callable signatures. See `contains_free_type_parameters_db`
 /// in `content_predicates` for the full doc.
 pub fn contains_free_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let mut checker = FreeTypeParamChecker {
-        types,
-        memo: FxHashMap::default(),
-        guard: crate::recursion::RecursionGuard::with_profile(
-            crate::recursion::RecursionProfile::ShallowTraversal,
-        ),
-    };
-    checker.check(type_id)
+    DeepContainsChecker::new(types, &ChildPolicy::FREE_TYPE_PARAMS, |key| {
+        matches!(
+            key,
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+        )
+    })
+    .check(type_id)
 }
 
 /// Check if a type contains any `infer` types.
@@ -59,14 +71,10 @@ pub fn contains_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// suppressing real errors like TS2322 when the only `infer` types are in
 /// type parameter constraint chains.
 pub fn contains_free_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let mut checker = FreeInferChecker {
-        types,
-        memo: FxHashMap::default(),
-        guard: crate::recursion::RecursionGuard::with_profile(
-            crate::recursion::RecursionProfile::ShallowTraversal,
-        ),
-    };
-    checker.check(type_id)
+    DeepContainsChecker::new(types, &ChildPolicy::FREE_INFER, |key| {
+        matches!(key, TypeData::Infer(_))
+    })
+    .check(type_id)
 }
 
 /// Check if a type contains the `any` intrinsic anywhere.
@@ -79,144 +87,24 @@ pub fn contains_any_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     })
 }
 
-/// Check if a type contains the error type.
+/// Check if a type contains the error type anywhere in its structure.
 ///
-/// This handles `TypeId::ERROR` directly and also detects error types nested
-/// inside Application types (e.g., `Application(Error, args)` which displays
-/// as `error<args>`). The generic `contains_type_matching` visitor can't catch
-/// these because (a) its intrinsic fast-path skips `TypeId::ERROR` and (b) it
-/// doesn't check Application bases.
+/// Structural rule: a type contains an error iff any node reachable through
+/// its structural *use* surface — including `Application` bases, property
+/// write types, and index-signature keys, but excluding type-parameter
+/// declaration metadata — is the `TypeId::ERROR` sentinel, `TypeData::Error`,
+/// or an `UnresolvedTypeName`. The `TypeId::ERROR` sentinel is matched before the
+/// intrinsic fast path (it sits in the intrinsic id range), which the generic
+/// `contains_type_matching` walk cannot do.
+///
+/// This is the single canonical error-containment answer; the checker-facing
+/// `contains_error_type_db` delegates here so both query paths agree.
 pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if type_id == TypeId::ERROR {
-        return true;
-    }
-    contains_error_type_recursive(types, type_id, &mut FxHashMap::default())
-}
-
-fn contains_error_type_recursive(
-    types: &dyn TypeDatabase,
-    type_id: TypeId,
-    memo: &mut FxHashMap<TypeId, bool>,
-) -> bool {
-    if type_id == TypeId::ERROR {
-        return true;
-    }
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    if let Some(&cached) = memo.get(&type_id) {
-        return cached;
-    }
-    // Mark as false to break cycles
-    memo.insert(type_id, false);
-
-    let Some(key) = types.lookup(type_id) else {
-        return false;
-    };
-    if matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_)) {
-        memo.insert(type_id, true);
-        return true;
-    }
-
-    // Terminal-kind fast path. These variants have no children to recurse
-    // into and fall through the match below to `_ => false`. Short-circuiting
-    // here skips the eight-arm dispatch and the trailing memo write (we
-    // already inserted `false` at line 462 for cycle prevention, and the
-    // match's `_ => false` would just rewrite the same value).
-    if matches!(
-        key,
-        TypeData::Literal(_)
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::Intrinsic(_)
-    ) {
-        return false;
-    }
-
-    let result = match key {
-        TypeData::Application(app_id) => {
-            let app = types.type_application(app_id);
-            // Check both base AND args for error types. Unlike the generic
-            // contains_type_matching which skips bases to avoid false positives
-            // with type parameters, error types in the base are always wrong.
-            contains_error_type_recursive(types, app.base, memo)
-                || app
-                    .args
-                    .iter()
-                    .any(|&a| contains_error_type_recursive(types, a, memo))
-        }
-        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-            let members = types.type_list(list_id);
-            members
-                .iter()
-                .any(|&m| contains_error_type_recursive(types, m, memo))
-        }
-        TypeData::Tuple(tuple_list_id) => {
-            let elements = types.tuple_list(tuple_list_id);
-            elements
-                .iter()
-                .any(|elem| contains_error_type_recursive(types, elem.type_id, memo))
-        }
-        TypeData::Array(element_type) => contains_error_type_recursive(types, element_type, memo),
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            let shape = types.object_shape(shape_id);
-            shape.properties.iter().any(|prop| {
-                contains_error_type_recursive(types, prop.type_id, memo)
-                    || contains_error_type_recursive(types, prop.write_type, memo)
-            }) || shape.string_index.as_ref().is_some_and(|index| {
-                contains_error_type_recursive(types, index.key_type, memo)
-                    || contains_error_type_recursive(types, index.value_type, memo)
-            }) || shape.number_index.as_ref().is_some_and(|index| {
-                contains_error_type_recursive(types, index.key_type, memo)
-                    || contains_error_type_recursive(types, index.value_type, memo)
-            })
-        }
-        TypeData::Function(shape_id) => {
-            let shape = types.function_shape(shape_id);
-            contains_error_type_recursive(types, shape.return_type, memo)
-                || shape
-                    .params
-                    .iter()
-                    .any(|p| contains_error_type_recursive(types, p.type_id, memo))
-        }
-        TypeData::Callable(shape_id) => {
-            let shape = types.callable_shape(shape_id);
-            shape.call_signatures.iter().any(|sig| {
-                sig.params
-                    .iter()
-                    .any(|param| contains_error_type_recursive(types, param.type_id, memo))
-                    || contains_error_type_recursive(types, sig.return_type, memo)
-                    || sig.this_type.is_some_and(|this_type| {
-                        contains_error_type_recursive(types, this_type, memo)
-                    })
-            }) || shape.construct_signatures.iter().any(|sig| {
-                sig.params
-                    .iter()
-                    .any(|param| contains_error_type_recursive(types, param.type_id, memo))
-                    || contains_error_type_recursive(types, sig.return_type, memo)
-                    || sig.this_type.is_some_and(|this_type| {
-                        contains_error_type_recursive(types, this_type, memo)
-                    })
-            }) || shape.properties.iter().any(|prop| {
-                contains_error_type_recursive(types, prop.type_id, memo)
-                    || contains_error_type_recursive(types, prop.write_type, memo)
-            }) || shape.string_index.as_ref().is_some_and(|index| {
-                contains_error_type_recursive(types, index.key_type, memo)
-                    || contains_error_type_recursive(types, index.value_type, memo)
-            }) || shape.number_index.as_ref().is_some_and(|index| {
-                contains_error_type_recursive(types, index.key_type, memo)
-                    || contains_error_type_recursive(types, index.value_type, memo)
-            })
-        }
-        _ => false,
-    };
-    memo.insert(type_id, result);
-    result
+    DeepContainsChecker::new(types, &ChildPolicy::ERROR_CONTAINMENT, |key| {
+        matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_))
+    })
+    .with_error_sentinel()
+    .check(type_id)
 }
 
 /// Check if a type contains the `this` type anywhere.
@@ -236,19 +124,16 @@ pub fn contains_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 /// Check if a type contains any type matching a predicate.
+///
+/// Descends the [`ChildPolicy::CONTENT_PREDICATE`] child set: notably,
+/// `Application` bases are not visited (the base definition's own type
+/// parameters are bound by the application's arguments, so e.g. `A<number>`
+/// is concrete even though `A`'s definition contains `TypeParameter T`).
 pub fn contains_type_matching<F>(types: &dyn TypeDatabase, type_id: TypeId, predicate: F) -> bool
 where
     F: Fn(&TypeData) -> bool,
 {
-    let mut checker = ContainsTypeChecker {
-        types,
-        predicate,
-        memo: FxHashMap::default(),
-        guard: crate::recursion::RecursionGuard::with_profile(
-            crate::recursion::RecursionProfile::ShallowTraversal,
-        ),
-    };
-    checker.check(type_id)
+    DeepContainsChecker::new(types, &ChildPolicy::CONTENT_PREDICATE, predicate).check(type_id)
 }
 
 /// Check if a type contains a type parameter with the given name.
@@ -306,22 +191,7 @@ pub fn contains_type_parameter_named_shallow(
             // `for_each_child_by_id` (which would iterate an empty child set)
             // saves the closure setup and visitor dispatch on the very common
             // input shape where the predicate is the entry-point lookup result.
-            // The kinds listed here match the leaf arms of every other walker
-            // that returns `false` for them — see `ContainsTypeChecker.check_key`,
-            // `FreeTypeParamChecker.check_key`, and `FreeInferChecker.check_key`.
-            if matches!(
-                &data,
-                TypeData::Literal(_)
-                    | TypeData::Error
-                    | TypeData::ThisType
-                    | TypeData::BoundParameter(_)
-                    | TypeData::Lazy(_)
-                    | TypeData::Recursive(_)
-                    | TypeData::TypeQuery(_)
-                    | TypeData::UniqueSymbol(_)
-                    | TypeData::ModuleNamespace(_)
-                    | TypeData::UnresolvedTypeName(_)
-            ) {
+            if !has_policy_children(&data, &ChildPolicy::FULL) {
                 continue;
             }
             // For all other types, use the generic child visitor.
@@ -370,22 +240,9 @@ pub fn contains_type_parameter_identity_shallow(
                 continue;
             };
 
-            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
-                continue;
-            }
-            if matches!(
-                &data,
-                TypeData::Literal(_)
-                    | TypeData::Error
-                    | TypeData::ThisType
-                    | TypeData::BoundParameter(_)
-                    | TypeData::Lazy(_)
-                    | TypeData::Recursive(_)
-                    | TypeData::TypeQuery(_)
-                    | TypeData::UniqueSymbol(_)
-                    | TypeData::ModuleNamespace(_)
-                    | TypeData::UnresolvedTypeName(_)
-            ) {
+            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_))
+                || !has_policy_children(&data, &ChildPolicy::FULL)
+            {
                 continue;
             }
             crate::visitors::visitor::for_each_child_by_id(types, current, |child| {
@@ -556,28 +413,59 @@ pub fn contains_type_by_id(types: &dyn TypeDatabase, root: TypeId, target: TypeI
     false
 }
 
-struct ContainsTypeChecker<'a, F>
+/// The single deep boolean-containment driver behind every `contains_*`
+/// predicate walk: memoized, recursion-guarded, short-circuiting. The child
+/// set it descends into is the explicit [`ChildPolicy`]; the positive match is
+/// the `predicate` over each visited node's `TypeData` (checked before the
+/// terminal fast path, so leaf kinds can still match).
+struct DeepContainsChecker<'a, F>
 where
     F: Fn(&TypeData) -> bool,
 {
     types: &'a dyn TypeDatabase,
+    policy: &'static ChildPolicy,
     predicate: F,
+    /// Match the raw `TypeId::ERROR` sentinel before the intrinsic fast path.
+    /// Only the error-containment walk sets this: the sentinel lives in the
+    /// intrinsic id range, where `lookup`-based predicates are never consulted.
+    detect_error_sentinel: bool,
     memo: FxHashMap<TypeId, bool>,
     guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
-impl<'a, F> ContainsTypeChecker<'a, F>
+impl<'a, F> DeepContainsChecker<'a, F>
 where
     F: Fn(&TypeData) -> bool,
 {
+    fn new(types: &'a dyn TypeDatabase, policy: &'static ChildPolicy, predicate: F) -> Self {
+        Self {
+            types,
+            policy,
+            predicate,
+            detect_error_sentinel: false,
+            memo: FxHashMap::default(),
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::ShallowTraversal,
+            ),
+        }
+    }
+
+    const fn with_error_sentinel(mut self) -> Self {
+        self.detect_error_sentinel = true;
+        self
+    }
+
     #[cfg(test)]
     fn memo_entries(&self) -> usize {
         self.memo.len()
     }
 
     fn check(&mut self, type_id: TypeId) -> bool {
-        // Fast path: intrinsic types (primitives, any, never, etc.) have no subtypes
-        // and can never contain nested type structures.
+        if self.detect_error_sentinel && type_id == TypeId::ERROR {
+            return true;
+        }
+        // Fast path: intrinsic types (primitives, any, never, etc.) have no
+        // subtypes and can never contain nested type structures.
         if type_id.is_intrinsic() {
             return false;
         }
@@ -595,29 +483,11 @@ where
             return true;
         }
 
-        // Terminal-kind fast path: types with no children to walk and no
-        // cycle risk. The recursive `check_key` below would dispatch to its
-        // leaf arm and immediately return `false` for these kinds, so
-        // skipping the `guard.enter`/`guard.leave` HashSet round-trip is a
-        // pure win. Memo is still updated so repeat visits of the same
-        // type within one `contains_type_matching` call stay O(1).
-        //
-        // `Intrinsic` is already handled by the entry-level `is_intrinsic`
-        // check above. The remaining terminal kinds match the recursive
-        // walker's leaf arm in `check_key`.
-        if matches!(
-            key,
-            TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
+        // Terminal fast path: a node with no children under this walker's
+        // policy cannot match below itself. Skipping the recursion guard's
+        // enter/leave HashSet round-trip is a pure win; the memo is still
+        // updated so repeat visits within one walk stay O(1).
+        if !has_policy_children(&key, self.policy) {
             self.memo.insert(type_id, false);
             return false;
         }
@@ -627,282 +497,21 @@ where
             _ => return false,
         }
 
-        let result = self.check_key(&key);
+        let types = self.types;
+        let policy = self.policy;
+        let result = try_for_each_child_with_policy::<()>(types, &key, policy, &mut |child| {
+            if self.check(child) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .is_break();
 
         self.guard.leave(type_id);
         self.memo.insert(type_id, result);
 
         result
-    }
-
-    fn check_key(&mut self, key: &TypeData) -> bool {
-        match key {
-            TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::UnresolvedTypeName(_) => false,
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.types.object_shape(*shape_id);
-                shape.properties.iter().any(|p| self.check(p.type_id))
-                    || shape
-                        .string_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-                    || shape
-                        .number_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-            }
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                let members = self.types.type_list(*list_id);
-                members.iter().any(|&m| self.check(m))
-            }
-            TypeData::Array(elem) => self.check(*elem),
-            TypeData::Tuple(list_id) => {
-                let elements = self.types.tuple_list(*list_id);
-                elements.iter().any(|e| self.check(e.type_id))
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.types.function_shape(*shape_id);
-                shape.params.iter().any(|p| self.check(p.type_id))
-                    || self.check(shape.return_type)
-                    || shape.this_type.is_some_and(|t| self.check(t))
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.types.callable_shape(*shape_id);
-                shape.call_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.construct_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.properties.iter().any(|p| self.check(p.type_id))
-            }
-            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                info.constraint.is_some_and(|c| self.check(c))
-                    || info.default.is_some_and(|d| self.check(d))
-            }
-            TypeData::Application(app_id) => {
-                // Only check args, not base. The base type's own type parameters
-                // are bound by the application arguments and should not count as
-                // "containing type parameters". E.g., `A<number>` is concrete even
-                // though `A`'s definition contains `TypeParameter T`.
-                let app = self.types.type_application(*app_id);
-                app.args.iter().any(|&a| self.check(a))
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.types.get_conditional(*cond_id);
-                self.check(cond.check_type)
-                    || self.check(cond.extends_type)
-                    || self.check(cond.true_type)
-                    || self.check(cond.false_type)
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.get_mapped(*mapped_id);
-                mapped.type_param.constraint.is_some_and(|c| self.check(c))
-                    || mapped.type_param.default.is_some_and(|d| self.check(d))
-                    || self.check(mapped.constraint)
-                    || self.check(mapped.template)
-                    || mapped.name_type.is_some_and(|n| self.check(n))
-            }
-            TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
-            TypeData::TemplateLiteral(list_id) => {
-                let spans = self.types.template_list(*list_id);
-                spans.iter().any(|span| {
-                    if let crate::types::TemplateSpan::Type(type_id) = span {
-                        self.check(*type_id)
-                    } else {
-                        false
-                    }
-                })
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.check(*inner)
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
-            TypeData::Enum(_def_id, member_type) => self.check(*member_type),
-        }
-    }
-}
-
-// =============================================================================
-// FreeTypeParamChecker — like ContainsTypeChecker but skips bound type params
-// in function/callable signatures
-// =============================================================================
-
-struct FreeTypeParamChecker<'a> {
-    types: &'a dyn TypeDatabase,
-    memo: FxHashMap<TypeId, bool>,
-    guard: crate::recursion::RecursionGuard<TypeId>,
-}
-
-impl<'a> FreeTypeParamChecker<'a> {
-    #[cfg(test)]
-    fn memo_entries(&self) -> usize {
-        self.memo.len()
-    }
-
-    fn check(&mut self, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        if let Some(&cached) = self.memo.get(&type_id) {
-            return cached;
-        }
-        let Some(key) = self.types.lookup(type_id) else {
-            return false;
-        };
-        if matches!(
-            key,
-            TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-        ) {
-            self.memo.insert(type_id, true);
-            return true;
-        }
-        // Terminal-kind fast path: same set that `check_key` returns `false`
-        // for unconditionally. Short-circuit before the recursion-guard
-        // enter/leave so common terminals (`Lazy(DefId)`, `TypeQuery`, etc.)
-        // skip the per-call `FxHashSet` insert + remove. Mirrors #1978/#1990.
-        if matches!(
-            key,
-            TypeData::Intrinsic(_)
-                | TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
-            self.memo.insert(type_id, false);
-            return false;
-        }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
-        let result = self.check_key(&key);
-        self.guard.leave(type_id);
-        self.memo.insert(type_id, result);
-        result
-    }
-
-    fn check_key(&mut self, key: &TypeData) -> bool {
-        match key {
-            TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::UnresolvedTypeName(_) => false,
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.types.object_shape(*shape_id);
-                shape.properties.iter().any(|p| self.check(p.type_id))
-                    || shape
-                        .string_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-                    || shape
-                        .number_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-            }
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                let members = self.types.type_list(*list_id);
-                members.iter().any(|&m| self.check(m))
-            }
-            TypeData::Array(elem) => self.check(*elem),
-            TypeData::Tuple(list_id) => {
-                let elements = self.types.tuple_list(*list_id);
-                elements.iter().any(|e| self.check(e.type_id))
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.types.function_shape(*shape_id);
-                if !shape.type_params.is_empty() {
-                    // Generic function: type params in body are bound, not free.
-                    // Skip body traversal to avoid counting bound params.
-                    return false;
-                }
-                shape.params.iter().any(|p| self.check(p.type_id))
-                    || self.check(shape.return_type)
-                    || shape.this_type.is_some_and(|t| self.check(t))
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.types.callable_shape(*shape_id);
-                shape.call_signatures.iter().any(|s| {
-                    if !s.type_params.is_empty() {
-                        return false;
-                    }
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.construct_signatures.iter().any(|s| {
-                    if !s.type_params.is_empty() {
-                        return false;
-                    }
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.properties.iter().any(|p| self.check(p.type_id))
-            }
-            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                info.constraint.is_some_and(|c| self.check(c))
-                    || info.default.is_some_and(|d| self.check(d))
-            }
-            TypeData::Application(app_id) => {
-                let app = self.types.type_application(*app_id);
-                app.args.iter().any(|&a| self.check(a))
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.types.get_conditional(*cond_id);
-                self.check(cond.check_type)
-                    || self.check(cond.extends_type)
-                    || self.check(cond.true_type)
-                    || self.check(cond.false_type)
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.get_mapped(*mapped_id);
-                mapped.type_param.constraint.is_some_and(|c| self.check(c))
-                    || mapped.type_param.default.is_some_and(|d| self.check(d))
-                    || self.check(mapped.constraint)
-                    || self.check(mapped.template)
-                    || mapped.name_type.is_some_and(|n| self.check(n))
-            }
-            TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
-            TypeData::TemplateLiteral(list_id) => {
-                let spans = self.types.template_list(*list_id);
-                spans.iter().any(|span| {
-                    if let crate::types::TemplateSpan::Type(type_id) = span {
-                        self.check(*type_id)
-                    } else {
-                        false
-                    }
-                })
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.check(*inner)
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
-            TypeData::Enum(_def_id, member_type) => self.check(*member_type),
-        }
     }
 }
 
@@ -916,7 +525,7 @@ impl<'a> FreeTypeParamChecker<'a> {
 /// by a nested generic signature in the traversed type is a distinct
 /// declaration that merely shares an interned name, and must not be reported.
 ///
-/// This mirrors [`FreeTypeParamChecker`]'s binder handling — the body of a
+/// This mirrors [`contains_free_type_parameters`]'s binder handling — the body of a
 /// nested generic signature is skipped wholesale rather than re-scoped — but
 /// returns the set of free parameter ids instead of a boolean. The result is a
 /// pure function of the input types and is memoized across all `roots` in a
@@ -967,24 +576,13 @@ impl<'a> FreeTypeParamCollector<'a> {
         let Some(key) = self.types.lookup(type_id) else {
             return FxHashSet::default();
         };
-        // Terminal-kind fast path: these variants have no children and contribute
-        // no free parameters, so skip the recursion-guard/memo bookkeeping
-        // entirely. Mirrors `FreeTypeParamChecker::check`. `TypeParameter`/`Infer`
-        // are intentionally excluded — they are the leaves we collect.
-        if matches!(
-            key,
-            TypeData::Intrinsic(_)
-                | TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
+        // Terminal-kind fast path: variants with no children under this
+        // walker's policy contribute no free parameters, so skip the
+        // recursion-guard/memo bookkeeping entirely. `TypeParameter`/`Infer`
+        // are the leaves we collect, handled positively in `free_key`.
+        if !matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
+            && !has_policy_children(&key, &ChildPolicy::FREE_PARAM_COLLECT)
+        {
             return FxHashSet::default();
         }
         // Cycle back-edges contribute no new free parameters (the parameter is
@@ -1004,318 +602,33 @@ impl<'a> FreeTypeParamCollector<'a> {
         result
     }
 
-    /// Free parameters of a signature. A *generic* signature binds its own type
-    /// parameters, so its body is skipped entirely — mirroring
-    /// [`FreeTypeParamChecker`]. This intentionally does not descend into a
-    /// generic signature to recover an outer parameter threaded through it; that
-    /// extra precision is unnecessary for the identity-sharing decision this
-    /// helper drives, and descending makes the walk dramatically deeper on
-    /// real-world recursive signature graphs. A *non-generic* signature binds
-    /// nothing, so its children's free parameters pass through.
-    fn free_signature(
-        &mut self,
-        is_generic: bool,
-        params: impl Iterator<Item = TypeId>,
-        return_type: TypeId,
-        this_type: Option<TypeId>,
-    ) -> FxHashSet<TypeId> {
-        let mut set = FxHashSet::default();
-        if is_generic {
-            return set;
-        }
-        for p in params {
-            set.extend(self.free(p));
-        }
-        set.extend(self.free(return_type));
-        if let Some(t) = this_type {
-            set.extend(self.free(t));
-        }
-        set
-    }
-
+    /// Free parameters of one node. A `TypeParameter`/`Infer` is a free
+    /// occurrence and a leaf — its constraint/default are metadata, not free
+    /// uses. Everything else unions its children's free parameters under
+    /// [`ChildPolicy::FREE_PARAM_COLLECT`]: a *generic* signature binds its
+    /// own type parameters, so its body is skipped wholesale. This
+    /// intentionally does not descend into a generic signature to recover an
+    /// outer parameter threaded through it; that extra precision is
+    /// unnecessary for the identity-sharing decision this helper drives, and
+    /// descending makes the walk dramatically deeper on real-world recursive
+    /// signature graphs.
     fn free_key(&mut self, type_id: TypeId, key: &TypeData) -> FxHashSet<TypeId> {
         let mut set = FxHashSet::default();
-        match key {
-            TypeData::TypeParameter(_) | TypeData::Infer(_) => {
-                // A free occurrence. Its constraint/default are metadata, not
-                // free uses, so they are intentionally not traversed.
-                set.insert(type_id);
-            }
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                // `object_shape` returns an owned `Arc`, so the iteration borrow
-                // is independent of `&mut self` and needs no intermediate Vec.
-                let shape = self.types.object_shape(*shape_id);
-                for child in shape
-                    .properties
-                    .iter()
-                    .map(|p| p.type_id)
-                    .chain(shape.string_index.as_ref().map(|i| i.value_type))
-                    .chain(shape.number_index.as_ref().map(|i| i.value_type))
-                {
-                    set.extend(self.free(child));
-                }
-            }
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                let members = self.types.type_list(*list_id);
-                for &m in members.iter() {
-                    set.extend(self.free(m));
-                }
-            }
-            TypeData::Array(elem) => set.extend(self.free(*elem)),
-            TypeData::Tuple(list_id) => {
-                let elems = self.types.tuple_list(*list_id);
-                for e in elems.iter() {
-                    set.extend(self.free(e.type_id));
-                }
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.types.function_shape(*shape_id);
-                set = self.free_signature(
-                    !shape.type_params.is_empty(),
-                    shape.params.iter().map(|p| p.type_id),
-                    shape.return_type,
-                    shape.this_type,
-                );
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.types.callable_shape(*shape_id);
-                for s in shape
-                    .call_signatures
-                    .iter()
-                    .chain(shape.construct_signatures.iter())
-                {
-                    set.extend(self.free_signature(
-                        !s.type_params.is_empty(),
-                        s.params.iter().map(|p| p.type_id),
-                        s.return_type,
-                        s.this_type,
-                    ));
-                }
-                for p in shape.properties.iter() {
-                    set.extend(self.free(p.type_id));
-                }
-            }
-            TypeData::Application(app_id) => {
-                let app = self.types.type_application(*app_id);
-                for &a in app.args.iter() {
-                    set.extend(self.free(a));
-                }
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.types.get_conditional(*cond_id);
-                let parts = [
-                    cond.check_type,
-                    cond.extends_type,
-                    cond.true_type,
-                    cond.false_type,
-                ];
-                for part in parts {
-                    set.extend(self.free(part));
-                }
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.get_mapped(*mapped_id);
-                for part in [
-                    Some(mapped.constraint),
-                    Some(mapped.template),
-                    mapped.name_type,
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    set.extend(self.free(part));
-                }
-            }
-            TypeData::IndexAccess(obj, idx) => {
-                set.extend(self.free(*obj));
-                set.extend(self.free(*idx));
-            }
-            TypeData::TemplateLiteral(list_id) => {
-                let spans = self.types.template_list(*list_id);
-                for span in spans.iter() {
-                    if let crate::types::TemplateSpan::Type(t) = span {
-                        set.extend(self.free(*t));
-                    }
-                }
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                set.extend(self.free(*inner));
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => set.extend(self.free(*type_arg)),
-            TypeData::Enum(_def_id, member_type) => set.extend(self.free(*member_type)),
-            TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::UnresolvedTypeName(_) => {}
+        if matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+            set.insert(type_id);
+            return set;
         }
-        set
-    }
-}
-
-// =============================================================================
-// FreeInferChecker — like ContainsTypeChecker but skips TypeParameter constraints
-// =============================================================================
-
-struct FreeInferChecker<'a> {
-    types: &'a dyn TypeDatabase,
-    memo: FxHashMap<TypeId, bool>,
-    guard: crate::recursion::RecursionGuard<TypeId>,
-}
-
-impl<'a> FreeInferChecker<'a> {
-    #[cfg(test)]
-    fn memo_entries(&self) -> usize {
-        self.memo.len()
-    }
-
-    fn check(&mut self, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        if let Some(&cached) = self.memo.get(&type_id) {
-            return cached;
-        }
-        let Some(key) = self.types.lookup(type_id) else {
-            return false;
-        };
-        if matches!(key, TypeData::Infer(_)) {
-            self.memo.insert(type_id, true);
-            return true;
-        }
-        // Terminal-kind fast path: same set that `check_key` returns `false`
-        // for unconditionally (TypeParameter is included here because this
-        // walker, by design, does not descend into TypeParameter
-        // constraints/defaults). Short-circuit before the recursion-guard
-        // enter/leave dance. Mirrors #1978/#1990.
-        if matches!(
+        let types = self.types;
+        let _ = try_for_each_child_with_policy::<std::convert::Infallible>(
+            types,
             key,
-            TypeData::Intrinsic(_)
-                | TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::TypeParameter(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
-            self.memo.insert(type_id, false);
-            return false;
-        }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
-        let result = self.check_key(&key);
-        self.guard.leave(type_id);
-        self.memo.insert(type_id, result);
-        result
-    }
-
-    fn check_key(&mut self, key: &TypeData) -> bool {
-        match key {
-            TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            // TypeParameter/Infer: do NOT walk into constraints/defaults.
-            // Structural `infer` patterns in constraints (e.g., from type alias
-            // definitions like `type Foo = X extends Bar<infer V> ? V : never`)
-            // are definitional, not live inference variables.
-            | TypeData::TypeParameter(_)
-            | TypeData::Infer(_)
-            | TypeData::UnresolvedTypeName(_) => false,
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.types.object_shape(*shape_id);
-                shape.properties.iter().any(|p| self.check(p.type_id))
-                    || shape
-                        .string_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-                    || shape
-                        .number_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-            }
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                let members = self.types.type_list(*list_id);
-                members.iter().any(|&m| self.check(m))
-            }
-            TypeData::Array(elem) => self.check(*elem),
-            TypeData::Tuple(list_id) => {
-                let elements = self.types.tuple_list(*list_id);
-                elements.iter().any(|e| self.check(e.type_id))
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.types.function_shape(*shape_id);
-                shape.params.iter().any(|p| self.check(p.type_id))
-                    || self.check(shape.return_type)
-                    || shape.this_type.is_some_and(|t| self.check(t))
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.types.callable_shape(*shape_id);
-                shape.call_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.construct_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.properties.iter().any(|p| self.check(p.type_id))
-            }
-            TypeData::Application(app_id) => {
-                let app = self.types.type_application(*app_id);
-                app.args.iter().any(|&a| self.check(a))
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.types.get_conditional(*cond_id);
-                self.check(cond.check_type)
-                    || self.check(cond.extends_type)
-                    || self.check(cond.true_type)
-                    || self.check(cond.false_type)
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.get_mapped(*mapped_id);
-                mapped.type_param.constraint.is_some_and(|c| self.check(c))
-                    || mapped.type_param.default.is_some_and(|d| self.check(d))
-                    || self.check(mapped.constraint)
-                    || self.check(mapped.template)
-                    || mapped.name_type.is_some_and(|n| self.check(n))
-            }
-            TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
-            TypeData::TemplateLiteral(list_id) => {
-                let spans = self.types.template_list(*list_id);
-                spans.iter().any(|span| {
-                    if let crate::types::TemplateSpan::Type(type_id) = span {
-                        self.check(*type_id)
-                    } else {
-                        false
-                    }
-                })
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.check(*inner)
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
-            TypeData::Enum(_def_id, member_type) => self.check(*member_type),
-        }
+            &ChildPolicy::FREE_PARAM_COLLECT,
+            &mut |child| {
+                set.extend(self.free(child));
+                ControlFlow::Continue(())
+            },
+        );
+        set
     }
 }
 
@@ -1355,7 +668,7 @@ pub fn contains_free_type_parameters_except_name(
                 TypeData::ThisType | TypeData::BoundParameter(_) => return true,
                 _ => {}
             }
-            visit_structural_children(types, current, &data, |child| {
+            visit_structural_children(types, &data, |child| {
                 if !visited.contains(&child) {
                     stack.push(child);
                 }
@@ -1369,235 +682,16 @@ pub fn contains_free_type_parameters_except_name(
 /// parameter `constraint`/`default` metadata on `Mapped`, `Function`, and
 /// `Callable` types. Used by free-type-parameter checks that must treat
 /// parameter-declaration metadata as bound by the host, not as free uses.
-fn visit_structural_children<F>(db: &dyn TypeDatabase, type_id: TypeId, data: &TypeData, mut f: F)
+fn visit_structural_children<F>(db: &dyn TypeDatabase, data: &TypeData, mut f: F)
 where
     F: FnMut(TypeId),
 {
-    match data {
-        TypeData::Mapped(mapped_id) => {
-            let mapped = db.get_mapped(*mapped_id);
-            f(mapped.constraint);
-            f(mapped.template);
-            if let Some(name_type) = mapped.name_type {
-                f(name_type);
-            }
-        }
-        TypeData::Function(func_id) => {
-            let sig = db.function_shape(*func_id);
-            f(sig.return_type);
-            if let Some(this_type) = sig.this_type {
-                f(this_type);
-            }
-            if let Some(predicate) = sig.type_predicate.as_ref()
-                && let Some(predicate_type) = predicate.type_id
-            {
-                f(predicate_type);
-            }
-            for param in &sig.params {
-                f(param.type_id);
-            }
-        }
-        TypeData::Callable(callable_id) => {
-            let callable = db.callable_shape(*callable_id);
-            for sig in callable
-                .call_signatures
-                .iter()
-                .chain(callable.construct_signatures.iter())
-            {
-                f(sig.return_type);
-                if let Some(this_type) = sig.this_type {
-                    f(this_type);
-                }
-                if let Some(predicate) = sig.type_predicate.as_ref()
-                    && let Some(predicate_type) = predicate.type_id
-                {
-                    f(predicate_type);
-                }
-                for param in &sig.params {
-                    f(param.type_id);
-                }
-            }
-            for prop in &callable.properties {
-                f(prop.type_id);
-                f(prop.write_type);
-            }
-            if let Some(sig) = callable.string_index.as_ref() {
-                f(sig.key_type);
-                f(sig.value_type);
-            }
-            if let Some(sig) = callable.number_index.as_ref() {
-                f(sig.key_type);
-                f(sig.value_type);
-            }
-        }
-        _ => crate::visitors::visitor::for_each_child_by_id(db, type_id, f),
-    }
-}
-
-// =============================================================================
-// ShallowContainsTypeChecker — checks type parameter name without traversing
-// into type parameter constraints/defaults (prevents false circularity detection)
-// =============================================================================
-
-#[allow(dead_code)]
-struct ShallowContainsTypeChecker<'a> {
-    types: &'a dyn TypeDatabase,
-    name: Atom,
-    memo: FxHashMap<TypeId, bool>,
-    guard: crate::recursion::RecursionGuard<TypeId>,
-}
-
-#[allow(dead_code)]
-impl<'a> ShallowContainsTypeChecker<'a> {
-    #[cfg(test)]
-    fn memo_entries(&self) -> usize {
-        self.memo.len()
-    }
-
-    fn check(&mut self, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        if let Some(&cached) = self.memo.get(&type_id) {
-            return cached;
-        }
-        let Some(key) = self.types.lookup(type_id) else {
-            return false;
-        };
-        // Direct match: is this type parameter the one we're looking for?
-        if matches!(&key, TypeData::TypeParameter(info) if info.name == self.name) {
-            self.memo.insert(type_id, true);
-            return true;
-        }
-        // Terminal-kind fast path: same set that `check_key` returns `false`
-        // for unconditionally. Note: `TypeParameter(_)` is also a terminal
-        // here — by design "shallow" does not descend into constraints —
-        // but we exclude it from this short-circuit because the positive
-        // match above already drained the matching name. Any remaining
-        // `TypeParameter` is a non-match terminal. Mirrors #1978/#1990.
-        if matches!(
-            key,
-            TypeData::Intrinsic(_)
-                | TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
-            self.memo.insert(type_id, false);
-            return false;
-        }
-        match self.guard.enter(type_id) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return false,
-        }
-        let result = self.check_key(&key);
-        self.guard.leave(type_id);
-        self.memo.insert(type_id, result);
-        result
-    }
-
-    fn check_key(&mut self, key: &TypeData) -> bool {
-        match key {
-            TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            // Do NOT traverse into TypeParameter constraints/defaults — that's
-            // the whole point of the "shallow" variant. We only check if the
-            // type parameter itself matches, not what its constraint contains.
-            | TypeData::TypeParameter(_)
-            | TypeData::Infer(_)
-            | TypeData::UnresolvedTypeName(_) => false,
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.types.object_shape(*shape_id);
-                shape.properties.iter().any(|p| self.check(p.type_id))
-                    || shape
-                        .string_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-                    || shape
-                        .number_index
-                        .as_ref()
-                        .is_some_and(|i| self.check(i.value_type))
-            }
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                let members = self.types.type_list(*list_id);
-                members.iter().any(|&m| self.check(m))
-            }
-            TypeData::Array(elem) => self.check(*elem),
-            TypeData::Tuple(list_id) => {
-                let elements = self.types.tuple_list(*list_id);
-                elements.iter().any(|e| self.check(e.type_id))
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.types.function_shape(*shape_id);
-                shape.params.iter().any(|p| self.check(p.type_id))
-                    || self.check(shape.return_type)
-                    || shape.this_type.is_some_and(|t| self.check(t))
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.types.callable_shape(*shape_id);
-                shape.call_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.construct_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id))
-                        || self.check(s.return_type)
-                        || s.this_type.is_some_and(|t| self.check(t))
-                }) || shape.properties.iter().any(|p| self.check(p.type_id))
-            }
-            TypeData::Application(app_id) => {
-                let app = self.types.type_application(*app_id);
-                app.args.iter().any(|&a| self.check(a))
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.types.get_conditional(*cond_id);
-                self.check(cond.check_type)
-                    || self.check(cond.extends_type)
-                    || self.check(cond.true_type)
-                    || self.check(cond.false_type)
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.get_mapped(*mapped_id);
-                mapped.type_param.constraint.is_some_and(|c| self.check(c))
-                    || mapped.type_param.default.is_some_and(|d| self.check(d))
-                    || self.check(mapped.constraint)
-                    || self.check(mapped.template)
-                    || mapped.name_type.is_some_and(|n| self.check(n))
-            }
-            TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
-            TypeData::TemplateLiteral(list_id) => {
-                let spans = self.types.template_list(*list_id);
-                spans.iter().any(|span| {
-                    if let crate::types::TemplateSpan::Type(type_id) = span {
-                        self.check(*type_id)
-                    } else {
-                        false
-                    }
-                })
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.check(*inner)
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
-            TypeData::Enum(_def_id, member_type) => self.check(*member_type),
-        }
-    }
+    crate::visitors::child_policy::for_each_child_with_policy(
+        db,
+        data,
+        &ChildPolicy::STRUCTURAL_USES,
+        &mut f,
+    );
 }
 
 #[cfg(test)]
@@ -1605,12 +699,6 @@ mod tests {
     use super::*;
     use crate::intern::TypeInterner;
     use crate::types::TypeParamInfo;
-
-    fn traversal_guard() -> crate::recursion::RecursionGuard<TypeId> {
-        crate::recursion::RecursionGuard::with_profile(
-            crate::recursion::RecursionProfile::ShallowTraversal,
-        )
-    }
 
     #[test]
     fn predicate_checker_memo_entry_counts_are_observable() {
@@ -1621,38 +709,74 @@ mod tests {
         let u_infer = interner.infer(TypeParamInfo::simple(u_name));
         let wrapper = interner.readonly_type(t_param);
 
-        let mut contains_checker = ContainsTypeChecker {
-            types: &interner,
-            predicate: |key| matches!(key, TypeData::TypeParameter(_)),
-            memo: FxHashMap::default(),
-            guard: traversal_guard(),
-        };
+        let mut contains_checker =
+            DeepContainsChecker::new(&interner, &ChildPolicy::CONTENT_PREDICATE, |key| {
+                matches!(key, TypeData::TypeParameter(_))
+            });
         assert!(contains_checker.check(wrapper));
         assert!(contains_checker.memo_entries() > 0);
 
-        let mut free_type_param_checker = FreeTypeParamChecker {
-            types: &interner,
-            memo: FxHashMap::default(),
-            guard: traversal_guard(),
-        };
-        assert!(free_type_param_checker.check(wrapper));
-        assert!(free_type_param_checker.memo_entries() > 0);
+        assert!(contains_free_type_parameters(&interner, wrapper));
+        assert!(contains_free_infer_types(&interner, u_infer));
+        assert!(!contains_free_infer_types(&interner, wrapper));
+    }
 
-        let mut free_infer_checker = FreeInferChecker {
-            types: &interner,
-            memo: FxHashMap::default(),
-            guard: traversal_guard(),
-        };
-        assert!(free_infer_checker.check(u_infer));
-        assert!(free_infer_checker.memo_entries() > 0);
+    /// `contains_free_infer_types` must not treat structural `infer` patterns
+    /// inside a `TypeParameter`'s constraint as live inference variables, while
+    /// the generic deep walk does descend into constraints.
+    #[test]
+    fn free_infer_policy_skips_type_param_constraints() {
+        let interner = TypeInterner::new();
+        let v_name = interner.intern_string("V");
+        let t_name = interner.intern_string("T");
+        let infer_v = interner.infer(TypeParamInfo::simple(v_name));
+        let constrained = interner.type_param(TypeParamInfo {
+            constraint: Some(infer_v),
+            ..TypeParamInfo::simple(t_name)
+        });
+        let wrapper = interner.readonly_type(constrained);
 
-        let mut shallow_checker = ShallowContainsTypeChecker {
-            types: &interner,
-            name: t_name,
-            memo: FxHashMap::default(),
-            guard: traversal_guard(),
-        };
-        assert!(shallow_checker.check(wrapper));
-        assert!(shallow_checker.memo_entries() > 0);
+        assert!(!contains_free_infer_types(&interner, wrapper));
+        assert!(contains_infer_types(&interner, wrapper));
+    }
+
+    /// Free-type-parameter checks skip the bodies of generic signatures (their
+    /// parameters are bound), but still see free parameters in non-generic
+    /// signature bodies.
+    #[test]
+    fn free_type_param_policy_skips_generic_signature_bodies() {
+        let interner = TypeInterner::new();
+        let t_name = interner.intern_string("T");
+        let t_param = interner.type_param(TypeParamInfo::simple(t_name));
+
+        let generic_fn = interner.function(crate::types::FunctionShape {
+            type_params: vec![TypeParamInfo::simple(t_name)],
+            ..crate::types::FunctionShape::new(vec![], t_param)
+        });
+        assert!(!contains_free_type_parameters(&interner, generic_fn));
+        assert!(contains_type_parameters(&interner, generic_fn));
+
+        let plain_fn = interner.function(crate::types::FunctionShape::new(vec![], t_param));
+        assert!(contains_free_type_parameters(&interner, plain_fn));
+    }
+
+    /// The unified error walk detects errors everywhere both historical
+    /// variants did: the raw `TypeId::ERROR` sentinel nested in application
+    /// arguments and bases (former visitor walker) and errors nested under
+    /// conditional/mapped/keyof wrappers (former checker-boundary walker).
+    #[test]
+    fn error_containment_covers_both_historical_walks() {
+        let interner = TypeInterner::new();
+        let app_with_error_arg = interner.application(TypeId::STRING, vec![TypeId::ERROR]);
+        assert!(contains_error_type(&interner, app_with_error_arg));
+
+        let app_with_error_base = interner.application(TypeId::ERROR, vec![TypeId::STRING]);
+        assert!(contains_error_type(&interner, app_with_error_base));
+
+        let keyof_error = interner.keyof(TypeId::ERROR);
+        assert!(contains_error_type(&interner, keyof_error));
+
+        let clean = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        assert!(!contains_error_type(&interner, clean));
     }
 }
