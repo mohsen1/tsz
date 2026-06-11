@@ -382,56 +382,36 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the Symbol property name from an expression.
+    /// Get the well-known-symbol property name from a `Symbol.<name>` access
+    /// expression, e.g. `Symbol.iterator` names `[Symbol.iterator]` when
+    /// `Symbol` resolves to the global lib value.
     ///
-    /// Extracts the name from a `Symbol()` expression, e.g., Symbol("foo") -> "Symbol.foo".
+    /// When `Symbol` is shadowed by a local binding, recovers the
+    /// literal-type key declared by the shadowing const object member
+    /// instead (a `CheckerState`-only recovery: it needs the expression's
+    /// computed literal type, which the lowering layer cannot ask for).
     pub(crate) fn get_symbol_property_name_from_expr(&self, expr_idx: NodeIndex) -> Option<String> {
-        use tsz_scanner::SyntaxKind;
+        use crate::types_domain::computed_names::{
+            WellKnownSymbolName, well_known_symbol_property_name,
+        };
 
-        let node = self.ctx.arena.get(expr_idx)?;
-
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            let paren = self.ctx.arena.get_parenthesized(node)?;
-            return self.get_symbol_property_name_from_expr(paren.expression);
-        }
-
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        match well_known_symbol_property_name(&self.ctx, self.ctx.arena, self.ctx.binder, expr_idx)?
         {
-            return None;
+            WellKnownSymbolName::Global(name) => Some(name),
+            WellKnownSymbolName::Shadowed => {
+                // `Symbol` is shadowed by a local binding: recover the
+                // literal-type key from the shadowing const object member,
+                // e.g. `[Symbol.obs]` with `const Symbol = { obs: "x" }`
+                // names the property "x".
+                let literal_type = self.const_object_member_literal_type_query(expr_idx)?;
+                let name =
+                    crate::query_boundaries::type_computation::access::literal_property_name(
+                        self.ctx.types,
+                        literal_type,
+                    )?;
+                Some(self.ctx.types.resolve_atom_ref(name).to_string())
+            }
         }
-
-        let access = self.ctx.arena.get_access_expr(node)?;
-        let base_node = self.ctx.arena.get(access.expression)?;
-        let base_ident = self.ctx.arena.get_identifier(base_node)?;
-        if base_ident.escaped_text != "Symbol" {
-            return None;
-        }
-        if !self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol") {
-            let literal_type = self.const_object_member_literal_type_query(expr_idx)?;
-            let name = crate::query_boundaries::type_computation::access::literal_property_name(
-                self.ctx.types,
-                literal_type,
-            )?;
-            return Some(self.ctx.types.resolve_atom_ref(name).to_string());
-        }
-
-        let name_node = self.ctx.arena.get(access.name_or_argument)?;
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(format!("[Symbol.{}]", ident.escaped_text));
-        }
-
-        if matches!(
-            name_node.kind,
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-            && !lit.text.is_empty()
-        {
-            return Some(format!("[Symbol.{}]", lit.text));
-        }
-
-        None
     }
 
     // 22. Node Containment

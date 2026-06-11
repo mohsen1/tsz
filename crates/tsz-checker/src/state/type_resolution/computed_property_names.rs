@@ -281,38 +281,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn local_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
-        let mut current = expr_idx;
-        while let Some(node) = self.ctx.arena.get(current)
-            && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        use crate::types_domain::computed_names::{
+            WellKnownSymbolName, well_known_symbol_property_name,
+        };
+        match well_known_symbol_property_name(&self.ctx, self.ctx.arena, self.ctx.binder, expr_idx)
         {
-            current = self.ctx.arena.get_parenthesized(node)?.expression;
+            Some(WellKnownSymbolName::Global(name)) => Some(name),
+            Some(WellKnownSymbolName::Shadowed) | None => None,
         }
-
-        let node = self.ctx.arena.get(current)?;
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-        let access = self.ctx.arena.get_access_expr(node)?;
-        if !self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol") {
-            return None;
-        }
-
-        let name_node = self.ctx.arena.get(access.name_or_argument)?;
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(format!("[Symbol.{}]", ident.escaped_text));
-        }
-        if matches!(
-            name_node.kind,
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-            && !lit.text.is_empty()
-        {
-            return Some(format!("[Symbol.{}]", lit.text));
-        }
-        None
     }
 
     fn computed_expression_literal_name_in_arena(
