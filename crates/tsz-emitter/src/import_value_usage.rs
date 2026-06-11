@@ -236,26 +236,12 @@ impl<'a> UsageScan<'a> {
             // sites never ask about them.
             return;
         }
-        if clause.name.is_some() {
-            self.add_binding(clause.name, false);
-        }
-        if clause.named_bindings.is_none() {
-            return;
-        }
-        if let Some(named) = self.arena.get_named_imports_at(clause.named_bindings) {
-            if named.name.is_some() && named.elements.nodes.is_empty() {
-                self.add_binding(named.name, false);
-            } else {
-                for &spec_idx in &named.elements.nodes {
-                    let Some(spec) = self.arena.get_specifier_at(spec_idx) else {
-                        continue;
-                    };
-                    if spec.is_type_only {
-                        continue;
-                    }
-                    self.add_binding(spec.name, false);
-                }
-            }
+        for (name_idx, name) in
+            crate::transforms::emit_utils::collect_import_clause_value_binding_names(
+                self.arena, clause,
+            )
+        {
+            self.add_named_binding(name_idx, name, false);
         }
     }
 
@@ -291,6 +277,15 @@ impl<'a> UsageScan<'a> {
         if name.is_empty() {
             return None;
         }
+        Some(self.add_named_binding(name_idx, name, exported_import_equals))
+    }
+
+    fn add_named_binding(
+        &mut self,
+        name_idx: NodeIndex,
+        name: String,
+        exported_import_equals: bool,
+    ) -> usize {
         let symbol = self.binder.get_node_symbol(name_idx);
         let binding_idx = self.bindings.len();
         if let Some(sym) = symbol {
@@ -303,7 +298,7 @@ impl<'a> UsageScan<'a> {
             symbol,
             exported_import_equals,
         });
-        Some(binding_idx)
+        binding_idx
     }
 
     // =========================================================================

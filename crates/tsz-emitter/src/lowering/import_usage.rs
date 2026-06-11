@@ -251,7 +251,6 @@ impl<'a> LoweringPass<'a> {
             }
             facts_settled = all_known;
         }
-        let names: Vec<String> = names.into_iter().map(|(_, name)| name).collect();
 
         let Some(source_text) = self.current_source_text else {
             return true;
@@ -296,7 +295,7 @@ impl<'a> LoweringPass<'a> {
                 &value_haystack,
                 &self.ctx.options.external_const_enum_bindings,
             );
-            if names.iter().any(|name| {
+            if names.iter().any(|(_, name)| {
                 crate::import_usage::contains_identifier_occurrence(&value_haystack, name)
             }) {
                 return true;
@@ -306,13 +305,16 @@ impl<'a> LoweringPass<'a> {
         // members become *value* references via `__metadata("design:type", X)`.
         // Don't elide imports whose binding appears in such an annotation.
         if self.ctx.options.emit_decorator_metadata
-            && names.iter().any(|name| {
+            && names.iter().any(|(_, name)| {
                 crate::import_usage::name_appears_in_decorator_metadata_type(haystack, name)
             })
         {
             return true;
         }
-        self.ctx.target_es5 && self.async_return_type_uses_imported_promise_constructor(&names)
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor(
+                &names.into_iter().map(|(_, name)| name).collect::<Vec<_>>(),
+            )
     }
 
     fn named_imports_have_value_usage(
