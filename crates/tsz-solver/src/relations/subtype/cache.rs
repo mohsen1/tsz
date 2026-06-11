@@ -882,7 +882,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 t_app = ?t_app_id,
                                 "recovered-target variance attempt"
                             );
-                            let vr = self.try_variance_fast_path(s_app_id, t_app_id);
+                            let vr = self
+                                .try_same_base_args_identical_or_any(s_app_id, t_app_id)
+                                .or_else(|| self.try_variance_fast_path(s_app_id, t_app_id));
                             // TEMP-TRACE (remove before PR)
                             tracing::trace!(
                                 src = source.0,

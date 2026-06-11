@@ -206,6 +206,12 @@ impl TypeInterner {
                 return;
             }
         }
+        // TEMP-TRACE (remove before PR)
+        tracing::trace!(
+            evaluated = evaluated.0,
+            application = application.0,
+            "record_application_eval_origin"
+        );
         self.application_eval_origin
             .entry(evaluated)
             .or_insert(application);

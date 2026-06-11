@@ -348,6 +348,21 @@ impl<'a> CheckerState<'a> {
         // (unlike Mapped/Object types which can collide with built-in aliases
         // like Record, Partial, Pick, Omit due to interning dedup).
         if result != type_id {
+            // Semantic (non-display) provenance: a nominal class/interface
+            // instantiation that this checker-side evaluation lowered to a
+            // structural shape keeps a reverse link to its application so the
+            // relation layer can recover the generic identity for the
+            // accept-only variance fast path. Gated on the result shape
+            // carrying a nominal `symbol` (class/interface instances), so
+            // anonymous alias expansions stay unrecorded.
+            {
+                let db = self.ctx.types.as_type_database();
+                if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, result)
+                    .is_some_and(|shape| shape.symbol.is_some())
+                {
+                    db.record_application_eval_origin(result, type_id);
+                }
+            }
             let app_info = query::application_info(self.ctx.types, type_id);
             let db = self.ctx.types.as_type_database();
             let has_param_args = if let Some((_, args)) = &app_info {
