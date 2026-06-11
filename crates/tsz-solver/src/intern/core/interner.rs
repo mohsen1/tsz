@@ -185,6 +185,20 @@ pub struct TypeInterner {
     /// gets its own slot. Entries are only written for fully-explored
     /// (cycle-untainted) subtrees; the answer is immutable per `TypeId`.
     pub(crate) eval_contains_infer_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Per-node cache for the `contains_file_relative_content_db` walk
+    /// (`UnresolvedTypeName | TypeQuery | UniqueSymbol | ModuleNamespace |
+    /// ThisType | Recursive` predicate). Gates which constraint-validation
+    /// proofs may be published to program-wide caches shared across file
+    /// checkers.
+    pub(crate) contains_file_relative_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Result memo for `normalize_union`, keyed by the exact flattened
+    /// pre-normalization member list. Normalization (semantic sort, dedup,
+    /// absorption passes, subtype reduction) is deterministic in the input
+    /// list over immutable interned types; evaluation rebuilds the same
+    /// unions constantly. Inputs longer than
+    /// `UNION_NORMALIZE_CACHE_MAX_LEN` bypass this memo so the sticky
+    /// TS2590 `union_too_complex` flag is never swallowed by a hit.
+    pub(crate) union_normalize_cache: DashMap<Box<[TypeId]>, TypeId, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -350,6 +364,8 @@ pub struct TypePredicateCacheStatistics {
     pub contains_generic_params_root_cache_entries: usize,
     /// Number of memoized evaluator `type_contains_infer` walk results.
     pub eval_contains_infer_cache_entries: usize,
+    /// Number of memoized file-relative containment predicate results.
+    pub contains_file_relative_cache_entries: usize,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -383,6 +399,7 @@ impl TypeInterner {
                 .contains_generic_params_root_cache
                 .len(),
             eval_contains_infer_cache_entries: self.eval_contains_infer_cache.len(),
+            contains_file_relative_cache_entries: self.contains_file_relative_cache.len(),
         }
     }
 
@@ -419,6 +436,8 @@ impl TypeInterner {
             contains_param_or_infer_root_cache: DashMap::with_hasher(FxBuildHasher),
             contains_generic_params_root_cache: DashMap::with_hasher(FxBuildHasher),
             eval_contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_file_relative_cache: DashMap::with_hasher(FxBuildHasher),
+            union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),

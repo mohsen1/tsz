@@ -38,6 +38,7 @@ nested_namespace_candidates_cache_complete = { lifetime = "FileLocalReset", capa
 lowering_entity_name_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 namespace_exports_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 shared_lib_type_cache = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+shared_constraint_proofs = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "program-wide append-only success tier for constraint proofs; entries are file-independent by construction and valid for the whole compilation" }
 cross_file_type_params_cache = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 skip_lib_type_resolution = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 lib_heritage_in_progress = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
