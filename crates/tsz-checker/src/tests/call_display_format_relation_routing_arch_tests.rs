@@ -118,7 +118,7 @@ fn variadic_tuple_display_uses_env_relation_outcome_boundary() {
         .find("fn constrained_variadic_tuple_parameter_display_structured")
         .expect("missing variadic tuple display helper");
     let end = source[start..]
-        .find("fn constrained_variadic_tuple_parameter_display_from_surface")
+        .find("fn underfilled_generic_variadic_tuple_parameter_display")
         .map(|offset| start + offset)
         .expect("missing next variadic tuple display helper");
     let helper = &source[start..end];

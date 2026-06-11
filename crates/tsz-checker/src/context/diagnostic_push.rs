@@ -145,51 +145,13 @@ impl<'a> CheckerContext<'a> {
     ///   owning variable/function name, producing one TS4094 per member at the
     ///   same span.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
-        // TS2304 ("Cannot find name"), TS2552 ("Cannot find name ... Did you mean?"),
-        // and TS2663 ("Did you mean the instance member 'this.X'?") are suppressed when
-        // TS2301 already exists at the same position, since TS2301
-        // ("Initializer of instance member cannot reference identifier declared in constructor")
-        // already explains the problem more precisely.
-        if (code == 2304 || code == 2552 || code == 2663)
-            && self.diagnostic_indices.emitted.contains(&(start, 2301))
-        {
+        if self.reconcile_name_resolution_precedence(start, code) {
             return;
         }
-        if code == 2301 {
-            self.diagnostics.retain(|diag| {
-                !(diag.start == start
-                    && (diag.code == 2304 || diag.code == 2552 || diag.code == 2663))
-            });
-            self.diagnostic_indices.emitted.remove(&(start, 2304));
-            self.diagnostic_indices.emitted.remove(&(start, 2552));
-            self.diagnostic_indices.emitted.remove(&(start, 2663));
-        }
-
-        // Prefer specific name suggestions over generic "Cannot find name".
-        if code == 2304
-            && (self.diagnostic_indices.emitted.contains(&(start, 2552))
-                || self.diagnostic_indices.emitted.contains(&(start, 2663)))
-        {
-            return;
-        }
-        if code == 2552 || code == 2663 {
-            self.diagnostics
-                .retain(|diag| !(diag.start == start && diag.code == 2304));
-            self.diagnostic_indices.emitted.remove(&(start, 2304));
-        }
-
-        let message = Self::normalize_diagnostic_message(code, message);
 
         // Check if we've already emitted this diagnostic
         let key = self.diagnostic_dedup_key_from_parts(start, code, &message);
         if self.diagnostic_indices.emitted.contains(&key) {
-            return;
-        }
-        if code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-            && message.contains("GetProps<")
-            && message.contains("ComponentClass")
-            && message.contains("FunctionComponent")
-        {
             return;
         }
         self.diagnostic_indices.emitted.insert(key);
@@ -256,42 +218,9 @@ impl<'a> CheckerContext<'a> {
     /// - TS4094 uses (start ^ `message_hash`, code) so each private/protected member of an
     ///   exported anonymous class expression emits its own diagnostic at the owning
     ///   variable/function name span.
-    pub fn push_diagnostic(&mut self, mut diag: Diagnostic) {
-        diag.message_text = Self::normalize_diagnostic_message(diag.code, diag.message_text);
-        if (diag.code == 2304 || diag.code == 2552 || diag.code == 2663)
-            && self
-                .diagnostic_indices
-                .emitted
-                .contains(&(diag.start, 2301))
-        {
+    pub fn push_diagnostic(&mut self, diag: Diagnostic) {
+        if self.reconcile_name_resolution_precedence(diag.start, diag.code) {
             return;
-        }
-        if diag.code == 2301 {
-            self.diagnostics.retain(|existing| {
-                !(existing.start == diag.start
-                    && (existing.code == 2304 || existing.code == 2552 || existing.code == 2663))
-            });
-            self.diagnostic_indices.emitted.remove(&(diag.start, 2304));
-            self.diagnostic_indices.emitted.remove(&(diag.start, 2552));
-            self.diagnostic_indices.emitted.remove(&(diag.start, 2663));
-        }
-        // Prefer specific name suggestions over generic "Cannot find name".
-        if diag.code == 2304
-            && (self
-                .diagnostic_indices
-                .emitted
-                .contains(&(diag.start, 2552))
-                || self
-                    .diagnostic_indices
-                    .emitted
-                    .contains(&(diag.start, 2663)))
-        {
-            return;
-        }
-        if diag.code == 2552 || diag.code == 2663 {
-            self.diagnostics
-                .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
-            self.diagnostic_indices.emitted.remove(&(diag.start, 2304));
         }
         if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
             let diag_end = diag.start.saturating_add(diag.length);
@@ -320,13 +249,6 @@ impl<'a> CheckerContext<'a> {
             self.reconcile_related_information_collision(diag);
             return;
         }
-        if diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-            && diag.message_text.contains("GetProps<")
-            && diag.message_text.contains("ComponentClass")
-            && diag.message_text.contains("FunctionComponent")
-        {
-            return;
-        }
         self.diagnostic_indices.emitted.insert(key);
         tracing::debug!(
             code = diag.code,
@@ -345,47 +267,45 @@ impl<'a> CheckerContext<'a> {
         self.diagnostics.push(diag);
     }
 
-    fn normalize_diagnostic_message(code: u32, message: String) -> String {
-        if code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
-            return Self::normalize_logical_nonnullable_source_message(message);
+    /// Reconcile precedence between the name-resolution diagnostics that can
+    /// collide at one span: TS2301 ("Initializer of instance member cannot
+    /// reference identifier declared in constructor") outranks TS2304 ("Cannot
+    /// find name"), TS2552 ("Cannot find name ... Did you mean?"), and TS2663
+    /// ("Did you mean the instance member 'this.X'?") because it explains the
+    /// problem more precisely; TS2552/TS2663 name suggestions outrank the
+    /// generic TS2304.
+    ///
+    /// Shared by both emission entry points ([`Self::error`] and
+    /// [`Self::push_diagnostic`]) so the precedence rules cannot drift.
+    /// Returns `true` when the incoming diagnostic is outranked and must be
+    /// dropped; lower-precedence diagnostics already emitted at the same span
+    /// are evicted as a side effect.
+    fn reconcile_name_resolution_precedence(&mut self, start: u32, code: u32) -> bool {
+        let emitted = &self.diagnostic_indices.emitted;
+        match code {
+            2304 | 2552 | 2663 => {
+                if emitted.contains(&(start, 2301)) {
+                    return true;
+                }
+                if code == 2304
+                    && (emitted.contains(&(start, 2552)) || emitted.contains(&(start, 2663)))
+                {
+                    return true;
+                }
+            }
+            _ => {}
         }
-        if code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE {
-            return Self::normalize_constrained_variadic_tuple_message(message);
-        }
-        message
-    }
-
-    fn normalize_constrained_variadic_tuple_message(message: String) -> String {
-        let target = "parameter of type 'readonly [...readonly [string, ...string[]], number]'";
-        if !message.contains(target) {
-            return message;
-        }
-        if message.contains("Argument of type 'number'") {
-            return message.replace(target, "parameter of type 'string'");
-        }
-        if message.contains("Argument of type '[") {
-            return message.replace(target, "parameter of type '[...string[], number]'");
-        }
-        message
-    }
-
-    fn normalize_logical_nonnullable_source_message(message: String) -> String {
-        let Some(rest) = message.strip_prefix("Type '") else {
-            return message;
+        let evict: &[u32] = match code {
+            2301 => &[2304, 2552, 2663],
+            2552 | 2663 => &[2304],
+            _ => return false,
         };
-        let Some((source, suffix)) = rest.split_once("' is not assignable") else {
-            return message;
-        };
-        let Some(nonnullable_rest) = source.strip_prefix("NonNullable<") else {
-            return message;
-        };
-        let Some((inner, right)) = nonnullable_rest.split_once("> | ") else {
-            return message;
-        };
-        if !right.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-            return message;
+        self.diagnostics
+            .retain(|diag| !(diag.start == start && evict.contains(&diag.code)));
+        for &evicted in evict {
+            self.diagnostic_indices.emitted.remove(&(start, evicted));
         }
-        format!("Type '{right} | NonNullable<{inner}>' is not assignable{suffix}")
+        false
     }
 }
 
