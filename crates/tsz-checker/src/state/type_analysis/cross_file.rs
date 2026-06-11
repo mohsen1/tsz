@@ -11,6 +11,8 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+mod miss_kind;
+
 pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 
 impl<'a> CheckerState<'a> {
@@ -1954,7 +1956,6 @@ impl<'a> CheckerState<'a> {
         derived_type
     }
 }
-mod miss_kind;
 
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
