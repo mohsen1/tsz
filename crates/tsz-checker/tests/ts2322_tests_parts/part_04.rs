@@ -1804,3 +1804,102 @@ fn test_ts2322_array_element_chain_independent_of_element_names() {
         "got: {chain:?}"
     );
 }
+
+// =============================================================================
+// #13212: deferred alias applications in signature-return position that
+// genuinely evaluate to `unknown` must not be vetoed by the raw-form
+// recursive-cycle fallback in `check_return_compat`. Structural rule: when a
+// `() => Alias<Args>` target return evaluates (stably) to `unknown`, tsc
+// relates the source return against `unknown` — always true. The raw fallback
+// applies only to recursion-bailed collapses.
+// =============================================================================
+
+/// Conditional alias whose both branches are `unknown`, concrete argument,
+/// nullish source return (valibot vf/vk witness).
+#[test]
+fn deferred_conditional_alias_unknown_return_accepts_undefined_source() {
+    let source = r#"
+type Wrap<T> = T extends 1 ? unknown : unknown;
+const f: () => Wrap<2> = () => undefined;
+const g: () => Wrap<2> = () => null;
+declare const h: () => void;
+const i: () => Wrap<2> = h;
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2322),
+        "deferred alias application evaluating to unknown must accept nullish/void returns: {diags:#?}"
+    );
+}
+
+/// Same shape through a pure indexed-access alias (no conditional) — the rule
+/// is about deferred applications generally, not conditionals (valibot vg).
+#[test]
+fn deferred_indexed_access_alias_unknown_return_accepts_undefined_source() {
+    let source = r#"
+type Carton<T> = { contents: T };
+type Pull<B extends Carton<unknown>> = B['contents'];
+const f: () => Pull<Carton<unknown>> = () => undefined;
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2322),
+        "indexed-access alias application evaluating to unknown must accept undefined return: {diags:#?}"
+    );
+}
+
+/// Generic-interface member position: the alias application reaches the
+/// relation through interface instantiation (valibot vq witness, renamed
+/// binders). Both the literal property and the signature-return member must
+/// relate.
+#[test]
+fn generic_interface_member_with_unknown_alias_return_accepts_object_literal() {
+    let source = r#"
+type Pick2<T> = T extends 1 ? unknown : unknown;
+interface Step<T> {
+  readonly tag: 'mark';
+  readonly go: () => Pick2<T>;
+  readonly payload: T;
+}
+function build(payload: number): Step<number> {
+  return { tag: 'mark', payload, go: () => 1 as unknown };
+}
+function buildNullish(payload: number): Step<number> {
+  return { tag: 'mark', payload, go: () => undefined };
+}
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2322),
+        "generic interface instantiation with unknown-evaluating alias return must accept: {diags:#?}"
+    );
+}
+
+/// Negative control: the same deferred-alias return shape must still reject a
+/// source whose return is genuinely incompatible with the evaluated branch.
+#[test]
+fn deferred_conditional_alias_string_return_still_rejects_number_source() {
+    let source = r#"
+type Pick3<T> = T extends 1 ? number : string;
+const f: () => Pick3<2> = () => 42;
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        has_diagnostic_code(&diags, 2322),
+        "alias application evaluating to string must still reject a number return: {diags:#?}"
+    );
+}
+
+/// Positive control adjacent to the negative one: the selected branch accepts.
+#[test]
+fn deferred_conditional_alias_string_return_accepts_string_source() {
+    let source = r#"
+type Pick4<T> = T extends 1 ? number : string;
+const f: () => Pick4<2> = () => 'ok';
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2322),
+        "alias application evaluating to string must accept a string return: {diags:#?}"
+    );
+}
