@@ -90,6 +90,45 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             return value_type;
         }
 
+        // tsc parity (`substituteIndexedMappedType`): indexing a *generic*
+        // mapped type `{ [T in C]: F(T) }` by its own constraint `C` (where `C`
+        // still contains type variables, e.g. a type parameter or `keyof T`)
+        // substitutes the index for the mapped binder, producing `F(C)`.
+        // Substituting a fresh `T extends C` parameter instead breaks identity
+        // with the simplified form tsc compares against: `{ [T in TB]:
+        // keyof DB[T] }[TB]` must relate to `keyof DB[TB]` in both directions.
+        // Concrete key spaces never reach here: literal-only constraints are
+        // expanded per key by `try_evaluate_mapped_template_per_concrete_key`,
+        // and the remaining non-generic constraints keep the conservative
+        // fresh-parameter behavior below.
+        //
+        // Known interaction: in whole-project checks the collapsed form is
+        // compared by `TypeId` identity against member types built from a
+        // different type-parameter generation (checker fresh ids vs lowering
+        // structural ids — see the pinned witnesses in
+        // `implements_type_param_generation_identity_tests`), which can flip
+        // order-dependent impl-vs-interface comparisons. That generation
+        // divergence is a distinct checker defect; this evaluation rule is
+        // the tsc-parity behavior.
+        if crate::type_queries::contains_type_parameters_db(
+            self.evaluator.interner(),
+            mapped.constraint,
+        ) {
+            let subst = TypeSubstitution::single(mapped.type_param.name, mapped.constraint);
+            let mut value_type = self.evaluator.evaluate(instantiate_type(
+                self.evaluator.interner(),
+                mapped.template,
+                &subst,
+            ));
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                value_type = self
+                    .evaluator
+                    .interner()
+                    .union2(value_type, TypeId::UNDEFINED);
+            }
+            return value_type;
+        }
+
         let constrained_key = self.evaluator.interner().type_param(TypeParamInfo {
             name: mapped.type_param.name,
             constraint: Some(mapped.constraint),
