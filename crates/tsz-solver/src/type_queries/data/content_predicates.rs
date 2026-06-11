@@ -94,6 +94,50 @@ impl ContentPredicate for TypeParamPredicate {
     }
 }
 
+struct ParamOrInferPredicate;
+impl ContentPredicate for ParamOrInferPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_param_or_infer_root_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_param_or_infer_root_cache(type_id, result);
+    }
+}
+
+/// Check whether `type_id` contains the legacy solver-internal
+/// `TypeParameter | Infer` predicate.
+///
+/// This preserves `visitor_predicates::contains_type_parameters` semantics:
+/// `ThisType` and `BoundParameter` are not considered matches here. The answer
+/// is immutable per `TypeId`, so repeated instantiation/evaluation gates share
+/// the project-wide content-predicate cache instead of re-walking each subtree.
+pub fn contains_param_or_infer_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => return true,
+        Some(
+            TypeData::Literal(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Error
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_),
+        ) => return false,
+        _ => {}
+    }
+    contains_content_cached(db, type_id, &ParamOrInferPredicate)
+}
+
 struct InferPredicate;
 impl ContentPredicate for InferPredicate {
     fn matches_node(&self, db: &dyn TypeDatabase, key: &TypeData) -> bool {

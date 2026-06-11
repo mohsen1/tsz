@@ -372,6 +372,43 @@ fn test_contains_type_parameters() {
 }
 
 #[test]
+fn contains_type_parameters_uses_deep_cache_without_broadening_semantics() {
+    let interner = TypeInterner::new();
+
+    let this_type = interner.this_type();
+    let bound_param = interner.bound_parameter(0);
+    assert!(!contains_type_parameters(&interner, this_type));
+    assert!(!contains_type_parameters(&interner, bound_param));
+    assert!(crate::type_queries::contains_type_parameters_db(
+        &interner, this_type
+    ));
+    assert!(crate::type_queries::contains_type_parameters_db(
+        &interner,
+        bound_param
+    ));
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let arr = interner.array(t_param);
+    let union = interner.union(vec![TypeId::STRING, arr]);
+    let idx = interner.index_access(union, TypeId::NUMBER);
+
+    assert!(contains_type_parameters(&interner, idx));
+    assert!(contains_type_parameters(&interner, idx));
+    let entries = interner
+        .type_predicate_cache_statistics()
+        .contains_param_or_infer_root_cache_entries;
+    assert!(
+        entries >= 3,
+        "expected param-or-infer cache to retain child entries, got {entries}"
+    );
+}
+
+#[test]
 fn test_contains_error_type() {
     let interner = TypeInterner::new();
 

@@ -133,16 +133,16 @@ pub trait TypePredicateCache {
     /// shared interner cache. Default impl is a no-op.
     fn set_contains_conditional_cache(&self, _type_id: TypeId, _result: bool) {}
 
-    /// Look up a cached root result for the depth-limited
-    /// `visitor_predicates::contains_type_parameters` walk. The walk always
-    /// starts from a fresh recursion guard, so the answer is a pure function
-    /// of the root `TypeId`. Default impl returns `None` (no caching).
+    /// Look up a cached result for the narrow
+    /// `visitor_predicates::contains_type_parameters` walk
+    /// (`TypeParameter | Infer`). The answer is a pure function of each
+    /// visited `TypeId`. Default impl returns `None` (no caching).
     fn contains_param_or_infer_root_cached(&self, _type_id: TypeId) -> Option<bool> {
         None
     }
 
-    /// Record a root result of the depth-limited
-    /// `visitor_predicates::contains_type_parameters` walk. Default no-op.
+    /// Record a narrow `visitor_predicates::contains_type_parameters` walk
+    /// result. Default no-op.
     fn set_contains_param_or_infer_root_cache(&self, _type_id: TypeId, _result: bool) {}
 
     /// Look up a cached root result for the depth-limited
