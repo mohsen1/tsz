@@ -33,11 +33,26 @@ impl<'a> InferSubstitutor<'a> {
     }
 
     /// Substitute infer types in the given type, returning the result.
+    ///
+    /// Guarded by [`crate::recursion::with_solver_frame`]: the traversal
+    /// recurses structurally through every nested shape, and `infer` bindings
+    /// produced by deep conditional evaluation (ts-toolbelt `MetaPath` /
+    /// `AutoPath` family) can nest thousands of levels with fresh `TypeId`s at
+    /// every level, so the per-`TypeId` `visiting` memo alone cannot bound the
+    /// OS stack. On budget exhaustion the type is left opaque (identity), the
+    /// same relation-preserving bail every other guarded solver recursion uses.
     pub fn substitute(&mut self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
         if let Some(&cached) = self.visiting.get(&type_id) {
             return cached;
         }
+        crate::recursion::with_solver_frame(|| self.substitute_inner(type_id)).unwrap_or(type_id)
+    }
 
+    /// Unguarded traversal body for [`Self::substitute`].
+    fn substitute_inner(&mut self, type_id: TypeId) -> TypeId {
         let Some(key) = self.interner.lookup(type_id) else {
             return type_id;
         };
