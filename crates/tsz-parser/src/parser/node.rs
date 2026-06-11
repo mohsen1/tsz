@@ -28,7 +28,7 @@
 use super::base::{NodeIndex, NodeList};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tsz_common::interner::{Atom, Interner};
+use tsz_common::interner::{AstAtom, Interner};
 
 /// A thin 16-byte node header for cache-efficient AST storage.
 ///
@@ -200,11 +200,11 @@ pub struct IdentifierData {
     /// arena (parser snapshot pipeline, see
     /// `docs/plan/PERFORMANCE_PLAN.md`) requires the atom to
     /// survive — otherwise identifier resolution silently breaks. The
-    /// `Atom::none` `default` is retained for backward-compatible
+    /// `AstAtom::none` `default` is retained for backward-compatible
     /// JSON inputs that omit the field (e.g. snapshots produced before
     /// the field became serialised).
-    #[serde(default = "Atom::none")]
-    pub atom: Atom,
+    #[serde(default = "AstAtom::none")]
+    pub atom: AstAtom,
     /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
     pub escaped_text: String,
     pub original_text: Option<String>,

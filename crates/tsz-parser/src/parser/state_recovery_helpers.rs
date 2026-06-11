@@ -3,7 +3,7 @@ use crate::parser::node::*;
 use crate::parser::{NodeIndex, NodeList};
 use rustc_hash::FxHashMap;
 use tracing::trace;
-use tsz_common::Atom;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -513,7 +513,7 @@ impl ParserState {
             pos,
             pos,
             IdentifierData {
-                atom: Atom::NONE,
+                atom: AstAtom::NONE,
                 escaped_text: String::new(),
                 original_text: None,
                 type_arguments: None,

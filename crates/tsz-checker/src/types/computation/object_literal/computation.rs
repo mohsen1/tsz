@@ -1476,7 +1476,6 @@ impl<'a> CheckerState<'a> {
                                 ctx_ty,
                                 self.ctx.compiler_options.no_implicit_any,
                             );
-                            let this_atom = self.ctx.types.intern_string("this");
                             let mut contextual_index = 0usize;
                             method
                                 .parameters
@@ -1484,14 +1483,7 @@ impl<'a> CheckerState<'a> {
                                 .iter()
                                 .map(|&param_idx| {
                                     let param = self.ctx.arena.get_parameter_at(param_idx)?;
-                                    let is_this_param = self
-                                        .ctx
-                                        .arena
-                                        .get(param.name)
-                                        .and_then(|name_node| {
-                                            self.ctx.arena.get_identifier(name_node)
-                                        })
-                                        .is_some_and(|ident| ident.atom == this_atom);
+                                    let is_this_param = self.is_this_parameter_name(param.name);
                                     let contextual_param_type = if is_this_param {
                                         ctx_helper
                                             .get_this_type()

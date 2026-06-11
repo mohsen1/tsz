@@ -10,8 +10,8 @@ use crate::parser::{
     node::{self},
     syntax_kind_ext,
 };
-use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::interner::AstAtom;
 use tsz_scanner::SyntaxKind;
 
 /// Pre-classified modifier flags for a single class member, computed in one
@@ -1751,7 +1751,7 @@ impl ParserState {
                 pos,
                 pos,
                 node::IdentifierData {
-                    atom: Atom::NONE,
+                    atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,

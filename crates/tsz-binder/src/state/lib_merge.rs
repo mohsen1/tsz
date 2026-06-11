@@ -6,7 +6,7 @@
 use crate::{SymbolId, SymbolTable, symbol_flags};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-use tsz_common::interner::{Atom, Interner};
+use tsz_common::interner::{AstAtom, Interner};
 
 use super::{BinderState, LibContext};
 
@@ -165,7 +165,7 @@ impl BinderState {
         let mut lib_symbol_remap: FxHashMap<(usize, SymbolId), SymbolId> = FxHashMap::default();
         // Maps: interned symbol name -> new_id (for merging same-name symbols)
         let mut name_interner = Interner::new();
-        let mut merged_by_name: FxHashMap<Atom, SymbolId> = FxHashMap::default();
+        let mut merged_by_name: FxHashMap<AstAtom, SymbolId> = FxHashMap::default();
 
         for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;

@@ -51,11 +51,10 @@ impl<'a> CheckerState<'a> {
 
         let ident = self.ctx.arena.get_identifier(name_node)?;
         let property_name = &ident.escaped_text;
-        let prop_atom = if ident.atom != tsz_common::interner::Atom::none() {
-            ident.atom
-        } else {
-            self.ctx.types.intern_string(property_name)
-        };
+        // Intern through the solver so the cache keys below share one atom
+        // namespace with the other `property_cache` writers; the arena's
+        // `AstAtom` for this identifier lives in a different namespace.
+        let prop_atom = self.ctx.types.intern_string(property_name);
 
         // TOP-LEVEL CACHE: check the dedicated optional_chain_cache first.
         // This is keyed by (object_type_with_nullish, prop_atom) and stores

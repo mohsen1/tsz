@@ -8,7 +8,7 @@ struct BindResultReducer {
     lib_binders: Vec<Arc<BinderState>>,
     lib_binder_arena_map: FxHashMap<usize, Arc<NodeArena>>,
     lib_symbol_remap: FxHashMap<(usize, SymbolId), SymbolId>,
-    lib_name_to_global: FxHashMap<Atom, SymbolId>,
+    lib_name_to_global: FxHashMap<AstAtom, SymbolId>,
 
     // Global symbol accumulators
     global_symbols: SymbolArena,
@@ -18,7 +18,7 @@ struct BindResultReducer {
 
     // Name-interning / merge-dedup
     name_interner: Interner,
-    merged_symbols: FxHashMap<Atom, SymbolId>,
+    merged_symbols: FxHashMap<AstAtom, SymbolId>,
 
     // Program-wide output accumulators
     globals: SymbolTable,
@@ -110,10 +110,10 @@ impl BindResultReducer {
         let name_interner = Interner::new();
         // IMPORTANT: This map is ONLY for symbols in the ROOT scope (ScopeId(0)).
         // Symbols from nested scopes should NEVER be merged across files/scopes.
-        let merged_symbols: FxHashMap<Atom, SymbolId> = FxHashMap::default();
+        let merged_symbols: FxHashMap<AstAtom, SymbolId> = FxHashMap::default();
 
         let lib_symbol_remap: FxHashMap<(usize, SymbolId), SymbolId> = FxHashMap::default();
-        let lib_name_to_global: FxHashMap<Atom, SymbolId> = FxHashMap::default();
+        let lib_name_to_global: FxHashMap<AstAtom, SymbolId> = FxHashMap::default();
 
         Self {
             lib_binders,
@@ -153,7 +153,7 @@ impl BindResultReducer {
         // has merged. Without this, each lib file allocates its own copy, causing members
         // from one lib (e.g. `calendar`) to silently disappear from the merged namespace.
         // Used only within this phase; not needed by subsequent phases.
-        let mut nested_merged: FxHashMap<(SymbolId, Atom), SymbolId> = FxHashMap::default();
+        let mut nested_merged: FxHashMap<(SymbolId, AstAtom), SymbolId> = FxHashMap::default();
         // Iterate by index to avoid holding a borrow on `self.lib_binders` while the
         // loop body mutates other fields of `self` through the stable NLL split-borrow.
         for lib_binder_idx in 0..self.lib_binders.len() {

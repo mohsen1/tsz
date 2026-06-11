@@ -12,39 +12,72 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
-/// An interned string identifier.
+/// Declare an interned string handle type.
 ///
-/// Atoms are cheap to copy (just a u32) and can be compared with == in O(1).
-/// To get the actual string, use `Interner::resolve(atom)`.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, PartialOrd, Ord,
-)]
-pub struct Atom(pub u32);
+/// Each handle type names a distinct atom namespace: handles minted by one
+/// interner kind must not be resolved by or compared against another, and
+/// the distinct types make such cross-namespace use a compile error.
+macro_rules! atom_handle {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(
+            Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, PartialOrd, Ord,
+        )]
+        pub struct $name(pub u32);
 
-impl Atom {
-    /// A sentinel value representing no atom / empty string.
-    pub const NONE: Self = Self(0);
+        impl $name {
+            /// A sentinel value representing no atom / empty string.
+            pub const NONE: Self = Self(0);
 
-    /// Returns `Atom::NONE` - used for serde default.
-    #[must_use]
-    #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
+            /// Returns the `NONE` sentinel - used for serde default.
+            #[must_use]
+            #[inline]
+            pub const fn none() -> Self {
+                Self::NONE
+            }
 
-    /// Check if this is the empty/none atom.
-    #[must_use]
-    #[inline]
-    pub const fn is_none(self) -> bool {
-        self.0 == 0
-    }
+            /// Check if this is the empty/none atom.
+            #[must_use]
+            #[inline]
+            pub const fn is_none(self) -> bool {
+                self.0 == 0
+            }
 
-    /// Get the raw index value.
-    #[must_use]
-    #[inline]
-    pub const fn index(self) -> u32 {
-        self.0
-    }
+            /// Get the raw index value.
+            #[must_use]
+            #[inline]
+            pub const fn index(self) -> u32 {
+                self.0
+            }
+        }
+    };
+}
+
+atom_handle! {
+    /// An interned string identifier in the program-wide (solver) namespace.
+    ///
+    /// Atoms are cheap to copy (just a u32) and can be compared with == in O(1).
+    /// `Atom`s are minted by the concurrent [`ShardedInterner`] (raw value is
+    /// `(local_index << 6) | shard`). To get the actual string, use
+    /// `ShardedInterner::resolve(atom)`.
+    ///
+    /// Identifiers scanned out of a single source file use [`AstAtom`] from the
+    /// per-file [`Interner`] instead; the two namespaces use incompatible
+    /// encodings, so the same string gets unrelated raw values in each. Bridge
+    /// by resolving the string and re-interning, never by copying raw indices.
+    Atom
+}
+
+atom_handle! {
+    /// An interned string identifier in a per-file AST namespace.
+    ///
+    /// `AstAtom`s are minted sequentially by the per-file [`Interner`] that the
+    /// scanner owns during lexing and that is transferred to the parsed file's
+    /// `NodeArena`. They are only meaningful relative to that one arena's
+    /// interner: comparing or resolving them against another file's arena, or
+    /// against the program-wide [`Atom`] namespace, is a logic error (and a
+    /// compile error thanks to this distinct type).
+    AstAtom
 }
 
 const SHARD_BITS: u32 = 6;
@@ -180,7 +213,7 @@ const COMMON_STRINGS: &[&str] = &[
 #[derive(Default, Clone, Debug)]
 pub struct Interner {
     /// Map from string to atom index
-    map: FxHashMap<Arc<str>, Atom>,
+    map: FxHashMap<Arc<str>, AstAtom>,
     /// Vector of all interned strings (index 0 is empty string)
     strings: Vec<Arc<str>>,
 }
@@ -196,19 +229,19 @@ impl Interner {
         // Index 0 is reserved for empty/none
         let empty: Arc<str> = Arc::from("");
         interner.strings.push(Arc::clone(&empty));
-        interner.map.insert(empty, Atom::NONE);
+        interner.map.insert(empty, AstAtom::NONE);
         interner
     }
 
-    /// Intern a string, returning its Atom handle.
-    /// If the string was already interned, returns the existing Atom.
+    /// Intern a string, returning its `AstAtom` handle.
+    /// If the string was already interned, returns the existing `AstAtom`.
     #[must_use]
     #[inline]
-    pub fn intern(&mut self, s: &str) -> Atom {
+    pub fn intern(&mut self, s: &str) -> AstAtom {
         if let Some(&atom) = self.map.get(s) {
             return atom;
         }
-        let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
+        let atom = AstAtom(u32::try_from(self.strings.len()).unwrap_or(AstAtom::NONE.0));
         let owned: Arc<str> = Arc::from(s);
         self.strings.push(Arc::clone(&owned));
         self.map.insert(owned, atom);
@@ -218,29 +251,29 @@ impl Interner {
     /// Intern an owned String, avoiding allocation if possible.
     #[must_use]
     #[inline]
-    pub fn intern_owned(&mut self, s: String) -> Atom {
+    pub fn intern_owned(&mut self, s: String) -> AstAtom {
         if let Some(&atom) = self.map.get(s.as_str()) {
             return atom;
         }
-        let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
+        let atom = AstAtom(u32::try_from(self.strings.len()).unwrap_or(AstAtom::NONE.0));
         let owned: Arc<str> = Arc::from(s.into_boxed_str());
         self.strings.push(Arc::clone(&owned));
         self.map.insert(owned, atom);
         atom
     }
 
-    /// Resolve an Atom back to its string value.
+    /// Resolve an `AstAtom` back to its string value.
     /// Returns empty string if atom is out of bounds (safety for error recovery).
     #[must_use]
     #[inline]
-    pub fn resolve(&self, atom: Atom) -> &str {
+    pub fn resolve(&self, atom: AstAtom) -> &str {
         self.strings.get(atom.0 as usize).map_or("", AsRef::as_ref)
     }
 
-    /// Try to resolve an Atom, returning None if invalid.
+    /// Try to resolve an `AstAtom`, returning None if invalid.
     #[must_use]
     #[inline]
-    pub fn try_resolve(&self, atom: Atom) -> Option<&str> {
+    pub fn try_resolve(&self, atom: AstAtom) -> Option<&str> {
         self.strings.get(atom.0 as usize).map(AsRef::as_ref)
     }
 
@@ -278,7 +311,7 @@ impl Interner {
         let mut size = size_of::<Self>();
 
         // HashMap overhead: capacity * (key + value + metadata)
-        size += self.map.capacity() * (size_of::<Arc<str>>() + size_of::<Atom>() + 8);
+        size += self.map.capacity() * (size_of::<Arc<str>>() + size_of::<AstAtom>() + 8);
 
         // strings Vec capacity
         size += self.strings.capacity() * size_of::<Arc<str>>();
@@ -311,10 +344,10 @@ impl<'de> Deserialize<'de> for Interner {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let strings_vec: Vec<String> = Deserialize::deserialize(deserializer)?;
         let mut strings: Vec<Arc<str>> = Vec::with_capacity(strings_vec.len());
-        let mut map: FxHashMap<Arc<str>, Atom> = FxHashMap::default();
+        let mut map: FxHashMap<Arc<str>, AstAtom> = FxHashMap::default();
         for (idx, s) in strings_vec.into_iter().enumerate() {
             let arc: Arc<str> = Arc::from(s.into_boxed_str());
-            let atom = Atom(u32::try_from(idx).unwrap_or(Atom::NONE.0));
+            let atom = AstAtom(u32::try_from(idx).unwrap_or(AstAtom::NONE.0));
             strings.push(Arc::clone(&arc));
             map.insert(arc, atom);
         }

@@ -173,7 +173,7 @@ impl NodeArenaInner {
         let Some(ident) = self.get_identifier(node) else {
             return false;
         };
-        ident.atom == tsz_common::interner::Atom::NONE && ident.escaped_text.is_empty()
+        ident.atom == tsz_common::interner::AstAtom::NONE && ident.escaped_text.is_empty()
     }
 
     /// Get the borrowed text of an `Identifier` node. Returns `None` for any
@@ -1650,7 +1650,7 @@ impl Node {
 mod is_missing_recovery_identifier_tests {
     use super::*;
     use crate::parser::node::NodeArena;
-    use tsz_common::interner::Atom;
+    use tsz_common::interner::AstAtom;
     use tsz_scanner::SyntaxKind;
 
     #[test]
@@ -1661,7 +1661,7 @@ mod is_missing_recovery_identifier_tests {
             0,
             0,
             IdentifierData {
-                atom: Atom::NONE,
+                atom: AstAtom::NONE,
                 escaped_text: String::new(),
                 original_text: None,
                 type_arguments: None,
@@ -1680,7 +1680,7 @@ mod is_missing_recovery_identifier_tests {
             0,
             3,
             IdentifierData {
-                atom: Atom(1),
+                atom: AstAtom(1),
                 escaped_text: "foo".to_string(),
                 original_text: None,
                 type_arguments: None,
@@ -1697,7 +1697,7 @@ mod is_missing_recovery_identifier_tests {
             0,
             0,
             IdentifierData {
-                atom: Atom(1),
+                atom: AstAtom(1),
                 escaped_text: String::new(),
                 original_text: None,
                 type_arguments: None,
@@ -1714,7 +1714,7 @@ mod is_missing_recovery_identifier_tests {
             0,
             3,
             IdentifierData {
-                atom: Atom::NONE,
+                atom: AstAtom::NONE,
                 escaped_text: "x".to_string(),
                 original_text: None,
                 type_arguments: None,

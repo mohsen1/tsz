@@ -157,7 +157,7 @@ impl ParserState {
 mod tests {
     use super::*;
     use crate::parser::node::IdentifierData;
-    use tsz_common::interner::Atom;
+    use tsz_common::interner::AstAtom;
     use tsz_scanner::SyntaxKind;
 
     fn fresh_parser(source: &str) -> ParserState {
@@ -168,7 +168,7 @@ mod tests {
 
     fn make_test_identifier(text: &str) -> IdentifierData {
         IdentifierData {
-            atom: Atom::NONE,
+            atom: AstAtom::NONE,
             escaped_text: text.to_string(),
             original_text: None,
             type_arguments: None,
