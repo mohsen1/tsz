@@ -11,16 +11,16 @@ use crate::parser::node::{
 impl NodeArenaInner {
     /// Add a block node
     pub fn add_block(&mut self, kind: u16, pos: u32, end: u32, data: BlockData) -> NodeIndex {
-        let statements = data.statements.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_list(&data.statements, parent);
 
         let data_index = self.len_u32(self.blocks.len());
         self.blocks.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent_list(&statements, parent);
 
         parent
     }
@@ -146,15 +146,17 @@ impl NodeArenaInner {
         data: CaseClauseData,
     ) -> NodeIndex {
         let expression = data.expression;
-        let statements = data.statements.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(expression, parent);
+        self.set_parent_list(&data.statements, parent);
+
         let data_index = self.len_u32(self.case_clauses.len());
         self.case_clauses.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        self.set_parent_list(&statements, parent);
         parent
     }
 

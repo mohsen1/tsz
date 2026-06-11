@@ -88,19 +88,18 @@ impl NodeArenaInner {
         data: CallExprData,
     ) -> NodeIndex {
         let expression = data.expression;
-        let type_arguments = data.type_arguments.clone();
-        let arguments = data.arguments.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(expression, parent);
+        self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
+        self.set_parent_opt_list(data.arguments.as_ref(), parent);
 
         let data_index = self.len_u32(self.call_exprs.len());
         self.call_exprs.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        self.set_parent_opt_list(type_arguments.as_ref(), parent);
-        self.set_parent_opt_list(arguments.as_ref(), parent);
 
         parent
     }
@@ -183,15 +182,16 @@ impl NodeArenaInner {
         end: u32,
         data: LiteralExprData,
     ) -> NodeIndex {
-        let elements = data.elements.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_list(&data.elements, parent);
 
         let data_index = self.len_u32(self.literal_exprs.len());
         self.literal_exprs.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_list(&elements, parent);
         parent
     }
 
@@ -264,17 +264,17 @@ impl NodeArenaInner {
         data: TemplateExprData,
     ) -> NodeIndex {
         let head = data.head;
-        let template_spans = data.template_spans.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(head, parent);
+        self.set_parent_list(&data.template_spans, parent);
 
         let data_index = self.len_u32(self.template_exprs.len());
         self.template_exprs.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(head, parent);
-        self.set_parent_list(&template_spans, parent);
 
         parent
     }
@@ -312,19 +312,19 @@ impl NodeArenaInner {
         data: TaggedTemplateData,
     ) -> NodeIndex {
         let tag = data.tag;
-        let type_arguments = data.type_arguments.clone();
         let template = data.template;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(tag, parent);
+        self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
+        self.set_parent(template, parent);
 
         let data_index = self.len_u32(self.tagged_templates.len());
         self.tagged_templates.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(tag, parent);
-        self.set_parent_opt_list(type_arguments.as_ref(), parent);
-        self.set_parent(template, parent);
 
         parent
     }
@@ -338,15 +338,17 @@ impl NodeArenaInner {
         data: ExprWithTypeArgsData,
     ) -> NodeIndex {
         let expression = data.expression;
-        let type_arguments = data.type_arguments.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(expression, parent);
+        self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
+
         let data_index = self.len_u32(self.expr_with_type_args.len());
         self.expr_with_type_args.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(expression, parent);
-        self.set_parent_opt_list(type_arguments.as_ref(), parent);
         parent
     }
 

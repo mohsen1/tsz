@@ -19,19 +19,19 @@ impl NodeArenaInner {
         data: JsxElementData,
     ) -> NodeIndex {
         let opening_element = data.opening_element;
-        let children = data.children.clone();
         let closing_element = data.closing_element;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(opening_element, parent);
+        self.set_parent_list(&data.children, parent);
+        self.set_parent(closing_element, parent);
 
         let data_index = self.len_u32(self.jsx_elements.len());
         self.jsx_elements.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(opening_element, parent);
-        self.set_parent_list(&children, parent);
-        self.set_parent(closing_element, parent);
         parent
     }
 
@@ -44,19 +44,19 @@ impl NodeArenaInner {
         data: JsxOpeningData,
     ) -> NodeIndex {
         let tag_name = data.tag_name;
-        let type_arguments = data.type_arguments.clone();
         let attributes = data.attributes;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(tag_name, parent);
+        self.set_parent_opt_list(data.type_arguments.as_ref(), parent);
+        self.set_parent(attributes, parent);
 
         let data_index = self.len_u32(self.jsx_opening.len());
         self.jsx_opening.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(tag_name, parent);
-        self.set_parent_opt_list(type_arguments.as_ref(), parent);
-        self.set_parent(attributes, parent);
         parent
     }
 
@@ -90,19 +90,19 @@ impl NodeArenaInner {
         data: JsxFragmentData,
     ) -> NodeIndex {
         let opening_fragment = data.opening_fragment;
-        let children = data.children.clone();
         let closing_fragment = data.closing_fragment;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(opening_fragment, parent);
+        self.set_parent_list(&data.children, parent);
+        self.set_parent(closing_fragment, parent);
 
         let data_index = self.len_u32(self.jsx_fragments.len());
         self.jsx_fragments.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent(opening_fragment, parent);
-        self.set_parent_list(&children, parent);
-        self.set_parent(closing_fragment, parent);
         parent
     }
 
@@ -114,16 +114,16 @@ impl NodeArenaInner {
         end: u32,
         data: JsxAttributesData,
     ) -> NodeIndex {
-        let properties = data.properties.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_list(&data.properties, parent);
 
         let data_index = self.len_u32(self.jsx_attributes.len());
         self.jsx_attributes.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent_list(&properties, parent);
         parent
     }
 

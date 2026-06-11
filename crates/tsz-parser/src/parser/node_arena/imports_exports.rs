@@ -18,21 +18,22 @@ impl NodeArenaInner {
         end: u32,
         data: ImportDeclData,
     ) -> NodeIndex {
-        let modifiers = data.modifiers.clone();
         let import_clause = data.import_clause;
         let module_specifier = data.module_specifier;
         let attributes = data.attributes;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_opt_list(data.modifiers.as_ref(), parent);
+        self.set_parent(import_clause, parent);
+        self.set_parent(module_specifier, parent);
+        self.set_parent(attributes, parent);
 
         let data_index = self.len_u32(self.import_decls.len());
         self.import_decls.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_opt_list(modifiers.as_ref(), parent);
-        self.set_parent(import_clause, parent);
-        self.set_parent(module_specifier, parent);
-        self.set_parent(attributes, parent);
         parent
     }
 
@@ -67,16 +68,17 @@ impl NodeArenaInner {
         data: NamedImportsData,
     ) -> NodeIndex {
         let name = data.name;
-        let elements = data.elements.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent(name, parent);
+        self.set_parent_list(&data.elements, parent);
 
         let data_index = self.len_u32(self.named_imports.len());
         self.named_imports.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent(name, parent);
-        self.set_parent_list(&elements, parent);
         parent
     }
 
@@ -110,21 +112,22 @@ impl NodeArenaInner {
         end: u32,
         data: ExportDeclData,
     ) -> NodeIndex {
-        let modifiers = data.modifiers.clone();
         let export_clause = data.export_clause;
         let module_specifier = data.module_specifier;
         let attributes = data.attributes;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_opt_list(data.modifiers.as_ref(), parent);
+        self.set_parent(export_clause, parent);
+        self.set_parent(module_specifier, parent);
+        self.set_parent(attributes, parent);
 
         let data_index = self.len_u32(self.export_decls.len());
         self.export_decls.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_opt_list(modifiers.as_ref(), parent);
-        self.set_parent(export_clause, parent);
-        self.set_parent(module_specifier, parent);
-        self.set_parent(attributes, parent);
         parent
     }
 
@@ -136,17 +139,18 @@ impl NodeArenaInner {
         end: u32,
         data: ExportAssignmentData,
     ) -> NodeIndex {
-        let modifiers = data.modifiers.clone();
         let expression = data.expression;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_opt_list(data.modifiers.as_ref(), parent);
+        self.set_parent(expression, parent);
 
         let data_index = self.len_u32(self.export_assignments.len());
         self.export_assignments.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_opt_list(modifiers.as_ref(), parent);
-        self.set_parent(expression, parent);
         parent
     }
 
@@ -158,15 +162,16 @@ impl NodeArenaInner {
         end: u32,
         data: ImportAttributesData,
     ) -> NodeIndex {
-        let elements = data.elements.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_list(&data.elements, parent);
 
         let data_index = self.len_u32(self.import_attributes.len());
         self.import_attributes.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_list(&elements, parent);
         parent
     }
 

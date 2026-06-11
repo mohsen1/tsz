@@ -16,15 +16,16 @@ impl NodeArenaInner {
         end: u32,
         data: BindingPatternData,
     ) -> NodeIndex {
-        let elements = data.elements.clone();
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_list(&data.elements, parent);
 
         let data_index = self.len_u32(self.binding_patterns.len());
         self.binding_patterns.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_list(&elements, parent);
         parent
     }
 
@@ -60,19 +61,20 @@ impl NodeArenaInner {
         end: u32,
         data: PropertyAssignmentData,
     ) -> NodeIndex {
-        let modifiers = data.modifiers.clone();
         let name = data.name;
         let initializer = data.initializer;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_opt_list(data.modifiers.as_ref(), parent);
+        self.set_parent(name, parent);
+        self.set_parent(initializer, parent);
 
         let data_index = self.len_u32(self.property_assignments.len());
         self.property_assignments.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_opt_list(modifiers.as_ref(), parent);
-        self.set_parent(name, parent);
-        self.set_parent(initializer, parent);
         parent
     }
 
@@ -84,19 +86,20 @@ impl NodeArenaInner {
         end: u32,
         data: ShorthandPropertyData,
     ) -> NodeIndex {
-        let modifiers = data.modifiers.clone();
         let name = data.name;
         let object_assignment_initializer = data.object_assignment_initializer;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_opt_list(data.modifiers.as_ref(), parent);
+        self.set_parent(name, parent);
+        self.set_parent(object_assignment_initializer, parent);
 
         let data_index = self.len_u32(self.shorthand_properties.len());
         self.shorthand_properties.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        let parent = NodeIndex(index);
-        self.set_parent_opt_list(modifiers.as_ref(), parent);
-        self.set_parent(name, parent);
-        self.set_parent(object_assignment_initializer, parent);
         parent
     }
 }

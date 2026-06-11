@@ -308,19 +308,19 @@ impl NodeArenaInner {
     /// Add a source file node
     pub fn add_source_file(&mut self, pos: u32, end: u32, data: SourceFileData) -> NodeIndex {
         use super::syntax_kind_ext::SOURCE_FILE;
-        let statements = data.statements.clone();
         let end_of_file_token = data.end_of_file_token;
+        let parent = NodeIndex(self.len_u32(self.nodes.len()));
+
+        self.set_parent_list(&data.statements, parent);
+        self.set_parent(end_of_file_token, parent);
 
         let data_index = self.len_u32(self.source_files.len());
         self.source_files.push(data);
         let index = self.len_u32(self.nodes.len());
+        debug_assert_eq!(parent.0, index);
         self.nodes
             .push(Node::with_data(SOURCE_FILE, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-
-        let parent = NodeIndex(index);
-        self.set_parent_list(&statements, parent);
-        self.set_parent(end_of_file_token, parent);
 
         parent
     }
