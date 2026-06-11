@@ -766,5 +766,5 @@ impl<'a> UsageScan<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/import_value_usage.rs"]
+#[path = "../../tests/import_value_usage.rs"]
 mod tests;

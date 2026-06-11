@@ -232,7 +232,7 @@ pub struct PrinterOptions {
     /// import-elision decision sites consult these facts instead of the
     /// text-based heuristics in `crate::import_usage`. Binder-less callers
     /// (transpile-style emit) leave this `None` and keep the text fallback.
-    pub import_usage_facts: Option<Arc<crate::import_value_usage::ImportValueUsageFacts>>,
+    pub import_usage_facts: Option<Arc<crate::passes::import_value_usage::ImportValueUsageFacts>>,
 }
 
 impl Default for PrinterOptions {

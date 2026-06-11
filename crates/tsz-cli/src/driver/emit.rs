@@ -458,16 +458,18 @@ pub(crate) fn emit_outputs(
             // --verbatimModuleSyntax) and for files without imports.
             if !is_js_input
                 && !printer_options.verbatim_module_syntax
-                && tsz_emitter::import_value_usage::file_has_import_declarations(&file.arena)
+                && tsz_emitter::passes::import_value_usage::file_has_import_declarations(
+                    &file.arena,
+                )
             {
                 let binder = file_binder.get_or_insert_with(|| {
                     tsz::parallel::create_binder_from_bound_file(file, context.program, file_idx)
                 });
                 printer_options.import_usage_facts = Some(std::sync::Arc::new(
-                    tsz_emitter::import_value_usage::compute_import_value_usage_facts(
+                    tsz_emitter::passes::import_value_usage::compute_import_value_usage_facts(
                         &file.arena,
                         binder,
-                        tsz_emitter::import_value_usage::ImportValueUsageInputs {
+                        tsz_emitter::passes::import_value_usage::ImportValueUsageInputs {
                             external_const_enum_bindings: Some(
                                 &printer_options.external_const_enum_bindings,
                             ),
