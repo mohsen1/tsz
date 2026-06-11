@@ -976,15 +976,8 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            self.write(", void 0, ");
-            self.write_awaiter_promise_arg(&promise_ctor);
-            self.write(", function () {");
-            self.write_line();
-            self.increase_indent();
-            self.emit_async_arrow_hoisted_var_groups(
-                &hoisted_var_groups,
-                needs_lexical_this_capture,
-            );
+            self.open_awaiter_callback(&promise_ctor);
+            self.emit_async_hoisted_var_groups(&hoisted_var_groups, needs_lexical_this_capture);
             self.emit_param_binding_prologue(&param_transforms);
             self.write(&generator_body);
             self.decrease_indent();
@@ -1009,25 +1002,9 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            self.write(", void 0, ");
-            self.write_awaiter_promise_arg(&promise_ctor);
-            self.write(", function () {");
-            self.write_line();
-            self.increase_indent();
-            self.emit_async_arrow_hoisted_var_groups(
-                &hoisted_var_groups,
-                needs_lexical_this_capture,
-            );
-            if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                self.writer.write("");
-                let base_line = self.writer.current_line();
-                let base_column = self.writer.current_column();
-                self.writer
-                    .add_offset_mappings(base_line, base_column, &generator_mappings);
-                self.writer.write(&generator_body);
-            } else {
-                self.write(&generator_body);
-            }
+            self.open_awaiter_callback(&promise_ctor);
+            self.emit_async_hoisted_var_groups(&hoisted_var_groups, needs_lexical_this_capture);
+            self.write_with_offset_mappings(&generator_body, &generator_mappings);
             self.decrease_indent();
             self.write_line();
             self.write("});");
@@ -1042,120 +1019,38 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            if hoisted_var_groups.is_empty() {
-                let can_inline_wrapper = func.equals_greater_than_token
-                    && body_is_single_line
-                    && !body_has_await
-                    && !needs_lexical_this_capture
-                    && generator_mappings.is_empty();
-                if can_inline_wrapper {
-                    self.write(", void 0, ");
-                    self.write_awaiter_promise_arg(&promise_ctor);
-                    self.write(", function () { ");
-                    self.write(&Self::inline_async_arrow_generator_body(&generator_body));
-                    self.write(" }); }");
-                    if synced_visual_indent {
-                        self.writer.set_indent_level(original_indent_level);
-                    }
-                    self.skip_comments_for_async_lowered_body(func.body);
-                    self.pop_temp_scope();
-                    return;
-                }
-                // Multi-line format (matches tsc): __generator on new line
+            let can_inline_wrapper = hoisted_var_groups.is_empty()
+                && func.equals_greater_than_token
+                && body_is_single_line
+                && !body_has_await
+                && !needs_lexical_this_capture
+                && generator_mappings.is_empty();
+            if can_inline_wrapper {
                 self.write(", void 0, ");
                 self.write_awaiter_promise_arg(&promise_ctor);
-                self.write(", function () {");
-                self.write_line();
-                self.increase_indent();
-                self.emit_async_arrow_hoisted_var_groups(
-                    &hoisted_var_groups,
-                    needs_lexical_this_capture,
-                );
-                if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &generator_mappings);
-                    self.writer.write(&generator_body);
-                } else {
-                    self.write(&generator_body);
+                self.write(", function () { ");
+                self.write(&Self::inline_async_generator_body(&generator_body));
+                self.write(" }); }");
+                if synced_visual_indent {
+                    self.writer.set_indent_level(original_indent_level);
                 }
-                self.decrease_indent();
-                self.write_line();
-                self.write("}); }");
-            } else {
-                // Multi-line format with hoisted vars
-                self.write(", void 0, ");
-                self.write_awaiter_promise_arg(&promise_ctor);
-                self.write(", function () {");
-                self.write_line();
-                self.increase_indent();
-                self.emit_async_arrow_hoisted_var_groups(
-                    &hoisted_var_groups,
-                    needs_lexical_this_capture,
-                );
-                if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &generator_mappings);
-                    self.writer.write(&generator_body);
-                } else {
-                    self.write(&generator_body);
-                }
-                self.decrease_indent();
-                self.write_line();
-                self.write("}); }");
+                self.skip_comments_for_async_lowered_body(func.body);
+                self.pop_temp_scope();
+                return;
             }
+            // Multi-line format (matches tsc): __generator on new line
+            self.open_awaiter_callback(&promise_ctor);
+            self.emit_async_hoisted_var_groups(&hoisted_var_groups, needs_lexical_this_capture);
+            self.write_with_offset_mappings(&generator_body, &generator_mappings);
+            self.decrease_indent();
+            self.write_line();
+            self.write("}); }");
         }
         if synced_visual_indent {
             self.writer.set_indent_level(original_indent_level);
         }
         self.skip_comments_for_async_lowered_body(func.body);
         self.pop_temp_scope();
-    }
-
-    fn inline_async_arrow_generator_body(generator_body: &str) -> String {
-        let mut lines = generator_body.lines();
-        let Some(first_line) = lines.next() else {
-            return String::new();
-        };
-
-        let following_strip = 4;
-        let mut output = String::from(first_line.trim_start());
-        for line in lines {
-            output.push('\n');
-            output.push_str(line.get(following_strip..).unwrap_or(line).trim_end());
-        }
-        output
-    }
-
-    fn emit_async_arrow_hoisted_var_groups(
-        &mut self,
-        hoisted_var_groups: &[Vec<String>],
-        needs_lexical_this_capture: bool,
-    ) {
-        for group in hoisted_var_groups {
-            if group.is_empty() {
-                continue;
-            }
-            self.write("var ");
-            for (i, var_name) in group.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(var_name);
-            }
-            self.write(";");
-            self.write_line();
-        }
-
-        if needs_lexical_this_capture {
-            self.write("var _this = this;");
-            self.write_line();
-        }
     }
 
     fn emit_async_arrow_es5_await_param_recovery(

@@ -216,16 +216,7 @@ impl<'a> Printer<'a> {
                 };
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let mappings = es5_emitter.take_mappings();
-                if !mappings.is_empty() && self.writer.has_source_map() {
-                    self.writer.write("");
-                    let base_line = self.writer.current_line();
-                    let base_column = self.writer.current_column();
-                    self.writer
-                        .add_offset_mappings(base_line, base_column, &mappings);
-                    self.writer.write(&output);
-                } else {
-                    self.write(&output);
-                }
+                self.write_with_offset_mappings(&output, &mappings);
                 while self.comment_emit_idx < self.all_comments.len()
                     && self.all_comments[self.comment_emit_idx].pos < node.end
                 {
@@ -421,16 +412,7 @@ impl<'a> Printer<'a> {
             };
             self.sync_es5_class_emitter_state(&mut es5_emitter);
             let mappings = es5_emitter.take_mappings();
-            if !mappings.is_empty() && self.writer.has_source_map() {
-                self.writer.write("");
-                let base_line = self.writer.current_line();
-                let base_column = self.writer.current_column();
-                self.writer
-                    .add_offset_mappings(base_line, base_column, &mappings);
-                self.writer.write(&output);
-            } else {
-                self.write(&output);
-            }
+            self.write_with_offset_mappings(&output, &mappings);
             // Emit any trailing comment from the class's closing `}` line
             // (e.g., `class Foo { ... } // comment` → `}()); // comment`).
             // This must happen BEFORE `skip_comments_for_erased_node` consumes

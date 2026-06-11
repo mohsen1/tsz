@@ -56,6 +56,8 @@ mod async_arrow_arguments_capture_tests;
 #[cfg(test)]
 mod empty_statement_comment_elision_tests;
 #[cfg(test)]
+mod es5_async_lexical_this_tests;
+#[cfg(test)]
 mod es5_emit_recovery_tail_tests;
 #[cfg(test)]
 mod es5_emit_tests;

@@ -49,6 +49,7 @@ mod literals;
 mod module_emission;
 mod module_wrapper;
 mod namespace_directives;
+mod offset_mapped_output;
 mod source_file;
 mod special_expressions;
 mod statement_erasure;
