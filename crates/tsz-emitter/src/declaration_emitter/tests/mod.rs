@@ -311,6 +311,7 @@ mod infer_paren_and_union_intersection;
 mod js_define_property;
 mod js_expando_features;
 mod jsdoc_template_defaults;
+mod local_alias_elision;
 mod misc_features;
 mod misc_features_import_exports;
 mod misc_inference_features;

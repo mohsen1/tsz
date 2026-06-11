@@ -74,6 +74,14 @@ pub struct TypePrinter<'a> {
     /// Matches tsc's depth limit of 10 for recursive generic function DTS expansion;
     /// at that depth we emit `/*elided*/ any` instead of expanding further.
     recursive_expansion_depth: u32,
+    /// Defs of function-local type aliases that can never be referenced by
+    /// name in declaration output. When the printer would render such a def
+    /// as its bare alias name, it prints the elided form instead:
+    /// `Arg | /*elided*/ any` for an application with exactly one visible
+    /// type argument, `/*elided*/ any` otherwise. This is printer display
+    /// policy replacing the retired `elide_type_reference_names` post-print
+    /// text rewrite.
+    elided_local_alias_defs: Option<&'a rustc_hash::FxHashSet<tsz_solver::def::DefId>>,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -98,6 +106,7 @@ impl<'a> TypePrinter<'a> {
             type_param_renames: Vec::new(),
             in_extends_clause: false,
             recursive_expansion_depth: 0,
+            elided_local_alias_defs: None,
         }
     }
 
@@ -220,6 +229,35 @@ impl<'a> TypePrinter<'a> {
     pub const fn with_strict_null_checks(mut self, strict: bool) -> Self {
         self.strict_null_checks = strict;
         self
+    }
+
+    /// Set the defs of function-local type aliases whose bare names must be
+    /// elided from declaration output (see `elided_local_alias_defs`).
+    pub const fn with_elided_local_alias_defs(
+        mut self,
+        defs: &'a rustc_hash::FxHashSet<tsz_solver::def::DefId>,
+    ) -> Self {
+        self.elided_local_alias_defs = Some(defs);
+        self
+    }
+
+    /// True when `def_id` is a function-local alias def that must not be
+    /// referenced by name in declaration output and `printed` is exactly the
+    /// bare alias name that would leak that reference. The name comparison
+    /// only confirms that the printer chose the named rendering for this def
+    /// (rather than an expansion or an import-qualified path, both of which
+    /// are valid output and stay untouched).
+    pub(crate) fn printed_as_elided_local_alias_name(
+        &self,
+        def_id: tsz_solver::def::DefId,
+        printed: &str,
+    ) -> bool {
+        self.elided_local_alias_defs
+            .is_some_and(|defs| defs.contains(&def_id))
+            && self
+                .type_cache
+                .and_then(|cache| cache.def_to_name.get(&def_id))
+                .is_some_and(|name| name == printed)
     }
 
     pub fn with_outer_type_params(mut self, names: Vec<Atom>) -> Self {
