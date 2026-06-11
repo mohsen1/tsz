@@ -376,10 +376,7 @@ impl<'a> CheckerContext<'a> {
         if !self.share_owner_symbol_type_results {
             return;
         }
-        if matches!(
-            type_id,
-            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN | tsz_solver::TypeId::ANY
-        ) {
+        if type_id.is_any_unknown_or_error() {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
@@ -405,20 +402,18 @@ impl<'a> CheckerContext<'a> {
     /// SYMBOL-bucket shortcuts on this check and fall through to the full
     /// computation (which registers both sides) when it fails.
     pub fn class_instance_recoverable(&mut self, sym_id: SymbolId, file_idx: u32) -> bool {
-        let valid =
-            |t: tsz_solver::TypeId| t != tsz_solver::TypeId::ANY && t != tsz_solver::TypeId::ERROR;
         if self
             .symbol_instance_types
             .get(&sym_id)
             .copied()
-            .is_some_and(valid)
+            .is_some_and(|t| !t.is_any_unknown_or_error())
         {
             return true;
         }
         let Some(inst) = self
             .cached_cross_file_class_instance_type(sym_id, file_idx)
             .map(|(inst, _)| inst)
-            .filter(|&inst| valid(inst))
+            .filter(|&inst| !inst.is_any_unknown_or_error())
         else {
             return false;
         };

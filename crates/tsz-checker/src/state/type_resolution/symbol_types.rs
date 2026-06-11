@@ -1930,7 +1930,7 @@ impl<'a> CheckerState<'a> {
             .symbol_instance_types
             .get(&sym_id)
             .copied()
-            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR && t != TypeId::UNKNOWN)?;
+            .filter(|&t| !t.is_any_unknown_or_error())?;
         if instance_type == value_type {
             return None;
         }
