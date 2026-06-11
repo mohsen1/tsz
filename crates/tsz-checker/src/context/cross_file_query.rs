@@ -362,7 +362,7 @@ impl<'a> CheckerContext<'a> {
     ///
     /// No-op when the share-owner gate is off or `type_id` is a sentinel
     /// (`ERROR`/`UNKNOWN`/`ANY`). First-writer-wins, matching the SYMBOL
-    /// bucket. A SYMBOL entry without its ClassInstance counterpart cannot
+    /// bucket. A SYMBOL entry without its `ClassInstance` counterpart cannot
     /// satisfy class reads (see [`class_instance_recoverable`]).
     ///
     /// [`class_instance_recoverable`]: Self::class_instance_recoverable
@@ -392,7 +392,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Whether a class symbol's INSTANCE type is recoverable in this checker:
     /// already registered in `symbol_instance_types`, or available in the
-    /// cross-file ClassInstance bucket (in which case it is registered now).
+    /// cross-file `ClassInstance` bucket (in which case it is registered now).
     ///
     /// The SYMBOL bucket stores only a class's value-side (constructor) type.
     /// Serving that entry while no instance side is recoverable leaves every
