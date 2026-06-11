@@ -672,6 +672,11 @@ impl<'a> TypeLowering<'a> {
         // `interface Empty {}` still lowers normally: its declaration parses
         // as an interface and increments the counter.
         if lowered_interface_decls == 0 {
+            tracing::debug!(
+                num_declarations,
+                symbol_id = ?symbol_id,
+                "no merged interface declaration lowered; returning error type"
+            );
             if type_params_collected {
                 self.pop_type_param_scope();
             }

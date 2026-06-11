@@ -85,12 +85,22 @@ pub(crate) fn collect_lib_decls_with_arenas_in_contexts<'a>(
                     // mis-typed members) that then leaks into the shared
                     // `DefinitionStore` and poisons sibling checkers under
                     // parallel fresh checking (issue #13255). Keep the pair
-                    // only when the node is a named declaration that actually
-                    // declares this symbol's name.
-                    if fallback_arena_node_declares_symbol(binder, sym_id, decl_idx, fallback_arena)
-                    {
+                    // only when ownership is provable: either the binder
+                    // registered `fallback_arena` as this symbol's home arena,
+                    // or the node is a named declaration that declares this
+                    // symbol's name.
+                    if fallback_arena_pair_is_trusted(binder, sym_id, decl_idx, fallback_arena) {
                         vec![(decl_idx, fallback_arena)]
                     } else {
+                        tracing::debug!(
+                            sym_id = ?sym_id,
+                            symbol = %binder
+                                .get_symbol(sym_id)
+                                .map(|s| s.escaped_name.as_str())
+                                .unwrap_or("<unknown>"),
+                            decl_idx = ?decl_idx,
+                            "rejecting foreign-arena lib-decl fallback pair"
+                        );
                         Vec::new()
                     }
                 } else {
@@ -102,6 +112,39 @@ pub(crate) fn collect_lib_decls_with_arenas_in_contexts<'a>(
             }
         })
         .collect()
+}
+
+/// Whether a `(decl_idx, fallback_arena)` pair produced by the last-resort
+/// fallback in [`collect_lib_decls_with_arenas_in_contexts`] provably belongs
+/// together.
+///
+/// Two independent proofs are accepted:
+/// - the binder registered `fallback_arena` as the symbol's home arena in
+///   `symbol_arenas` (covers declarations without a plain identifier name:
+///   binding patterns, default exports, `export =`); or
+/// - the node at `decl_idx` is a named declaration whose declared name equals
+///   the symbol's escaped name.
+///
+/// Pairs that satisfy neither are foreign-arena `NodeIndex` collisions, not
+/// declarations of this symbol, and lowering them manufactures wrong types
+/// (issue #13255).
+fn fallback_arena_pair_is_trusted(
+    binder: &tsz_binder::BinderState,
+    sym_id: tsz_binder::SymbolId,
+    decl_idx: NodeIndex,
+    arena: &NodeArena,
+) -> bool {
+    if arena.get(decl_idx).is_none() {
+        return false;
+    }
+    if binder
+        .symbol_arenas
+        .get(&sym_id)
+        .is_some_and(|home| std::ptr::eq(home.as_ref(), arena))
+    {
+        return true;
+    }
+    fallback_arena_node_declares_symbol(binder, sym_id, decl_idx, arena)
 }
 
 /// Whether the node at `decl_idx` in `arena` is a named declaration whose
@@ -141,8 +184,11 @@ fn fallback_arena_node_declares_symbol(
     } else {
         return false;
     };
+    // Plain identifier names first; string-literal names (e.g. ambient
+    // `declare module "name"`) resolve through literal text.
     arena
         .get_identifier_text(name_idx)
+        .or_else(|| arena.get_literal_text(name_idx))
         .is_some_and(|name| name == symbol.escaped_name)
 }
 
