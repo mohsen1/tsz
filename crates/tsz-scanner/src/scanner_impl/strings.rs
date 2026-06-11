@@ -4,7 +4,28 @@ impl ScannerState {
     /// Scan a string literal.
     pub(crate) fn scan_string(&mut self, quote: u32) {
         self.pos += 1; // Skip opening quote
-        let mut result = String::new();
+        let content_start = self.pos;
+
+        while self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if ch == quote {
+                let text = &self.source[content_start..self.pos];
+                self.token_atom = self.interner.intern(text);
+                self.pos += 1; // Closing quote
+                self.token_value.clear();
+                self.token = SyntaxKind::StringLiteral;
+                return;
+            }
+            if ch == CharacterCodes::BACKSLASH
+                || ch == CharacterCodes::LINE_FEED
+                || ch == CharacterCodes::CARRIAGE_RETURN
+            {
+                break;
+            }
+            self.pos += self.char_len_at(self.pos);
+        }
+
+        let mut result = self.source[content_start..self.pos].to_string();
 
         while self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
