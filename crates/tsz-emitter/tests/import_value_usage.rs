@@ -387,3 +387,106 @@ fn cjs_emit_keeps_import_with_value_usage() {
         "value-used import must emit a require.\nOutput:\n{output}"
     );
 }
+
+// =============================================================================
+// Resolver-artifact cases: symbols that cannot shadow a value binding
+// =============================================================================
+
+/// A generic's type parameter sharing the import's name shadows it in type
+/// space only; value references in the body still hit the import
+/// (`declarationEmitRetainedAnnotationRetainsImportInOutput`).
+#[test]
+fn type_parameter_shadow_does_not_hide_value_usage() {
+    assert!(binding_used(
+        "import * as NS from \"./m\";\nexport const run = <NS>(i: () => NS): NS => NS.go(i);\n",
+        "NS"
+    ));
+}
+
+/// A re-export specifier (`export { x as out } from "mod"`) does not
+/// introduce a local binding; bare references still hit the same-named
+/// import (`es6ExportEqualsInterop`).
+#[test]
+fn reexport_specifier_does_not_hide_value_usage() {
+    assert!(binding_used(
+        "import { a as out } from \"./m\";\nout;\nexport { b as out } from \"./other\";\n",
+        "out"
+    ));
+}
+
+/// Find every import-equals alias named `name`, in source order.
+fn import_equals_alias_nodes(parser: &ParserState, name: &str) -> Vec<NodeIndex> {
+    let mut nodes = Vec::new();
+    for idx in 0..parser.arena.nodes.len() {
+        let node_idx = NodeIndex(idx as u32);
+        let Some(node) = parser.arena.get(node_idx) else {
+            continue;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            continue;
+        }
+        if parser
+            .arena
+            .get_identifier(node)
+            .is_none_or(|ident| ident.escaped_text != name)
+        {
+            continue;
+        }
+        let Some(parent_idx) = parser.arena.parent_of(node_idx) else {
+            continue;
+        };
+        let Some(parent) = parser.arena.get(parent_idx) else {
+            continue;
+        };
+        if parent.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            && parser
+                .arena
+                .get_import_decl(parent)
+                .is_some_and(|import| import.import_clause == node_idx)
+        {
+            nodes.push(node_idx);
+        }
+    }
+    nodes
+}
+
+/// Same-named namespace aliases must not pollute each other: a value use in
+/// one namespace keeps only that namespace's alias alive (`importStatements`).
+#[test]
+fn same_named_namespace_aliases_are_isolated() {
+    let source = "namespace Root {\n    export class Thing {}\n}\nnamespace UserA {\n    import w = Root;\n    export const t = new w.Thing();\n}\nnamespace UserB {\n    import w = Root;\n    var m: typeof w;\n    var p: w.Thing;\n}\n";
+    let (parser, _root, binder) = parse_and_bind(source);
+    let facts =
+        compute_import_value_usage_facts(&parser.arena, &binder, ImportValueUsageInputs::default());
+    let aliases = import_equals_alias_nodes(&parser, "w");
+    assert_eq!(aliases.len(), 2, "expected two `w` aliases");
+    assert_eq!(
+        facts.binding_value_used(aliases[0]),
+        Some(true),
+        "UserA's alias is value-used"
+    );
+    assert_eq!(
+        facts.binding_value_used(aliases[1]),
+        Some(false),
+        "UserB's alias is type-only-used and must not be polluted by UserA's"
+    );
+}
+
+/// Duplicate alias declarations (an error case tsc still emits) merge into
+/// one binder symbol; a value use must keep every same-named alias binding
+/// alive so the emitter's own duplicate suppression picks the survivor
+/// (`moduleSharesNameWithImportDeclarationInsideIt3`).
+#[test]
+fn duplicate_aliases_share_value_usage() {
+    let source = "namespace Z {\n    export namespace M {\n        export function bar() { return \"\"; }\n    }\n    export interface I { }\n}\nnamespace A.M {\n    import M = Z.M;\n    import M = Z.I;\n    export function bar() {\n    }\n    M.bar();\n}\n";
+    let (parser, _root, binder) = parse_and_bind(source);
+    let facts =
+        compute_import_value_usage_facts(&parser.arena, &binder, ImportValueUsageInputs::default());
+    let aliases = import_equals_alias_nodes(&parser, "M");
+    assert_eq!(aliases.len(), 2, "expected two `M` aliases");
+    assert_eq!(
+        facts.binding_value_used(aliases[0]),
+        Some(true),
+        "first duplicate alias must stay alive"
+    );
+}

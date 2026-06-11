@@ -26,7 +26,7 @@
 //! eliding one that is required at runtime.
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_binder::{BinderState, SymbolId};
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -108,6 +108,11 @@ struct Binding {
     /// Whether this is an `import A = ...` alias carrying an `export`
     /// modifier (always emitted, so its RHS reference is always live).
     exported_import_equals: bool,
+    /// For `import A = ...` aliases, the AST parent of the declaration.
+    /// Duplicate same-named aliases in one container resolve to a single
+    /// declaration, but the emitter's duplicate suppression decides which
+    /// one survives, so a value use must keep all of them alive.
+    import_equals_container: Option<NodeIndex>,
 }
 
 /// Which import bindings a resolved reference denotes.
@@ -137,7 +142,22 @@ fn for_each_matching_binding(
 ) {
     match target {
         ReferenceTarget::None => {}
-        ReferenceTarget::Binding(idx) => apply(idx, &bindings[idx]),
+        // Duplicate same-named `import A = ...` aliases in one container
+        // resolve to a single declaration, but the emitter's duplicate
+        // suppression decides which one survives, so a value use keeps every
+        // sibling alias alive.
+        ReferenceTarget::Binding(idx) => {
+            apply(idx, &bindings[idx]);
+            if let Some(container) = bindings[idx].import_equals_container {
+                for &candidate in candidates {
+                    if candidate != idx
+                        && bindings[candidate].import_equals_container == Some(container)
+                    {
+                        apply(candidate, &bindings[candidate]);
+                    }
+                }
+            }
+        }
         ReferenceTarget::AllSameName | ReferenceTarget::SameNameWithUnknownSymbol => {
             let unknown_only = matches!(target, ReferenceTarget::SameNameWithUnknownSymbol);
             for &idx in candidates {
@@ -241,7 +261,7 @@ impl<'a> UsageScan<'a> {
                 self.arena, clause,
             )
         {
-            self.add_named_binding(name_idx, name, false);
+            self.add_named_binding(name_idx, name, false, None);
         }
     }
 
@@ -265,7 +285,17 @@ impl<'a> UsageScan<'a> {
             .arena
             .has_modifier(&import.modifiers, SyntaxKind::ExportKeyword)
             || self.import_equals_is_export_declaration_clause(decl_idx);
-        let binding_idx = self.add_named_binding(import.import_clause, name, exported);
+        let container = self.arena.parent_of(decl_idx).filter(|idx| idx.is_some());
+        let binding_idx = self.add_named_binding(import.import_clause, name, exported, container);
+        // Some binder paths key the alias symbol on the declaration node
+        // rather than the alias identifier; backfill so shadow-aware
+        // matching can recognize references to this alias.
+        if self.bindings[binding_idx].symbol.is_none()
+            && let Some(sym) = self.binder.get_node_symbol(decl_idx)
+        {
+            self.bindings[binding_idx].symbol = Some(sym);
+            self.by_symbol.insert(sym, binding_idx);
+        }
         self.alias_decl_to_binding.insert(decl_idx, binding_idx);
     }
 
@@ -283,6 +313,7 @@ impl<'a> UsageScan<'a> {
         name_idx: NodeIndex,
         name: String,
         exported_import_equals: bool,
+        import_equals_container: Option<NodeIndex>,
     ) -> usize {
         let symbol = self.binder.get_node_symbol(name_idx);
         let binding_idx = self.bindings.len();
@@ -295,6 +326,7 @@ impl<'a> UsageScan<'a> {
             name_node: name_idx,
             symbol,
             exported_import_equals,
+            import_equals_container,
         });
         binding_idx
     }
@@ -363,21 +395,35 @@ impl<'a> UsageScan<'a> {
         ref_idx: NodeIndex,
         candidates: &[usize],
     ) -> ReferenceTarget {
-        // Scope resolution first: `node_symbols` keys *declaration* sites
-        // (e.g. `export default expr` maps to the default-export symbol), so
-        // it is only a fallback for references the scope walk cannot reach.
+        // Scope resolution, accepting only symbols that can answer a *value*
+        // reference: one of our import bindings, or a genuine value-space
+        // shadow. Pure type-space symbols (type parameters, interfaces, type
+        // aliases) and foreign alias symbols (e.g. the alias a re-export
+        // specifier declares for the same name) are resolver hits that do NOT
+        // shadow value references, so the walk continues past them.
+        // `node_symbols` keys *declaration* sites (e.g. `export default expr`
+        // maps to the default-export symbol), so it is only a fallback for
+        // references the scope walk cannot reach.
         let resolved = self
             .binder
-            .resolve_identifier_with_filter(self.arena, ref_idx, &[], |_| true)
+            .resolve_identifier_with_filter(self.arena, ref_idx, &[], |sym| {
+                self.by_symbol.contains_key(&sym) || self.is_value_shadow_symbol(sym)
+            })
             .or_else(|| self.binder.get_node_symbol(ref_idx));
         match resolved {
             Some(sym) => {
                 if let Some(&binding_idx) = self.by_symbol.get(&sym) {
                     return ReferenceTarget::Binding(binding_idx);
                 }
-                // The reference resolved to a different symbol (a shadowing
-                // local). Only same-named bindings whose own symbol is
-                // unknown still conservatively match.
+                if !self.is_value_shadow_symbol(sym) {
+                    // Resolver artifact (a foreign alias or a type-space
+                    // symbol reached through the `node_symbols` fallback):
+                    // shadowing is unproven, conservatively preserve.
+                    return ReferenceTarget::AllSameName;
+                }
+                // The reference resolved to a genuine value shadow. Only
+                // same-named bindings whose own symbol is unknown still
+                // conservatively match.
                 if candidates
                     .iter()
                     .any(|&idx| self.bindings[idx].symbol.is_none())
@@ -391,6 +437,20 @@ impl<'a> UsageScan<'a> {
             // binding so the import is preserved.
             None => ReferenceTarget::AllSameName,
         }
+    }
+
+    /// Whether `sym` is a value-space, non-alias binding — the only kind of
+    /// symbol that can shadow an import for a value reference.
+    ///
+    /// Namespace/module symbols are excluded: a namespace sharing an import's
+    /// name *merges or collides* with it (e.g. the enclosing `namespace A.M`
+    /// whose body declares `import M = ...`) rather than shadowing it, so
+    /// resolving to one proves nothing about the import's liveness.
+    fn is_value_shadow_symbol(&self, sym: SymbolId) -> bool {
+        const SHADOW: u32 = symbol_flags::VALUE & !symbol_flags::MODULE;
+        self.binder.get_symbol(sym).is_some_and(|symbol| {
+            symbol.flags & SHADOW != 0 && symbol.flags & symbol_flags::ALIAS == 0
+        })
     }
 
     // =========================================================================
