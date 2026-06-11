@@ -5,6 +5,8 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tracing::debug;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
+use tsz_common::file_extensions::strip_known_extension;
+use tsz_common::module_resolution::package_exports::reverse_export_specifier_for_runtime_path as reverse_package_export_specifier_for_runtime_path;
 use tsz_parser::parser::node::NodeArena;
 
 impl<'a> DeclarationEmitter<'a> {
@@ -130,7 +132,7 @@ impl<'a> DeclarationEmitter<'a> {
                 module_path.clone()
             } else {
                 let rel_path = self.calculate_relative_path(current_path, module_path);
-                self.strip_ts_extensions(&rel_path)
+                self.strip_module_path_extension(&rel_path)
             };
 
             candidates.push(module_specifier);
@@ -142,7 +144,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             for (source_module, _) in source_modules {
-                let normalized_source_module = self.strip_ts_extensions(source_module);
+                let normalized_source_module = self.strip_module_path_extension(source_module);
                 let effective_source_module = if normalized_source_module != source_module.as_str()
                 {
                     normalized_source_module.as_str()
@@ -180,7 +182,7 @@ impl<'a> DeclarationEmitter<'a> {
                     package_specifier
                 } else {
                     let rel_path = self.calculate_relative_path(current_path, module_path);
-                    self.strip_ts_extensions(&rel_path)
+                    self.strip_module_path_extension(&rel_path)
                 };
 
                 candidates.push(module_specifier);
@@ -228,7 +230,7 @@ impl<'a> DeclarationEmitter<'a> {
                         let arena_addr = std::sync::Arc::as_ptr(source_arena) as usize;
                         if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
                             let rel = self.calculate_relative_path(current_path, source_path);
-                            let stripped = self.strip_ts_extensions(&rel);
+                            let stripped = self.strip_module_path_extension(&rel);
                             if alias_symbol.import_module.as_deref() == Some(&stripped)
                                 || alias_symbol.import_module.as_deref()
                                     == Some(source_path.as_str())
@@ -395,7 +397,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let rel_path = self.calculate_relative_path(current_path, source_path);
-            Some(self.strip_ts_extensions(&rel_path))
+            Some(self.strip_module_path_extension(&rel_path))
         };
 
         if let Some(ambient_path) = self.check_ambient_module(sym_id, binder) {
@@ -746,7 +748,7 @@ impl<'a> DeclarationEmitter<'a> {
                             self.reverse_export_specifier_for_runtime_path(&package_root, &runtime)
                         })
                         .or_else(|| {
-                            let mut relative_path = self.strip_ts_extensions(&relative);
+                            let mut relative_path = self.strip_module_path_extension(&relative);
                             if relative_path.ends_with("/index") {
                                 relative_path.truncate(relative_path.len() - "/index".len());
                             } else if relative_path == "index" {
@@ -840,7 +842,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| {
                 let mut specifier_parts = package_relative_parts;
                 if let Some(last) = specifier_parts.last_mut() {
-                    *last = self.strip_ts_extensions(last);
+                    *last = self.strip_module_path_extension(last);
                 }
                 if specifier_parts.last().is_some_and(|part| part == "index") {
                     specifier_parts.pop();
@@ -913,7 +915,7 @@ impl<'a> DeclarationEmitter<'a> {
         let subpath = self
             .reverse_export_specifier_for_runtime_path(package_root, &runtime_relative_path)
             .or_else(|| {
-                let mut relative_path = self.strip_ts_extensions(&relative);
+                let mut relative_path = self.strip_module_path_extension(&relative);
                 if relative_path.ends_with("/index") {
                     relative_path.truncate(relative_path.len() - "/index".len());
                 } else if relative_path == "index" {
@@ -971,7 +973,7 @@ impl<'a> DeclarationEmitter<'a> {
         let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
         let types_versions = package_json.get("typesVersions")?.as_object()?;
         let normalized_relative =
-            Self::normalize_package_relative_path(&self.strip_ts_extensions(relative_path));
+            Self::normalize_package_relative_path(&self.strip_module_path_extension(relative_path));
 
         let mut candidates = Vec::new();
         for mappings in types_versions
@@ -1015,7 +1017,7 @@ impl<'a> DeclarationEmitter<'a> {
         relative_path: &str,
     ) -> Option<String> {
         let normalized_target =
-            Self::normalize_package_relative_path(&self.strip_ts_extensions(target));
+            Self::normalize_package_relative_path(&self.strip_module_path_extension(target));
         if let Some((target_prefix, target_suffix)) = normalized_target.split_once('*') {
             if !relative_path.starts_with(target_prefix) || !relative_path.ends_with(target_suffix)
             {
@@ -1055,7 +1057,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         let relative_path =
-            Self::normalize_package_relative_path(&self.strip_ts_extensions(relative_path));
+            Self::normalize_package_relative_path(&self.strip_module_path_extension(relative_path));
 
         for mappings in types_versions
             .values()
@@ -1090,7 +1092,7 @@ impl<'a> DeclarationEmitter<'a> {
                         continue;
                     };
                     let reexport_path = reexport_path.to_string_lossy().replace('\\', "/");
-                    let reexport_path = self.strip_ts_extensions(&reexport_path);
+                    let reexport_path = self.strip_module_path_extension(&reexport_path);
                     if reexport_path.ends_with(&format!("/{relative_path}")) {
                         return true;
                     }
@@ -1196,143 +1198,19 @@ impl<'a> DeclarationEmitter<'a> {
         package_root: &std::path::Path,
         runtime_relative_path: &str,
     ) -> Option<String> {
-        let package_json_path = package_root.join("package.json");
-        let package_json = std::fs::read_to_string(package_json_path).ok()?;
-        let package_json: serde_json::Value = serde_json::from_str(&package_json).ok()?;
-        let exports = package_json.get("exports")?;
-        let runtime_relative_path = format!("./{}", runtime_relative_path.trim_start_matches("./"));
-        self.reverse_match_exports_subpath(exports, &runtime_relative_path)
+        reverse_package_export_specifier_for_runtime_path(package_root, runtime_relative_path)
     }
 
-    pub(in crate::declaration_emitter) fn reverse_match_exports_subpath(
-        &self,
-        exports: &serde_json::Value,
-        runtime_path: &str,
-    ) -> Option<String> {
-        match exports {
-            serde_json::Value::String(target) => {
-                self.match_export_target(".", target, runtime_path)
-            }
-            serde_json::Value::Array(entries) => entries
-                .iter()
-                .find_map(|entry| self.reverse_match_exports_subpath(entry, runtime_path)),
-            serde_json::Value::Object(map) => {
-                for (key, value) in map {
-                    if key == "." || key.starts_with("./") {
-                        if let Some(specifier) =
-                            self.reverse_match_export_entry(key, value, runtime_path)
-                        {
-                            return Some(specifier);
-                        }
-                        continue;
-                    }
-
-                    if let Some(specifier) = self.reverse_match_exports_subpath(value, runtime_path)
-                    {
-                        return Some(specifier);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    pub(in crate::declaration_emitter) fn reverse_match_export_entry(
-        &self,
-        subpath_key: &str,
-        value: &serde_json::Value,
-        runtime_path: &str,
-    ) -> Option<String> {
-        match value {
-            serde_json::Value::String(target) => {
-                self.match_export_target(subpath_key, target, runtime_path)
-            }
-            serde_json::Value::Array(entries) => entries.iter().find_map(|entry| {
-                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
-            }),
-            serde_json::Value::Object(map) => map.values().find_map(|entry| {
-                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
-            }),
-            _ => None,
-        }
-    }
-
-    pub(in crate::declaration_emitter) fn match_export_target(
-        &self,
-        subpath_key: &str,
-        target: &str,
-        runtime_path: &str,
-    ) -> Option<String> {
-        let target = target.trim();
-        let runtime_path = runtime_path.trim();
-
-        if target.contains('*') {
-            let wildcard = self.match_exports_wildcard(target, runtime_path)?;
-            return Some(self.apply_exports_wildcard(subpath_key, &wildcard));
-        }
-
-        if target.ends_with('/') && subpath_key.ends_with('/') {
-            let remainder = runtime_path.strip_prefix(target)?;
-            return Some(format!(
-                "{}{}",
-                subpath_key.trim_start_matches("./"),
-                remainder
-            ));
-        }
-
-        if target != runtime_path {
-            return None;
-        }
-
-        if subpath_key == "." {
-            return Some(String::new());
-        }
-
-        Some(subpath_key.trim_start_matches("./").to_string())
-    }
-
-    pub(in crate::declaration_emitter) fn match_exports_wildcard(
-        &self,
-        pattern: &str,
-        value: &str,
-    ) -> Option<String> {
-        let star_idx = pattern.find('*')?;
-        let prefix = &pattern[..star_idx];
-        let suffix = &pattern[star_idx + 1..];
-        let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
-        Some(middle.to_string())
-    }
-
-    pub(in crate::declaration_emitter) fn apply_exports_wildcard(
-        &self,
-        pattern: &str,
-        wildcard: &str,
-    ) -> String {
-        pattern
-            .replace('*', wildcard)
-            .trim_start_matches("./")
-            .to_string()
-    }
-
-    /// Strip TypeScript file extensions from a path.
+    /// Strip an import-path extension using the shared TS/JS rules.
     ///
-    /// Converts "../utils.ts" -> "../utils"
-    pub(crate) fn strip_ts_extensions(&self, path: &str) -> String {
+    /// Arbitrary-extension declaration files (`foo.d.css.ts`) keep the user
+    /// specifier form (`foo.css`) before falling back to the shared helper.
+    pub(crate) fn strip_module_path_extension(&self, path: &str) -> String {
         if let Some((base, ext)) = Self::arbitrary_extension_declaration_user_parts(path) {
             return format!("{base}.{ext}");
         }
 
-        // Remove TypeScript and JavaScript source/declaration extensions.
-        for ext in [
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".tsx", ".ts", ".mts", ".cts", ".jsx", ".js",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(path) = path.strip_suffix(ext) {
-                return path.to_string();
-            }
-        }
-        path.to_string()
+        strip_known_extension(path).to_string()
     }
 
     fn arbitrary_extension_declaration_user_parts(path: &str) -> Option<(&str, &str)> {
@@ -1360,7 +1238,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> std::path::PathBuf {
         use std::path::Component;
 
-        std::path::Path::new(&self.strip_ts_extensions(path))
+        std::path::Path::new(&self.strip_module_path_extension(path))
             .components()
             .filter(|component| !matches!(component, Component::CurDir))
             .collect()

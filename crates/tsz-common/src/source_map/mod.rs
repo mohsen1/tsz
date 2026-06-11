@@ -548,57 +548,50 @@ pub fn escape_json(s: &str) -> String {
     result
 }
 
-/// Escape a JavaScript string literal (single or double quoted)
-/// SIMD-optimized with memchr for bulk scanning
+/// Escape a JavaScript string literal (single or double quoted).
 #[must_use]
 pub fn escape_js_string(s: &str, quote: char) -> String {
     let bytes = s.as_bytes();
     let quote_byte = quote as u8;
 
     // Fast path: return early when there is nothing to escape.
-    // All five special bytes (\, quote, \n, \r, \t, \0) must be absent.
+    // All JS string-sensitive bytes/chars must be absent.
     let has_backslash = memchr::memchr(b'\\', bytes).is_some();
     let has_quote = memchr::memchr(quote_byte, bytes).is_some();
     let has_newline_or_cr = memchr::memchr2(b'\n', b'\r', bytes).is_some();
-    let has_tab_or_null = memchr::memchr2(b'\t', b'\0', bytes).is_some();
+    let has_control = bytes.iter().any(|&byte| byte < 0x20);
+    let has_js_line_separator =
+        s.contains('\u{2028}') || s.contains('\u{2029}') || s.contains('\u{0085}');
 
-    if !has_backslash && !has_quote && !has_newline_or_cr && !has_tab_or_null {
+    if !has_backslash && !has_quote && !has_newline_or_cr && !has_control && !has_js_line_separator
+    {
         return s.to_string();
     }
 
     let mut result = String::with_capacity(s.len() + 16);
-    let mut start = 0;
 
-    for (i, &byte) in bytes.iter().enumerate() {
-        let escape = match byte {
-            b'\\' => Some("\\\\"),
-            b'\n' => Some("\\n"),
-            b'\r' => Some("\\r"),
-            b'\t' => Some("\\t"),
-            b'\0' => Some("\\0"),
-            b if b == quote_byte => {
-                if i > start {
-                    result.push_str(&s[start..i]);
-                }
+    for c in s.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\0' => result.push_str("\\0"),
+            '\x08' => result.push_str("\\b"),
+            '\x0c' => result.push_str("\\f"),
+            '\x0b' => result.push_str("\\v"),
+            '\u{2028}' => result.push_str("\\u2028"),
+            '\u{2029}' => result.push_str("\\u2029"),
+            '\u{0085}' => result.push_str("\\u0085"),
+            c if c == quote => {
                 result.push('\\');
                 result.push(quote);
-                start = i + 1;
-                continue;
             }
-            _ => None,
-        };
-
-        if let Some(escaped) = escape {
-            if i > start {
-                result.push_str(&s[start..i]);
+            c if (c as u32) < 0x20 => {
+                let _ = write!(&mut result, "\\u{:04X}", c as u32);
             }
-            result.push_str(escaped);
-            start = i + 1;
+            c => result.push(c),
         }
-    }
-
-    if start < s.len() {
-        result.push_str(&s[start..]);
     }
 
     result

@@ -88,12 +88,11 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn property_access_name_atom(&mut self, name_idx: NodeIndex) -> Option<Atom> {
+    fn property_access_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
+        // Intern through the solver: `OptionalPropertyChainKey.properties`
+        // is solver-atom keyed, while the arena's `AstAtom` for this
+        // identifier lives in a different namespace.
         let ident = self.ctx.arena.get_identifier_at(name_idx)?;
-        if ident.atom != Atom::none() {
-            return Some(ident.atom);
-        }
-        let property_name = ident.escaped_text.clone();
-        Some(self.ctx.types.intern_string(&property_name))
+        Some(self.ctx.types.intern_string(&ident.escaped_text))
     }
 }

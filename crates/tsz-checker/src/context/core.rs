@@ -13,6 +13,7 @@ use crate::control_flow::FlowGraph;
 use crate::module_resolution::build_file_name_index;
 use tsz_binder::symbols::StableLocation;
 use tsz_binder::{BinderState, SymbolId};
+use tsz_common::file_extensions::strip_known_extension;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
@@ -433,7 +434,7 @@ impl<'a> CheckerContext<'a> {
             for sf in &arena.source_files {
                 let file_name = &sf.file_name;
                 // Strip .ts/.tsx/.d.ts/.js/.jsx extension to get the module specifier
-                let specifier = Self::strip_ts_extension(file_name);
+                let specifier = strip_known_extension(file_name);
                 // Use just the filename component (without directory path) to match tsc's
                 // diagnostic display. tsc shows `import("a").F` not `import("/full/path/a").F`.
                 let basename = specifier
@@ -457,7 +458,7 @@ impl<'a> CheckerContext<'a> {
         let mut paths: Vec<(u32, String)> = Vec::new();
         for (idx, arena) in arenas.iter().enumerate() {
             for sf in &arena.source_files {
-                let specifier = Self::strip_ts_extension(&sf.file_name);
+                let specifier = strip_known_extension(&sf.file_name);
                 paths.push((idx as u32, specifier.to_string()));
             }
         }
@@ -544,20 +545,6 @@ impl<'a> CheckerContext<'a> {
             Some(last_slash) => first[..=last_slash].to_string(),
             None => String::new(),
         }
-    }
-
-    /// Strip TypeScript/JavaScript extension from a file path to get the module specifier.
-    fn strip_ts_extension(path: &str) -> &str {
-        // Check extensions in order: longer extensions first to avoid partial matches
-        for ext in &[
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(stripped) = path.strip_suffix(ext) {
-                return stripped;
-            }
-        }
-        path
     }
 
     /// Pre-populate `global_declared_modules` from skeleton-derived data.

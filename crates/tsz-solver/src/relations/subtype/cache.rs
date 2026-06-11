@@ -457,9 +457,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // (correctness-preserving: the result is recomputed later), never
         // produces a wrong answer. Captures `lazy_failures_at_entry` and
         // `weak_sensitivity_at_entry` from the enclosing scope by name.
+        //
+        // Results computed under `bypass_evaluation` are also never written:
+        // that mode compares raw alias/meta forms without expanding them, so
+        // its answers can differ from full-evaluation answers for the same
+        // pair, and the flag-agnostic `RelationCacheKey` cannot tell the two
+        // modes apart. Persisting a raw-mode `False` (e.g. `unknown` vs an
+        // alias application that evaluates to `unknown`) would poison every
+        // later full-evaluation check of the same pair, from any raw-mode
+        // entry point (`check_return_compat`'s placeholder fallback, the
+        // evaluator's union/intersection simplification). Reads stay shared:
+        // a full-evaluation answer is the more precise result for the same
+        // relation, so serving it to a bypass-mode query is sound.
         macro_rules! cache_definitive {
             ($db:expr, $key:expr, $result:expr) => {
-                if lazy_resolve_failure_count() == lazy_failures_at_entry
+                if !self.bypass_evaluation
+                    && lazy_resolve_failure_count() == lazy_failures_at_entry
                     && weak_type_sensitivity_count() == weak_sensitivity_at_entry
                 {
                     match $result {
@@ -812,9 +825,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .get_display_alias(source)
                     .and_then(|alias| application_id(self.interner, alias))
             });
+            // When the TARGET also lost its Application identity to evaluation
+            // (e.g. a parameter type like `Kysely<any>` already expanded to an
+            // Object), recover it via display provenance as well — but use it
+            // only for the same-base all-`any`-target-args lawyer shortcut.
+            // Full variance checking on a provenance-recovered target is not
+            // attempted: provenance is display-grade, so it is only trusted
+            // for the permissive `X<...> <: X<any, ..., any>` direction.
+            let t_app_id_for_any_shortcut = t_app_id.or_else(|| {
+                self.interner
+                    .get_display_alias(target)
+                    .and_then(|alias| application_id(self.interner, alias))
+            });
             let variance_result =
                 if let (Some(s_app_id), Some(t_app_id)) = (s_app_id_for_variance, t_app_id) {
                     self.try_variance_fast_path(s_app_id, t_app_id)
+                } else if let Some(t_app_id) = t_app_id_for_any_shortcut {
+                    self.try_same_base_all_any_target_args(source, s_app_id_for_variance, t_app_id)
                 } else if let Some(s_app_id) = s_app_id {
                     // Source is Application, target might be Union containing an Application.
                     // This handles optional properties where target is App<X> | undefined.

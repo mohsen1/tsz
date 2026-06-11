@@ -1,4 +1,5 @@
 use super::*;
+use tsz_checker::state::CheckerState;
 
 impl<'a> SignatureHelpProvider<'a> {
     pub(super) fn tuple_union_variants(text: &str) -> Vec<String> {

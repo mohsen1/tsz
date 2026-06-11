@@ -39,23 +39,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Component, Path};
 use std::sync::Arc;
 
+use tsz_common::file_extensions::strip_known_extension as strip_ts_extension;
 use tsz_parser::parser::node::NodeArena;
 
 // ---------------------------------------------------------------------------
 // Extension tables
 // ---------------------------------------------------------------------------
-
-/// TypeScript/JavaScript file extensions in *stripping* order.
-///
-/// `.d.ts` (and friends) must appear before `.ts` so that stripping peels the
-/// whole `.d.ts` suffix instead of leaving a `.d` artifact in the stem. This
-/// ordering is correct for [`strip_ts_extension`] but is **not** the order in
-/// which resolution candidates should be tried — use [`RESOLUTION_EXTENSIONS`]
-/// for that.
-const TS_EXTENSIONS: &[&str] = &[
-    ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
-    ".cjs",
-];
 
 /// File extensions in `tsc` resolution-candidate priority order, mirroring
 /// TypeScript's `allSupportedExtensions`:
@@ -78,9 +67,10 @@ const TS_EXTENSIONS: &[&str] = &[
 /// triple-slash directive resolver in `state_checking::directive` follows the
 /// same shared order.
 ///
-/// This is intentionally distinct from [`TS_EXTENSIONS`], which is ordered
-/// declaration-first purely so suffix *stripping* works. There is no real
-/// `.d.tsx` file in TypeScript, so it is absent here.
+/// This is intentionally distinct from the shared `strip_known_extension`
+/// stripping helper, which is ordered declaration-first purely so suffix
+/// stripping works. There is no real `.d.tsx` file in TypeScript, so it is
+/// absent here.
 const RESOLUTION_EXTENSIONS: &[&str] = tsz_common::file_extensions::TSC_TS_JS_RESOLUTION_EXTENSIONS;
 
 /// `tsc` resolution priority of a concrete file path: the position of its
@@ -117,18 +107,6 @@ fn target_resolution_priority(target: &IndexedTarget<'_>) -> usize {
 const ARBITRARY_EXT_TAILS: &[&str] = &[
     ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".d.js", ".d.jsx", ".d.mjs", ".d.cjs", ".d.json",
 ];
-
-/// Strip a known TS/JS extension from the end of `path`. Returns `path`
-/// unchanged if no known extension is present. Always returns a borrow of the
-/// input — no allocation.
-fn strip_ts_extension(path: &str) -> &str {
-    for ext in TS_EXTENSIONS {
-        if let Some(stripped) = path.strip_suffix(ext) {
-            return stripped;
-        }
-    }
-    path
-}
 
 /// Detect `<base>.d.<ext>.ts` files. These are treated specially (see the
 /// `ARBITRARY_EXT_TAILS` documentation).

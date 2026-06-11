@@ -71,7 +71,7 @@ fn test_atom_default() {
 fn test_interner_new_has_empty_string() {
     let interner = Interner::new();
     // Index 0 is the empty string
-    assert_eq!(interner.resolve(Atom::NONE), "");
+    assert_eq!(interner.resolve(AstAtom::NONE), "");
     assert_eq!(interner.len(), 1);
     assert!(interner.is_empty()); // Only has the empty string sentinel
 }
@@ -107,7 +107,7 @@ fn test_interner_different_strings_get_different_atoms() {
 fn test_interner_empty_string_returns_none_atom() {
     let mut interner = Interner::new();
     let atom = interner.intern("");
-    assert_eq!(atom, Atom::NONE);
+    assert_eq!(atom, AstAtom::NONE);
     assert_eq!(interner.resolve(atom), "");
 }
 
@@ -131,7 +131,7 @@ fn test_interner_intern_owned_deduplication() {
 fn test_interner_intern_owned_empty_string() {
     let mut interner = Interner::new();
     let atom = interner.intern_owned(String::new());
-    assert_eq!(atom, Atom::NONE);
+    assert_eq!(atom, AstAtom::NONE);
 }
 
 // =============================================================================
@@ -148,15 +148,15 @@ fn test_interner_try_resolve_valid() {
 #[test]
 fn test_interner_try_resolve_invalid() {
     let interner = Interner::new();
-    // Atom(999) was never interned
-    assert_eq!(interner.try_resolve(Atom(999)), None);
+    // AstAtom(999) was never interned
+    assert_eq!(interner.try_resolve(AstAtom(999)), None);
 }
 
 #[test]
 fn test_interner_resolve_out_of_bounds_returns_empty() {
     let interner = Interner::new();
     // resolve returns empty string for invalid atoms (safety for error recovery)
-    assert_eq!(interner.resolve(Atom(999)), "");
+    assert_eq!(interner.resolve(AstAtom(999)), "");
 }
 
 // =============================================================================
@@ -917,7 +917,7 @@ fn test_interner_default_vs_new() {
     let new_interner = Interner::new();
     assert_eq!(new_interner.len(), 1); // has the empty string sentinel
     assert!(new_interner.is_empty()); // is_empty means only the sentinel
-    assert_eq!(new_interner.resolve(Atom::NONE), "");
+    assert_eq!(new_interner.resolve(AstAtom::NONE), "");
 }
 
 // =============================================================================
@@ -991,7 +991,7 @@ fn interner_round_trips_via_serde_json() {
         serde_json::from_str(&json).expect("Interner should deserialize via serde_json");
 
     // Resolution must still work for previously-interned atoms.
-    assert_eq!(restored.resolve(Atom::NONE), "");
+    assert_eq!(restored.resolve(AstAtom::NONE), "");
     assert_eq!(restored.resolve(a_hello), "hello");
     assert_eq!(restored.resolve(a_world), "world");
     assert_eq!(
@@ -1022,7 +1022,7 @@ fn interner_round_trips_empty() {
     let restored: Interner =
         serde_json::from_str(&json).expect("empty Interner should deserialize");
     assert_eq!(restored.len(), 1); // Only the empty string.
-    assert_eq!(restored.resolve(Atom::NONE), "");
+    assert_eq!(restored.resolve(AstAtom::NONE), "");
 }
 
 #[test]

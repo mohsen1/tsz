@@ -941,7 +941,9 @@ pub struct PropertyInfo {
     pub visibility: Visibility,
     /// Symbol that declared this property (for nominal identity checks)
     pub parent_id: Option<SymbolId>,
-    /// Declaration order for preserving source ordering in emit (excluded from equality/hash).
+    /// Declaration order for preserving source ordering in emit (excluded from
+    /// equality/hash). 0 means "unset": interner constructors backfill it from
+    /// insertion order.
     pub declaration_order: u32,
     /// Whether this property was declared with a string key that looks numeric
     /// (e.g. `"404"` vs `404`). Included in PartialEq/Hash because `"100"` and

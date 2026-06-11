@@ -108,7 +108,20 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    pub(super) fn collect_interface_members(&self, members: &NodeList, parts: &mut InterfaceParts) {
+    /// Collect object-type members (properties, methods, call/construct
+    /// signatures, index signatures, accessors) into `ObjectTypeParts`.
+    ///
+    /// This is the single member-collection pipeline shared by interface
+    /// declarations (same-arena and cross-arena merged) and type literals, so
+    /// structurally equivalent `interface I { ... }` and `type T = { ... }`
+    /// lower through identical merge rules: method-overload accumulation,
+    /// index-signature merging, duplicate-member conflict handling, and
+    /// late-bound member detection.
+    pub(super) fn collect_object_type_members(
+        &self,
+        members: &NodeList,
+        parts: &mut ObjectTypeParts,
+    ) {
         for &idx in &members.nodes {
             let Some(member) = self.arena.get(idx) else {
                 continue;
@@ -256,12 +269,31 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
+    /// Assign forward `declaration_order` values (1-based) for one member list,
+    /// continuing from `counter`. Used for both interface declarations and type
+    /// literals so earlier members get lower order numbers, matching tsc's
+    /// property enumeration for diagnostics like TS2740 "missing properties:
+    /// length, pop, ...".
+    pub(super) fn assign_forward_member_order(
+        &self,
+        parts: &mut ObjectTypeParts,
+        members: impl Iterator<Item = NodeIndex>,
+        counter: &mut u32,
+    ) {
+        for idx in members {
+            if let Some(name) = self.object_member_name(idx) {
+                parts.declaration_orders.entry(name).or_insert_with(|| {
+                    *counter += 1;
+                    *counter
+                });
+            }
+        }
+    }
+
     /// Assign `declaration_order` values by iterating declarations in FORWARD order.
-    /// This gives earlier declarations lower order numbers, matching tsc's property
-    /// enumeration for diagnostics like TS2740 "missing properties: length, pop, ...".
     pub(super) fn assign_forward_declaration_order(
         &self,
-        parts: &mut InterfaceParts,
+        parts: &mut ObjectTypeParts,
         declarations: impl Iterator<Item = NodeIndex>,
     ) {
         let mut counter: u32 = 0;
@@ -272,21 +304,18 @@ impl<'a> TypeLowering<'a> {
             let Some(interface) = self.arena.get_interface(node) else {
                 continue;
             };
-            for &idx in &interface.members.nodes {
-                if let Some(name) = self.get_interface_member_name(idx) {
-                    parts.declaration_orders.entry(name).or_insert_with(|| {
-                        counter += 1;
-                        counter
-                    });
-                }
-            }
+            self.assign_forward_member_order(
+                parts,
+                interface.members.nodes.iter().copied(),
+                &mut counter,
+            );
         }
     }
 
     /// Cross-file variant of `assign_forward_declaration_order`.
     pub(super) fn assign_forward_declaration_order_cross_file(
         &self,
-        parts: &mut InterfaceParts,
+        parts: &mut ObjectTypeParts,
         declarations: &[(NodeIndex, &NodeArena)],
     ) {
         let mut counter: u32 = 0;
@@ -298,19 +327,17 @@ impl<'a> TypeLowering<'a> {
                 continue;
             };
             let lowerer = self.with_arena(decl_arena);
-            for &idx in &interface.members.nodes {
-                if let Some(name) = lowerer.get_interface_member_name(idx) {
-                    parts.declaration_orders.entry(name).or_insert_with(|| {
-                        counter += 1;
-                        counter
-                    });
-                }
-            }
+            lowerer.assign_forward_member_order(
+                parts,
+                interface.members.nodes.iter().copied(),
+                &mut counter,
+            );
         }
     }
 
-    /// Extract the property/method name from an interface member node.
-    fn get_interface_member_name(&self, idx: NodeIndex) -> Option<Atom> {
+    /// Extract the property/method name from an object-type member node
+    /// (interface member or type-literal member).
+    fn object_member_name(&self, idx: NodeIndex) -> Option<Atom> {
         let member = self.arena.get(idx)?;
         if let Some(sig) = self.arena.get_signature(member) {
             return self.lower_signature_name(sig.name);
@@ -324,9 +351,13 @@ impl<'a> TypeLowering<'a> {
         None
     }
 
-    pub(super) fn finish_interface_parts(
+    /// Build the final object/callable type from collected `ObjectTypeParts`.
+    ///
+    /// Shared by interface lowering and type-literal lowering; `symbol_id` is
+    /// `Some` only for interfaces that need symbol stamping.
+    pub(super) fn finish_object_type_parts(
         &self,
-        mut parts: InterfaceParts,
+        mut parts: ObjectTypeParts,
         symbol_id: Option<tsz_binder::SymbolId>,
     ) -> TypeId {
         // When an interface (or merged interface group) carries multiple string-keyed

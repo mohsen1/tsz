@@ -5,6 +5,7 @@ use rustc_hash::FxHashSet;
 use std::path::Path;
 use tsz::lsp::completions::{CompletionItem, CompletionItemKind, sort_priority};
 use tsz::lsp::jsdoc::{inline_links, jsdoc_for_node, parse_jsdoc};
+use tsz_common::file_extensions::strip_known_extension;
 
 impl Server {
     pub(super) fn is_ts_like_file(path: &str) -> bool {
@@ -612,10 +613,6 @@ impl Server {
     }
 
     pub(super) fn normalize_completion_source_for_match(source: &str) -> String {
-        const SOURCE_SUFFIXES: [&str; 11] = [
-            ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
-            ".cjs",
-        ];
         let mut normalized = source
             .trim()
             .trim_matches('\"')
@@ -624,13 +621,9 @@ impl Server {
         if let Some(stripped) = normalized.strip_prefix("node:") {
             normalized = stripped.to_string();
         }
-        for suffix in SOURCE_SUFFIXES {
-            if let Some(base) = normalized.strip_suffix(suffix)
-                && !base.is_empty()
-            {
-                normalized = base.to_string();
-                break;
-            }
+        let stripped = strip_known_extension(&normalized);
+        if !stripped.is_empty() {
+            normalized = stripped.to_string();
         }
         if let Some(base) = normalized.strip_suffix("/index")
             && !base.is_empty()
@@ -1376,5 +1369,30 @@ impl Server {
             tsz::lsp::completions::CompletionItemKind::Constructor => "constructor",
             tsz::lsp::completions::CompletionItemKind::Alias => "alias",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Server;
+
+    #[test]
+    fn normalize_completion_source_for_match_uses_shared_extension_rules() {
+        assert_eq!(
+            Server::normalize_completion_source_for_match("'node:fs'"),
+            "fs"
+        );
+        assert_eq!(
+            Server::normalize_completion_source_for_match("\"pkg/types.d.cts\""),
+            "pkg/types"
+        );
+        assert_eq!(
+            Server::normalize_completion_source_for_match("pkg/types.d.tsx"),
+            "pkg/types.d"
+        );
+        assert_eq!(
+            Server::normalize_completion_source_for_match("pkg/index.d.ts"),
+            "pkg"
+        );
     }
 }

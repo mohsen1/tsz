@@ -217,7 +217,7 @@ impl ParserState {
                 id_start,
                 id_end,
                 crate::parser::node::IdentifierData {
-                    atom: tsz_common::interner::Atom::NONE,
+                    atom: tsz_common::interner::AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,

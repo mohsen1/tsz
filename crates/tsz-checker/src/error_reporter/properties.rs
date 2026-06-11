@@ -6,6 +6,7 @@ use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::common as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use tsz_common::file_extensions::strip_known_extension;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1714,7 +1715,7 @@ impl<'a> CheckerState<'a> {
                 // Normalize module specifier: TSC displays resolved module names
                 // without the relative path prefix (e.g., "./b" → "b").
                 let display_name = module_name.strip_prefix("./").unwrap_or(&module_name);
-                let display_name = strip_property_namespace_module_extension(display_name);
+                let display_name = strip_known_extension(display_name);
                 let type_str = format!("typeof import(\"{display_name}\")");
                 let (code, message) = if let Some(ref suggestion) = suggestion {
                     (
@@ -1816,18 +1817,6 @@ impl<'a> CheckerState<'a> {
 }
 
 include!("properties/diagnostic_methods_tail.rs");
-
-fn strip_property_namespace_module_extension(module_name: &str) -> &str {
-    const EXTS: &[&str] = &[
-        ".d.ts", ".d.mts", ".d.cts", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
-    ];
-    for ext in EXTS {
-        if let Some(stripped) = module_name.strip_suffix(ext) {
-            return stripped;
-        }
-    }
-    module_name
-}
 
 /// Match tsc's `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$` regex used by
 /// `containerSeemsToBeEmptyDomElement` to detect DOM element-like type names.

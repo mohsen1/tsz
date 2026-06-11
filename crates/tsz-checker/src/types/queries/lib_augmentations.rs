@@ -10,6 +10,16 @@ use super::lib_resolution::{
     augmentation_def_id_from_node, no_value_resolver, resolve_augmentation_node,
 };
 
+/// Mutation-isolation campaign: freeze each lib def's shared-store body at
+/// its *finalized* publication point (heritage-merged + augmented), so later
+/// checkers' re-finalizations cannot republish a different (checker-relative)
+/// form. Default-on; `TSZ_DISABLE_LIB_DEF_FREEZE=1` is the kill switch for
+/// A/B parity measurement.
+pub(crate) fn lib_def_finalize_freeze_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| !std::env::var("TSZ_DISABLE_LIB_DEF_FREEZE").is_ok_and(|v| v == "1"))
+}
+
 impl<'a> CheckerState<'a> {
     /// Lower augmentation declarations from a given arena and return the resulting `TypeId`.
     ///
@@ -180,8 +190,48 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+        // Publish through the store's finalize entry point first: it bypasses
+        // the deferred-publication drop (the finalized form must replace any
+        // earlier intermediate form), and the env registration below then
+        // write-throughs the identical body (a no-op same-body publication).
+        self.ctx.definition_store.set_body_finalized(
+            def_id,
+            ty,
+            (!type_params.is_empty()).then(|| type_params.clone()),
+        );
         self.ctx
             .register_def_auto_params_in_envs(def_id, ty, type_params);
+    }
+
+    /// Mutation-isolation campaign: freeze `name`'s lib def body in the
+    /// shared store after a **cleanly completed** resolution (not
+    /// heritage-incomplete, not locally augmented), so later checkers'
+    /// re-finalizations cannot republish a different (checker-relative) form.
+    ///
+    /// Freezing must only happen at clean completion: the incomplete-heritage
+    /// recovery path (#12299) intentionally re-resolves the name and
+    /// *overwrites* the def body with the flattened form — freezing the
+    /// incomplete body would suppress that recovery and drop inherited
+    /// members (false `TS2339`).
+    pub(crate) fn freeze_finalized_lib_def(&mut self, name: &str) {
+        if !lib_def_finalize_freeze_enabled() {
+            return;
+        }
+        // Declaration emit is out of scope for the freeze: emit nameability
+        // analysis (TS7056 and friends) is sensitive to which checker's lib
+        // body TypeId the shared store carries, and freezing the first
+        // checker's form regresses tsc parity there. The campaign target is
+        // the checking pipeline (parallel gate-lift); the emit lane keeps
+        // last-writer-wins semantics until emit type identity is owned.
+        if self.ctx.emit_declarations() {
+            return;
+        }
+        let name_atom = self.ctx.types.intern_string(name);
+        if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom)
+            && let Some(&def_id) = defs.first()
+        {
+            self.ctx.definition_store.mark_publish_once(def_id);
+        }
     }
 
     /// Wrapper around `register_finalized_lib_body` that no-ops unless the

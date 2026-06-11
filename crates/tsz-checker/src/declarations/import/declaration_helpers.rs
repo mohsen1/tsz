@@ -34,6 +34,25 @@ pub(crate) fn ts_extension_suffix(module_name: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns `(declaration_suffix, ts_extension, js_extension)` when the module
+/// specifier names a declaration file (`.d.ts`/`.d.mts`/`.d.cts`).
+///
+/// These specifiers are handled by TS2846 ("a declaration file cannot be
+/// imported without `import type`"), never by TS5097.
+pub(crate) fn declaration_file_extension(
+    module_name: &str,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    if module_name.ends_with(".d.ts") {
+        Some((".d.ts", ".ts", ".js"))
+    } else if module_name.ends_with(".d.mts") {
+        Some((".d.mts", ".mts", ".mjs"))
+    } else if module_name.ends_with(".d.cts") {
+        Some((".d.cts", ".cts", ".cjs"))
+    } else {
+        None
+    }
+}
+
 /// Check if a module specifier refers to a Node.js built-in module.
 /// Handles both bare names ("fs") and the `node:` prefix ("node:fs").
 pub(crate) fn is_node_builtin_module(name: &str) -> bool {

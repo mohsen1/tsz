@@ -38,7 +38,7 @@ mod display;
 mod storage;
 
 pub(super) use storage::{CachedUnionMember, TypeShard};
-use storage::{ConcurrentSliceInterner, ConcurrentValueInterner};
+use storage::{ConcurrentSliceInterner, ConcurrentValueInterner, write_id_slot};
 
 /// Global counter for assigning unique `instance_id`s to `TypeInterner`
 /// instances. `0` is reserved as "empty/no-interner" so it will never match
@@ -989,13 +989,8 @@ impl TypeInterner {
                     .write()
                     .expect("interner alloc_order lock poisoned")
             });
-            let target_len = local_index as usize + 1;
-            if vec.len() < target_len {
-                vec.resize(target_len, TypeData::Error);
-                ord.resize(target_len, u32::MAX);
-            }
-            vec[local_index as usize] = key;
-            ord[local_index as usize] = order;
+            write_id_slot(&mut vec, local_index as usize, key, || TypeData::Error);
+            write_id_slot(&mut ord, local_index as usize, order, || u32::MAX);
         }
 
         self.make_id(local_index, shard_idx as u32)
@@ -1050,7 +1045,6 @@ impl TypeInterner {
         // Double-check: another thread might have inserted while we allocated
         match inner.key_to_index.entry(key) {
             Entry::Vacant(e) => {
-                e.insert(local_index);
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
                 {
@@ -1073,14 +1067,13 @@ impl TypeInterner {
                                 .write()
                                 .expect("interner alloc_order lock poisoned")
                         });
-                    let target_len = local_index as usize + 1;
-                    if vec.len() < target_len {
-                        vec.resize(target_len, TypeData::Error);
-                        ord.resize(target_len, u32::MAX);
-                    }
-                    vec[local_index as usize] = key;
-                    ord[local_index as usize] = order;
+                    write_id_slot(&mut vec, local_index as usize, key, || TypeData::Error);
+                    write_id_slot(&mut ord, local_index as usize, order, || u32::MAX);
                 }
+                // Publish the index only after its slot is readable so a
+                // concurrent `key_to_index` hit can never observe an
+                // unwritten `index_to_key` slot via `lookup`.
+                e.insert(local_index);
                 if let Some(c) = pc {
                     c.interner_intern_misses
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

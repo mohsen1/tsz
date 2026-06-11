@@ -1,4 +1,7 @@
 use super::*;
+use tsz_common::file_extensions::{
+    strip_known_extension, strip_ts_extension as strip_ts_specifier_extension,
+};
 
 /// Rank a [`SpecifierCandidateSet`] into a deduplicated, ordered list of
 /// import specifier strings, applying the caller's `pref` policy.
@@ -122,27 +125,28 @@ pub(super) fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
-pub(super) fn strip_ts_extension(path: &Path) -> PathBuf {
+fn strip_path_file_extension(path: &Path, strip: fn(&str) -> &str) -> PathBuf {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return path.to_path_buf();
     };
 
-    for suffix in TS_EXTENSION_SUFFIXES {
-        if let Some(base_name) = file_name.strip_suffix(suffix) {
-            if base_name.is_empty() {
-                return path.to_path_buf();
-            }
-            let mut base = PathBuf::new();
-            if let Some(parent) = path.parent() {
-                base.push(parent);
-            }
-            base.push(base_name);
-            return base;
-        }
+    let base_name = strip(file_name);
+    if base_name == file_name || base_name.is_empty() {
+        return path.to_path_buf();
     }
 
-    path.to_path_buf()
+    let mut base = PathBuf::new();
+    if let Some(parent) = path.parent() {
+        base.push(parent);
+    }
+    base.push(base_name);
+    base
 }
+
+pub(super) fn strip_ts_path_extension(path: &Path) -> PathBuf {
+    strip_path_file_extension(path, strip_ts_specifier_extension)
+}
+
 pub(super) fn split_node_modules_package_path(package_path: &str) -> Option<(String, String)> {
     let mut segments = package_path.split('/');
     let first = segments.next()?;
@@ -813,28 +817,7 @@ pub(super) fn resolve_path_mapping_target(
 }
 
 pub(super) fn strip_js_ts_extension(path: &Path) -> PathBuf {
-    const SOURCE_SUFFIXES: [&str; 11] = [
-        ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
-    ];
-    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-        return path.to_path_buf();
-    };
-
-    for suffix in SOURCE_SUFFIXES {
-        if let Some(base_name) = file_name.strip_suffix(suffix) {
-            if base_name.is_empty() {
-                return path.to_path_buf();
-            }
-            let mut base = PathBuf::new();
-            if let Some(parent) = path.parent() {
-                base.push(parent);
-            }
-            base.push(base_name);
-            return base;
-        }
-    }
-
-    path.to_path_buf()
+    strip_path_file_extension(path, strip_known_extension)
 }
 
 /// Returns the runtime (emit) extension for a source file path, preserving
@@ -870,4 +853,37 @@ pub(super) fn has_source_extension(path: &str) -> bool {
         || normalized.ends_with(".jsx")
         || normalized.ends_with(".mjs")
         || normalized.ends_with(".cjs")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_ts_path_extension_uses_shared_ts_family_rules() {
+        assert_eq!(
+            strip_ts_path_extension(Path::new("src/types.d.cts")),
+            PathBuf::from("src/types")
+        );
+        assert_eq!(
+            strip_ts_path_extension(Path::new("src/types.d.tsx")),
+            PathBuf::from("src/types.d")
+        );
+        assert_eq!(
+            strip_ts_path_extension(Path::new("src/runtime.mjs")),
+            PathBuf::from("src/runtime.mjs")
+        );
+    }
+
+    #[test]
+    fn strip_js_ts_extension_uses_shared_known_extension_rules() {
+        assert_eq!(
+            strip_js_ts_extension(Path::new("src/runtime.mjs")),
+            PathBuf::from("src/runtime")
+        );
+        assert_eq!(
+            strip_js_ts_extension(Path::new("src/types.d.tsx")),
+            PathBuf::from("src/types.d")
+        );
+    }
 }

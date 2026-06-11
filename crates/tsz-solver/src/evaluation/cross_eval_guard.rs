@@ -104,15 +104,31 @@ pub(crate) fn memoized_eval(
     no_unchecked_indexed_access: bool,
     compute: impl FnOnce() -> (TypeId, bool),
 ) -> Option<TypeId> {
+    memoized_eval_with_stability(type_id, no_unchecked_indexed_access, compute)
+        .map(|(result, _)| result)
+}
+
+/// Like [`memoized_eval`], but also reports whether the result is *stable*:
+/// converged without tripping any recursion/depth/budget limit.
+///
+/// A memo hit is always stable (only stable results are stored). A fresh
+/// computation reports the `memoizable` flag from `compute`. Callers that
+/// treat a collapsed result (e.g. `unknown`) as suspicious can use the flag to
+/// distinguish a genuinely evaluated answer from a recursion-bail artifact.
+pub(crate) fn memoized_eval_with_stability(
+    type_id: TypeId,
+    no_unchecked_indexed_access: bool,
+    compute: impl FnOnce() -> (TypeId, bool),
+) -> Option<(TypeId, bool)> {
     if let Some(cached) = query_memo_get(type_id, no_unchecked_indexed_access) {
-        return Some(cached);
+        return Some((cached, true));
     }
     let _cross = CrossEvalExpansionGuard::enter(type_id)?;
     let (result, memoizable) = compute();
     if memoizable {
         query_memo_put(type_id, no_unchecked_indexed_access, result);
     }
-    Some(result)
+    Some((result, memoizable))
 }
 
 /// RAII membership guard for cross-evaluator expansion of a `TypeId`.

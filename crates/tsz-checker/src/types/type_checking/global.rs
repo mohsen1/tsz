@@ -369,17 +369,27 @@ impl<'a> CheckerState<'a> {
         let mut boxed_def_entries: smallvec::SmallVec<
             [(IntrinsicKind, TypeId, tsz_solver::DefId); 16],
         > = smallvec::SmallVec::new();
+        // Resolve each per-lib-context SymbolId to a DefId and verify the
+        // def actually names this builtin. Per-lib SymbolIds are
+        // binder-relative; `get_lib_def_id` resolves them through
+        // context-agnostic indexes (raw symbol id, with every lib def sharing
+        // the same sentinel decl file index), so a later lib context's
+        // `String` symbol id can collide with an unrelated def from an
+        // earlier lib binder (e.g. `alert`). Registering — and worse,
+        // `insert_def`-publishing — the boxed body onto that unrelated def
+        // corrupts the shared `DefinitionStore` body for that def (a
+        // last-writer-wins in-flight channel the parallel-checking campaign
+        // must eliminate). On mismatch, route through the canonical
+        // name-keyed lib def resolution instead.
         for &(name, type_opt, kind) in boxed_names {
             let Some(ty) = type_opt else { continue };
             for ctx in self.ctx.lib_contexts.iter() {
                 if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                    let def_id = self.ctx.get_lib_def_id(sym_id);
-                    boxed_def_entries.push((kind, ty, def_id));
+                    boxed_def_entries.push((kind, ty, self.ctx.lib_def_id_verified(name, sym_id)));
                 }
             }
             if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                let def_id = self.ctx.get_lib_def_id(sym_id);
-                boxed_def_entries.push((kind, ty, def_id));
+                boxed_def_entries.push((kind, ty, self.ctx.lib_def_id_verified(name, sym_id)));
             }
         }
         for &(kind, _ty, def_id) in &boxed_def_entries {
@@ -388,14 +398,18 @@ impl<'a> CheckerState<'a> {
 
         // Register ThisType marker DefIds so ThisTypeMarkerExtractor can identify
         // ThisType<T> applications when the base type is Lazy(DefId).
+        // Name-verified resolution (`lib_def_id_verified`): a raw per-lib
+        // SymbolId collision would register an *unrelated* def as the
+        // ThisType marker (same identity-collision family as the boxed-type
+        // registration fix above).
         for ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = ctx.binder.file_locals.get("ThisType") {
-                let def_id = self.ctx.get_lib_def_id(sym_id);
+                let def_id = self.ctx.lib_def_id_verified("ThisType", sym_id);
                 self.ctx.types.register_this_type_def_id(def_id);
             }
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("ThisType") {
-            let def_id = self.ctx.get_lib_def_id(sym_id);
+            let def_id = self.ctx.lib_def_id_verified("ThisType", sym_id);
             self.ctx.types.register_this_type_def_id(def_id);
         }
 
@@ -502,16 +516,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Name-verified (`lib_def_id_verified`): a raw per-lib SymbolId
+        // collision would mark an unrelated def as the Function interface,
+        // corrupting `T extends Function` constraint checks.
         for ctx in self.ctx.lib_contexts.iter() {
             if let Some(sym_id) = ctx.binder.file_locals.get("Function") {
-                let def_id = self.ctx.get_lib_def_id(sym_id);
+                let def_id = self.ctx.lib_def_id_verified("Function", sym_id);
                 self.ctx
                     .types
                     .register_boxed_def_id(IntrinsicKind::Function, def_id);
             }
         }
         if let Some(sym_id) = self.ctx.binder.file_locals.get("Function") {
-            let def_id = self.ctx.get_lib_def_id(sym_id);
+            let def_id = self.ctx.lib_def_id_verified("Function", sym_id);
             self.ctx
                 .types
                 .register_boxed_def_id(IntrinsicKind::Function, def_id);

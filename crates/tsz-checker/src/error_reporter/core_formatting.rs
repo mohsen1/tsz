@@ -592,168 +592,76 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // If display_alias didn't provide type args, try heuristic recovery.
+                // If display_alias didn't provide type args, recover the
+                // application's ACTUAL arguments from properties whose declared
+                // type is a bare type parameter (`value: T` → the instantiated
+                // property type IS the argument for `T`, at `T`'s declared
+                // index). Each recovered argument is placed at its parameter's
+                // index; the display is only rewritten when every parameter is
+                // recovered consistently. Harvesting other member types (the
+                // old name-sorted property-type zip) fabricated argument lists
+                // unrelated to the actual instantiation, so unrecoverable
+                // arguments are elided (bare name) instead.
                 if !formatted.contains('<') {
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
                     let type_param_names = self.symbol_type_param_names_for_display(symbol);
-                    let type_param_count = if !type_param_names.is_empty() {
-                        type_param_names.len()
-                    } else if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
-                        type_params.len()
-                    } else {
-                        symbol
-                            .declarations
-                            .iter()
-                            .find_map(|decl| {
-                                let node = self.ctx.arena.get(*decl)?;
-                                let class = self.ctx.arena.get_class(node)?;
-                                Some(class.type_parameters.as_ref().map_or(0, |p| p.nodes.len()))
-                            })
-                            .unwrap_or(0)
-                    };
+                    let type_param_count = type_param_names.len();
                     if type_param_count > 0 {
-                        // Recover instantiation args from actual value-carrying members.
-                        // For methods, use return type (not the full function signature)
-                        // since method return types often directly reflect type params.
-                        // E.g. `compareTo(other: T): T` with T=number → return type is `number`.
-                        let resolve_candidate_type = |prop: &tsz_solver::PropertyInfo| -> TypeId {
-                            if prop.is_method {
-                                // For methods, extract a representative type instead of
-                                // the full function signature.
-                                // Strategy: prefer return type, but if it's trivial
-                                // (void/never/any/unknown/undefined), use the first
-                                // non-trivial parameter type. This handles both
-                                // `compareTo(other: T): T` → return type `number`, and
-                                // `foo(a: T): void` → param type `{ a: string }`.
-                                let extract_from_shape =
-                                    |params: &[tsz_solver::ParamInfo],
-                                     return_type: TypeId|
-                                     -> TypeId {
-                                        let is_trivial = matches!(
-                                            return_type,
-                                            TypeId::VOID
-                                                | TypeId::NEVER
-                                                | TypeId::ANY
-                                                | TypeId::UNKNOWN
-                                                | TypeId::UNDEFINED
-                                                | TypeId::NULL
-                                        );
-                                        if !is_trivial {
-                                            return return_type;
-                                        }
-                                        // Return type is trivial — use first substantive param
-                                        for param in params {
-                                            if !matches!(
-                                                param.type_id,
-                                                TypeId::VOID
-                                                    | TypeId::NEVER
-                                                    | TypeId::ANY
-                                                    | TypeId::UNKNOWN
-                                                    | TypeId::UNDEFINED
-                                                    | TypeId::NULL
-                                            ) {
-                                                return param.type_id;
-                                            }
-                                        }
-                                        return_type
-                                    };
-                                if let Some(fn_shape) =
-                                    crate::query_boundaries::common::function_shape_for_type(
-                                        self.ctx.types,
-                                        prop.type_id,
-                                    )
-                                {
-                                    return extract_from_shape(
-                                        &fn_shape.params,
-                                        fn_shape.return_type,
-                                    );
-                                }
-                                if let Some(callable) =
-                                    crate::query_boundaries::common::callable_shape_for_type(
-                                        self.ctx.types,
-                                        prop.type_id,
-                                    )
-                                    && callable.call_signatures.len() == 1
-                                {
-                                    let sig = &callable.call_signatures[0];
-                                    return extract_from_shape(&sig.params, sig.return_type);
-                                }
+                        // For methods, the declared-type matcher inspects the
+                        // declared RETURN annotation, so project the
+                        // instantiated return type as the candidate value.
+                        let candidate_value_type = |prop: &tsz_solver::PropertyInfo| -> TypeId {
+                            if !prop.is_method {
+                                return prop.type_id;
+                            }
+                            if let Some(fn_shape) =
+                                crate::query_boundaries::common::function_shape_for_type(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                )
+                            {
+                                return fn_shape.return_type;
+                            }
+                            if let Some(callable) =
+                                crate::query_boundaries::common::callable_shape_for_type(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                )
+                                && callable.call_signatures.len() == 1
+                            {
+                                return callable.call_signatures[0].return_type;
                             }
                             prop.type_id
                         };
-                        let build_candidates =
-                            |predicate: fn(&tsz_solver::PropertyInfo) -> bool,
-                             types: &dyn tsz_solver::construction::TypeDatabase| {
-                                let mut candidates: Vec<(String, TypeId)> = shape
-                                    .properties
-                                    .iter()
-                                    .filter(|prop| predicate(prop))
-                                    .filter_map(|prop| {
-                                        let name = types.resolve_atom_ref(prop.name).to_string();
-                                        if tsz_solver::utils::is_synthetic_private_brand_name(&name)
-                                        {
-                                            None
-                                        } else {
-                                            Some((name, resolve_candidate_type(prop)))
-                                        }
-                                    })
-                                    .collect();
-                                candidates.sort_by(|a, b| a.0.cmp(&b.0));
-                                candidates
+                        let mut slots: Vec<Option<TypeId>> = vec![None; type_param_count];
+                        let mut conflict = false;
+                        for prop in shape.properties.iter() {
+                            let Some((index, candidate)) = self
+                                .declared_property_type_arg_candidate_for_display(
+                                    symbol,
+                                    prop.name,
+                                    candidate_value_type(prop),
+                                    &type_param_names,
+                                )
+                            else {
+                                continue;
                             };
-                        let mut candidates: Vec<(String, TypeId)> = if type_param_names.is_empty() {
-                            Vec::new()
-                        } else {
-                            shape
-                                .properties
-                                .iter()
-                                .filter_map(|prop| {
-                                    let candidate = self
-                                        .declared_property_type_arg_candidate_for_display(
-                                            symbol,
-                                            prop.name,
-                                            resolve_candidate_type(prop),
-                                            &type_param_names,
-                                        )?;
-                                    let name =
-                                        self.ctx.types.resolve_atom_ref(prop.name).to_string();
-                                    Some((name, candidate))
-                                })
-                                .collect()
-                        };
-                        candidates.sort_by(|a, b| a.0.cmp(&b.0));
-                        if candidates.len() < type_param_count
-                            && shape.properties.len() >= type_param_count
-                        {
-                            candidates = build_candidates(
-                                |prop| !prop.is_method && !prop.is_class_prototype,
-                                self.ctx.types.as_type_database(),
-                            );
-                            if candidates.len() < type_param_count {
-                                candidates = build_candidates(
-                                    |prop| !prop.is_method,
-                                    self.ctx.types.as_type_database(),
-                                );
-                            }
-                            if candidates.len() < type_param_count {
-                                candidates = build_candidates(
-                                    |prop| !prop.is_class_prototype,
-                                    self.ctx.types.as_type_database(),
-                                );
-                            }
-                            if candidates.len() < type_param_count {
-                                candidates =
-                                    build_candidates(|_| true, self.ctx.types.as_type_database());
+                            match slots[index] {
+                                None => slots[index] = Some(candidate),
+                                Some(existing) if existing == candidate => {}
+                                Some(_) => {
+                                    conflict = true;
+                                    break;
+                                }
                             }
                         }
-                        let args: Vec<String> = candidates
-                            .iter()
-                            .take(type_param_count)
-                            .map(|(_, type_id)| {
-                                self.format_type_diagnostic_for_assignability_display(*type_id)
-                            })
-                            .collect();
-                        if args.len() == type_param_count {
+                        if !conflict && slots.iter().all(Option::is_some) {
+                            let args: Vec<String> = slots
+                                .iter()
+                                .flatten()
+                                .map(|type_id| {
+                                    self.format_type_diagnostic_for_assignability_display(*type_id)
+                                })
+                                .collect();
                             formatted = format!("{}<{}>", symbol_name, args.join(", "));
                         }
                     }
@@ -761,6 +669,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Callable-only shapes (call/construct-signature interfaces) carry no
+        // properties, so recover their actual arguments from declared
+        // signature annotations that are bare type parameters — again
+        // index-placed and all-or-elide, never positional harvesting.
         if !formatted.contains('<')
             && let Some(sym_id) =
                 crate::query_boundaries::common::type_shape_symbol(self.ctx.types, display_ty)
@@ -770,11 +682,19 @@ impl<'a> CheckerState<'a> {
             let type_param_names = self.symbol_type_param_names_for_display(symbol);
             let type_param_count = type_param_names.len();
             if type_param_count > 0 {
-                let candidates = self.signature_type_arg_display_candidates(display_ty);
-                if candidates.len() >= type_param_count {
-                    let args: Vec<String> = candidates
+                let mut slots: Vec<Option<TypeId>> = vec![None; type_param_count];
+                let mut conflict = false;
+                self.fill_signature_type_arg_slots_for_display(
+                    symbol,
+                    display_ty,
+                    &type_param_names,
+                    &mut slots,
+                    &mut conflict,
+                );
+                if !conflict && slots.iter().all(Option::is_some) {
+                    let args: Vec<String> = slots
                         .iter()
-                        .take(type_param_count)
+                        .flatten()
                         .map(|type_id| {
                             self.format_type_diagnostic_for_assignability_display(*type_id)
                         })

@@ -456,15 +456,7 @@ impl<'a> CheckerState<'a> {
             let Some(param) = self.ctx.arena.get_parameter(param_node) else {
                 continue;
             };
-            let is_this_param = self
-                .ctx
-                .arena
-                .get(param.name)
-                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .is_some_and(|ident| {
-                    self.ctx.types.intern_string(&ident.escaped_text) == this_atom
-                });
-            if is_this_param {
+            if self.is_this_parameter_name(param.name) {
                 continue;
             }
             non_this_param_count += 1;

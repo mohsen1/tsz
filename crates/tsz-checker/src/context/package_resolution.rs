@@ -1,5 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
+use tsz_common::file_extensions::strip_known_extension;
 use tsz_common::module_resolution::types_versions;
 
 use crate::module_resolution::{
@@ -167,13 +168,13 @@ impl<'a> CheckerContext<'a> {
         target: &str,
     ) -> Option<usize> {
         let target = Self::normalize_package_relative_path(target);
-        let target = Self::strip_resolution_extension(&target);
+        let target = strip_known_extension(&target).to_string();
         let arenas = self.all_arenas.as_ref()?;
         arenas.iter().enumerate().find_map(|(idx, arena)| {
             let file_name = arena.source_files.first()?.file_name.as_str();
             let relative = Path::new(file_name).strip_prefix(package_root).ok()?;
             let relative = Self::normalize_package_relative_path(&relative.to_string_lossy());
-            let relative = Self::strip_resolution_extension(&relative);
+            let relative = strip_known_extension(&relative).to_string();
             (relative == target || relative == format!("{target}/index")).then_some(idx)
         })
     }
@@ -241,17 +242,5 @@ impl<'a> CheckerContext<'a> {
             .trim_start_matches("./")
             .trim_start_matches('/')
             .to_string()
-    }
-
-    fn strip_resolution_extension(path: &str) -> String {
-        for ext in [
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(stripped) = path.strip_suffix(ext) {
-                return stripped.to_string();
-            }
-        }
-        path.to_string()
     }
 }

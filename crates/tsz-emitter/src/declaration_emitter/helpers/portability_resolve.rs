@@ -17,6 +17,8 @@ use tsz_binder::{BinderState, SymbolId, symbol_flags};
 #[allow(unused_imports)]
 use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 #[allow(unused_imports)]
+use tsz_common::module_resolution::package_exports::{match_export_target, match_exports_wildcard};
+#[allow(unused_imports)]
 use tsz_parser::parser::ParserState;
 #[allow(unused_imports)]
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
@@ -196,7 +198,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .find_map(|(module_path, exports)| {
                     let candidate =
                         if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
-                            Some(self.strip_ts_extensions(
+                            Some(self.strip_module_path_extension(
                                 &self.calculate_relative_path(current_path, module_path),
                             ))
                         } else {
@@ -582,7 +584,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let source_path = self.arena_to_path.get(&arena_addr)?;
                 let candidate =
                     if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
-                        self.strip_ts_extensions(
+                        self.strip_module_path_extension(
                             &self.calculate_relative_path(current_path, source_path),
                         )
                     } else {
@@ -681,7 +683,7 @@ impl<'a> DeclarationEmitter<'a> {
                     let candidate = if module_specifier.starts_with('.')
                         || module_specifier.starts_with('/')
                     {
-                        Some(self.strip_ts_extensions(
+                        Some(self.strip_module_path_extension(
                             &self.calculate_relative_path(current_file_path, module_path),
                         ))
                     } else {
@@ -843,7 +845,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .into_iter()
                 .next()
             {
-                let mut from_path = self.strip_ts_extensions(
+                let mut from_path = self.strip_module_path_extension(
                     &self.calculate_relative_path(current_file_path, module_path),
                 );
                 if from_path.ends_with("/index") {
@@ -1600,7 +1602,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         match exports {
             serde_json::Value::String(target) => {
-                subpath == "." || self.match_export_target(".", target, subpath).is_some()
+                subpath == "." || match_export_target(".", target, subpath).is_some()
             }
             serde_json::Value::Array(entries) => entries
                 .iter()
@@ -1630,7 +1632,7 @@ impl<'a> DeclarationEmitter<'a> {
         if key == subpath {
             return true;
         }
-        if key.contains('*') && self.match_exports_wildcard(key, subpath).is_some() {
+        if key.contains('*') && match_exports_wildcard(key, subpath).is_some() {
             return true;
         }
         if key.ends_with('/') && subpath.starts_with(key) {

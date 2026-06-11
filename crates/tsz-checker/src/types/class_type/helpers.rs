@@ -97,6 +97,62 @@ pub(super) fn declaration_is_module_augmentation(
 }
 
 impl<'a> CheckerState<'a> {
+    /// Whether a just-computed constructor type for this class symbol may be
+    /// cached. Two windows forbid caching:
+    /// - the class's own constructor resolution is re-entrant
+    ///   (`class_constructor_resolution_set`), or
+    /// - the class's INSTANCE type computation is still in flight AND the
+    ///   constructor result actually embeds the provisional instance shape
+    ///   (see `ctor_result_embeds_inflight_instance`).
+    pub(super) fn constructor_cache_admissible(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        result: TypeId,
+    ) -> bool {
+        !self.ctx.class_constructor_resolution_set.contains(&sym_id)
+            && !self.ctor_result_embeds_inflight_instance(sym_id, result)
+    }
+
+    /// Constructor types computed while the class's own INSTANCE type is
+    /// still being built (`class_instance_resolution_set`, e.g. a static
+    /// self-reference forcing `typeof C` mid-build) can embed the Phase-0
+    /// prescan instance shape — missing computed/symbol-keyed members and
+    /// heritage — as their construct-signature return. Caching such a result
+    /// leaks the partial instance into every later `new C()` (false
+    /// TS7053/TS2739/TS2741). The check is narrow on purpose: results whose
+    /// construct return does NOT point at the in-flight provisional instance
+    /// (e.g. a `Lazy(DefId)` or already-final shape) stay cacheable, so heavy
+    /// self-referential classes are not recomputed per reference.
+    pub(crate) fn ctor_result_embeds_inflight_instance(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        result: TypeId,
+    ) -> bool {
+        if !self.ctx.class_instance_resolution_set.contains(&sym_id) {
+            return false;
+        }
+        let Some(decl_idx) = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .and_then(|symbol| symbol.primary_declaration())
+        else {
+            // No declaration to compare against: be conservative inside the
+            // in-flight window and treat the result as provisional.
+            return true;
+        };
+        let Some(&provisional_instance) = self.ctx.class_instance_type_cache.get(&decl_idx) else {
+            return true;
+        };
+        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, result)
+            .is_some_and(|shape| {
+                shape
+                    .construct_signatures
+                    .iter()
+                    .any(|sig| sig.return_type == provisional_instance)
+            })
+    }
+
     pub(super) fn class_member_name_is_symbol_named(&mut self, name_idx: NodeIndex) -> bool {
         self.ctx
             .arena

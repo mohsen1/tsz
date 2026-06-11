@@ -337,6 +337,7 @@ mod tests {
         assert_eq!(strip_known_extension("foo.ts"), "foo");
         assert_eq!(strip_known_extension("foo.js"), "foo");
         assert_eq!(strip_known_extension("foo.d.ts"), "foo");
+        assert_eq!(strip_known_extension("foo.d.tsx"), "foo.d");
         assert_eq!(strip_known_extension("foo"), "foo");
         assert_eq!(strip_known_extension("foo.json"), "foo.json");
     }

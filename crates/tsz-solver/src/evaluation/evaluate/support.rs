@@ -18,6 +18,7 @@ type MemberModifierMap = Option<FxHashMap<u32, (bool, bool)>>;
 
 /// Controls which subtype direction makes a member redundant when simplifying
 /// a union or intersection.
+#[derive(Debug)]
 enum SubtypeDirection {
     /// member[i] <: member[j] -> member[i] is redundant (union semantics).
     SourceSubsumedByOther,
@@ -368,6 +369,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
+            // `UnresolvedTypeName` is a display-preserving unresolved type
+            // name (cross-file alias bodies lowered before the referenced
+            // declaration's name is resolvable in this checker) and is just
+            // as inherently deferred as the other variants in this arm: the
+            // relation layer treats it as an error type that is related to
+            // EVERYTHING, so any subtype-based simplification over it would
+            // collapse distinct union members (e.g. `Expression<any> |
+            // SelectQueryBuilderExpression<...>` losing its supertype arm).
+            // The evaluator resolves these on demand later, so keep them out
+            // of simplification entirely.
             TypeData::TypeParameter(_)
             | TypeData::Infer(_)
             | TypeData::Conditional(_)
@@ -378,7 +389,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             | TypeData::TemplateLiteral(_)
             | TypeData::ReadonlyType(_)
             | TypeData::StringIntrinsic { .. }
-            | TypeData::ThisType => true,
+            | TypeData::ThisType
+            | TypeData::UnresolvedTypeName(_) => true,
             // Intersection/union types containing complex members are also complex.
             // Without this, the evaluator's subtype-based simplification can incorrectly
             // collapse union members like `(T&U&1) | (T&U&2) | (T&U&3)` to just `T&U&2`
@@ -395,9 +407,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // not subtype-reduce union members that depend on unresolved type
             // parameters, so keep them. Fully-concrete applications stay
             // simplifiable via the canonicalizer.
+            // An application whose BASE is an unresolved type name is just as
+            // deferred as the bare name: `is_error_type` follows application
+            // bases, so the bypass-evaluation subtype checker would judge the
+            // whole application universally related and let simplification drop
+            // a sibling member. Check the base alongside the arguments.
             TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
-                app.args.iter().any(|&arg| self.is_complex_type(arg))
+                self.is_complex_type(app.base)
+                    || app.args.iter().any(|&arg| self.is_complex_type(arg))
             }
             TypeData::Array(_) | TypeData::Tuple(_) => self.has_nested_complex_marker(type_id),
             // Function types with Application/Lazy return *or parameter* types are
@@ -874,6 +892,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 };
                 if is_subtype {
+                    tracing::trace!(
+                        removed = ?members[i],
+                        subsumed_by = ?members[j],
+                        ?direction,
+                        "remove_redundant_members: removing member"
+                    );
                     keep &= !(1u32 << i);
                     break;
                 }

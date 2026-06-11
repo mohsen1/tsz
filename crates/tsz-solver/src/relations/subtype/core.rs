@@ -195,6 +195,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// be observably distinct.
     /// Default: false.
     pub strict_readonly_identity: bool,
+    /// Whether split-accessor (divergent getter/setter) properties are checked
+    /// contravariantly on their write types during property compatibility.
+    ///
+    /// `tsc` relates object properties through their *read* types only;
+    /// setter/write types never participate in assignability, subtype, or
+    /// conditional-`extends` relations (TS 4.3 divergent accessors). Sound
+    /// Mode opts back into the sound contravariant write check.
+    /// Default: false (tsc parity).
+    pub check_split_accessor_writes: bool,
     /// Whether null/undefined are treated as separate types.
     /// Default: true (strict null checks).
     pub strict_null_checks: bool,
@@ -272,7 +281,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
     /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
-    pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
+    /// Value is `(result, stable)` where `stable` records whether the evaluation
+    /// converged without tripping a recursion/depth/budget limit (see
+    /// `evaluate_type_with_stability`).
+    pub(crate) eval_cache: FxHashMap<(TypeId, bool), (TypeId, bool)>,
     /// Apparent object shapes for primitive wrapper fallback.
     ///
     /// Primitive structural subtype checks can ask for the same wrapper shape
@@ -352,6 +364,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
             strict_readonly_identity: false,
+            check_split_accessor_writes: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
@@ -400,6 +413,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
             strict_readonly_identity: false,
+            check_split_accessor_writes: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
@@ -540,7 +554,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn cache_statistics(&self) -> SubtypeCheckerCacheStatistics {
         let eval_entries = self.eval_cache.len();
         let estimated_size_bytes =
-            eval_entries.saturating_mul(std::mem::size_of::<((TypeId, bool), TypeId)>());
+            eval_entries.saturating_mul(std::mem::size_of::<((TypeId, bool), (TypeId, bool))>());
         SubtypeCheckerCacheStatistics {
             eval_entries,
             estimated_size_bytes,

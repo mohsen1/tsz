@@ -708,6 +708,31 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
+    /// Resolve a lib symbol's `DefId`, verifying the def actually names
+    /// `expected_name`.
+    ///
+    /// Raw `SymbolId`s are binder-relative, and every lib-binder symbol
+    /// shares the `u32::MAX` declaration-file sentinel, so the raw-id
+    /// resolution in [`get_lib_def_id`](Self::get_lib_def_id) can answer with
+    /// a colliding def registered by a *different* lib binder for an
+    /// unrelated name (and `get_existing_def_id`'s name guard self-confirms
+    /// the collision because it derives the name from the first lib binder
+    /// owning the raw id). When the caller knows which name the symbol must
+    /// bind, verify the resolved def against it and, on mismatch, route
+    /// through the canonical name-keyed lib def resolution instead.
+    pub fn lib_def_id_verified(&self, expected_name: &str, sym_id: SymbolId) -> DefId {
+        let def_id = self.get_lib_def_id(sym_id);
+        if self
+            .definition_store
+            .get(def_id)
+            .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name)
+        {
+            def_id
+        } else {
+            self.get_canonical_lib_def_id(expected_name, sym_id)
+        }
+    }
+
     /// Cache type parameters for a canonical lib symbol (without body registration).
     ///
     /// Combines [`get_canonical_lib_def_id`] + [`insert_def_type_params`] into a
@@ -729,24 +754,40 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a lib type's DefId, type parameters, and body in one step.
     ///
-    /// Combines `get_lib_def_id` + `insert_def_type_params` +
+    /// Combines name-verified def resolution + `insert_def_type_params` +
     /// `register_def_auto_params_in_envs` into a single call, eliminating the
     /// repeated three-step pattern in `resolve_lib_type_by_name` (interface and
     /// type-alias branches) and `resolve_lib_type_with_params`.
     ///
+    /// `expected_name` is the bare name the resolved type binds (for
+    /// namespace-qualified lib types, the export name). The def resolution is
+    /// name-verified because this function *publishes* `body` into the shared
+    /// `DefinitionStore`: a raw-`SymbolId` resolution that collides across lib
+    /// binders would publish the body onto an unrelated def (the misdirected
+    /// write family the boxed-type identity fix closed).
+    ///
     /// Returns the `DefId` for subsequent use (e.g., creating `Lazy(DefId)`).
     pub fn register_lib_def_resolved(
         &self,
+        expected_name: &str,
         sym_id: SymbolId,
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) -> DefId {
-        let def_id = self.get_lib_def_id(sym_id);
+        let def_id = self.get_or_create_def_id_for_symbol_name(sym_id, expected_name);
         self.insert_def_type_params(def_id, params.clone());
         self.register_def_auto_params_in_envs(def_id, body, params);
 
-        if let Some(symbol) = self.binder.get_symbol(sym_id) {
-            let canonical_def_id = self.get_canonical_lib_def_id(&symbol.escaped_name, sym_id);
+        // Mirror onto the canonical name-keyed def when it differs, but only
+        // when the main binder's symbol at this raw id actually names
+        // `expected_name` — otherwise the raw id belongs to an unrelated
+        // main-binder symbol and the mirror would target a colliding def.
+        if self
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|symbol| symbol.escaped_name == expected_name)
+        {
+            let canonical_def_id = self.get_canonical_lib_def_id(expected_name, sym_id);
             if canonical_def_id != def_id {
                 let canonical_params = self.get_def_type_params(def_id).unwrap_or_default();
                 self.insert_def_type_params(canonical_def_id, canonical_params.clone());
@@ -861,6 +902,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Register a non-generic definition body in **both** type environments.
+    #[track_caller]
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
         let body_changed = self.definition_store.get_body(def_id) != Some(body);
         self.definition_store.set_body(def_id, body);
@@ -877,6 +919,7 @@ impl<'a> CheckerContext<'a> {
     /// atomic write so concurrent readers never observe a generic alias whose
     /// body is visible but whose parameter list is still missing (which would
     /// mis-instantiate every application of the alias).
+    #[track_caller]
     pub fn register_def_with_params_in_envs(
         &self,
         def_id: DefId,
@@ -905,6 +948,7 @@ impl<'a> CheckerContext<'a> {
     /// Register a definition body in **both** type environments, choosing
     /// `insert_def` or `insert_def_with_params` based on whether `params` is
     /// empty.
+    #[track_caller]
     pub fn register_def_auto_params_in_envs(
         &self,
         def_id: DefId,
