@@ -115,14 +115,13 @@ pub(in crate::intern::core) fn write_id_slot<T: Clone>(
     value: T,
     placeholder: impl FnOnce() -> T,
 ) {
-    if vec.len() < index {
-        let fill = placeholder();
-        vec.resize(index, fill);
-    }
-    if vec.len() == index {
-        vec.push(value);
-    } else {
-        vec[index] = value;
+    match vec.len().cmp(&index) {
+        std::cmp::Ordering::Less => {
+            vec.resize(index, placeholder());
+            vec.push(value);
+        }
+        std::cmp::Ordering::Equal => vec.push(value),
+        std::cmp::Ordering::Greater => vec[index] = value,
     }
 }
 
