@@ -188,11 +188,55 @@ impl<'a> CheckerState<'a> {
                         && symbol.import_name.as_deref() != Some("*")
                 })
         {
-            let alias_type = self.type_reference_symbol_type(local_sym_id);
-            if let Some(instance_type) =
-                self.instance_type_from_named_import_type_reference(alias_type)
-            {
-                return instance_type;
+            // `import { X } from ...` referenced in plain type position.
+            //
+            // For an imported CLASS the alias type can resolve to the class's
+            // constructor (static) side, so map constructor -> instance. That
+            // conversion must NOT run when the import target declares its own
+            // type meaning (type alias or interface): the declared type IS the
+            // type-position meaning, and unwrapping a constructor-type alias
+            // body (`type C = new (a: A) => I`) to its instance side drops the
+            // construct signature (false TS2349/TS2351 on imported constructor
+            // aliases; kysely `isNoResultErrorConstructor` family).
+            let mut visited = crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
+            let alias_target =
+                self.resolve_alias_symbol(local_sym_id, &mut visited)
+                    .map(|target_sym_id| {
+                        let flags = self
+                            .get_cross_file_symbol(target_sym_id)
+                            .map(|s| s.flags)
+                            .or_else(|| self.ctx.binder.get_symbol(target_sym_id).map(|s| s.flags))
+                            .unwrap_or(0);
+                        (target_sym_id, flags)
+                    });
+            let target_owns_declared_type = alias_target.is_some_and(|(_, flags)| {
+                flags & (symbol_flags::TYPE_ALIAS | symbol_flags::INTERFACE) != 0
+                    && flags & symbol_flags::CLASS == 0
+            });
+            if !target_owns_declared_type {
+                let alias_type = self.type_reference_symbol_type(local_sym_id);
+                if let Some(instance_type) =
+                    self.instance_type_from_named_import_type_reference(alias_type)
+                {
+                    return instance_type;
+                }
+                // Imported non-generic CLASS in type position where
+                // `type_reference_symbol_type` already produced the class
+                // INSTANCE type: return it directly. Falling through would
+                // re-lower the reference into a `Lazy(DefId)` minted for the
+                // import-alias symbol; that `DefId` has no class-instance
+                // environment entry, so relation-time resolution can land on
+                // the class's static side and fail with "Property 'prototype'
+                // is missing" (kysely order-by-parser / create-table-builder).
+                if let Some((target_sym_id, flags)) = alias_target
+                    && flags & symbol_flags::CLASS != 0
+                    && self.get_type_params_for_symbol(target_sym_id).is_empty()
+                    && alias_type != TypeId::ERROR
+                    && alias_type != TypeId::UNKNOWN
+                    && alias_type != TypeId::ANY
+                {
+                    return alias_type;
+                }
             }
         }
         let has_type_args = type_ref
