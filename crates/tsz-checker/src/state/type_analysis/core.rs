@@ -1324,6 +1324,23 @@ impl<'a> CheckerState<'a> {
                 .zip(self.ctx.get_existing_def_id(sym_id))
                 .is_some_and(|(ld, od)| ld == od)
         };
+        // A class symbol queried in value position while its own instance
+        // type is still being computed (`class_instance_resolution_set`
+        // contains it, e.g. a static self-reference like
+        // `readonly X = C.Y` forcing `typeof C` mid-build) yields a
+        // provisional constructor type whose construct-signature return is
+        // the Phase-0 prescan instance shape — missing computed/symbol-keyed
+        // members and heritage. Caching that would leak the partial instance
+        // into later `new C()` results (false TS7053/TS2739/TS2741). Only
+        // results that actually embed the provisional instance are dropped;
+        // healthy in-window results stay cacheable (perf on large
+        // self-referential classes).
+        let class_instance_resolution_in_flight = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
+            && self.ctor_result_embeds_inflight_instance(sym_id, result);
         if let Some(file_idx) = cross_file_owner_idx {
             self.ctx.cache_cross_file_symbol_type(
                 sym_id,
@@ -1332,7 +1349,8 @@ impl<'a> CheckerState<'a> {
                 type_params.clone(),
             );
         } else {
-            let result_cached_locally = if result_is_lazy_to_self
+            let result_cached_locally = if (result_is_lazy_to_self
+                || class_instance_resolution_in_flight)
                 && self
                     .ctx
                     .binder
@@ -1360,7 +1378,15 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: We use the type_params returned by compute_type_of_symbol
         // because those are the same TypeIds used when lowering the type body.
         // Calling get_type_params_for_symbol would create fresh TypeIds that don't match.
-        if use_local_symbol_state && result != TypeId::ANY && result != TypeId::ERROR {
+        if use_local_symbol_state
+            && result != TypeId::ANY
+            && result != TypeId::ERROR
+            // Do not register provisional in-flight class constructor types
+            // (see `class_instance_resolution_in_flight` above): the env entry
+            // would pin the prescan instance shape for Lazy/Application
+            // resolution even after the real instance type is finished.
+            && !class_instance_resolution_in_flight
+        {
             // For class symbols, we need to cache BOTH the constructor type (for value position)
             // and the instance type (for type position with typeof/TypeQuery resolution).
             let class_env_entry = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {

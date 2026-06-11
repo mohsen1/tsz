@@ -176,6 +176,7 @@ impl<'a> SoundLawyer<'a> {
         checker.allow_void_return = false; // Strict void handling
         checker.allow_bivariant_rest = false; // No bivariant rest params
         checker.disable_method_bivariance = true; // Methods are also contravariant
+        checker.check_split_accessor_writes = true; // Setter writes are contravariant
         checker.strict_null_checks = self.config.strict_null_checks;
         checker.exact_optional_property_types = self.config.exact_optional_property_types;
         checker.no_unchecked_indexed_access = self.config.no_unchecked_indexed_access;

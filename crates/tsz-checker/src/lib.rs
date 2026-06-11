@@ -369,6 +369,9 @@ mod rest_parameter_tests;
 #[path = "../tests/rest_tuple_contextual_typing_tests.rs"]
 mod rest_tuple_contextual_typing_tests;
 #[cfg(test)]
+#[path = "tests/return_alias_unknown_eval_assignability_tests.rs"]
+mod return_alias_unknown_eval_assignability_tests;
+#[cfg(test)]
 #[path = "tests/return_relation_routing_arch_tests.rs"]
 mod return_relation_routing_arch_tests;
 #[cfg(test)]
@@ -725,6 +728,9 @@ mod direct_generic_return_tests;
 #[cfg(test)]
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
+#[cfg(test)]
+#[path = "tests/display_normalization_budget_tests.rs"]
+mod display_normalization_budget_tests;
 #[cfg(test)]
 #[path = "tests/do_while_exit_narrowing_tests.rs"]
 mod do_while_exit_narrowing_tests;
@@ -1331,6 +1337,9 @@ mod union_source_literal_target_display_tests;
 #[cfg(test)]
 #[path = "tests/unique_symbol_assignment_ts2322_tests.rs"]
 mod unique_symbol_assignment_ts2322_tests;
+#[cfg(test)]
+#[path = "tests/unique_symbol_member_lookup_family_tests.rs"]
+mod unique_symbol_member_lookup_family_tests;
 #[cfg(test)]
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]
 mod variadic_tuple_alias_display_tests;

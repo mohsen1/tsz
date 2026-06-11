@@ -195,6 +195,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// be observably distinct.
     /// Default: false.
     pub strict_readonly_identity: bool,
+    /// Whether split-accessor (divergent getter/setter) properties are checked
+    /// contravariantly on their write types during property compatibility.
+    ///
+    /// `tsc` relates object properties through their *read* types only;
+    /// setter/write types never participate in assignability, subtype, or
+    /// conditional-`extends` relations (TS 4.3 divergent accessors). Sound
+    /// Mode opts back into the sound contravariant write check.
+    /// Default: false (tsc parity).
+    pub check_split_accessor_writes: bool,
     /// Whether null/undefined are treated as separate types.
     /// Default: true (strict null checks).
     pub strict_null_checks: bool,
@@ -355,6 +364,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
             strict_readonly_identity: false,
+            check_split_accessor_writes: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
@@ -403,6 +413,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
             strict_readonly_identity: false,
+            check_split_accessor_writes: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,

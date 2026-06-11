@@ -697,6 +697,9 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Fail-safe work-budget scope: the recursive failure-reason tree of
+        // one diagnostic shares a single budget (issue #13040).
+        let _budget_scope = crate::error_reporter::display_budget::DisplayBudgetScope::enter();
         let source = self.recover_unknown_array_source_type_for_display(source, idx, depth);
         let (start, length) = self
             .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)

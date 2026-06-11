@@ -166,12 +166,11 @@ pub struct TypeInterner {
     /// The answer is immutable per `TypeId` and avoids repeated subtree walks
     /// on dense recursive mapped/conditional/index-access expansions.
     pub(crate) contains_conditional_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Root-result cache for the depth-limited
+    /// Per-`TypeId` cache for the narrow
     /// `visitor_predicates::contains_type_parameters` walk
-    /// (`TypeParameter | Infer` predicate). The walk always starts from a
-    /// fresh guard, so the answer is a pure function of the root `TypeId`
-    /// and can be shared project-wide. Recursive conditional evaluation
-    /// re-asks this for the same check/extends roots constantly.
+    /// (`TypeParameter | Infer` predicate). Recursive conditional evaluation
+    /// and instantiation gates re-ask this for the same shared subtrees
+    /// constantly.
     pub(crate) contains_param_or_infer_root_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// Root-result cache for the depth-limited
     /// `contains_generic_type_parameters_db` walk
@@ -345,7 +344,7 @@ pub struct TypePredicateCacheStatistics {
     pub contains_resolver_dependent_cache_entries: usize,
     /// Number of memoized conditional-type containment predicate results.
     pub contains_conditional_cache_entries: usize,
-    /// Number of memoized depth-limited param-or-infer root walk results.
+    /// Number of memoized narrow param-or-infer containment results.
     pub contains_param_or_infer_root_cache_entries: usize,
     /// Number of memoized depth-limited generic-params root walk results.
     pub contains_generic_params_root_cache_entries: usize,
