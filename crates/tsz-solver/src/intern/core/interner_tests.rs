@@ -151,3 +151,152 @@ fn same_name_type_parameter_replacement_dedups_non_adjacent_members() {
 
     assert_eq!(&*interner.type_list(list_id), &[constrained_t, u]);
 }
+
+/// Append-protocol regression tests for #13046: ids are allocated by
+/// `fetch_add` before the storage lock is taken, so writers can reach the
+/// lock out of id order. The old while-`push` backfill let an
+/// earlier-arriving higher id claim a later-arriving lower id's slot,
+/// silently corrupting `get(id)` for the rest of the session.
+mod append_protocol {
+    use super::storage::write_id_slot;
+    use super::*;
+    use std::sync::Barrier;
+    use std::thread;
+
+    const THREADS: usize = 8;
+    const PER_THREAD: u32 = 2_000;
+
+    #[test]
+    fn write_id_slot_round_trips_out_of_order_arrivals() {
+        let mut vec: Vec<u32> = Vec::new();
+        // A higher id reaches the lock first; lower ids arrive later and
+        // must still land in their own slots.
+        write_id_slot(&mut vec, 5, 50, &u32::MAX);
+        write_id_slot(&mut vec, 1, 10, &u32::MAX);
+        write_id_slot(&mut vec, 3, 30, &u32::MAX);
+        assert_eq!(vec.len(), 6);
+        assert_eq!((vec[1], vec[3], vec[5]), (10, 30, 50));
+        // Unwritten gaps hold the placeholder, never another id's data.
+        assert_eq!((vec[0], vec[2], vec[4]), (u32::MAX, u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn slice_interner_ids_round_trip_under_concurrent_interning() {
+        let interner = ConcurrentSliceInterner::<u32>::new();
+        let barrier = Barrier::new(THREADS);
+        thread::scope(|s| {
+            let handles: Vec<_> = (0..THREADS as u32)
+                .map(|t| {
+                    let (interner, barrier) = (&interner, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        (0..PER_THREAD)
+                            .map(|i| (interner.intern(&[t, i]), [t, i]))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for handle in handles {
+                for (id, slice) in handle.join().expect("intern thread panicked") {
+                    let stored = interner.get(id).expect("interned id must resolve");
+                    assert_eq!(
+                        &*stored, &slice,
+                        "id {id} resolved to another writer's slice"
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn value_interner_ids_round_trip_under_concurrent_interning() {
+        let interner = ConcurrentValueInterner::<u64>::new();
+        let barrier = Barrier::new(THREADS);
+        thread::scope(|s| {
+            let handles: Vec<_> = (0..THREADS as u64)
+                .map(|t| {
+                    let (interner, barrier) = (&interner, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        (0..u64::from(PER_THREAD))
+                            .map(|i| {
+                                let value = (t << 32) | i;
+                                (interner.intern(value), value)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for handle in handles {
+                for (id, value) in handle.join().expect("intern thread panicked") {
+                    assert_eq!(
+                        interner.get_copy(id),
+                        Some(value),
+                        "id {id} resolved to another writer's value"
+                    );
+                }
+            }
+        });
+    }
+
+    /// Threads race on the same value first (losers leak their allocated
+    /// ids), then intern unique values; leaked ids must not shift later
+    /// slots out of alignment.
+    #[test]
+    fn value_interner_duplicate_race_keeps_later_ids_aligned() {
+        let interner = ConcurrentValueInterner::<u64>::new();
+        let barrier = Barrier::new(THREADS);
+        thread::scope(|s| {
+            let handles: Vec<_> = (0..THREADS as u64)
+                .map(|t| {
+                    let (interner, barrier) = (&interner, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        let shared = interner.intern(u64::MAX);
+                        let unique = (t + 1) * 10_000;
+                        (shared, interner.intern(unique), unique)
+                    })
+                })
+                .collect();
+            for handle in handles {
+                let (shared, unique_id, unique) = handle.join().expect("intern thread panicked");
+                assert_eq!(interner.get_copy(shared), Some(u64::MAX));
+                assert_eq!(interner.get_copy(unique_id), Some(unique));
+            }
+        });
+    }
+
+    #[test]
+    fn type_interner_lookup_round_trips_under_concurrent_interning() {
+        let interner = TypeInterner::new();
+        let barrier = Barrier::new(THREADS);
+        thread::scope(|s| {
+            let handles: Vec<_> = (0..THREADS as u32)
+                .map(|t| {
+                    let (interner, barrier) = (&interner, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        (0..PER_THREAD)
+                            .map(|i| {
+                                let key = TypeData::Array(TypeId(
+                                    TypeId::FIRST_USER + t * PER_THREAD + i,
+                                ));
+                                (interner.intern(key), key)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for handle in handles {
+                for (id, key) in handle.join().expect("intern thread panicked") {
+                    assert_eq!(
+                        interner.lookup(id),
+                        Some(key),
+                        "id {id:?} resolved to another writer's TypeData"
+                    );
+                    assert_eq!(interner.intern(key), id, "re-intern must be stable");
+                }
+            }
+        });
+    }
+}
