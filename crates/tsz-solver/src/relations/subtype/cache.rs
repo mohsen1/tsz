@@ -812,9 +812,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .get_display_alias(source)
                     .and_then(|alias| application_id(self.interner, alias))
             });
+            // When the TARGET also lost its Application identity to evaluation
+            // (e.g. a parameter type like `Kysely<any>` already expanded to an
+            // Object), recover it via display provenance as well — but use it
+            // only for the same-base all-`any`-target-args lawyer shortcut.
+            // Full variance checking on a provenance-recovered target is not
+            // attempted: provenance is display-grade, so it is only trusted
+            // for the permissive `X<...> <: X<any, ..., any>` direction.
+            let t_app_id_for_any_shortcut = t_app_id.or_else(|| {
+                self.interner
+                    .get_display_alias(target)
+                    .and_then(|alias| application_id(self.interner, alias))
+            });
             let variance_result =
                 if let (Some(s_app_id), Some(t_app_id)) = (s_app_id_for_variance, t_app_id) {
                     self.try_variance_fast_path(s_app_id, t_app_id)
+                } else if let Some(t_app_id) = t_app_id_for_any_shortcut {
+                    self.try_same_base_all_any_target_args(source, s_app_id_for_variance, t_app_id)
                 } else if let Some(s_app_id) = s_app_id {
                     // Source is Application, target might be Union containing an Application.
                     // This handles optional properties where target is App<X> | undefined.
