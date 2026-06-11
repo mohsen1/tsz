@@ -30,6 +30,138 @@ fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R 
     r
 }
 
+#[inline]
+fn can_skip_concrete_instantiation(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut visited = FxHashSet::default();
+    can_skip_concrete_instantiation_inner(interner, type_id, &mut visited)
+}
+
+fn can_skip_concrete_instantiation_inner(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    visited: &mut FxHashSet<TypeId>,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return true;
+    }
+    if !visited.insert(type_id) {
+        return true;
+    }
+
+    let Some(key) = interner.lookup(type_id) else {
+        return true;
+    };
+
+    match key {
+        TypeData::TypeParameter(_)
+        | TypeData::Infer(_)
+        | TypeData::Conditional(_)
+        | TypeData::Mapped(_)
+        | TypeData::IndexAccess(_, _)
+        | TypeData::KeyOf(_)
+        | TypeData::TemplateLiteral(_)
+        | TypeData::StringIntrinsic { .. } => false,
+        TypeData::Intrinsic(_)
+        | TypeData::Literal(_)
+        | TypeData::UnresolvedTypeName(_)
+        | TypeData::Error
+        | TypeData::Lazy(_)
+        | TypeData::Recursive(_)
+        | TypeData::BoundParameter(_)
+        | TypeData::TypeQuery(_)
+        | TypeData::UniqueSymbol(_)
+        | TypeData::ModuleNamespace(_)
+        | TypeData::ThisType => true,
+        TypeData::Enum(_, member_type)
+        | TypeData::Array(member_type)
+        | TypeData::ReadonlyType(member_type)
+        | TypeData::NoInfer(member_type) => {
+            can_skip_concrete_instantiation_inner(interner, member_type, visited)
+        }
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => interner
+            .type_list(list_id)
+            .iter()
+            .copied()
+            .all(|member| can_skip_concrete_instantiation_inner(interner, member, visited)),
+        TypeData::Tuple(tuple_id) => interner
+            .tuple_list(tuple_id)
+            .iter()
+            .all(|elem| can_skip_concrete_instantiation_inner(interner, elem.type_id, visited)),
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            shape.properties.iter().all(|prop| {
+                can_skip_concrete_instantiation_inner(interner, prop.type_id, visited)
+                    && can_skip_concrete_instantiation_inner(interner, prop.write_type, visited)
+            }) && shape.string_index.as_ref().is_none_or(|idx| {
+                can_skip_concrete_instantiation_inner(interner, idx.key_type, visited)
+                    && can_skip_concrete_instantiation_inner(interner, idx.value_type, visited)
+            }) && shape.number_index.as_ref().is_none_or(|idx| {
+                can_skip_concrete_instantiation_inner(interner, idx.key_type, visited)
+                    && can_skip_concrete_instantiation_inner(interner, idx.value_type, visited)
+            })
+        }
+        TypeData::Function(shape_id) => {
+            let shape = interner.function_shape(shape_id);
+            shape.type_params.is_empty()
+                && shape.params.iter().all(|param| {
+                    can_skip_concrete_instantiation_inner(interner, param.type_id, visited)
+                })
+                && shape.this_type.is_none_or(|this_type| {
+                    can_skip_concrete_instantiation_inner(interner, this_type, visited)
+                })
+                && can_skip_concrete_instantiation_inner(interner, shape.return_type, visited)
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = interner.callable_shape(shape_id);
+            let signatures_are_identity = shape
+                .call_signatures
+                .iter()
+                .chain(shape.construct_signatures.iter())
+                .all(|sig| {
+                    sig.type_params.is_empty()
+                        && sig.params.iter().all(|param| {
+                            can_skip_concrete_instantiation_inner(interner, param.type_id, visited)
+                        })
+                        && sig.this_type.is_none_or(|this_type| {
+                            can_skip_concrete_instantiation_inner(interner, this_type, visited)
+                        })
+                        && can_skip_concrete_instantiation_inner(interner, sig.return_type, visited)
+                        && sig.type_predicate.is_none_or(|predicate| {
+                            predicate.type_id.is_none_or(|predicate_type| {
+                                can_skip_concrete_instantiation_inner(
+                                    interner,
+                                    predicate_type,
+                                    visited,
+                                )
+                            })
+                        })
+                });
+            signatures_are_identity
+                && shape.properties.iter().all(|prop| {
+                    can_skip_concrete_instantiation_inner(interner, prop.type_id, visited)
+                        && can_skip_concrete_instantiation_inner(interner, prop.write_type, visited)
+                })
+                && shape.string_index.as_ref().is_none_or(|idx| {
+                    can_skip_concrete_instantiation_inner(interner, idx.key_type, visited)
+                        && can_skip_concrete_instantiation_inner(interner, idx.value_type, visited)
+                })
+                && shape.number_index.as_ref().is_none_or(|idx| {
+                    can_skip_concrete_instantiation_inner(interner, idx.key_type, visited)
+                        && can_skip_concrete_instantiation_inner(interner, idx.value_type, visited)
+                })
+        }
+        TypeData::Application(app_id) => {
+            let app = interner.type_application(app_id);
+            can_skip_concrete_instantiation_inner(interner, app.base, visited)
+                && app
+                    .args
+                    .iter()
+                    .copied()
+                    .all(|arg| can_skip_concrete_instantiation_inner(interner, arg, visited))
+        }
+    }
+}
+
 /// Shared body for the option-only wrappers
 /// (`instantiate_type_preserving_cached`, `instantiate_type_preserving_meta_cached`,
 /// `instantiate_type_with_infer_cached`).
@@ -54,9 +186,6 @@ fn instantiate_with_options_cached(
         return type_id;
     }
     if substitution.is_empty() {
-        return type_id;
-    }
-    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return type_id;
     }
     instantiate_with_request_cached(
@@ -168,9 +297,6 @@ pub(crate) fn instantiate_type_with_shadowed(
     if substitution.is_empty() {
         return type_id;
     }
-    if !crate::visitor::contains_type_parameters(interner, type_id) {
-        return type_id;
-    }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     instantiator.shadowed.extend_from_slice(shadowed_params);
     let result = instantiator.instantiate(type_id);
@@ -199,9 +325,6 @@ pub(crate) fn instantiate_type_preserving_with_declared(
     declared_type: TypeId,
 ) -> TypeId {
     if type_id.is_intrinsic() {
-        return type_id;
-    }
-    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -236,35 +359,33 @@ pub fn instantiate_type_cached(
     if substitution.is_empty() {
         return type_id;
     }
-    match interner.lookup(type_id) {
-        // Fast path: TypeParameter directly in the substitution — return immediately.
-        // This is the most common leaf case in mapped type template instantiation.
-        // MUST run BEFORE any CanonicalSubst construction so we don't pay
-        // hash/alloc for trivial leaf substitutions.
-        Some(TypeData::TypeParameter(info)) => {
-            if let Some(result) = substitution.get(info.name) {
-                return result;
-            }
-        }
-        _ => {}
+    // Fast path: TypeParameter directly in the substitution — return immediately.
+    // This is the most common leaf case in mapped type template instantiation.
+    // MUST run BEFORE any CanonicalSubst construction so we don't pay
+    // hash/alloc for trivial leaf substitutions.
+    if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id)
+        && let Some(result) = substitution.get(info.name)
+    {
+        return result;
     }
-    // Concrete identity short-circuit — no cache key construction needed.
-    if !crate::visitor::contains_type_parameters(interner, type_id) {
+    // Fast path: IndexAccess(T, P) — the most common mapped type template pattern.
+    // Recursively instantiate obj and idx without creating a TypeInstantiator.
+    // Same reasoning as above: cache-key construction MUST NOT happen for this case.
+    if let Some(TypeData::IndexAccess(obj, idx)) = interner.lookup(type_id) {
+        let new_obj = instantiate_type_cached(interner, query_db, obj, substitution);
+        let new_idx = instantiate_type_cached(interner, query_db, idx, substitution);
+        if new_obj == obj && new_idx == idx {
+            return type_id;
+        }
+        return interner.index_access(new_obj, new_idx);
+    }
+    // Concrete identity short-circuit — no cache key construction needed. This
+    // is intentionally narrower than `!contains_type_parameters`: the TSZ
+    // instantiator also normalizes concrete meta-types (`keyof`, indexed
+    // access, mapped, template, string-intrinsic), so those shapes must still
+    // walk even when an unrelated substitution cannot affect their leaves.
+    if can_skip_concrete_instantiation(interner, type_id) {
         return type_id;
-    }
-    match interner.lookup(type_id) {
-        // Fast path: IndexAccess(T, P) — the most common mapped type template pattern.
-        // Recursively instantiate obj and idx without creating a TypeInstantiator.
-        // Same reasoning as above: cache-key construction MUST NOT happen for this case.
-        Some(TypeData::IndexAccess(obj, idx)) => {
-            let new_obj = instantiate_type_cached(interner, query_db, obj, substitution);
-            let new_idx = instantiate_type_cached(interner, query_db, idx, substitution);
-            if new_obj == obj && new_idx == idx {
-                return type_id;
-            }
-            return interner.index_access(new_obj, new_idx);
-        }
-        _ => {}
     }
 
     instantiate_with_request_cached(
@@ -393,9 +514,6 @@ pub fn instantiate_type_with_depth_status(
         return (type_id, false);
     }
     if substitution.is_empty() {
-        return (type_id, false);
-    }
-    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return (type_id, false);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -531,9 +649,6 @@ pub fn instantiate_generic_cached(
     }
     let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
     if substitution.is_empty() || substitution.is_identity_for(interner, type_params) {
-        return type_id;
-    }
-    if !crate::visitor::contains_type_parameters(interner, type_id) {
         return type_id;
     }
     instantiate_with_request_cached(

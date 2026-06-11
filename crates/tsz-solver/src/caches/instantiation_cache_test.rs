@@ -353,10 +353,7 @@ fn concrete_body_short_circuits_before_cache_with_non_empty_substitution() {
 
     for _ in 0..16 {
         let direct = instantiate_type_cached(&interner, Some(&db), concrete_body, &subst);
-        let preserving =
-            instantiate_type_preserving_cached(&interner, Some(&db), concrete_body, &subst);
         assert_eq!(direct, concrete_body);
-        assert_eq!(preserving, concrete_body);
     }
 
     let stats1 = db.statistics();
@@ -371,39 +368,84 @@ fn concrete_body_short_circuits_before_cache_with_non_empty_substitution() {
 }
 
 #[test]
-fn concrete_generic_body_short_circuits_before_cache() {
-    // `instantiate_generic_cached` still builds a substitution from the
-    // call-site type arguments, but a body with no type parameters is identity
-    // and should avoid the instantiation cache entirely.
+fn concrete_body_with_meta_type_still_walks_and_caches() {
+    // `instantiate_type_cached` can only skip concrete bodies that are true
+    // identity walks. Concrete meta-types still need the instantiator's
+    // normalization pass; otherwise an unrelated substitution would leave
+    // nested `{ a: string }["a"]` raw.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
     let (t_atom, _) = type_param(&interner, "T");
-    let concrete_body = object_with(&interner, TypeId::STRING);
+    let source = object_with(&interner, TypeId::STRING);
+    let indexed = interner.index_access(source, interner.literal_string("a"));
+    let concrete_body = object_with(&interner, indexed);
+    let expected = object_with(&interner, TypeId::STRING);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_atom, TypeId::NUMBER);
+
+    let stats0 = db.statistics();
+
+    let first = instantiate_type_cached(&interner, Some(&db), concrete_body, &subst);
+    let second = instantiate_type_cached(&interner, Some(&db), concrete_body, &subst);
+
+    assert_eq!(first, expected);
+    assert_eq!(second, expected);
+
+    let stats1 = db.statistics();
+    assert!(
+        stats1.instantiation_cache_misses > stats0.instantiation_cache_misses,
+        "first concrete meta-type normalization must probe the cache"
+    );
+    assert!(
+        stats1.instantiation_cache_hits > stats0.instantiation_cache_hits,
+        "second concrete meta-type normalization must hit the cache"
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_keeps_concrete_meta_type_normalization() {
+    // `instantiate_generic_cached` is also the entry point for alias/application
+    // body normalization. Even when a body contains no type parameters, it must
+    // still run the staged instantiator so concrete meta-types such as
+    // `{ a: string }["a"]` reduce the same way as the non-short-circuited path.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, _) = type_param(&interner, "T");
+    let source = object_with(&interner, TypeId::STRING);
+    let concrete_body = interner.index_access(source, interner.literal_string("a"));
     let type_params = [param_info(t_atom)];
     let type_args = [TypeId::NUMBER];
 
     let stats0 = db.statistics();
 
-    for _ in 0..16 {
-        let result = instantiate_generic_cached(
-            &interner,
-            Some(&db),
-            concrete_body,
-            &type_params,
-            &type_args,
-        );
-        assert_eq!(result, concrete_body);
-    }
+    let first = instantiate_generic_cached(
+        &interner,
+        Some(&db),
+        concrete_body,
+        &type_params,
+        &type_args,
+    );
+    let second = instantiate_generic_cached(
+        &interner,
+        Some(&db),
+        concrete_body,
+        &type_params,
+        &type_args,
+    );
+
+    assert_eq!(first, TypeId::STRING);
+    assert_eq!(second, TypeId::STRING);
 
     let stats1 = db.statistics();
-    assert_eq!(
-        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
-        "generic concrete identity must NOT populate the instantiation cache"
+    assert!(
+        stats1.instantiation_cache_misses > stats0.instantiation_cache_misses,
+        "first generic concrete meta-type normalization must probe the cache"
     );
-    assert_eq!(
-        stats1.instantiation_cache_misses, stats0.instantiation_cache_misses,
-        "generic concrete identity must NOT probe the instantiation cache"
+    assert!(
+        stats1.instantiation_cache_hits > stats0.instantiation_cache_hits,
+        "second generic concrete meta-type normalization must hit the cache"
     );
 }
 
