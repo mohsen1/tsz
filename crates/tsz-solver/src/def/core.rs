@@ -19,6 +19,7 @@ mod definition_info;
 
 pub use content_addressed::ContentAddressedDefIds;
 
+use super::publication_census;
 #[cfg(test)]
 use crate::types::ObjectFlags;
 use crate::types::{ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
@@ -364,6 +365,16 @@ pub struct DefinitionStore {
     /// matching tsc's collapse of the alias to the error type.
     depth_poisoned_defs: DefDashSet<DefId>,
 
+    /// Mutation-isolation campaign prototype: defs whose shared-store body is
+    /// **published once** — after the first body materialization, later
+    /// publications carrying a *different* body form are dropped instead of
+    /// overwriting (first-writer-wins instead of last-writer-wins). Used to
+    /// measure whether a def class can be pre-materialized and kept immutable
+    /// during per-file checking without diagnostic drift. Populated only when
+    /// the `TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE` experiment is enabled by the
+    /// driver; empty (and skipped via a cheap `is_empty` gate) otherwise.
+    publish_once_defs: DefDashSet<DefId>,
+
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
     /// Populated during `register()` when the `DefinitionInfo` has a `file_id`.
@@ -623,6 +634,7 @@ impl DefinitionStore {
             computed_alias_bodies: DefDashSet::default(),
             directly_named_alias_bodies: DefDashSet::default(),
             depth_poisoned_defs: DefDashSet::default(),
+            publish_once_defs: DefDashSet::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
@@ -856,6 +868,7 @@ impl DefinitionStore {
     /// `get_or_create_def_id` without a full `register` call), a minimal
     /// entry is created so that cross-file type resolution can find the
     /// body via `get_body`.
+    #[track_caller]
     pub fn set_body(&self, id: DefId, body: TypeId) {
         self.set_body_with_params(id, body, None);
     }
@@ -872,12 +885,58 @@ impl DefinitionStore {
     /// empty/stale, mis-instantiating every application of the alias
     /// (false `TS2344` storms under parallel fresh checking; sequential
     /// checking never interleaves a reader between the two writes).
+    #[track_caller]
     pub fn set_body_with_params(
         &self,
         id: DefId,
         body: TypeId,
         params: Option<Vec<TypeParamInfo>>,
     ) {
+        // Mutation-isolation prototype: defs marked publish-once keep their
+        // first published body; a later attempt to overwrite it with a
+        // *different* body form is dropped (the shared store stays immutable
+        // for that def after first materialization). Identical republication
+        // is allowed through (it is a no-op write).
+        let suppressed = !self.publish_once_defs.is_empty()
+            && self.publish_once_defs.contains(&id)
+            && self
+                .definitions
+                .get(&id)
+                .and_then(|entry| entry.body)
+                .is_some_and(|prev| prev != body);
+        // Mutation-isolation campaign census (env-gated, see
+        // `publication_census`): classify this publication against the
+        // pre-write entry state with caller attribution.
+        if publication_census::census_enabled() {
+            let caller = std::panic::Location::caller();
+            let (outcome, kind, name, file_id) = match self.definitions.get(&id) {
+                Some(entry) => {
+                    let params_changed = params
+                        .as_ref()
+                        .is_some_and(|new_params| *new_params != entry.type_params);
+                    (
+                        if suppressed {
+                            publication_census::PublicationOutcome::SuppressedDifferentBody
+                        } else {
+                            publication_census::classify(entry.body, body, params_changed, true)
+                        },
+                        Some(entry.kind),
+                        entry.name,
+                        entry.file_id,
+                    )
+                }
+                None => (
+                    publication_census::classify(None, body, false, false),
+                    None,
+                    Atom::NONE,
+                    None,
+                ),
+            };
+            publication_census::record_publication(id, kind, name, file_id, body, outcome, caller);
+        }
+        if suppressed {
+            return;
+        }
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             if let Some(params) = params {
                 if entry.kind == DefKind::TypeAlias
@@ -927,6 +986,39 @@ impl DefinitionStore {
             );
             self.bump_generation();
         }
+    }
+
+    /// Mutation-isolation campaign prototype: mark every **interface**
+    /// definition that does not originate from a program source file (lib
+    /// binder symbols carry the binder's "no declaration file" sentinel
+    /// index) as publish-once. After each such def's first body
+    /// materialization, later publications with a different body form are
+    /// dropped, keeping the shared store immutable for the class while
+    /// per-file checkers continue to use their own `TypeEnvironment` bodies.
+    ///
+    /// Returns the number of definitions marked. Driver-invoked only when the
+    /// `TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE` experiment is enabled.
+    pub fn mark_non_program_interface_defs_publish_once(&self) -> usize {
+        /// `tsz_binder` symbols without a program declaration file (every
+        /// lib-binder symbol) carry `u32::MAX` as `decl_file_idx`.
+        const NON_PROGRAM_FILE_SENTINEL: u32 = u32::MAX;
+        let mut marked = 0usize;
+        for entry in &self.definitions {
+            let info = entry.value();
+            if info.kind == DefKind::Interface && info.file_id == Some(NON_PROGRAM_FILE_SENTINEL) {
+                self.publish_once_defs.insert(*entry.key());
+                marked += 1;
+            }
+        }
+        marked
+    }
+
+    /// Mutation-isolation campaign prototype: mark a single def publish-once
+    /// **after** its current body, so the form just published becomes the
+    /// frozen one (used to freeze at the *finalized* lib-body publication
+    /// point rather than at the first partial materialization).
+    pub fn mark_publish_once(&self, id: DefId) {
+        self.publish_once_defs.insert(id);
     }
 
     /// Mark a type-alias `DefId` as having an unconditionally-infinite

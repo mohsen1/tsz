@@ -971,6 +971,26 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             ),
         );
         shared_store.init_file_locks(program.files.len());
+        // Mutation-isolation campaign prototype: keep lib interface bodies
+        // immutable in the shared store after first materialization
+        // (first-writer-wins). Sequential checking order makes the first
+        // writer deterministic; the experiment measures republication
+        // suppression + diagnostic parity for this def class before the
+        // campaign promotes it to a pre-materialization pass.
+        // Two variants: `first` (default) freezes every lib interface def at
+        // its first body write; `finalize` lets the checker freeze each def
+        // at its finalized-body publication point instead (see
+        // `register_finalized_lib_body`).
+        match std::env::var("TSZ_EXPERIMENT_LIB_DEF_PUBLISH_ONCE") {
+            Ok(value) if value == "finalize" => {
+                tracing::info!("publish-once experiment: freeze-at-finalize variant");
+            }
+            Ok(_) => {
+                let marked = shared_store.mark_non_program_interface_defs_publish_once();
+                tracing::info!(marked, "publish-once experiment: lib interface defs marked");
+            }
+            Err(_) => {}
+        }
         program_context.shared_definition_store = Some(shared_store);
     }
 
@@ -1799,6 +1819,41 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     } else {
         None
     };
+
+    // Mutation-isolation campaign census dump (env-gated, see
+    // `tsz_solver::def::publication_census`). The driver owns name
+    // resolution (shared `TypeInterner` atoms, program file table) and
+    // file IO; when `TSZ_DEF_PUBLICATION_CENSUS` names a path the report
+    // is written there, otherwise it goes to the tracing stream.
+    if let Some(report) = tsz_solver::def::publication_census::dump_to_string(
+        &|atom| program.type_interner.resolve_atom(atom),
+        &|file_id| {
+            program
+                .files
+                .get(file_id as usize)
+                .map_or_else(|| format!("<file#{file_id}>"), |f| f.file_name.clone())
+        },
+        &|type_id| {
+            tsz_solver::def::publication_census::describe_type_shallow(
+                &program.type_interner,
+                type_id,
+            )
+        },
+    ) {
+        let dest = std::env::var("TSZ_DEF_PUBLICATION_CENSUS").unwrap_or_default();
+        if dest.contains('/') {
+            if let Err(err) = std::fs::write(&dest, &report) {
+                tracing::warn!(
+                    target: "def_publication_census",
+                    %err,
+                    path = %dest,
+                    "failed to write census report"
+                );
+            }
+        } else {
+            tracing::info!(target: "def_publication_census", "\n{report}");
+        }
+    }
 
     CollectDiagnosticsResult {
         diagnostics,
