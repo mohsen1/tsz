@@ -124,6 +124,20 @@ fn parse_test_file_discards_preamble_before_first_filename() {
 }
 
 #[test]
+fn parse_test_file_accepts_cr_only_line_endings() {
+    let content = "\u{FEFF}//@target: es6\r\r// newlines are <CR>\r`\r\\r`";
+    let parsed = parse_test_file(content);
+    assert_eq!(
+        parsed.options.get("target").map(String::as_str),
+        Some("es6")
+    );
+    assert!(
+        parsed.filenames.is_empty(),
+        "no virtual files declared in the CR-only fixture"
+    );
+}
+
+#[test]
 fn parse_test_file_drops_other_flag_lines() {
     let content = "// @filename: a.ts\n// @internal\nexport const a = 1;\n";
     let parsed = parse_test_file(content);

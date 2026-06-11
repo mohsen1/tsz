@@ -149,6 +149,46 @@ pub fn parse_bool_value(value: &str) -> Option<bool> {
     }
 }
 
+struct TestFileLines<'a> {
+    rest: &'a str,
+}
+
+impl<'a> Iterator for TestFileLines<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rest.is_empty() {
+            return None;
+        }
+
+        let bytes = self.rest.as_bytes();
+        for (idx, byte) in bytes.iter().enumerate() {
+            if *byte != b'\r' && *byte != b'\n' {
+                continue;
+            }
+
+            let line = &self.rest[..idx];
+            let next_idx = if *byte == b'\r' && bytes.get(idx + 1) == Some(&b'\n') {
+                idx + 2
+            } else {
+                idx + 1
+            };
+            self.rest = &self.rest[next_idx..];
+            return Some(line);
+        }
+
+        let line = self.rest;
+        self.rest = "";
+        Some(line)
+    }
+}
+
+/// Iterate test-file lines while accepting every newline spelling the
+/// TypeScript corpus uses (`\n`, `\r\n`, and CR-only legacy fixtures).
+const fn test_file_lines(content: &str) -> TestFileLines<'_> {
+    TestFileLines { rest: content }
+}
+
 /// Directives parsed from a whole test file.
 #[derive(Debug, Default, Clone)]
 pub struct TestDirectives {
@@ -189,7 +229,7 @@ pub fn parse_test_file(content: &str) -> TestDirectives {
         directives.options.insert(key, value.to_string());
     };
 
-    for line in content.lines() {
+    for line in test_file_lines(content) {
         if let Some(directive) = parse_directive_line(line) {
             if directive.key_is("filename") {
                 if let Some(filename) = current_filename.take() {

@@ -364,7 +364,7 @@ function parseSourceTest(content: string, defaultSourceFileName?: string): Parse
   const sourceFiles: Array<{ name: string; content: string }> = [];
   const links: LinkInput[] = [];
   const stripped = content.replace(/^\uFEFF/, '');
-  const lines = stripped.split('\n');
+  const lines = stripped.split(/\r\n|\r|\n/);
   let currentFileName: string | null = null;
   let currentContent: string[] = [];
 
