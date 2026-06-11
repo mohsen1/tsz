@@ -45,6 +45,8 @@ use crate::{LiteralValue, SymbolRef, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
+use super::child_policy::{ChildPolicy, for_each_child_with_policy, has_policy_children};
+
 // Re-export type data extraction helpers (extracted to visitor_extract.rs)
 pub use super::visitor_extract::*;
 
@@ -321,227 +323,18 @@ pub trait TypeVisitor: Sized {
 ///
 /// # `TypeData` Variants Handled
 ///
-/// This function handles ALL `TypeData` variants to ensure complete traversal:
-/// - **Single nested types**: Array, `ReadonlyType`, `KeyOf`, etc.
-/// - **Multiple members**: Union, Intersection
-/// - **Structured types**: Object, Tuple, Function, Callable
-/// - **Complex types**: Application, Conditional, Mapped, `IndexAccess`
-/// - **Template literals**: Iterates over template spans
-/// - **String intrinsics**: Visits type argument
-/// - **Leaf types**: Intrinsic, Literal, Lazy, `TypeQuery`, etc. (no children)
-pub fn for_each_child<F>(db: &dyn TypeDatabase, key: &TypeData, mut f: F)
+/// This is the [`ChildPolicy::FULL`] traversal of the canonical
+/// policy-parameterized enumerator: every `TypeData` variant is handled, with
+/// the full structural surface visited (application bases, property write
+/// types, index-signature keys, signature `this`/predicate/type-parameter
+/// metadata). Walkers that need a different child set drive
+/// [`crate::visitors::child_policy::try_for_each_child_with_policy`] with
+/// their own [`ChildPolicy`].
+pub fn for_each_child<F>(db: &dyn TypeDatabase, key: &TypeData, f: F)
 where
     F: FnMut(TypeId),
 {
-    match key {
-        // Single nested type
-        TypeData::Array(inner)
-        | TypeData::ReadonlyType(inner)
-        | TypeData::KeyOf(inner)
-        | TypeData::NoInfer(inner) => {
-            f(*inner);
-        }
-
-        // Composite types with multiple members
-        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-            for &member in db.type_list(*list_id).iter() {
-                f(member);
-            }
-        }
-
-        // Object types with properties and index signatures
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            let shape = db.object_shape(*shape_id);
-            for prop in &shape.properties {
-                f(prop.type_id);
-                f(prop.write_type); // IMPORTANT: Must visit both read and write types
-            }
-            if let Some(ref sig) = shape.string_index {
-                f(sig.key_type);
-                f(sig.value_type);
-            }
-            if let Some(ref sig) = shape.number_index {
-                f(sig.key_type);
-                f(sig.value_type);
-            }
-        }
-
-        // Tuple types
-        TypeData::Tuple(tuple_id) => {
-            for elem in db.tuple_list(*tuple_id).iter() {
-                f(elem.type_id);
-            }
-        }
-
-        // Function types
-        TypeData::Function(func_id) => {
-            let sig = db.function_shape(*func_id);
-            f(sig.return_type);
-            if let Some(this_type) = sig.this_type {
-                f(this_type);
-            }
-            if let Some(ref type_predicate) = sig.type_predicate
-                && let Some(type_id) = type_predicate.type_id
-            {
-                f(type_id);
-            }
-            for param in &sig.params {
-                f(param.type_id);
-            }
-            for type_param in &sig.type_params {
-                if let Some(constraint) = type_param.constraint {
-                    f(constraint);
-                }
-                if let Some(default) = type_param.default {
-                    f(default);
-                }
-            }
-        }
-
-        // Callable types
-        TypeData::Callable(callable_id) => {
-            let callable = db.callable_shape(*callable_id);
-            for sig in &callable.call_signatures {
-                f(sig.return_type);
-                if let Some(this_type) = sig.this_type {
-                    f(this_type);
-                }
-                if let Some(ref type_predicate) = sig.type_predicate
-                    && let Some(type_id) = type_predicate.type_id
-                {
-                    f(type_id);
-                }
-                for param in &sig.params {
-                    f(param.type_id);
-                }
-                for type_param in &sig.type_params {
-                    if let Some(constraint) = type_param.constraint {
-                        f(constraint);
-                    }
-                    if let Some(default) = type_param.default {
-                        f(default);
-                    }
-                }
-            }
-            for sig in &callable.construct_signatures {
-                f(sig.return_type);
-                if let Some(this_type) = sig.this_type {
-                    f(this_type);
-                }
-                if let Some(ref type_predicate) = sig.type_predicate
-                    && let Some(type_id) = type_predicate.type_id
-                {
-                    f(type_id);
-                }
-                for param in &sig.params {
-                    f(param.type_id);
-                }
-                for type_param in &sig.type_params {
-                    if let Some(constraint) = type_param.constraint {
-                        f(constraint);
-                    }
-                    if let Some(default) = type_param.default {
-                        f(default);
-                    }
-                }
-            }
-            // Visit prototype properties
-            for prop in &callable.properties {
-                f(prop.type_id);
-                f(prop.write_type);
-            }
-            if let Some(ref sig) = callable.string_index {
-                f(sig.key_type);
-                f(sig.value_type);
-            }
-            if let Some(ref sig) = callable.number_index {
-                f(sig.key_type);
-                f(sig.value_type);
-            }
-        }
-
-        // Type applications
-        TypeData::Application(app_id) => {
-            let app = db.type_application(*app_id);
-            f(app.base);
-            for &arg in &app.args {
-                f(arg);
-            }
-        }
-
-        // Conditional types
-        TypeData::Conditional(cond_id) => {
-            let cond = db.get_conditional(*cond_id);
-            f(cond.check_type);
-            f(cond.extends_type);
-            f(cond.true_type);
-            f(cond.false_type);
-        }
-
-        // Mapped types
-        TypeData::Mapped(mapped_id) => {
-            let mapped = db.get_mapped(*mapped_id);
-            if let Some(constraint) = mapped.type_param.constraint {
-                f(constraint);
-            }
-            if let Some(default) = mapped.type_param.default {
-                f(default);
-            }
-            f(mapped.constraint);
-            f(mapped.template);
-            if let Some(name_type) = mapped.name_type {
-                f(name_type);
-            }
-        }
-
-        // Index access types
-        TypeData::IndexAccess(obj, idx) => {
-            f(*obj);
-            f(*idx);
-        }
-
-        // Template literal types
-        TypeData::TemplateLiteral(template_id) => {
-            for span in db.template_list(*template_id).iter() {
-                match span {
-                    crate::types::TemplateSpan::Text(_) => {}
-                    crate::types::TemplateSpan::Type(type_id) => {
-                        f(*type_id);
-                    }
-                }
-            }
-        }
-
-        // String intrinsics
-        TypeData::StringIntrinsic { type_arg, .. } => {
-            f(*type_arg);
-        }
-
-        // Type parameters with constraints
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-            if let Some(constraint) = info.constraint {
-                f(constraint);
-            }
-        }
-
-        // Enum types
-        TypeData::Enum(_def_id, member_type) => {
-            f(*member_type);
-        }
-
-        // Leaf types - no children to visit
-        TypeData::Intrinsic(_)
-        | TypeData::Literal(_)
-        | TypeData::Lazy(_)
-        | TypeData::Recursive(_)
-        | TypeData::BoundParameter(_)
-        | TypeData::TypeQuery(_)
-        | TypeData::UniqueSymbol(_)
-        | TypeData::ThisType
-        | TypeData::ModuleNamespace(_)
-        | TypeData::UnresolvedTypeName(_)
-        | TypeData::Error => {}
-    }
+    for_each_child_with_policy(db, key, &ChildPolicy::FULL, f);
 }
 
 /// Walk all transitively referenced type IDs from `root`.
@@ -1114,25 +907,12 @@ impl<'a> RecursiveTypeCollector<'a> {
             return;
         };
 
-        // Terminal-kind fast path: these `TypeData` variants have no
-        // children, so `visit_key` is a no-op for them. Skip the recursion
+        // Terminal-kind fast path: variants with no children under the
+        // collector's policy make `visit_key` a no-op. Skip the recursion
         // guard's enter/leave HashSet bookkeeping — there is no recursion,
         // no cycle, and no depth growth. Mirrors the same fast path used in
-        // `ContainsTypeChecker` (#1988) and the sibling visitor predicates.
-        if matches!(
-            &key,
-            TypeData::Intrinsic(_)
-                | TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
+        // `DeepContainsChecker` (#1988) and the sibling visitor predicates.
+        if !has_policy_children(&key, &ChildPolicy::EVERYTHING) {
             self.collected.insert(type_id);
             return;
         }
@@ -1154,195 +934,10 @@ impl<'a> RecursiveTypeCollector<'a> {
     }
 
     fn visit_key(&mut self, key: &TypeData) {
-        match key {
-            TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::BoundParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::UnresolvedTypeName(_) => {
-                // Leaf types - nothing to traverse
-            }
-            TypeData::NoInfer(inner) => {
-                // Traverse inner type
-                self.visit(*inner);
-            }
-            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.types.object_shape(*shape_id);
-                for prop in &shape.properties {
-                    self.visit(prop.type_id);
-                    self.visit(prop.write_type);
-                }
-                if let Some(ref idx) = shape.string_index {
-                    self.visit(idx.key_type);
-                    self.visit(idx.value_type);
-                }
-                if let Some(ref idx) = shape.number_index {
-                    self.visit(idx.key_type);
-                    self.visit(idx.value_type);
-                }
-            }
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                let members = self.types.type_list(*list_id);
-                for &member in members.iter() {
-                    self.visit(member);
-                }
-            }
-            TypeData::Array(elem) => {
-                self.visit(*elem);
-            }
-            TypeData::Tuple(list_id) => {
-                let elements = self.types.tuple_list(*list_id);
-                for elem in elements.iter() {
-                    self.visit(elem.type_id);
-                }
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.types.function_shape(*shape_id);
-                for param in &shape.params {
-                    self.visit(param.type_id);
-                }
-                self.visit(shape.return_type);
-                if let Some(this_type) = shape.this_type {
-                    self.visit(this_type);
-                }
-                if let Some(ref type_predicate) = shape.type_predicate
-                    && let Some(type_id) = type_predicate.type_id
-                {
-                    self.visit(type_id);
-                }
-                for type_param in &shape.type_params {
-                    if let Some(constraint) = type_param.constraint {
-                        self.visit(constraint);
-                    }
-                    if let Some(default) = type_param.default {
-                        self.visit(default);
-                    }
-                }
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.types.callable_shape(*shape_id);
-                for sig in &shape.call_signatures {
-                    for param in &sig.params {
-                        self.visit(param.type_id);
-                    }
-                    self.visit(sig.return_type);
-                    if let Some(this_type) = sig.this_type {
-                        self.visit(this_type);
-                    }
-                    if let Some(ref type_predicate) = sig.type_predicate
-                        && let Some(type_id) = type_predicate.type_id
-                    {
-                        self.visit(type_id);
-                    }
-                    for type_param in &sig.type_params {
-                        if let Some(constraint) = type_param.constraint {
-                            self.visit(constraint);
-                        }
-                        if let Some(default) = type_param.default {
-                            self.visit(default);
-                        }
-                    }
-                }
-                for sig in &shape.construct_signatures {
-                    for param in &sig.params {
-                        self.visit(param.type_id);
-                    }
-                    self.visit(sig.return_type);
-                    if let Some(this_type) = sig.this_type {
-                        self.visit(this_type);
-                    }
-                    if let Some(ref type_predicate) = sig.type_predicate
-                        && let Some(type_id) = type_predicate.type_id
-                    {
-                        self.visit(type_id);
-                    }
-                    for type_param in &sig.type_params {
-                        if let Some(constraint) = type_param.constraint {
-                            self.visit(constraint);
-                        }
-                        if let Some(default) = type_param.default {
-                            self.visit(default);
-                        }
-                    }
-                }
-                for prop in &shape.properties {
-                    self.visit(prop.type_id);
-                    self.visit(prop.write_type);
-                }
-                if let Some(ref sig) = shape.string_index {
-                    self.visit(sig.key_type);
-                    self.visit(sig.value_type);
-                }
-                if let Some(ref sig) = shape.number_index {
-                    self.visit(sig.key_type);
-                    self.visit(sig.value_type);
-                }
-            }
-            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                if let Some(constraint) = info.constraint {
-                    self.visit(constraint);
-                }
-                if let Some(default) = info.default {
-                    self.visit(default);
-                }
-            }
-            TypeData::Application(app_id) => {
-                let app = self.types.type_application(*app_id);
-                self.visit(app.base);
-                for &arg in &app.args {
-                    self.visit(arg);
-                }
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.types.get_conditional(*cond_id);
-                self.visit(cond.check_type);
-                self.visit(cond.extends_type);
-                self.visit(cond.true_type);
-                self.visit(cond.false_type);
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.get_mapped(*mapped_id);
-                if let Some(constraint) = mapped.type_param.constraint {
-                    self.visit(constraint);
-                }
-                if let Some(default) = mapped.type_param.default {
-                    self.visit(default);
-                }
-                self.visit(mapped.constraint);
-                self.visit(mapped.template);
-                if let Some(name_type) = mapped.name_type {
-                    self.visit(name_type);
-                }
-            }
-            TypeData::IndexAccess(obj, idx) => {
-                self.visit(*obj);
-                self.visit(*idx);
-            }
-            TypeData::TemplateLiteral(list_id) => {
-                let spans = self.types.template_list(*list_id);
-                for span in spans.iter() {
-                    if let crate::types::TemplateSpan::Type(type_id) = span {
-                        self.visit(*type_id);
-                    }
-                }
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
-                self.visit(*inner);
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => {
-                self.visit(*type_arg);
-            }
-            TypeData::Enum(_def_id, member_type) => {
-                // Traverse into the structural member type
-                self.visit(*member_type);
-            }
-        }
+        let types = self.types;
+        for_each_child_with_policy(types, key, &ChildPolicy::EVERYTHING, |child| {
+            self.visit(child);
+        });
     }
 }
 
@@ -1388,8 +983,7 @@ impl<'a> ConstAssertionVisitor<'a> {
         // below have nothing to recurse into and produce the input type
         // unchanged. Skip the `RecursionGuard::enter`/`leave` `FxHashSet`
         // round-trip for those — the guard only matters when there are
-        // children to walk. Mirrors #1988 (ContainsTypeChecker), #1993
-        // (FreeTypeParamChecker / FreeInferChecker / ShallowContainsTypeChecker),
+        // children to walk. Mirrors #1988/#1993 (the deep contains walkers)
         // and #1996 (RecursiveTypeCollector).
         let lookup = self.db.lookup(type_id);
         let needs_recursion = matches!(
