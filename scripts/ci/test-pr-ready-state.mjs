@@ -11,6 +11,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "ci", "check-pr-ready-state.mjs");
 const CI_WORKFLOW = path.join(ROOT, ".github", "workflows", "ci.yml");
+const GATE_CLASSIFIER = path.join(ROOT, "scripts", "ci", "gate-path-classifier.mjs");
 
 function readyPr(overrides = {}) {
   return {
@@ -132,6 +133,7 @@ assert.equal(passingDraft.status, 0, passingDraft.stderr);
 assert.match(passingDraft.stdout, /Ready-state WIP check passed/);
 
 const ciWorkflow = fs.readFileSync(CI_WORKFLOW, "utf8");
+const gateClassifier = fs.readFileSync(GATE_CLASSIFIER, "utf8");
 assert.match(
   ciWorkflow,
   /pull_request:\s*\n\s*types:\s*\[[^\]]*\bedited\b[^\]]*\]/,
@@ -160,13 +162,19 @@ assert.match(
 
 assert.match(
   ciWorkflow,
-  /scripts\/ci\/\(ci-resources\|gcp-full-ci\|github-suite\|gcp-cache\|suite-metadata\|build-dist\|dist\|wasm\)/,
+  /node scripts\/ci\/gate-path-classifier\.mjs/,
+  "CI gate should use the shared path classifier instead of inline path regex copies",
+);
+
+assert.match(
+  gateClassifier,
+  /ci-resources\|gcp-full-ci\|github-suite\|gcp-cache\|suite-metadata\|build-dist\|dist\|wasm/,
   "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",
 );
 
 assert.match(
-  ciWorkflow,
-  /\\.github\/workflows\/\(ci\|bench\)\\.yml/,
+  gateClassifier,
+  /\.github\\\/workflows\\\/\(ci\|bench\)\\\.yml/,
   "CI workflow changes must require compiler CI because they route native merge queue and Cloud Run jobs",
 );
 

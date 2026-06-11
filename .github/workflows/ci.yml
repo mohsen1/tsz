@@ -81,6 +81,7 @@ jobs:
           else
             echo "active_suite_found=false" >> "$GITHUB_OUTPUT"
           fi
+      - uses: actions/checkout@v4
       - id: gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -100,12 +101,6 @@ jobs:
           arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
-          # Single source of truth for "this path touches compiler/runtime
-          # CI inputs". Used in two places: the initial PR-diff classifier
-          # (sets compiler_checks_required) and the skip-main-CI logic
-          # (decides whether heavy gates are required for cached PRs).
-          # Keeping one copy prevents the two sites from drifting apart.
-          COMPILER_PATH_PATTERN='^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|\.github/workflows/(ci|bench)\.yml|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/lib/[^/]+\.sh|scripts/ci/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)'
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
             # Native merge queue validates a GitHub-owned synthetic merge
             # commit. Run the same Cloud Run-backed compiler suite here so
@@ -181,18 +176,15 @@ jobs:
                 if [[ "$page" -gt 30 ]]; then break; fi
               done
               if [[ -n "$all_paths" ]]; then
-                non_docs=$(printf '%s\n' "$all_paths" \
-                  | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$' \
-                  || true)
-                if [[ -z "$non_docs" ]]; then
+                path_classification=$(printf '%s\n' "$all_paths" | node scripts/ci/gate-path-classifier.mjs)
+                docs_only=$(printf '%s' "$path_classification" | jq -r '.docsOnly')
+                if [[ "$docs_only" == "true" ]]; then
                   echo "PR diff is docs-only — skipping CI jobs:"
-                  printf '  %s\n' $(printf '%s\n' "$all_paths" | sort -u)
+                  printf '%s' "$path_classification" | jq -r '.paths[]' | sed 's/^/  /'
                   should_run=false
                 fi
-                compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E "$COMPILER_PATH_PATTERN" \
-                  || true)
-                if [[ -z "$compiler_paths" ]]; then
+                compiler_checks_required=$(printf '%s' "$path_classification" | jq -r '.compilerChecksRequired')
+                if [[ "$compiler_checks_required" != "true" ]]; then
                   compiler_checks_required=false
                   echo "PR diff has no compiler/runtime paths; compiler suites are skipped and not required by CI Summary."
                 fi
@@ -203,16 +195,11 @@ jobs:
             # jobs with a cheap bash syntax smoke job below. CI workflow edits,
             # Cargo files, Rust crates, JS helpers, and non-bench shell scripts
             # still take the normal path.
-            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
-              bench_shell_paths=$(printf '%s\n' "$all_paths" \
-                | grep -E '^scripts/bench/[^/]+\.sh$' \
-                || true)
-              non_bench_shell_paths=$(printf '%s\n' "$all_paths" \
-                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/bench/[^/]+\.sh$' \
-                || true)
-              if [[ -n "$bench_shell_paths" && -z "$non_bench_shell_paths" ]]; then
+            if [[ "$should_run" == "true" && -n "${path_classification:-}" ]]; then
+              bench_shell_only_classified=$(printf '%s' "$path_classification" | jq -r '.benchShellOnly')
+              if [[ "$bench_shell_only_classified" == "true" ]]; then
                 echo "PR diff only changes bench shell scripts/docs — running bench shell smoke only:"
-                printf '%s\n' "$bench_shell_paths" | sort -u | sed 's/^/  /'
+                printf '%s' "$path_classification" | jq -r '.benchShellPaths[]' | sed 's/^/  /'
                 should_run=false
                 full_run=false
                 bench_shell_only=true
@@ -223,16 +210,11 @@ jobs:
             # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
             # files, Rust crates, shell scripts, and non-perf scripts still take
             # the normal path.
-            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
-              perf_tool_paths=$(printf '%s\n' "$all_paths" \
-                | grep -E '^scripts/perf/[^/]+\.py$' \
-                || true)
-              non_perf_tool_paths=$(printf '%s\n' "$all_paths" \
-                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/perf/[^/]+\.py$' \
-                || true)
-              if [[ -n "$perf_tool_paths" && -z "$non_perf_tool_paths" ]]; then
+            if [[ "$should_run" == "true" && -n "${path_classification:-}" ]]; then
+              perf_tool_only_classified=$(printf '%s' "$path_classification" | jq -r '.perfToolOnly')
+              if [[ "$perf_tool_only_classified" == "true" ]]; then
                 echo "PR diff only changes perf Python tools/docs — running perf tool smoke only:"
-                printf '%s\n' "$perf_tool_paths" | sort -u | sed 's/^/  /'
+                printf '%s' "$path_classification" | jq -r '.perfToolPaths[]' | sed 's/^/  /'
                 should_run=false
                 full_run=false
                 perf_tool_only=true
@@ -243,16 +225,11 @@ jobs:
             # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
             # files, Rust crates, shell scripts, and non-arch scripts still take
             # the normal path.
-            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
-              arch_tool_paths=$(printf '%s\n' "$all_paths" \
-                | grep -E '^scripts/arch/[^/]+\.py$' \
-                || true)
-              non_arch_tool_paths=$(printf '%s\n' "$all_paths" \
-                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/arch/[^/]+\.py$' \
-                || true)
-              if [[ -n "$arch_tool_paths" && -z "$non_arch_tool_paths" ]]; then
+            if [[ "$should_run" == "true" && -n "${path_classification:-}" ]]; then
+              arch_tool_only_classified=$(printf '%s' "$path_classification" | jq -r '.archToolOnly')
+              if [[ "$arch_tool_only_classified" == "true" ]]; then
                 echo "PR diff only changes arch Python tools/docs — running arch tool smoke only:"
-                printf '%s\n' "$arch_tool_paths" | sort -u | sed 's/^/  /'
+                printf '%s' "$path_classification" | jq -r '.archToolPaths[]' | sed 's/^/  /'
                 should_run=false
                 full_run=false
                 arch_tool_only=true
@@ -279,44 +256,14 @@ jobs:
             # regardless, so compile breakage in any crate still surfaces fast.
             if [[ "$should_run" == "true" \
                   && "${{ github.event.pull_request.draft }}" == "true" \
-                  && -n "$all_paths" ]]; then
-              # Paths that force the full unit suite even on drafts.
-              blast_paths=$(printf '%s\n' "$all_paths" \
-                | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|scripts/ci/|\.github/workflows/|crates/[^/]+/(Cargo\.toml|build\.rs))' \
-                || true)
-              # Source under crates/<X>/, excluding the blast paths above.
-              crate_paths=$(printf '%s\n' "$all_paths" \
-                | grep -E '^crates/[^/]+/(src|tests|benches|examples)/' \
-                || true)
-              # Catch-all: anything else (root files, scripts/, TypeScript/, etc.)
-              # not yet classified.
-              other_paths=$(printf '%s\n' "$all_paths" \
-                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^crates/[^/]+/(src|tests|benches|examples)/|^Cargo\.(lock|toml)$|^\.cargo/|^rust-toolchain|^scripts/ci/|^\.github/workflows/|^crates/[^/]+/(Cargo\.toml|build\.rs)$' \
-                || true)
-              if [[ -z "$blast_paths" && -z "$other_paths" && -n "$crate_paths" ]]; then
-                # Extract distinct crate names from the matching paths.
-                touched_crates=$(printf '%s\n' "$crate_paths" \
-                  | sed -E 's|^crates/([^/]+)/.*|\1|' \
-                  | sort -u)
-                known_unit_crates="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp tsz-core"
-                all_known=true
-                for crate in $touched_crates; do
-                  case " $known_unit_crates " in
-                    *" $crate "*) ;;
-                    *) all_known=false; break;;
-                  esac
-                done
-                if [[ "$all_known" == "true" ]]; then
-                  unit_packages=$(printf '%s' "$touched_crates" | tr '\n' ' ' | sed 's/ *$//')
-                  echo "P4 draft fast-fail: narrowing unit to: ${unit_packages}"
-                  printf '  touched: %s\n' $(printf '%s\n' "$crate_paths" | sort -u)
-                fi
+                  && -n "${path_classification:-}" ]]; then
+              unit_packages=$(printf '%s' "$path_classification" | jq -r '.draftUnitNarrow.unitPackages | join(" ")')
+              if [[ -n "$unit_packages" ]]; then
+                echo "P4 draft fast-fail: narrowing unit to: ${unit_packages}"
+                printf '%s' "$path_classification" | jq -r '.draftUnitNarrow.cratePaths[]' | sed 's/^/  touched: /'
               fi
               if [[ -z "$unit_packages" ]]; then
-                reasons=""
-                [[ -n "$blast_paths" ]] && reasons+="blast-radius paths touched; "
-                [[ -n "$other_paths" ]] && reasons+="unclassified paths touched; "
-                [[ -z "$crate_paths" && -z "$reasons" ]] && reasons="no crate source changes"
+                reasons=$(printf '%s' "$path_classification" | jq -r '.draftUnitNarrow.reason')
                 echo "P4 draft fast-fail: NOT narrowing (${reasons:-no eligible crates})"
               fi
             fi
@@ -387,6 +334,7 @@ jobs:
               fi
 
               pr_changed_paths=""
+              pr_changed_path_classification=""
               page=1
               while :; do
                 page_paths=$(gh api \
@@ -395,21 +343,21 @@ jobs:
                   2>/dev/null || true)
                 if [[ -z "$page_paths" ]]; then break; fi
                 pr_changed_paths+="${page_paths}"$'\n'
-                cache_paths=$(printf '%s\n' "$page_paths" \
-                  | grep -E '^(Cargo\.lock|Cargo\.toml|\.cargo/config\.toml)$' \
-                  || true)
-                if [[ -n "$cache_paths" ]]; then
-                  echo "PR #${pr_number} changed CI cache-key inputs; running main CI to refresh shared Rust caches:"
-                  printf '  %s\n' $(printf '%s\n' "$cache_paths" | sort -u)
-                  cache_key_changed=true
-                  rust_cache_refresh=true
-                  break
-                fi
                 count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
                 if [[ "$count" -lt 100 ]]; then break; fi
                 page=$((page + 1))
                 if [[ "$page" -gt 30 ]]; then break; fi
               done
+              if [[ -n "$pr_changed_paths" ]]; then
+                pr_changed_path_classification=$(printf '%s\n' "$pr_changed_paths" | node scripts/ci/gate-path-classifier.mjs)
+                cache_paths=$(printf '%s' "$pr_changed_path_classification" | jq -r '.cacheKeyInputPaths[]')
+                if [[ -n "$cache_paths" ]]; then
+                  echo "PR #${pr_number} changed CI cache-key inputs; running main CI to refresh shared Rust caches:"
+                  printf '%s\n' "$cache_paths" | sed 's/^/  /'
+                  cache_key_changed=true
+                  rust_cache_refresh=true
+                fi
+              fi
             fi
             if [[ -n "$pr_number" && "$cache_key_changed" != "true" && "${main_skip_allowed:-true}" == "true" ]]; then
               pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
@@ -438,8 +386,8 @@ jobs:
                     --jq '[.jobs[] | select(.name == "CI Summary" and .conclusion == "success")] | length' \
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
-                    compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
-                      | grep -E "$COMPILER_PATH_PATTERN" \
+                    compiler_paths_on_pr=$(printf '%s' "${pr_changed_path_classification:-}" \
+                      | jq -r '.compilerPaths[]?' \
                       || true)
                     if [[ -n "$compiler_paths_on_pr" ]]; then
                       heavy_checks_passed=$(gh api \
