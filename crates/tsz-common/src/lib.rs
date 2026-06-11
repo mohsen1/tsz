@@ -71,4 +71,4 @@ pub mod lib_capabilities;
 
 // Canonical parser for TypeScript test-file directives (`// @option: value`)
 // shared by the conformance, emit, fourslash, and checker test harness paths.
-pub mod test_directives;
+pub use common::test_directives;

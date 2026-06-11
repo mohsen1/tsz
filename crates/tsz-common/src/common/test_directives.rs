@@ -196,8 +196,8 @@ pub fn parse_test_file(content: &str) -> TestDirectives {
                     directives
                         .filenames
                         .push((filename, current_content.join("\n")));
-                    current_content.clear();
                 }
+                current_content.clear();
                 current_filename = Some(directive.value.to_string());
             } else {
                 record_option(&mut directives, directive.key_lower(), directive.value);

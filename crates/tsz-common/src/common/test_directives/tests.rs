@@ -114,6 +114,16 @@ fn parse_test_file_multi_file_sections() {
 }
 
 #[test]
+fn parse_test_file_discards_preamble_before_first_filename() {
+    let content = "// @target: es2015\n\n// @filename: a.ts\nnamespace foo {}\n";
+    let parsed = parse_test_file(content);
+    assert_eq!(
+        parsed.filenames,
+        vec![("a.ts".to_string(), "namespace foo {}".to_string())]
+    );
+}
+
+#[test]
 fn parse_test_file_drops_other_flag_lines() {
     let content = "// @filename: a.ts\n// @internal\nexport const a = 1;\n";
     let parsed = parse_test_file(content);
