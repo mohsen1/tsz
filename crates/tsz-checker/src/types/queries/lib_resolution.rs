@@ -789,6 +789,18 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_global_type_with_libs(name, &lib_binders)
         })
+        // Cross-file lookup binders (cross-arena delegation) keep
+        // `file_locals` per-file and carry the hoisted lib-origin globals in
+        // `program_globals`. Resolve through it BEFORE the per-lib-context
+        // fallback below: the program-space symbol carries the declarations
+        // merged across ALL lib files, while a single lib context's symbol
+        // only carries that one file's declarations — lowering the latter
+        // produces a partial interface body (e.g. `SymbolConstructor`
+        // without `asyncDispose`), making derived types and diagnostics
+        // depend on which file's checker resolved the name first.
+        // `program_globals` is empty on primary (lib-merged) binders, so
+        // this changes nothing there.
+        .or_else(|| self.ctx.binder.program_global_type(name))
         .or_else(|| {
             resolve_name_to_lib_symbol(
                 name,

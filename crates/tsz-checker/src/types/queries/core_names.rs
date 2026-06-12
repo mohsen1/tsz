@@ -99,6 +99,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
                 && self.get_type_of_node(computed.expression) == TypeId::ERROR
             {
+                tracing::debug!(
+                    name = %name,
+                    node = name_idx.0,
+                    "get_property_name_resolved: discarding well-known symbol name (expression typed ERROR)"
+                );
                 return None;
             }
             if name.starts_with("[Symbol.")

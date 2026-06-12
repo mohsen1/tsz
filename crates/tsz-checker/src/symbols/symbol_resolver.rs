@@ -638,7 +638,23 @@ impl<'a> CheckerState<'a> {
                             // Use file binder's sym_id for correct ID space after lib merge.
                             // Never return lib-context SymbolIds directly: they may collide with
                             // unrelated symbols in the current binder ID space.
-                            let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
+                            //
+                            // Cross-file lookup binders (cross-arena delegation) keep
+                            // `file_locals` per-file and carry the hoisted lib-origin
+                            // globals separately in `program_globals` (see
+                            // `create_cross_file_lookup_binder_with_augmentations`).
+                            // Consult it as the same program-ID-space mapping; otherwise a
+                            // lib global (e.g. `Symbol` in a computed member name) silently
+                            // fails to resolve during delegation and derived types depend
+                            // on file check order. `program_globals` is empty on primary
+                            // (lib-merged) binders, so this changes nothing there.
+                            let Some(file_sym_id) = self
+                                .ctx
+                                .binder
+                                .file_locals
+                                .get(name)
+                                .or_else(|| self.ctx.binder.program_globals.get(name))
+                            else {
                                 continue;
                             };
                             // Filter out string-literal ambient module symbols (e.g., `declare module "foobar"`)
@@ -954,7 +970,20 @@ impl<'a> CheckerState<'a> {
                     // After lib merge, the file binder has the same symbols with
                     // potentially different IDs. Use file binder's ID for returns,
                     // and skip symbols not present in current binder ID space.
-                    let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+                    //
+                    // Cross-file lookup binders (cross-arena delegation) keep
+                    // `file_locals` per-file and carry the hoisted lib-origin globals
+                    // separately in `program_globals`; consult it as the same
+                    // program-ID-space mapping so type-position lib globals resolve
+                    // independently of file check order (twin of the value-position
+                    // fallback in `resolve_identifier_symbol`).
+                    let Some(sym_id) = self
+                        .ctx
+                        .binder
+                        .file_locals
+                        .get(name)
+                        .or_else(|| self.ctx.binder.program_globals.get(name))
+                    else {
                         continue;
                     };
                     if !should_skip_lib_symbol(sym_id) {

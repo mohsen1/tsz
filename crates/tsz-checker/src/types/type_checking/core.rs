@@ -1790,6 +1790,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        tracing::debug!(
+            init_type = init_type.0,
+            is_await_using,
+            "check_using_declaration_disposable: initializer type"
+        );
         // Check for the required dispose method
         if !self.type_has_disposable_method(init_type, is_await_using) {
             let (message, code) = if is_await_using {
