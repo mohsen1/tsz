@@ -62,8 +62,25 @@ impl CheckerState<'_> {
         name: &str,
         prop_name: &str,
     ) -> Option<TypeId> {
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let key = (name.to_string(), prop_atom);
+        if let Some(cached) = self
+            .ctx
+            .lazy_lib_member_resolution_cache
+            .borrow()
+            .get(&key)
+            .copied()
+        {
+            return cached;
+        }
+
         let mut visited = FxHashSet::default();
-        self.resolve_simple_lib_interface_property(name, prop_name, &mut visited)
+        let result = self.resolve_simple_lib_interface_property(name, prop_name, &mut visited);
+        self.ctx
+            .lazy_lib_member_resolution_cache
+            .borrow_mut()
+            .insert(key, result);
+        result
     }
 
     fn resolve_simple_lib_interface_property(

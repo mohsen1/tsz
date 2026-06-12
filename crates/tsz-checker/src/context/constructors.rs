@@ -72,6 +72,7 @@ impl<'a> CheckerContext<'a> {
             enum_namespace_types: crate::context::CowCache::default(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
+            lazy_lib_member_resolution_cache: RefCell::new(FxHashMap::default()),
             lib_delegation_cache: crate::context::CrossFileDelegationCache::default(),
             namespace_member_resolution_cache: RefCell::new(crate::context::CowCache::default()),
             export_equals_named_cache: RefCell::new(crate::context::CowCache::default()),

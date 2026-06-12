@@ -3,6 +3,7 @@
 use rustc_hash::FxHashMap;
 use std::mem;
 use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
 use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
@@ -30,6 +31,8 @@ pub struct CheckerContextCacheStatistics {
     pub type_param_node_cache_estimated_size_bytes: usize,
     pub lib_type_resolution_cache_entries: usize,
     pub lib_type_resolution_cache_estimated_size_bytes: usize,
+    pub lazy_lib_member_resolution_cache_entries: usize,
+    pub lazy_lib_member_resolution_cache_estimated_size_bytes: usize,
     pub symbol_name_candidates_cache_entries: usize,
     pub symbol_name_candidates_cache_estimated_size_bytes: usize,
     pub namespace_member_resolution_cache_entries: usize,
@@ -83,6 +86,7 @@ impl CheckerContextCacheStatistics {
         self.cross_file_type_params_cache_estimated_size_bytes
             + self.type_param_node_cache_estimated_size_bytes
             + self.lib_type_resolution_cache_estimated_size_bytes
+            + self.lazy_lib_member_resolution_cache_estimated_size_bytes
             + self.symbol_name_candidates_cache_estimated_size_bytes
             + self.namespace_member_resolution_cache_estimated_size_bytes
             + self.export_equals_named_cache_estimated_size_bytes
@@ -113,6 +117,7 @@ impl CheckerContextCacheStatistics {
         self.cross_file_type_params_cache_entries
             + self.type_param_node_cache_entries
             + self.lib_type_resolution_cache_entries
+            + self.lazy_lib_member_resolution_cache_entries
             + self.symbol_name_candidates_cache_entries
             + self.namespace_member_resolution_cache_entries
             + self.export_equals_named_cache_entries
@@ -151,6 +156,7 @@ impl<'a> CheckerContext<'a> {
         let cross_file_type_params_cache_estimated_size_bytes =
             cross_file_type_params_cache_stats.map_or(0, |stats| stats.estimated_size_bytes());
 
+        let lazy_lib_member_resolution_cache = self.lazy_lib_member_resolution_cache.borrow();
         let symbol_name_candidates_cache = self.symbol_name_candidates_cache.borrow();
         let namespace_member_resolution_cache = self.namespace_member_resolution_cache.borrow();
         let export_equals_named_cache = self.export_equals_named_cache.borrow();
@@ -203,6 +209,11 @@ impl<'a> CheckerContext<'a> {
             lib_type_resolution_cache_entries: self.lib_type_resolution_cache.len(),
             lib_type_resolution_cache_estimated_size_bytes:
                 string_option_type_cache_estimated_size_bytes(&self.lib_type_resolution_cache),
+            lazy_lib_member_resolution_cache_entries: lazy_lib_member_resolution_cache.len(),
+            lazy_lib_member_resolution_cache_estimated_size_bytes:
+                string_atom_option_type_cache_estimated_size_bytes(
+                    &lazy_lib_member_resolution_cache,
+                ),
             symbol_name_candidates_cache_entries: symbol_name_candidates_cache.len(),
             symbol_name_candidates_cache_estimated_size_bytes:
                 string_symbol_vec_cache_estimated_size_bytes(&symbol_name_candidates_cache),
@@ -316,6 +327,13 @@ fn string_option_type_cache_estimated_size_bytes(
 ) -> usize {
     fx_hash_map_estimated_size_bytes(cache)
         .saturating_add(cache.keys().map(String::len).sum::<usize>())
+}
+
+fn string_atom_option_type_cache_estimated_size_bytes(
+    cache: &FxHashMap<(String, Atom), Option<TypeId>>,
+) -> usize {
+    fx_hash_map_estimated_size_bytes(cache)
+        .saturating_add(cache.keys().map(|(name, _)| name.len()).sum::<usize>())
 }
 
 fn string_symbol_vec_cache_estimated_size_bytes(cache: &FxHashMap<String, Vec<SymbolId>>) -> usize {

@@ -537,6 +537,14 @@ pub struct CheckerContext<'a> {
     /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
     pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,
 
+    /// Per-checker cache for lazy single-member lib-interface property reads.
+    /// Keyed by `(interface_name, property_name)` and stores both hits and
+    /// conservative misses after the existing lazy-member resolver has decided
+    /// whether it can lower only the requested member. This keeps repeated DOM
+    /// reads from rescanning declaration and heritage lists while preserving the
+    /// same full-materialization fallback on cached misses.
+    pub lazy_lib_member_resolution_cache: RefCell<FxHashMap<(String, Atom), Option<TypeId>>>,
+
     /// File-local caches for cross-file/lib delegation results.
     pub lib_delegation_cache: CrossFileDelegationCache,
 
