@@ -188,9 +188,9 @@ pub struct PropertyAccessEvaluator<'a> {
     pub(crate) exact_optional_property_types: bool,
     /// Unified recursion guard for cycle detection and depth limiting.
     pub(crate) guard: RefCell<crate::recursion::RecursionGuard<TypeId>>,
-    // Context for visitor pattern (set during property access resolution)
-    // We store both the str (for immediate use) and Atom (for interned comparisons)
-    pub(crate) current_prop_name: RefCell<Option<String>>,
+    // Context for visitor pattern (set during property access resolution).
+    // Keep the interned property identity in the recursive hot path; string-only
+    // leaf helpers receive `prop_name` directly from the current stack frame.
     pub(crate) current_prop_atom: RefCell<Option<Atom>>,
     /// When true, `bind_object_receiver_this` is a no-op. Set when resolving
     /// properties through a type parameter's constraint so that `this` is
@@ -223,7 +223,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
             guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::PropertyAccess,
             )),
-            current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
             skip_this_binding: Cell::new(false),
             allow_private_identifier_properties: Cell::new(false),
@@ -363,7 +362,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
         obj_type: TypeId,
         prop_name: &str,
     ) -> PropertyAccessResult {
-        let result = self.resolve_property_access_inner(obj_type, prop_name, None);
+        let prop_atom = self.interner().intern_string(prop_name);
+        self.resolve_property_access_with_atom(obj_type, prop_name, prop_atom)
+    }
+
+    /// Resolve property access when the caller already has the interned property name.
+    ///
+    /// This is the hot query-cache path: the cache key is keyed by `Atom`, so
+    /// preserve that identity through evaluator recursion and avoid rebuilding
+    /// a side-channel `String` for visitor context.
+    pub(crate) fn resolve_property_access_with_atom(
+        &self,
+        obj_type: TypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        let result = self.resolve_property_access_inner(obj_type, prop_name, Some(prop_atom));
 
         // For deferred conditionals: when the inner resolver returned ANY (the deferred
         // fallback), check the apparent type — union of branches — to detect genuine
@@ -402,9 +416,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // of branches) to check whether the property genuinely exists.
                 // union2 normalises any|T→any and never|T→T.
                 let apparent = self.interner().union2(cond.true_type, cond.false_type);
-                match self.resolve_property_access_inner(apparent, prop_name, None) {
+                match self.resolve_property_access_inner(apparent, prop_name, Some(prop_atom)) {
                     PropertyAccessResult::PropertyNotFound { .. } => {
-                        let prop_atom = self.interner().intern_string(prop_name);
                         return PropertyAccessResult::PropertyNotFound {
                             type_id: obj_type,
                             property_name: prop_atom,
@@ -446,16 +459,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     ) -> PropertyAccessResult {
         // Milestone 2: Visitor Bridge Pattern
         // Set context for visitor methods
-        {
-            let mut current_name = self.current_prop_name.borrow_mut();
-            if let Some(name) = current_name.as_mut() {
-                name.clear();
-                name.push_str(prop_name);
-            } else {
-                *current_name = Some(prop_name.to_owned());
-            }
-        }
-        *self.current_prop_atom.borrow_mut() = prop_atom;
+        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+        *self.current_prop_atom.borrow_mut() = Some(prop_atom);
+        let prop_atom = Some(prop_atom);
 
         // Single-lookup dispatch: resolve property access based on type data.
         // All type variants are handled in one match to avoid redundant interner lookups.
