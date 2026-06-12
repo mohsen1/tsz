@@ -46,7 +46,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             self.depth.leave();
             return TypeId::ERROR;
         };
-        let scoped_cache_allowed = node.kind != syntax_kind_ext::MAPPED_TYPE;
+        let has_type_parameter_scope = !self.ctx.type_parameter_scope.is_empty();
+        let scoped_cache_allowed = scoped_type_node_cache_allowed(node.kind);
         let scope_cache_key = scoped_cache_allowed
             .then(|| TypeParameterScopeCacheKey::from_scope(&self.ctx.type_parameter_scope))
             .flatten();
@@ -61,7 +62,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // For non-ERROR cached results, check if we're in a generic context
             // If we're not in a generic context (type params are empty), the cache is valid
-            if scope_cache_key.is_none() {
+            if !has_type_parameter_scope {
                 // No type parameters in scope - cache is valid
                 self.depth.leave();
                 return cached;
@@ -91,7 +92,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .type_reference_validation_caches
                     .type_node_scope_types
                     .insert((idx.0, key), result);
-            } else {
+            } else if !has_type_parameter_scope {
                 self.ctx.node_types.insert(idx.0, result);
             }
         }
@@ -1974,6 +1975,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
         "_".to_string()
     }
+}
+
+fn scoped_type_node_cache_allowed(kind: u16) -> bool {
+    kind == syntax_kind_ext::ARRAY_TYPE
+        || kind == syntax_kind_ext::TUPLE_TYPE
+        || kind == syntax_kind_ext::UNION_TYPE
+        || kind == syntax_kind_ext::INTERSECTION_TYPE
 }
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
