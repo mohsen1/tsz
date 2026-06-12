@@ -89,6 +89,23 @@ impl<'a> CheckerContext<'a> {
     /// save/restore mechanism scoped to overload/generic checking;
     /// this reset is for *successful* file completion only.
     pub fn reset_for_next_file(&mut self) {
+        if tsz_common::perf_counters::enabled_fast() {
+            let stats = self.cache_statistics();
+            tsz_common::perf_counters::record_file_session_reset_cache_statistics(
+                stats.entries() as u64,
+                stats.estimated_size_bytes() as u64,
+                stats.namespace_member_resolution_cache_entries as u64,
+                stats.namespace_member_resolution_cache_estimated_size_bytes as u64,
+                stats.export_equals_named_cache_entries as u64,
+                stats.export_equals_named_cache_estimated_size_bytes as u64,
+                stats.nested_namespace_candidates_cache_entries as u64,
+                stats.nested_namespace_candidates_cache_estimated_size_bytes as u64,
+                stats.lowering_entity_name_resolution_cache_entries as u64,
+                stats.lowering_entity_name_resolution_cache_estimated_size_bytes as u64,
+                stats.env_eval_cache_entries as u64,
+                stats.env_eval_cache_estimated_size_bytes as u64,
+            );
+        }
         // Attribution counter: increments only on the sequential session-
         // reuse path (T2.1.B). Zero on the default construction-per-file
         // path, so reuse vs construct is observable from a single counter.

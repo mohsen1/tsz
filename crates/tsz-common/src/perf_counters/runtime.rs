@@ -105,6 +105,21 @@ pub struct PerfCounters {
     /// `(files_checked - 1)` and `checker_state_constructed` falls by the
     /// same amount versus the baseline construction-per-file path.
     pub file_session_resets: AtomicU64,
+    /// High-water retained checker-context cache entries observed immediately
+    /// before `CheckerContext::reset_for_next_file()` clears file-local state.
+    pub file_session_reset_cache_entries_max: AtomicU64,
+    /// High-water estimated bytes for the same reset-boundary cache snapshot.
+    pub file_session_reset_cache_bytes_max: AtomicU64,
+    pub file_session_reset_namespace_member_entries_max: AtomicU64,
+    pub file_session_reset_namespace_member_bytes_max: AtomicU64,
+    pub file_session_reset_export_equals_entries_max: AtomicU64,
+    pub file_session_reset_export_equals_bytes_max: AtomicU64,
+    pub file_session_reset_nested_namespace_entries_max: AtomicU64,
+    pub file_session_reset_nested_namespace_bytes_max: AtomicU64,
+    pub file_session_reset_lowering_entity_name_entries_max: AtomicU64,
+    pub file_session_reset_lowering_entity_name_bytes_max: AtomicU64,
+    pub file_session_reset_env_eval_entries_max: AtomicU64,
+    pub file_session_reset_env_eval_bytes_max: AtomicU64,
 
     // ─── overlay copy ────────────────────────────────────────────────────
     pub copy_symbol_file_targets_calls: AtomicU64,
@@ -258,6 +273,18 @@ impl PerfCounters {
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
                 CHECKER_CREATION_REASON_COUNT],
             file_session_resets: AtomicU64::new(0),
+            file_session_reset_cache_entries_max: AtomicU64::new(0),
+            file_session_reset_cache_bytes_max: AtomicU64::new(0),
+            file_session_reset_namespace_member_entries_max: AtomicU64::new(0),
+            file_session_reset_namespace_member_bytes_max: AtomicU64::new(0),
+            file_session_reset_export_equals_entries_max: AtomicU64::new(0),
+            file_session_reset_export_equals_bytes_max: AtomicU64::new(0),
+            file_session_reset_nested_namespace_entries_max: AtomicU64::new(0),
+            file_session_reset_nested_namespace_bytes_max: AtomicU64::new(0),
+            file_session_reset_lowering_entity_name_entries_max: AtomicU64::new(0),
+            file_session_reset_lowering_entity_name_bytes_max: AtomicU64::new(0),
+            file_session_reset_env_eval_entries_max: AtomicU64::new(0),
+            file_session_reset_env_eval_bytes_max: AtomicU64::new(0),
             copy_symbol_file_targets_calls: AtomicU64::new(0),
             copy_symbol_file_targets_entries_total: AtomicU64::new(0),
             copy_symbol_file_targets_entries_max: AtomicU64::new(0),
@@ -1439,6 +1466,68 @@ pub fn record_file_session_reset() {
     counters()
         .file_session_resets
         .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record high-water retained checker-context cache sizes immediately before
+/// a reused checker clears file-local state. This is attribution-only data for
+/// issue #13246's session-reuse accumulation audit; it never changes reset or
+/// cache behavior.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn record_file_session_reset_cache_statistics(
+    total_entries: u64,
+    total_bytes: u64,
+    namespace_member_entries: u64,
+    namespace_member_bytes: u64,
+    export_equals_entries: u64,
+    export_equals_bytes: u64,
+    nested_namespace_entries: u64,
+    nested_namespace_bytes: u64,
+    lowering_entity_name_entries: u64,
+    lowering_entity_name_bytes: u64,
+    env_eval_entries: u64,
+    env_eval_bytes: u64,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    record_max_inner(&c.file_session_reset_cache_entries_max, total_entries);
+    record_max_inner(&c.file_session_reset_cache_bytes_max, total_bytes);
+    record_max_inner(
+        &c.file_session_reset_namespace_member_entries_max,
+        namespace_member_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_namespace_member_bytes_max,
+        namespace_member_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_export_equals_entries_max,
+        export_equals_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_export_equals_bytes_max,
+        export_equals_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_nested_namespace_entries_max,
+        nested_namespace_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_nested_namespace_bytes_max,
+        nested_namespace_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_lowering_entity_name_entries_max,
+        lowering_entity_name_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_lowering_entity_name_bytes_max,
+        lowering_entity_name_bytes,
+    );
+    record_max_inner(&c.file_session_reset_env_eval_entries_max, env_eval_entries);
+    record_max_inner(&c.file_session_reset_env_eval_bytes_max, env_eval_bytes);
 }
 
 #[inline]
