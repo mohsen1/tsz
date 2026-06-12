@@ -977,6 +977,48 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "module_commonjs.rs",
         2016,
     ),
+    # Current-main drift refresh (2026-06-12, #8204 ratchet PR): the
+    # unguarded-oversized-file smoke test found these five production files
+    # already past 2000 lines on main with no guard entry. Pinned at their
+    # live counts; ratchet down as submodules land (§19).
+    (
+        "Solver boundary: def/core.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "def" / "core.rs",
+        2298,
+    ),
+    (
+        "Common boundary: perf_counters/runtime.rs size ratchet",
+        ROOT / "crates" / "tsz-common" / "src" / "perf_counters" / "runtime.rs",
+        2114,
+    ),
+    (
+        "Solver boundary: evaluate_rules/index_access.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "evaluation"
+        / "evaluate_rules"
+        / "index_access.rs",
+        2056,
+    ),
+    (
+        "Solver boundary: subtype/rules/generics.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "relations"
+        / "subtype"
+        / "rules"
+        / "generics.rs",
+        2017,
+    ),
+    (
+        "Solver boundary: intern/normalize.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "intern" / "normalize.rs",
+        2010,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker
@@ -1116,6 +1158,52 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
         ],
         ("crates/tsz-checker/src/query_boundaries/",),
         0,
+    ),
+]
+
+# Seal the module-path escape hatch around the #8204 tiered solver API: the
+# flat-root ratchet above pins re-exported symbol names, but the solver still
+# declares `pub mod operations`/`relations`/`evaluation`/..., so downstream
+# crates can reach computation internals by full module path
+# (`tsz_solver::operations::widening::widen_type`). This pins those references
+# in the emitter/LSP/CLI/wasm source trees at the current count; migrating a
+# site to a tiered facade or checker query-boundary helper should ratchet the
+# cap down in the same diff.
+#
+# Transitional exceptions pinned by the current cap (#8204 successor debt —
+# each file below still reaches computation modules by path and is the
+# migration backlog for sealing the tiered API):
+#   - crates/tsz-cli/src/bin/tsz.rs (relations::subtype thread-local reset)
+#   - crates/tsz-cli/src/driver/check_tests/check_tests_part2.rs
+#     (operations::property::PropertyAccessResult)
+#   - crates/tsz-emitter/src/declaration_emitter/core/emit_class_properties.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/generic_call_literal.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/type_inference.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/
+#     type_inference_return_normalization.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/variable_decl.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/
+#     variable_decl_type_helpers.rs
+#     (operations::widening / operations iterator helpers)
+#   - crates/tsz-emitter/src/lowering/helpers_private_fields.rs
+#     (operations::compound_assignment)
+#   - crates/tsz-lsp/src/code_actions/code_action_extract.rs
+#     (operations::compound_assignment)
+#   - crates/tsz-lsp/src/completions/mod.rs (objects apparent-member helpers)
+#
+# Each entry:
+#   (description, search_roots, exclude_path_prefixes, max_references).
+MODULE_PATH_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
+    (
+        "Solver API boundary: module-path computation imports in emitter/LSP/CLI/wasm (#8204)",
+        [
+            ROOT / "crates" / "tsz-emitter" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-cli" / "src",
+            ROOT / "crates" / "tsz-wasm" / "src",
+        ],
+        (),
+        16,
     ),
 ]
 
@@ -1276,7 +1364,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3163→3155 after arch-smoke caught current-main slack in the
         # live direct-reference count.
-        3155,
+        #
+        # Ratcheted 3155→3040 after the #8204 module-path ratchet PR's
+        # arch-smoke run caught current-main slack in the live count.
+        3040,
     ),
 ]
 
