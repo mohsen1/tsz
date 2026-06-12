@@ -727,7 +727,7 @@ fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
     checker
 }
 
-fn apply_policy_bits_to_subtype_checker<R: TypeResolver>(
+const fn apply_policy_bits_to_subtype_checker<R: TypeResolver>(
     checker: &mut SubtypeChecker<'_, R>,
     policy: RelationPolicy,
 ) {
