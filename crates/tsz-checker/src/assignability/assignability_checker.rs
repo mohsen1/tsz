@@ -1482,8 +1482,7 @@ impl<'a> CheckerState<'a> {
     /// the same `TypeId`s heavily (~94% repeated outermost calls on the
     /// ts-toolbelt project row, issue #8356, with nested repeats called out in
     /// issue #13243). The active recursion stack still wins over the memo, so
-    /// cycle-guard semantics (re-entered types evaluate to themselves) are
-    /// preserved exactly.
+    /// re-entered types still evaluate to themselves.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         use crate::state_domain::type_environment::lazy::{
             global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
