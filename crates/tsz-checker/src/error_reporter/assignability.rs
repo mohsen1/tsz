@@ -1327,11 +1327,6 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_for_assignability(source);
         let widened = crate::query_boundaries::diagnostics::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
-        // Widen the literal annotations the deep widen leaves behind (method
-        // returns, signature params, application arguments) at the type
-        // level, then print once (#13075). The `WidenedDiagnostic` role
-        // formats without display properties, so display residue needs no
-        // special handling here.
         let widened = self
             .widen_annotation_literals_for_display(
                 widened,
@@ -1341,11 +1336,7 @@ impl<'a> CheckerState<'a> {
         self.format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic)
     }
 
-    /// Returns `true` when `ty` (a non-fresh source type) contains a literal-typed
-    /// member at any nesting depth: a property of an object, an array element, a
-    /// tuple element, or a union member, recursively. Used to decide whether a
-    /// source whose canonical shape is authoritative (no fresh-object-literal
-    /// display provenance) should be displayed verbatim instead of text-widened.
+    /// Returns `true` when a non-fresh source has canonical literal members.
     pub(super) fn source_carries_canonical_literal_member(&self, ty: TypeId) -> bool {
         let mut visiting = rustc_hash::FxHashSet::default();
         self.source_carries_canonical_literal_member_inner(ty, &mut visiting, 0)
@@ -1432,11 +1423,6 @@ impl<'a> CheckerState<'a> {
 
         let widened = crate::query_boundaries::diagnostics::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
-        // Widen the literal annotations the deep widen leaves behind (method
-        // returns, signature params, application arguments) at the type
-        // level, then print once (#13075). The `WidenedDiagnostic` role
-        // formats without display properties, so display residue needs no
-        // special handling here.
         let widened = self
             .widen_annotation_literals_for_display(
                 widened,
@@ -1561,16 +1547,9 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Text-level literal-annotation widening for displays that have no
-    /// producing `TypeId`.
-    ///
-    /// Retained from #13075 only for the generic-signature displays in
-    /// `call_errors/display_formatting.rs` that splice type-parameter names
-    /// into a rendered signature via `replace_type_param_name_in_display`:
-    /// the spliced string is not the render of any single type, so the
-    /// type-level `widen_object_property_literals_for_display` boundary
-    /// helper cannot reproduce it. Every display produced from a `TypeId`
-    /// must use that helper instead of this function.
+    /// Text-level literal-annotation widening for generic-signature displays
+    /// spliced from multiple rendered types; single-`TypeId` displays use the
+    /// type-level widening boundary instead.
     pub(super) fn widen_member_literals_in_display_text(display: &str) -> String {
         let bytes = display.as_bytes();
         let mut out = String::with_capacity(display.len());
