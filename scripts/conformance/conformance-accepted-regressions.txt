@@ -65,13 +65,6 @@
 #      existing leading-zero exception). Covered by
 #      parser_improvement_class_member_recovery_tests::misplaced_case_clause_* and
 #      parser_improvement_expression_recovery_tests::empty_element_access_*.
-TypeScript/tests/cases/compiler/temporal.ts
-# temporal.ts: ACCEPTED 2026-06-12 from CI aggregate run 27438255110 on
-# PR #13340 after syncing with `origin/main`. The current observed row is
-# expected:[TS2339,TS2552] actual:[TS2322,TS2339,TS2345,TS2769,TS6046].
-# Owner layer: existing checker/lib diagnostics parity gap for esnext temporal
-# library option and Temporal overload compatibility, unrelated to the
-# server-resident completion project cache in #13340.
 # intersectionsOfLargeUnions.ts: RESOLVED. Two-part fix: (1) IndexAccess structural
 # comparison (PR #13146) distinguishes `ElementTagNameMap[T]` from
 # `HTMLElementTagNameMap[T]` when both sides are IndexAccess types; (2)
