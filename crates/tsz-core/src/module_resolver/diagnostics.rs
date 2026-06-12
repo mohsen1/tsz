@@ -3,9 +3,9 @@
 //! All TS diagnostic codes emitted by module resolution (TS2307, TS2732,
 //! TS2792, TS2834, TS2835, TS5097, TS6142, TS6504, TS7016) are owned here.
 
-use crate::diagnostics::Diagnostic;
 use crate::span::Span;
 use std::path::PathBuf;
+use tsz_common::diagnostics::Diagnostic;
 
 /// TS2307: Cannot find module
 ///
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// Usage example:
 /// ```text
 /// let mut resolver = ModuleResolver::new(&options);
-/// let mut diagnostics = DiagnosticBag::new();
+/// let mut diagnostics: Vec<tsz_common::diagnostics::Diagnostic> = Vec::new();
 ///
 /// match resolver.resolve("./missing-module", containing_file, specifier_span) {
 ///     Ok(module) => { /* use module */ }
@@ -201,7 +201,7 @@ impl ResolutionFailure {
                 specifier,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            } => Diagnostic::error_with_span(
                 containing_file,
                 *span,
                 format!("Cannot find module '{specifier}' or its corresponding type declarations.",),
@@ -226,7 +226,7 @@ impl ResolutionFailure {
                 message,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            } => Diagnostic::error_with_span(
                 containing_file,
                 *span,
                 format!("Cannot find module '{message}' or its corresponding type declarations.",),
@@ -240,7 +240,7 @@ impl ResolutionFailure {
             } => {
                 if suggested_extension.is_empty() {
                     // TS2834: No suggestion available
-                    Diagnostic::error(
+                    Diagnostic::error_with_span(
                         containing_file,
                         *span,
                         "Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Consider adding an extension to the import path.".to_string(),
@@ -248,7 +248,7 @@ impl ResolutionFailure {
                     )
                 } else {
                     // TS2835: With extension suggestion
-                    Diagnostic::error(
+                    Diagnostic::error_with_span(
                         containing_file,
                         *span,
                         format!(
@@ -262,7 +262,7 @@ impl ResolutionFailure {
                 extension,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            } => Diagnostic::error_with_span(
                 containing_file,
                 *span,
                 format!(
@@ -275,7 +275,7 @@ impl ResolutionFailure {
                 resolved_path,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            } => Diagnostic::error_with_span(
                 containing_file,
                 *span,
                 format!(
@@ -289,7 +289,7 @@ impl ResolutionFailure {
                 specifier,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            } => Diagnostic::error_with_span(
                 containing_file,
                 *span,
                 format!(
@@ -301,7 +301,7 @@ impl ResolutionFailure {
                 specifier,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            } => Diagnostic::error_with_span(
                 containing_file,
                 *span,
                 format!(
@@ -314,7 +314,7 @@ impl ResolutionFailure {
                 package_json_path,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            } => Diagnostic::error_with_span(
                 containing_file,
                 *span,
                 format!(
