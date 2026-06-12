@@ -7,6 +7,7 @@ use tsz_solver::{
     ObjectShape, ParamInfo, PropertyInfo, SubtypeFailureReason, TypeId, TypeParamInfo,
 };
 
+use crate::context::CachedAssignabilityAnalysis;
 use crate::state::CheckerState;
 use tsz_solver::relations::relation_queries::{
     RelationContext, RelationKind as SolverRelationKind, RelationPolicy, RelationQueryInputs,
@@ -667,12 +668,18 @@ pub(crate) use tsz_solver::type_queries::{
 
 /// Submodules keep this file under its LOC ceiling while the assignability
 /// boundary still owns the helpers: relation cache-key construction, the
-/// overload subtype pass, and indexed-access normalization shape probes.
+/// overload subtype pass, indexed-access normalization shape probes, and the
+/// non-default relation-kind query variants.
 mod cache_key;
 mod overload_subtype_pass;
+mod relation_kind_variants;
 mod shape;
 pub(crate) use cache_key::{RelationFlags, assignability_cache_key, subtype_cache_key};
 pub(crate) use overload_subtype_pass::cached_overload_subtype_pass_assignability;
+pub(crate) use relation_kind_variants::{
+    cached_bivariant_assignability_with_resolver, is_redeclaration_identical_with_resolver,
+    is_subtype_with_resolver,
+};
 pub(crate) use shape::{is_index_access_for_assignability, union_members_for_assignability};
 
 pub(crate) fn classify_for_assignability_eval(
@@ -952,135 +959,6 @@ pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::relations::subtype
     pub sound_mode: bool,
 }
 
-pub(crate) fn is_assignable_bivariant_with_resolver<
-    R: tsz_solver::relations::subtype::TypeResolver,
->(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-    inheritance_graph: &InheritanceGraph,
-    sound_mode: bool,
-) -> tsz_solver::relations::relation_queries::RelationResult {
-    let policy = relation_policy::from_checker_flags_u16(flags)
-        .with_strict_subtype_checking(sound_mode)
-        .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::relations::relation_queries::RelationContext {
-        query_db: Some(db),
-        inheritance_graph: Some(inheritance_graph),
-        class_check: None,
-    };
-    tsz_solver::relations::relation_queries::query_relation_with_resolver(
-        db,
-        resolver,
-        source,
-        target,
-        tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
-        policy,
-        context,
-    )
-}
-
-pub(crate) fn cached_bivariant_assignability_with_resolver<
-    R: tsz_solver::relations::subtype::TypeResolver,
->(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-    inheritance_graph: &InheritanceGraph,
-    sound_mode: bool,
-) -> tsz_solver::relations::relation_queries::RelationResult {
-    let is_cacheable = is_relation_cacheable(db.as_type_database(), source, target);
-    if is_cacheable {
-        let cache_key = assignability_cache_key(source, target, flags);
-        if let Some(cached) = db.lookup_assignability_cache(cache_key) {
-            return tsz_solver::relations::relation_queries::RelationResult {
-                kind: tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
-                related: cached,
-                depth_exceeded: false,
-                iteration_exceeded: false,
-            };
-        }
-    }
-
-    let relation_result = is_assignable_bivariant_with_resolver(
-        db,
-        resolver,
-        source,
-        target,
-        flags,
-        inheritance_graph,
-        sound_mode,
-    );
-
-    if is_cacheable {
-        let cache_key = assignability_cache_key(source, target, flags);
-        db.insert_assignability_cache(cache_key, relation_result.is_related());
-    }
-
-    relation_result
-}
-
-pub(crate) fn is_subtype_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-    inheritance_graph: &InheritanceGraph,
-    class_check: Option<&dyn Fn(tsz_solver::SymbolRef) -> bool>,
-) -> tsz_solver::relations::relation_queries::RelationResult {
-    let policy = relation_policy::from_checker_flags_u16(flags);
-    let context = tsz_solver::relations::relation_queries::RelationContext {
-        query_db: Some(db),
-        inheritance_graph: Some(inheritance_graph),
-        class_check,
-    };
-    tsz_solver::relations::relation_queries::query_relation_with_resolver(
-        db,
-        resolver,
-        source,
-        target,
-        tsz_solver::relations::relation_queries::RelationKind::Subtype,
-        policy,
-        context,
-    )
-}
-
-pub(crate) fn is_redeclaration_identical_with_resolver<
-    R: tsz_solver::relations::subtype::TypeResolver,
->(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-    inheritance_graph: &InheritanceGraph,
-    sound_mode: bool,
-) -> bool {
-    let policy = relation_policy::from_checker_flags_u16(flags)
-        .with_strict_subtype_checking(sound_mode)
-        .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::relations::relation_queries::RelationContext {
-        query_db: Some(db),
-        inheritance_graph: Some(inheritance_graph),
-        class_check: None,
-    };
-    tsz_solver::relations::relation_queries::query_relation_with_resolver(
-        db,
-        resolver,
-        source,
-        target,
-        tsz_solver::relations::relation_queries::RelationKind::RedeclarationIdentical,
-        policy,
-        context,
-    )
-    .is_related()
-}
-
 pub(crate) struct AssignabilityFailureAnalysis {
     pub weak_union_violation: bool,
     pub failure_reason: Option<SubtypeFailureReason>,
@@ -1091,20 +969,46 @@ pub(crate) struct AssignabilityGateResult {
     pub analysis: Option<AssignabilityFailureAnalysis>,
 }
 
+/// Like [`execute_relation`], `precomputed` replays a prior reason-collecting
+/// pass over the same `(source, target, flags, sound_mode)` memo key instead
+/// of re-running the solver, and the second return value is the raw analysis
+/// of a freshly executed collecting pass for the caller to memoize.
 pub(crate) fn check_assignable_gate_with_overrides<
     R: tsz_solver::relations::subtype::TypeResolver,
 >(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
     collect_failure_analysis: bool,
-) -> AssignabilityGateResult {
+    precomputed: Option<&CachedAssignabilityAnalysis>,
+) -> (AssignabilityGateResult, Option<CachedAssignabilityAnalysis>) {
     // When the caller only needs the boolean, take the cheap single-decision path.
     if !collect_failure_analysis {
         let related = is_assignable_with_overrides(inputs, overrides).is_related();
-        return AssignabilityGateResult {
-            related,
-            analysis: None,
-        };
+        return (
+            AssignabilityGateResult {
+                related,
+                analysis: None,
+            },
+            None,
+        );
+    }
+
+    // A memoized pass over the same key replays without re-running the solver.
+    if let Some(cached) = precomputed {
+        if !cached.related {
+            tsz_common::perf_counters::record_relation_failure_memo_hit();
+        }
+        let analysis = (!cached.related).then(|| AssignabilityFailureAnalysis {
+            weak_union_violation: cached.weak_union_violation,
+            failure_reason: cached.failure_reason.clone(),
+        });
+        return (
+            AssignabilityGateResult {
+                related: cached.related,
+                analysis,
+            },
+            None,
+        );
     }
 
     // Otherwise decide and (on failure) explain in a single configured-checker
@@ -1126,14 +1030,25 @@ pub(crate) fn check_assignable_gate_with_overrides<
         context,
         overrides,
     });
+    let related = outcome.result.is_related();
+    let capture = CachedAssignabilityAnalysis {
+        related,
+        depth_exceeded: outcome.result.depth_exceeded,
+        iteration_exceeded: outcome.result.iteration_exceeded,
+        weak_union_violation: outcome
+            .analysis
+            .as_ref()
+            .is_some_and(|a| a.weak_union_violation),
+        failure_reason: outcome
+            .analysis
+            .as_ref()
+            .and_then(|a| a.failure_reason.clone()),
+    };
     let analysis = outcome.analysis.map(|a| AssignabilityFailureAnalysis {
         weak_union_violation: a.weak_union_violation,
         failure_reason: a.failure_reason,
     });
-    AssignabilityGateResult {
-        related: outcome.result.is_related(),
-        analysis,
-    }
+    (AssignabilityGateResult { related, analysis }, Some(capture))
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,6 +1098,13 @@ pub(crate) struct RelationOutcome {
 /// caller-side EPC/missing-property emission still owns source anchors and
 /// diagnostic wording, but the request decides whether property classification
 /// is part of the relation outcome.
+///
+/// `precomputed` replays a prior reason-collecting solver pass over the same
+/// memo key (issue #13243): when present, the solver is not re-run and the
+/// outcome is rebuilt from the captured analysis through the identical
+/// post-processing. The second return value is the raw solver analysis of a
+/// freshly executed non-decision-only pass, for the caller to memoize; it is
+/// `None` on the decision-only path and on memo replays.
 pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     request: &RelationRequest,
     db: &dyn QueryDatabase,
@@ -1191,7 +1113,8 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     inheritance_graph: &InheritanceGraph,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
     sound_mode: bool,
-) -> RelationOutcome {
+    precomputed: Option<&CachedAssignabilityAnalysis>,
+) -> (RelationOutcome, Option<CachedAssignabilityAnalysis>) {
     let _span = tracing::debug_span!(
         "execute_relation",
         src = request.source.0,
@@ -1199,65 +1122,112 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
         kind = ?request.kind,
     )
     .entered();
+    debug_assert!(
+        precomputed.is_none() || request.failure_memo_key(flags, sound_mode).is_some(),
+        "precomputed analysis passed for a memo-ineligible request"
+    );
 
     // BivariantCallbacks treats callback parameter types bivariantly by stripping
     // strict-function-types. The decision and the failure reason both run under
     // this policy so they cannot diverge.
     let (solver_kind, solver_flags) = request.solver_relation_policy(flags);
 
-    // Decide the relation and, on failure, capture the structured reason from the
-    // SAME configured checker (single pass). This is the canonical fix for the
-    // boundary's previous double evaluation, where the pass/fail decision and the
-    // failure reason were computed by two independently configured checkers and
-    // could contradict each other (or drop the reason entirely when a checker
-    // override forced the failure).
-    let (policy, context) =
-        assignability_policy_and_context(db, inheritance_graph, solver_flags, sound_mode);
-    // The overload subtype pass rides on the typed `any`-propagation mode (not
-    // the packed `u16` flags, which are saturated). The mode participates in
-    // `RelationPolicy::cache_config`, so pass-1 results cannot share relation
-    // cache slots with the default assignable relation.
-    let policy = if request.overload_subtype_pass {
-        policy.with_any_propagation_mode(
-            tsz_solver::relations::subtype::AnyPropagationMode::AnySourceNotRelated,
-        )
-    } else {
-        policy
-    };
-    let inputs = RelationQueryInputs {
-        interner: db.as_type_database(),
-        resolver,
-        source: request.source,
-        target: request.target,
-        kind: solver_kind,
-        policy,
-        context,
-        overrides,
-    };
-    let solver_outcome = if request.decision_only {
-        // The caller reads only the pass/fail bit: run the identical decision
-        // pass but skip the failure-reason walk on failure.
-        tsz_solver::relations::relation_queries::query_assignability_decision_only(inputs)
-    } else {
-        query_assignability_with_failure_analysis(inputs)
-    };
-
-    let related = solver_outcome.result.is_related();
-    let depth_exceeded = solver_outcome.result.depth_exceeded;
-    let iteration_exceeded = solver_outcome.result.iteration_exceeded;
+    let (related, depth_exceeded, iteration_exceeded, analysis, capture) =
+        if let Some(cached) = precomputed {
+            if !cached.related {
+                tsz_common::perf_counters::record_relation_failure_memo_hit();
+            }
+            let analysis = (!cached.related).then(|| {
+                tsz_solver::relations::relation_queries::AssignabilityFailureAnalysis {
+                    weak_union_violation: cached.weak_union_violation,
+                    failure_reason: cached.failure_reason.clone(),
+                }
+            });
+            (
+                cached.related,
+                cached.depth_exceeded,
+                cached.iteration_exceeded,
+                analysis,
+                None,
+            )
+        } else {
+            // Decide the relation and, on failure, capture the structured reason
+            // from the SAME configured checker (single pass). This is the
+            // canonical fix for the boundary's previous double evaluation, where
+            // the pass/fail decision and the failure reason were computed by two
+            // independently configured checkers and could contradict each other
+            // (or drop the reason entirely when a checker override forced the
+            // failure).
+            let (policy, context) =
+                assignability_policy_and_context(db, inheritance_graph, solver_flags, sound_mode);
+            // The overload subtype pass rides on the typed `any`-propagation mode
+            // (not the packed `u16` flags, which are saturated). The mode
+            // participates in `RelationPolicy::cache_config`, so pass-1 results
+            // cannot share relation cache slots with the default assignable
+            // relation.
+            let policy = if request.overload_subtype_pass {
+                policy.with_any_propagation_mode(
+                    tsz_solver::relations::subtype::AnyPropagationMode::AnySourceNotRelated,
+                )
+            } else {
+                policy
+            };
+            let inputs = RelationQueryInputs {
+                interner: db.as_type_database(),
+                resolver,
+                source: request.source,
+                target: request.target,
+                kind: solver_kind,
+                policy,
+                context,
+                overrides,
+            };
+            let solver_outcome = if request.decision_only {
+                // The caller reads only the pass/fail bit: run the identical
+                // decision pass but skip the failure-reason walk on failure.
+                tsz_solver::relations::relation_queries::query_assignability_decision_only(inputs)
+            } else {
+                query_assignability_with_failure_analysis(inputs)
+            };
+            let related = solver_outcome.result.is_related();
+            let depth_exceeded = solver_outcome.result.depth_exceeded;
+            let iteration_exceeded = solver_outcome.result.iteration_exceeded;
+            let capture = (!request.decision_only).then(|| CachedAssignabilityAnalysis {
+                related,
+                depth_exceeded,
+                iteration_exceeded,
+                weak_union_violation: solver_outcome
+                    .analysis
+                    .as_ref()
+                    .is_some_and(|a| a.weak_union_violation),
+                failure_reason: solver_outcome
+                    .analysis
+                    .as_ref()
+                    .and_then(|a| a.failure_reason.clone()),
+            });
+            (
+                related,
+                depth_exceeded,
+                iteration_exceeded,
+                solver_outcome.analysis,
+                capture,
+            )
+        };
 
     if related {
-        return RelationOutcome {
-            related: true,
-            depth_exceeded,
-            iteration_exceeded,
-            failure: None,
-            weak_union_violation: false,
-            property_classification: None,
-        };
+        return (
+            RelationOutcome {
+                related: true,
+                depth_exceeded,
+                iteration_exceeded,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            },
+            capture,
+        );
     }
 
-    let analysis = solver_outcome.analysis;
     let (weak_union_violation, failure) = match analysis {
         Some(a) => (
             a.weak_union_violation,
@@ -1279,14 +1249,17 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     let failure =
         suppress_excess_property_failure_if_needed(failure, db.as_type_database(), request.target);
 
-    RelationOutcome {
-        related: false,
-        depth_exceeded,
-        iteration_exceeded,
-        failure,
-        weak_union_violation,
-        property_classification,
-    }
+    (
+        RelationOutcome {
+            related: false,
+            depth_exceeded,
+            iteration_exceeded,
+            failure,
+            weak_union_violation,
+            property_classification,
+        },
+        capture,
+    )
 }
 
 /// Suppress an `ExcessProperty` failure reason when the target's structure

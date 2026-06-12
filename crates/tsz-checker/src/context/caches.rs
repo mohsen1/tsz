@@ -149,6 +149,9 @@ pub struct TypeReferenceValidationCaches {
     /// Stamp-guarded result memo for `evaluate_type_for_assignability`.
     /// See [`AssignabilityEvalMemo`].
     pub assignability_eval_memo: AssignabilityEvalMemo,
+    /// Stamp-guarded memo for reason-collecting assignability relation
+    /// outcomes. See [`AssignabilityFailureMemo`].
+    pub assignability_failure_memo: AssignabilityFailureMemo,
 }
 
 /// Program-wide success tier for generic type-argument constraint proofs,
@@ -643,6 +646,91 @@ impl AssignabilityEvalMemo {
     /// Drop all entries and forget the stamp. Required between file sessions:
     /// a fresh file's environment can restart at a previously seen generation,
     /// which would otherwise collide with the prior file's stamp.
+    pub fn clear(&mut self) {
+        self.stamp = None;
+        self.entries.clear();
+    }
+}
+
+/// Key for [`AssignabilityFailureMemo`] entries: prepared (evaluated)
+/// source and target types, the solver relation flags the pass ran under,
+/// and the sound-mode bit (which shapes relation policy outside the packed
+/// flags).
+pub type AssignabilityFailureKey = (TypeId, TypeId, u16, bool);
+
+/// One reason-collecting assignability relation outcome, captured from the
+/// solver pass that decided it (`query_assignability_with_failure_analysis`).
+///
+/// This is the raw solver-side analysis **before** the boundary/checker
+/// post-passes (excess-property suppression, intersection-constituent
+/// framing, array-extends weak-type suppression), which differ per consumer
+/// and must keep running on every path.
+#[derive(Debug, Clone)]
+pub struct CachedAssignabilityAnalysis {
+    /// Pass/fail verdict of the relation.
+    pub related: bool,
+    /// Stack-depth limit was exceeded during the pass.
+    pub depth_exceeded: bool,
+    /// Iteration budget was exhausted during the pass.
+    pub iteration_exceeded: bool,
+    /// Whether the failure is a weak-union violation (TS2559).
+    pub weak_union_violation: bool,
+    /// Structured failure reason, present only when `related` is `false`
+    /// and the reason walk produced one.
+    pub failure_reason: Option<tsz_solver::SubtypeFailureReason>,
+}
+
+/// Stamp-guarded memo for reason-collecting assignability relation passes
+/// (issue #13243).
+///
+/// A failing TS2322/TS2345 assignment runs the reason-collecting relation
+/// more than once on identical prepared inputs: once through the
+/// `RelationRequest` gateway that decides which diagnostic to emit, and
+/// again inside `analyze_assignability_failure` when the error reporter
+/// renders the elaboration chain. Both passes run the same configured
+/// solver checker on the same `(source, target, flags, sound_mode)` key,
+/// so the second is a pure re-walk. Entries follow exactly the
+/// [`AssignabilityEvalMemo`] validity model: dropped wholesale whenever the
+/// session stamp moves, never written for depth/iteration/fuel-degraded
+/// passes, so a hit replays what a fresh pass under the current environment
+/// would produce.
+#[derive(Debug, Default)]
+pub struct AssignabilityFailureMemo {
+    stamp: Option<AssignabilityEvalStamp>,
+    entries: FxHashMap<AssignabilityFailureKey, CachedAssignabilityAnalysis>,
+}
+
+impl AssignabilityFailureMemo {
+    fn roll_to(&mut self, stamp: AssignabilityEvalStamp) {
+        if self.stamp != Some(stamp) {
+            self.entries.clear();
+            self.stamp = Some(stamp);
+        }
+    }
+
+    /// Look up a memoized analysis valid for `stamp`.
+    pub fn get(
+        &mut self,
+        stamp: AssignabilityEvalStamp,
+        key: AssignabilityFailureKey,
+    ) -> Option<CachedAssignabilityAnalysis> {
+        self.roll_to(stamp);
+        self.entries.get(&key).cloned()
+    }
+
+    /// Record an analysis computed under `stamp`.
+    pub fn insert(
+        &mut self,
+        stamp: AssignabilityEvalStamp,
+        key: AssignabilityFailureKey,
+        analysis: CachedAssignabilityAnalysis,
+    ) {
+        self.roll_to(stamp);
+        self.entries.insert(key, analysis);
+    }
+
+    /// Drop all entries and forget the stamp (between file sessions; see
+    /// [`AssignabilityEvalMemo::clear`]).
     pub fn clear(&mut self) {
         self.stamp = None;
         self.entries.clear();

@@ -1138,6 +1138,21 @@ impl<'a> CheckerState<'a> {
 
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
+        // Share one captured reason-collecting solver pass with the
+        // `RelationRequest` gateway (`execute_relation_request`): the gateway
+        // typically already decided this exact prepared pair under the same
+        // flags, so the memo replays its analysis instead of re-running the
+        // relation engine (issue #13243). Same key and stamp model on both
+        // sides keeps the gate byte-equivalent to a fresh pass.
+        let flags = self.ctx.pack_relation_flags();
+        let memo_key = (
+            prepared_source,
+            prepared_target,
+            flags,
+            self.ctx.sound_mode(),
+        );
+        let precomputed = self.failure_memo_lookup(memo_key);
+
         // Keep failure analysis on the same relation boundary as `is_assignable_to`
         // (CheckerContext resolver + checker overrides) so mismatch suppression and
         // diagnostic rendering observe identical compatibility semantics.
@@ -1147,11 +1162,15 @@ impl<'a> CheckerState<'a> {
             resolver: &self.ctx,
             source: prepared_source,
             target: prepared_target,
-            flags: self.ctx.pack_relation_flags(),
+            flags,
             inheritance_graph: &self.ctx.inheritance_graph,
             sound_mode: self.ctx.sound_mode(),
         };
-        let gate = check_assignable_gate_with_overrides(&inputs, &overrides, true);
+        let (gate, capture) =
+            check_assignable_gate_with_overrides(&inputs, &overrides, true, precomputed.as_ref());
+        if let Some(capture) = capture {
+            self.failure_memo_store(memo_key, capture);
+        }
         if gate.related
             && let Some(reason) =
                 self.checker_only_assignability_failure_reason(prepared_source, prepared_target)

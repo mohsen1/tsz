@@ -32,6 +32,8 @@ pub struct PerfCounterSnapshot {
     pub interner: InternerCounters,
     /// Solver relation limit-result cache (issue #13241).
     pub relation_limit_cache: RelationLimitCacheCounters,
+    /// Relation failure-reason single-pass campaign (issue #13243).
+    pub relation_failure: RelationFailureCounters,
     /// Per-`CheckerCreationReason` breakdown. Always
     /// `CHECKER_CREATION_REASON_COUNT` long; rows for inactive reasons
     /// carry all-zero counts (matching the text dump's filter behavior
@@ -476,6 +478,17 @@ pub struct RelationLimitCacheCounters {
     pub maybe_promotions: u64,
 }
 
+/// Relation failure-reason single-pass counters (issue #13243): how many
+/// failing reason-collecting relations re-walked the relation graph vs were
+/// served from the checker's stamp-guarded failure-analysis memo.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RelationFailureCounters {
+    /// Failure-reason walks executed by the solver on a failing relation.
+    pub reason_walks: u64,
+    /// Failing analyses served from the failure-analysis memo.
+    pub memo_hits: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InternerCounters {
     /// Total `intern` calls across kinds. `None` until the solver intern
@@ -623,6 +636,10 @@ impl PerfCounters {
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
                 maybe_promotions: load(&c.relation_maybe_promotions),
+            },
+            relation_failure: RelationFailureCounters {
+                reason_walks: load(&c.relation_failure_reason_walks),
+                memo_hits: load(&c.relation_failure_memo_hits),
             },
             by_reason: (0..CHECKER_CREATION_REASON_COUNT)
                 .map(|i| ByReasonRow {
