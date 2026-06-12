@@ -37,6 +37,7 @@ fn main() -> Result<()> {
         }
     };
 
+    let (preprocessed, batch_residency_budget) = extract_batch_residency_budget_arg(preprocessed);
     let args = match CliArgs::try_parse_from(&preprocessed) {
         Ok(args) => args,
         Err(e) => {
@@ -51,22 +52,26 @@ fn main() -> Result<()> {
     if use_large_stack_thread {
         std::thread::Builder::new()
             .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
-            .spawn(move || actual_main(args, cwd))
+            .spawn(move || actual_main(args, cwd, batch_residency_budget))
             .expect("failed to spawn main thread")
             .join()
             .expect("main thread panicked")
     } else {
-        actual_main(args, cwd)
+        actual_main(args, cwd, batch_residency_budget)
     }
 }
 
-fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
+fn actual_main(
+    mut args: CliArgs,
+    cwd: std::path::PathBuf,
+    batch_residency_budget: bool,
+) -> Result<()> {
     validate_locale_or_exit(&args);
 
     // Initialize locale for i18n message translation
     locale::init_locale(args.locale.as_deref());
 
-    match select_command(&mut args, &cwd) {
+    match select_command(&mut args, &cwd, batch_residency_budget) {
         Command::Batch { residency_budget } => run_batch_mode(residency_budget),
         Command::Init => init::handle_init(&args, &cwd),
         Command::ShowConfig => handle_show_config(&args, &cwd),
@@ -123,11 +128,15 @@ enum Command {
 /// returned `Command` names the action to execute. `args` may be normalized in
 /// place (promoting a lone directory positional to `--project`, merging
 /// output-only tsconfig options) before the compile command is returned.
-fn select_command(args: &mut CliArgs, cwd: &std::path::Path) -> Command {
+fn select_command(
+    args: &mut CliArgs,
+    cwd: &std::path::Path,
+    batch_residency_budget: bool,
+) -> Command {
     // Handle --batch: enter batch compilation mode
     if args.batch {
         return Command::Batch {
-            residency_budget: args.batch_residency_budget,
+            residency_budget: batch_residency_budget,
         };
     }
 
@@ -229,6 +238,63 @@ fn should_report_ts5112_for_command_line_files(args: &CliArgs, cwd: &std::path::
 
 const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
     args.project.is_some() || args.build || args.watch || args.batch || !args.files.is_empty()
+}
+
+/// Pull the internal batch residency probe out before clap sees it.
+///
+/// The flag is part of the batch worker protocol, not tsconfig/compiler-option
+/// compatibility. Only strip it when `--batch` is present; otherwise the normal
+/// parser keeps reporting it as an unknown option like `tsc` would for any
+/// unsupported compiler option.
+fn extract_batch_residency_budget_arg(
+    args: Vec<std::ffi::OsString>,
+) -> (Vec<std::ffi::OsString>, bool) {
+    let is_batch = args
+        .iter()
+        .skip(1)
+        .any(|arg| arg.to_string_lossy() == "--batch");
+    if !is_batch {
+        return (args, false);
+    }
+
+    let mut normalized = Vec::with_capacity(args.len());
+    let mut residency_budget = false;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].to_string_lossy();
+        let flag = arg.as_ref();
+        let mut matched = false;
+        let mut value = None;
+        for spelling in ["--batchResidencyBudget", "--batch-residency-budget"] {
+            if flag == spelling {
+                matched = true;
+                break;
+            }
+            if let Some(raw_value) = flag.strip_prefix(&format!("{spelling}=")) {
+                matched = true;
+                value = Some(raw_value.to_ascii_lowercase());
+                break;
+            }
+        }
+
+        if matched {
+            let next_value = args
+                .get(i + 1)
+                .map(|arg| arg.to_string_lossy().to_ascii_lowercase());
+            match value.as_deref().or(next_value.as_deref()) {
+                Some("false") => residency_budget = false,
+                _ => residency_budget = true,
+            }
+            if value.is_none() && matches!(next_value.as_deref(), Some("true" | "false")) {
+                i += 1;
+            }
+        } else {
+            normalized.push(args[i].clone());
+        }
+        i += 1;
+    }
+
+    (normalized, residency_budget)
 }
 
 /// Batch compilation mode: read project directory paths from stdin (one per line),
