@@ -1109,6 +1109,24 @@ export class Bag {
 }
 
 #[test]
+fn test_full_emit_unannotated_this_indexed_access_return_preserves_key_param() {
+    let output = emit_dts(
+        r#"
+export class Bag {
+    value: number;
+    get<K extends keyof this>(key: K) {
+        return this[key];
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("get<K extends keyof this>(key: K): this[K]"),
+        "Expected full emit to preserve this-indexed key parameter: {output}"
+    );
+}
+
+#[test]
 fn test_unannotated_indexed_access_return_preserves_array_element_key_surface() {
     let output = emit_dts_with_method_node_return_type(
         r#"

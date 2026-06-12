@@ -233,6 +233,23 @@ class Foo {
 }
 
 #[test]
+fn test_js_async_class_method_emits_promise_return() {
+    let output = emit_js_dts(
+        r#"
+class Foo {
+    async a() {
+        await Promise.resolve(1);
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("a(): Promise<void>;"),
+        "Expected async class method to emit a Promise return: {output}"
+    );
+}
+
+#[test]
 fn test_getter_and_setter() {
     let output = emit_dts(
         r#"

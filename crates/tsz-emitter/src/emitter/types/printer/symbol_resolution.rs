@@ -221,10 +221,9 @@ impl<'a> TypePrinter<'a> {
         let func_shape = self.interner.function_shape(shape_id);
         let subst = TypeSubstitution::from_args(self.interner, &func_shape.type_params, type_args);
         let mut return_template = func_shape.return_type;
-        if self.recursive_expansion_depth > 0
-            && visitor::object_shape_id(self.interner, return_template)
-                .or_else(|| visitor::object_with_index_shape_id(self.interner, return_template))
-                .is_some()
+        if visitor::object_shape_id(self.interner, return_template)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, return_template))
+            .is_some()
         {
             return_template = self.rename_recursive_function_type_params_for_depth(return_template);
         }

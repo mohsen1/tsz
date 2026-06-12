@@ -218,6 +218,39 @@ fn test_match_object_extra_source_properties() {
 }
 
 #[test]
+fn test_match_intersection_naked_param_uses_corresponding_source_member() {
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let (t_name, t_type) = make_type_param(&interner, "T");
+    let (p_name, p_type) = make_type_param(&interner, "P");
+    let _var_t = ctx.fresh_type_param(t_name, false);
+    let _var_p = ctx.fresh_type_param(p_name, false);
+
+    let marker_name = interner.intern_string("marker");
+    let props_name = interner.intern_string("props");
+    let source_marker = interner.object(vec![PropertyInfo::new(marker_name, TypeId::STRING)]);
+    let source_props = interner.object(vec![PropertyInfo::new(props_name, TypeId::NUMBER)]);
+    let source = interner.intersect_types_raw(vec![source_marker, source_props]);
+    let target_props = interner.object(vec![PropertyInfo::new(props_name, p_type)]);
+    let target = interner.intersection(vec![t_type, target_props]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let var_t = ctx.find_type_param(t_name).unwrap();
+    let var_p = ctx.find_type_param(p_name).unwrap();
+    let result_t = ctx.resolve_with_constraints(var_t).unwrap();
+    let result_p = ctx.resolve_with_constraints(var_p).unwrap();
+
+    assert_eq!(
+        result_t, source_marker,
+        "naked intersection member should infer from the corresponding source member"
+    );
+    assert_eq!(result_p, TypeId::NUMBER);
+}
+
+#[test]
 fn test_match_object_missing_source_property() {
     // Match `{ x: string }` against `{ x: T, y: U }`
     // => infers T = string, U stays unresolved

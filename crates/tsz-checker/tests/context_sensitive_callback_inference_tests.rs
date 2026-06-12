@@ -16,6 +16,51 @@ fn assert_no_ts2322(source: &str, context: &str) {
     );
 }
 
+fn assert_no_ts7006(source: &str, context: &str) {
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|diagnostic| diagnostic.code == 7006),
+        "{context}: expected no TS7006, got {:#?}",
+        diagnostic_code_message_refs(&diagnostics),
+    );
+}
+
+#[test]
+fn generic_object_callback_return_arrow_no_implicit_any() {
+    assert_no_ts7006(
+        r#"
+declare function repro<T>(config: {
+    params: T;
+    callback: () => (params: T) => number;
+}): void;
+
+repro({
+    params: 1,
+    callback: () => { return value => value + 1 },
+});
+"#,
+        "returned arrow parameter should inherit resolved generic context",
+    );
+}
+
+#[test]
+fn generic_object_method_return_arrow_no_implicit_any() {
+    assert_no_ts7006(
+        r#"
+declare function repro<T>(config: {
+    params: T;
+    callback: () => (params: T) => number;
+}): void;
+
+repro({
+    params: 1,
+    callback() { return item => item + 1 },
+});
+"#,
+        "returned method arrow parameter should inherit resolved generic context",
+    );
+}
+
 #[test]
 fn nullish_callback_return_does_not_self_infer_wrapped_result() {
     assert_no_ts2322(
