@@ -66,7 +66,8 @@ impl CheckerState<'_> {
         let key = (name.to_string(), prop_atom);
         if let Some(cached) = self
             .ctx
-            .lazy_lib_member_resolution_cache
+            .lib_type_resolution_caches
+            .lazy_members
             .borrow()
             .get(&key)
             .copied()
@@ -77,7 +78,8 @@ impl CheckerState<'_> {
         let mut visited = FxHashSet::default();
         let result = self.resolve_simple_lib_interface_property(name, prop_name, &mut visited);
         self.ctx
-            .lazy_lib_member_resolution_cache
+            .lib_type_resolution_caches
+            .lazy_members
             .borrow_mut()
             .insert(key, result);
         result

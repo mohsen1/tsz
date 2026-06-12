@@ -622,7 +622,8 @@ impl<'a> CheckerState<'a> {
         // cycle; return the now-complete type so the caller does not keep the
         // base-less value computed during the cycle.
         self.ctx
-            .lib_type_resolution_cache
+            .lib_type_resolution_caches
+            .types
             .get(name)
             .and_then(|cached| *cached)
             .or(result)
@@ -725,7 +726,8 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| TypeResolver::get_array_base_type(&self.ctx.types))
         {
             self.ctx
-                .lib_type_resolution_cache
+                .lib_type_resolution_caches
+                .types
                 .insert(name.to_string(), Some(ty));
             return Some(ty);
         }
@@ -743,7 +745,8 @@ impl<'a> CheckerState<'a> {
             let cached = *entry;
             if self.cached_lib_type_is_usable(name, cached) {
                 self.ctx
-                    .lib_type_resolution_cache
+                    .lib_type_resolution_caches
+                    .types
                     .insert(name.to_string(), cached);
                 return cached;
             }
@@ -756,7 +759,8 @@ impl<'a> CheckerState<'a> {
         // the in-progress edge breaks that cycle and the completed result
         // overwrites this sentinel.
         self.ctx
-            .lib_type_resolution_cache
+            .lib_type_resolution_caches
+            .types
             .insert(name.to_string(), None);
         // Record that `name`'s resolution is on the stack so a heritage merge of
         // a derived interface reached transitively from here can tell this
@@ -1087,7 +1091,8 @@ impl<'a> CheckerState<'a> {
         // freeze it in their local cache and never re-resolve.
         if let Some(ty) = lib_type_id {
             self.ctx
-                .lib_type_resolution_cache
+                .lib_type_resolution_caches
+                .types
                 .insert(name.to_string(), Some(ty));
 
             // Register the final merged type in type_to_def so the formatter can
@@ -1274,7 +1279,8 @@ impl<'a> CheckerState<'a> {
 
         // Generic lib interfaces had their type params cached above.
         self.ctx
-            .lib_type_resolution_cache
+            .lib_type_resolution_caches
+            .types
             .insert(name.to_string(), lib_type_id);
         if !self.lib_name_locally_augmented(name)
             && let Some(ref shared) = self.ctx.shared_lib_type_cache

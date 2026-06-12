@@ -61,14 +61,16 @@ impl<'a> CheckerState<'a> {
             let cached = *entry;
             if self.cached_lib_type_is_usable(cache_name, cached) {
                 self.ctx
-                    .lib_type_resolution_cache
+                    .lib_type_resolution_caches
+                    .types
                     .insert(cache_name.to_string(), cached);
                 return cached;
             }
         }
 
         self.ctx
-            .lib_type_resolution_cache
+            .lib_type_resolution_caches
+            .types
             .insert(cache_name.to_string(), None);
 
         let lib_contexts = self.ctx.lib_contexts.clone();
@@ -83,7 +85,8 @@ impl<'a> CheckerState<'a> {
         };
         if !has_interface || has_type_alias || declarations.is_empty() {
             self.ctx
-                .lib_type_resolution_cache
+                .lib_type_resolution_caches
+                .types
                 .insert(cache_name.to_string(), None);
             return None;
         }
@@ -128,7 +131,8 @@ impl<'a> CheckerState<'a> {
         );
         if decls_with_arenas.is_empty() {
             self.ctx
-                .lib_type_resolution_cache
+                .lib_type_resolution_caches
+                .types
                 .insert(cache_name.to_string(), None);
             return None;
         }
@@ -139,7 +143,8 @@ impl<'a> CheckerState<'a> {
         );
         if has_resolvable_heritage == Some(false) {
             self.ctx
-                .lib_type_resolution_cache
+                .lib_type_resolution_caches
+                .types
                 .insert(cache_name.to_string(), None);
             return None;
         }
@@ -197,7 +202,8 @@ impl<'a> CheckerState<'a> {
             lowering.lower_merged_interface_declarations_with_symbol(&deduped, Some(sym_id));
         if ty == TypeId::ERROR || ty == TypeId::UNKNOWN {
             self.ctx
-                .lib_type_resolution_cache
+                .lib_type_resolution_caches
+                .types
                 .insert(cache_name.to_string(), None);
             return None;
         }
@@ -213,7 +219,8 @@ impl<'a> CheckerState<'a> {
             .register_lib_def_resolved(bare_name, sym_id, ty, params);
         self.ensure_relation_input_ready(ty);
         self.ctx
-            .lib_type_resolution_cache
+            .lib_type_resolution_caches
+            .types
             .insert(cache_name.to_string(), Some(ty));
         if !self.lib_name_locally_augmented(cache_name)
             && let Some(ref shared) = self.ctx.shared_lib_type_cache

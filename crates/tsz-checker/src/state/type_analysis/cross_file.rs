@@ -950,7 +950,8 @@ impl<'a> CheckerState<'a> {
             }
             for (name, type_id) in child_lib_type_cache {
                 self.ctx
-                    .lib_type_resolution_cache
+                    .lib_type_resolution_caches
+                    .types
                     .entry(name)
                     .or_insert(type_id);
             }

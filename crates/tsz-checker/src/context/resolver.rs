@@ -374,7 +374,8 @@ impl<'a> CheckerContext<'a> {
                 return None;
             }
             let cached_ty = self
-                .lib_type_resolution_cache
+                .lib_type_resolution_caches
+                .types
                 .get(name.as_str())?
                 .as_ref()?;
             return (*cached_ty != current_ty).then_some(*cached_ty);
@@ -394,7 +395,8 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let cached_ty = self
-            .lib_type_resolution_cache
+            .lib_type_resolution_caches
+            .types
             .get(symbol.escaped_name.as_str())?
             .as_ref()?;
         (*cached_ty != current_ty).then_some(*cached_ty)
