@@ -495,43 +495,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Prepare both relation inputs, skipping expensive lazy-ref resolution
-    /// when a cached result is already available.
-    ///
-    /// Gates on `is_relation_cacheable` first: only cacheable type pairs
-    /// benefit from a cache lookup short-circuit. Non-cacheable pairs (those
-    /// containing infer placeholders or `this` types) always go through the
-    /// full `ensure_relation_input_ready` path.
-    pub(crate) fn ensure_relation_pair_ready(&mut self, source: TypeId, target: TypeId) {
-        if crate::query_boundaries::assignability::is_relation_cacheable(
-            self.ctx.types,
-            source,
-            target,
-        ) {
-            let flags = self.ctx.pack_relation_flags();
-            // Probe both the checker-final funnel slot (default gauntlet)
-            // and the raw Lawyer-relation slot (flag-variant gateways).
-            let final_key =
-                crate::query_boundaries::assignability::checker_final_assignability_cache_key(
-                    source, target, flags,
-                );
-            let raw_key = crate::query_boundaries::assignability::assignability_cache_key(
-                source, target, flags,
-            );
-            if self
-                .ctx
-                .types
-                .lookup_assignability_cache(final_key)
-                .is_some()
-                || self.ctx.types.lookup_assignability_cache(raw_key).is_some()
-            {
-                return;
-            }
-        }
-        self.ensure_relation_input_ready(source);
-        self.ensure_relation_input_ready(target);
-    }
-
     /// Centralized suppression for TS2322-style assignability diagnostics.
     pub(crate) fn should_suppress_assignability_diagnostic(
         &mut self,

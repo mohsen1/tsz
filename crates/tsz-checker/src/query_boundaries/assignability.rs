@@ -678,9 +678,7 @@ mod overload_subtype_pass;
 mod relation_kind_variants;
 mod shape;
 pub(crate) use cache_key::{RelationFlags, assignability_cache_key, subtype_cache_key};
-pub(crate) use final_relation::{
-    cached_final_assignability, checker_final_assignability_cache_key,
-};
+pub(crate) use final_relation::cached_final_assignability;
 pub(crate) use overload_subtype_pass::cached_overload_subtype_pass_assignability;
 pub(crate) use relation_kind_variants::{
     cached_bivariant_assignability_with_resolver, is_redeclaration_identical_with_resolver,

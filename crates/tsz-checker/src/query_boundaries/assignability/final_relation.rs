@@ -25,7 +25,7 @@ use crate::state::{CheckerOverrideProvider, CheckerState};
 /// Same typed `RelationCacheConfig` derivation as `assignability_cache_key`,
 /// but under `RelationCacheKind::CheckerAssignable` so checker-final entries
 /// never share a slot with raw Lawyer-relation entries.
-pub(crate) const fn checker_final_assignability_cache_key(
+const fn checker_final_assignability_cache_key(
     source: TypeId,
     target: TypeId,
     flags: u16,
