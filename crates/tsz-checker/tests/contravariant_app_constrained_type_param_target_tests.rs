@@ -159,6 +159,31 @@ register(consume);
 }
 
 #[test]
+fn recursive_tuple_conditional_with_free_number_params_falls_through() {
+    // `recursiveConditionalTypes.ts` keeps both assignments clean for generic
+    // tuple-length parameters. The public application-variance boundary must
+    // not turn a raw `TupleOf<number, N>` / `TupleOf<number, M>` type-argument
+    // mismatch into a definitive rejection before recursive conditional
+    // expansion gets the same chance `tsc` gives it.
+    let source = r#"
+type TupleOf<T, N extends number> = N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<number, M>) {
+    tn = tm;
+    tm = tn;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes = codes(&diags);
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2345),
+        "expected recursive tuple conditionals with free params to stay clean. Codes: {codes:?}"
+    );
+}
+
+#[test]
 fn covariant_application_to_constrained_param_target_rejects_wider_to_narrower() {
     // Anti-regression: COVARIANT containers still reject the wider-to-narrower
     // direction. `Covariant<A>` -> `Covariant<B>` fails when B extends A,

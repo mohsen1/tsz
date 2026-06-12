@@ -867,8 +867,7 @@ pub fn check_application_variance<R: TypeResolver>(
         .args
         .iter()
         .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg));
-    let has_direct_usage = variances.iter().any(|v| v.has_direct_usage());
-    if any_checked && !all_ok && (has_direct_usage || !source_args_contain_type_parameters) {
+    if any_checked && !all_ok && !source_args_contain_type_parameters {
         return Some(false);
     }
 
