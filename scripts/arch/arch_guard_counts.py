@@ -126,6 +126,23 @@ _ROOT_SOLVER_COMPUTATION_IMPORT_PATTERN = re.compile(
     + r")\b"
 )
 
+MODULE_PATH_SOLVER_COMPUTATION_MODULES = (
+    "contextual",
+    "evaluation",
+    "instantiation",
+    "intern",
+    "narrowing",
+    "objects",
+    "operations",
+    "relations",
+)
+
+_MODULE_PATH_SOLVER_COMPUTATION_IMPORT_PATTERN = re.compile(
+    r"\btsz_solver::(?:"
+    + "|".join(MODULE_PATH_SOLVER_COMPUTATION_MODULES)
+    + r")::"
+)
+
 _QUERY_BOUNDARY_COMMON_REFERENCE_PATTERN = re.compile(
     r"\b(?:crate::)?query_boundaries::common::"
 )
@@ -267,6 +284,67 @@ def scan_root_solver_computation_import_count(
         hits.append(
             f"total flat root solver computation API references outside "
             f"query boundaries: {len(matching_lines)} (cap {max_references}; "
+            f"bump cap intentionally, or route the new site through a named "
+            f"solver facade / checker query-boundary helper — #8204)"
+        )
+        return hits
+    return []
+
+
+def scan_module_path_solver_computation_import_count(
+    search_roots: list[pathlib.Path],
+    exclude_path_prefixes: tuple[str, ...],
+    max_references: int,
+) -> list[str]:
+    """Count module-path `tsz_solver::<computation module>::` references in
+    production code.
+
+    This seals the remaining #8204 escape hatch: the flat-root ratchet above
+    pins re-exported symbol names, but the solver still declares
+    `pub mod operations`/`relations`/`evaluation`/..., so downstream crates can
+    reach computation internals by full module path
+    (`tsz_solver::operations::widening::widen_type`). Existing references are
+    transitional compatibility debt; new sites should route through the tiered
+    solver facades or a checker query-boundary helper. Test files are
+    excluded, and `exclude_path_prefixes` marks approved boundary modules.
+    """
+    matching_lines: list[tuple[str, int]] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            if any(rel_to_root.startswith(prefix) for prefix in exclude_path_prefixes):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if _MODULE_PATH_SOLVER_COMPUTATION_IMPORT_PATTERN.search(line):
+                    matching_lines.append((rel_to_root, line_no))
+
+    matching_lines.sort()
+    if len(matching_lines) > max_references:
+        hits = [
+            f"module-path solver computation reference #{i + 1}: {rel}:{line_no}"
+            for i, (rel, line_no) in enumerate(matching_lines)
+        ]
+        hits.append(
+            f"total module-path solver computation references outside "
+            f"approved boundaries: {len(matching_lines)} (cap {max_references}; "
             f"bump cap intentionally, or route the new site through a named "
             f"solver facade / checker query-boundary helper — #8204)"
         )
