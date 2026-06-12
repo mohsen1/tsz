@@ -1502,8 +1502,9 @@ fn test_variance_method_param_alone_is_rejection_unreliable() {
 fn test_variance_method_callback_param_is_reliable_covariant() {
     // interface Promise<T> { then<U>(cb: (x: T) => U): U }
     // T appears only inside a non-method callback nested inside a method
-    // parameter. Tsc still lets method bivariance decide the relation
-    // structurally, so a variance-based rejection is not definitive.
+    // parameter. Tsc treats this as COVARIANT and rejects mismatched
+    // assignments — the rejection IS reliable, so REJECTION_UNRELIABLE must
+    // NOT be set.
     let interner = create_interner();
     let t_param = intern_type_param(&interner, "T");
 
@@ -1548,8 +1549,8 @@ fn test_variance_method_callback_param_is_reliable_covariant() {
         "T under a non-method callback inside a method param should be COVARIANT"
     );
     assert!(
-        variance.rejection_unreliable(),
-        "T inside a callback below a method parameter should fall through to structural method bivariance"
+        !variance.rejection_unreliable(),
+        "T inside a nested callback gives a reliable variance signal — REJECTION_UNRELIABLE must NOT be set"
     );
 }
 
@@ -1557,10 +1558,10 @@ fn test_variance_method_callback_param_is_reliable_covariant() {
 fn test_variance_mixed_direct_and_callback_method_param_is_reliable() {
     // interface C<T> { m(x: T, cb: (x: T) => void): void }
     // T appears both directly in m's params (method-bivariant) AND inside a
-    // non-method callback below the same method parameter context. The result
-    // remains COVARIANT, but rejection is still not definitive because tsc's
-    // structural method-bivariance rules can accept shapes that the argument
-    // variance alone would reject.
+    // non-method callback (strict covariant). The strict occurrence pins the
+    // variance — the result must be COVARIANT and reliably rejecting
+    // (matches tsc, which errors on `C<Foo>` -> `C<Bar>` for unrelated Foo,
+    // Bar despite the direct-param T being method-bivariant).
     let interner = create_interner();
     let t_param = intern_type_param(&interner, "T");
 
@@ -1610,8 +1611,8 @@ fn test_variance_mixed_direct_and_callback_method_param_is_reliable() {
         "Mixed direct/callback method params should resolve to COVARIANT"
     );
     assert!(
-        variance.rejection_unreliable(),
-        "Callback occurrences below method parameters should not make method-bivariant rejection definitive"
+        !variance.rejection_unreliable(),
+        "A strict (callback) occurrence should clear REJECTION_UNRELIABLE set by sibling direct method params"
     );
 }
 
@@ -1628,10 +1629,12 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
     //   }
     //
     // Both occurrences of T are inside non-method callbacks nested under
-    // method-bivariant parameters. The variance remains COVARIANT, but the
-    // rejection is not definitive: `promisesWithConstraints.ts` expects
-    // Promise-like applications with compatible method shapes to remain
-    // mutually assignable through the structural relation.
+    // method-bivariant parameters. Each leaf occurrence is a strict
+    // covariant signal (double-contravariant = covariant), so the merged
+    // variance must be COVARIANT and reliable, with no
+    // REJECTION_UNRELIABLE bit. This locks in tsz's variance computation
+    // for the Promise pattern after declaration merging — the path
+    // exercised by `tests/cases/compiler/promisesWithConstraints.ts`.
     let interner = create_interner();
     let t_param = intern_type_param(&interner, "T");
 
@@ -1705,7 +1708,7 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
         "T does not appear in any contravariant-only position"
     );
     assert!(
-        variance.rejection_unreliable(),
-        "Promise-like method callback occurrences must fall through on rejection"
+        !variance.rejection_unreliable(),
+        "Strict callback occurrences pin the variance signal — REJECTION_UNRELIABLE must be cleared"
     );
 }

@@ -485,15 +485,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             && !needs_structural_fallback
                             && !rejection_unreliable
                         {
+                            let has_direct_usage = variances.iter().any(|v| v.has_direct_usage());
                             // For two applications of the same generic definition with
                             // concrete type arguments, a variance failure is conclusive.
-                            // However, when any source arg is a type parameter, we must
-                            // fall through to structural comparison — the expanded form
-                            // may introduce implicit index signatures (e.g., homomorphic
-                            // mapped types like `{ [K in keyof T]: T[K] }`) that make
-                            // the structural check succeed even though the variance
-                            // check on the raw type parameter fails.
-                            if !args_contain_type_parameters(self.interner, &s_app.args) {
+                            // Direct non-mapped usages are conclusive even for type-param args;
+                            // mapped/conditional forwarding still falls through by marker.
+                            if has_direct_usage
+                                || !args_contain_type_parameters(self.interner, &s_app.args)
+                            {
                                 return SubtypeResult::False;
                             }
                         }
@@ -883,7 +882,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !all_ok
             && !needs_structural_fallback
             && !rejection_unreliable
-            && !args_contain_type_parameters(self.interner, &s_args)
+            && (variances.iter().any(|v| v.has_direct_usage())
+                || !args_contain_type_parameters(self.interner, &s_args))
         {
             return Some(SubtypeResult::False);
         }

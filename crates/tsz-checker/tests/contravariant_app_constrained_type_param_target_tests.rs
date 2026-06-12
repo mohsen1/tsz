@@ -16,10 +16,28 @@
 //! — emitted a spurious second TS2322 on `b = a` because this helper
 //! short-circuited the variance check before contravariance could fire.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{
+    DiagnosticShape, assert_diagnostic_shape, assert_diagnostic_shapes_exactly,
+    check_source_diagnostics, check_source_with_libs, load_compiled_lib_files,
+};
+use tsz_checker::{context::CheckerOptions, diagnostics::Diagnostic};
+use tsz_common::common::ScriptTarget;
 
 fn codes(diags: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<u32> {
     diags.iter().map(|d| d.code).collect()
+}
+
+fn check_es2015_promise_source(source: &str) -> Vec<Diagnostic> {
+    let libs = load_compiled_lib_files(&["lib.es5.d.ts", "lib.es2015.promise.d.ts"]);
+    check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
 }
 
 #[test]
@@ -37,11 +55,12 @@ function f2<A, B extends A>(a: Contravariant<A>, b: Contravariant<B>) {
 }
 "#;
     let diags = check_source_diagnostics(source);
-    let codes = codes(&diags);
-    let ts2322_count = codes.iter().filter(|c| **c == 2322).count();
-    assert_eq!(
-        ts2322_count, 1,
-        "Exactly one TS2322 expected (the `a = b` line). Codes: {codes:?}"
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[DiagnosticShape::code(2322).at(6, 5).with_message_fragment(
+            "Type 'Contravariant<B>' is not assignable to type 'Contravariant<A>'.",
+        )],
     );
 }
 
@@ -175,10 +194,49 @@ function f<A, B extends A>(a: Invariant<A>, b: Invariant<B>) {
 }
 "#;
     let diags = check_source_diagnostics(source);
-    let codes = codes(&diags);
-    let ts2322_count = codes.iter().filter(|c| **c == 2322).count();
-    assert_eq!(
-        ts2322_count, 2,
-        "Both TS2322 expected for invariant case. Codes: {codes:?}"
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2322).at(6, 5).with_message_fragment(
+                "Type 'Invariant<B>' is not assignable to type 'Invariant<A>'.",
+            ),
+            DiagnosticShape::code(2322).at(7, 5).with_message_fragment(
+                "Type 'Invariant<A>' is not assignable to type 'Invariant<B>'.",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn promise_like_method_callback_variance_still_rejects_unconstrained_applications() {
+    let source = r#"// @target: es2015
+interface Promise<T> {
+    then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+interface CPromise<T extends { x: any; }> {
+    then<U extends { x: any; }>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+var a: Promise<Foo>;
+declare var b: Promise<Bar>;
+a = b; // ok
+b = a; // ok
+
+var a2: CPromise<Foo>;
+declare var b2: CPromise<Bar>;
+a2 = b2; // ok
+b2 = a2; // was error
+"#;
+    let diags = check_es2015_promise_source(source);
+    assert_diagnostic_shape(
+        source,
+        &diags,
+        &DiagnosticShape::code(2322)
+            .with_message_fragment("Type 'Promise<Foo>' is not assignable to type 'Promise<Bar>'."),
     );
 }

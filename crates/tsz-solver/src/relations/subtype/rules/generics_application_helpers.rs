@@ -317,15 +317,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        // Type-parameter arguments make a variance rejection inconclusive: the
-        // expanded structural forms can introduce implicit index signatures
-        // (homomorphic mapped types) that change the outcome. The relation
-        // falls through to structural comparison for these, so the explanation
-        // must do the same.
-        if args_contain_type_parameters(self.interner, &s_app.args) {
-            return None;
-        }
-
         let def_id = self.application_base_def_id(s_app.base)?;
         let variances = self.resolve_application_variances(def_id)?;
         if variances.len() != s_app.args.len() {
@@ -340,6 +331,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if variances
             .iter()
             .any(|v| v.needs_structural_fallback() || v.rejection_unreliable())
+        {
+            return None;
+        }
+        // Type-parameter arguments are inconclusive only when no direct
+        // non-mapped occurrence pins the variance. Homomorphic mapped and
+        // conditional-forwarding cases keep falling through structurally via
+        // the fallback/unreliable markers above; direct property/callback/
+        // return occurrences should explain the same definitive rejection the
+        // relation fast path uses.
+        if args_contain_type_parameters(self.interner, &s_app.args)
+            && !variances.iter().any(|v| v.has_direct_usage())
         {
             return None;
         }

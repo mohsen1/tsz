@@ -803,18 +803,76 @@ pub fn check_application_variance<R: TypeResolver>(
         return None;
     }
 
-    let _ = (s_app_id, t_app_id, policy, context, query_db);
+    let variances = if same_base_same_arity {
+        let def_id = lazy_def_id(db, s_app.base)?;
+        resolver.get_type_param_variance(def_id).or_else(|| {
+            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
+                db, resolver, query_db, def_id,
+            )
+        })?
+    } else {
+        return None;
+    };
+    if variances.len() != s_app.args.len() {
+        return None;
+    }
 
     // This public pre-evaluation boundary must be conservative. The solver
-    // engine still owns variance-based App/App decisions through
-    // `SubtypeChecker::try_variance_fast_path` after the ordinary relation
-    // reaches it, but accepting here skips structural expansion before the
-    // relation has seen conditional, recursive, mapped, and declared-variance
-    // bodies. Conformance witnesses (`promisesWithConstraints.ts`,
-    // `recursiveConditionalTypes.ts`, `conditionalTypes2.ts`, and
-    // `varianceAnnotations.ts`) show that even delegated positive results can
-    // suppress `tsc` diagnostics at this public boundary. Fall through until
-    // the boundary has a structural proof that a positive result is parity-safe.
+    // engine still owns positive App/App variance decisions after the ordinary
+    // relation reaches `SubtypeChecker::try_variance_fast_path`; accepting here
+    // can skip structural expansion before conditional, recursive, mapped, and
+    // declared-variance bodies have been observed. Reliable rejections are
+    // different: if the same-base variance mask has direct non-mapped usage and
+    // carries no structural-fallback/unreliable marker, structural expansion can
+    // erase the raw type-argument mismatch that `tsc` reports.
+    let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
+    let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
+    if needs_structural_fallback || rejection_unreliable {
+        return None;
+    }
+
+    let mut checker = configured_compat_checker(db, resolver, policy, context);
+    if let Some(qdb) = query_db {
+        checker.set_query_db(qdb);
+    }
+
+    let mut any_checked = false;
+    let mut all_ok = true;
+    for (i, variance) in variances.iter().enumerate() {
+        let s_arg = s_app.args[i];
+        let t_arg = t_app.args[i];
+
+        if variance.is_invariant() {
+            any_checked = true;
+            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_covariant() {
+            any_checked = true;
+            if !checker.is_assignable(s_arg, t_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_contravariant() {
+            any_checked = true;
+            if !checker.is_assignable(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        }
+    }
+
+    let source_args_contain_type_parameters = s_app
+        .args
+        .iter()
+        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg));
+    let has_direct_usage = variances.iter().any(|v| v.has_direct_usage());
+    if any_checked && !all_ok && (has_direct_usage || !source_args_contain_type_parameters) {
+        return Some(false);
+    }
+
+    // Positive outcomes still fall through structurally at this boundary.
     None
 }
 
