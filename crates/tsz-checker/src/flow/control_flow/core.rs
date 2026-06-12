@@ -757,6 +757,33 @@ impl<'a> FlowAnalyzer<'a> {
         analyzer
     }
 
+    /// Create a `FlowAnalyzer` for property-read flow queries.
+    ///
+    /// Property reads historically used a narrower shared-state set than the
+    /// general flow-narrowing path. Keep that contract centralized here instead
+    /// of letting call sites hand-assemble the builder chain.
+    pub fn from_context_for_property_reads(ctx: &'a crate::context::CheckerContext<'a>) -> Self {
+        Self::with_node_types(ctx.arena, ctx.binder, ctx.types, &ctx.node_types)
+            .with_flow_cache(&ctx.flow_analysis_cache)
+            .with_flow_reference_keys(&ctx.flow_reference_keys)
+            .with_switch_reference_cache(&ctx.flow_switch_reference_cache)
+            .with_numeric_atom_cache(&ctx.flow_numeric_atom_cache)
+            .with_reference_match_cache(&ctx.flow_reference_match_cache)
+            .with_alias_base_assignment_cache(&ctx.symbol_flow_memo.alias_base_assignment)
+            .with_alias_path_assignment_cache(&ctx.symbol_flow_memo.alias_path_assignment)
+            .with_type_environment(&ctx.type_environment)
+            .with_checker_context(ctx)
+            .with_narrowing_cache(&ctx.narrowing_cache)
+            .with_call_type_predicates(&ctx.call_type_predicates)
+            .with_flow_buffers(
+                &ctx.flow_worklist,
+                &ctx.flow_in_worklist,
+                &ctx.flow_visited,
+                &ctx.flow_results,
+            )
+            .with_destructured_bindings(&ctx.destructured_bindings)
+    }
+
     /// Set a shared interner for property/element reference-path cache keys.
     ///
     /// Without it, references that do not resolve to a single symbol (e.g.
