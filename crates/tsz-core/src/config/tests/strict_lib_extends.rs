@@ -506,6 +506,41 @@ fn test_individual_strict_option_overrides_default() {
     );
 }
 
+/// Issue #3861 ordering through the tsconfig lane: an explicit member wins
+/// over the `strict: false` umbrella contraction.
+#[test]
+fn test_strict_false_with_explicit_member_true_keeps_member() {
+    let json = r#"{"compilerOptions":{"strict":false,"strictNullChecks":true}}"#;
+    let config: TsConfig = serde_json::from_str(json).unwrap();
+    let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+    assert!(!resolved.checker.strict);
+    assert!(
+        resolved.checker.strict_null_checks,
+        "explicit strictNullChecks: true must win over strict: false (#3861)"
+    );
+    assert!(
+        !resolved.checker.no_implicit_any,
+        "rest of the family still contracted by strict: false"
+    );
+    assert!(!resolved.checker.strict_function_types);
+}
+
+/// Issue #3861 ordering, inverse permutation: `strict: true` plus an explicit
+/// `false` member keeps the member off while the rest of the family expands.
+#[test]
+fn test_strict_true_with_explicit_member_false_keeps_member_off() {
+    let json = r#"{"compilerOptions":{"strict":true,"strictFunctionTypes":false}}"#;
+    let config: TsConfig = serde_json::from_str(json).unwrap();
+    let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+    assert!(resolved.checker.strict);
+    assert!(
+        !resolved.checker.strict_function_types,
+        "explicit strictFunctionTypes: false must win over strict: true (#3861)"
+    );
+    assert!(resolved.checker.strict_null_checks);
+    assert!(resolved.checker.no_implicit_any);
+}
+
 #[test]
 fn test_ts5024_boolean_string_uses_always_strict_default() {
     // tsc still enforces strict-mode syntax here: the invalid string value is
