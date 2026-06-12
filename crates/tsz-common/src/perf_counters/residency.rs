@@ -34,6 +34,8 @@ pub struct ResidencyGauges {
     type_interner_bytes_est: AtomicU64,
     skeleton_index_bytes_est: AtomicU64,
     pre_merge_bind_total_bytes_est: AtomicU64,
+    retained_file_state_bytes_est: AtomicU64,
+    retained_file_state_pressure: AtomicU64,
     shared_query_cache_entries: AtomicU64,
     shared_query_cache_bytes_est: AtomicU64,
     type_cache_count: AtomicU64,
@@ -56,6 +58,8 @@ fn residency_gauges() -> &'static ResidencyGauges {
         type_interner_bytes_est: AtomicU64::new(0),
         skeleton_index_bytes_est: AtomicU64::new(0),
         pre_merge_bind_total_bytes_est: AtomicU64::new(0),
+        retained_file_state_bytes_est: AtomicU64::new(0),
+        retained_file_state_pressure: AtomicU64::new(0),
         shared_query_cache_entries: AtomicU64::new(0),
         shared_query_cache_bytes_est: AtomicU64::new(0),
         type_cache_count: AtomicU64::new(0),
@@ -79,6 +83,39 @@ pub struct MergedProgramResidencyRecord {
     pub type_interner_bytes_est: u64,
     pub skeleton_index_bytes_est: u64,
     pub pre_merge_bind_total_bytes_est: u64,
+    pub retained_file_state_bytes_est: u64,
+    pub retained_file_state_pressure: ResidencyPressureLevel,
+}
+
+/// Default-budget retained-state pressure level for residency accounting.
+///
+/// This is an observation only. It lets perf-counter artifacts show what the
+/// batch/LSP residency decision would see without wiring eviction behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResidencyPressureLevel {
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+
+impl ResidencyPressureLevel {
+    const fn as_u64(self) -> u64 {
+        match self {
+            Self::Low => 0,
+            Self::Medium => 1,
+            Self::High => 2,
+        }
+    }
+
+    const fn from_u64(value: u64) -> Self {
+        match value {
+            1 => Self::Medium,
+            2 => Self::High,
+            _ => Self::Low,
+        }
+    }
 }
 
 /// Record the merged-program residency categories. Gated on
@@ -111,6 +148,12 @@ pub fn record_merged_program_residency(record: &MergedProgramResidencyRecord) {
         .store(record.skeleton_index_bytes_est, Ordering::Relaxed);
     g.pre_merge_bind_total_bytes_est
         .store(record.pre_merge_bind_total_bytes_est, Ordering::Relaxed);
+    g.retained_file_state_bytes_est
+        .store(record.retained_file_state_bytes_est, Ordering::Relaxed);
+    g.retained_file_state_pressure.store(
+        record.retained_file_state_pressure.as_u64(),
+        Ordering::Relaxed,
+    );
     g.recorded_any.store(true, Ordering::Relaxed);
 }
 
@@ -174,6 +217,13 @@ pub struct ResidencySnapshot {
     /// Pre-merge `BindResult` footprint captured before the merge consumed
     /// per-file data (informational; this memory is released after merge).
     pub pre_merge_bind_total_bytes_est: u64,
+    /// Retained state used by the default `ResidencyBudget` pressure
+    /// assessment: post-merge bound-file state plus unique user-file arenas.
+    /// This intentionally excludes `pre_merge_bind_total_bytes_est` because
+    /// that footprint is transient after owned merge paths complete.
+    pub retained_file_state_bytes_est: u64,
+    /// Default-budget pressure level for `retained_file_state_bytes_est`.
+    pub retained_file_state_pressure: ResidencyPressureLevel,
     /// `SharedQueryCache` entries across eval/subtype/assignability maps.
     pub shared_query_cache_entries: u64,
     pub shared_query_cache_bytes_est: u64,
@@ -225,6 +275,10 @@ pub(crate) fn snapshot_residency() -> Option<ResidencySnapshot> {
         type_interner_bytes_est,
         skeleton_index_bytes_est,
         pre_merge_bind_total_bytes_est: load(&g.pre_merge_bind_total_bytes_est),
+        retained_file_state_bytes_est: load(&g.retained_file_state_bytes_est),
+        retained_file_state_pressure: ResidencyPressureLevel::from_u64(
+            load(&g.retained_file_state_pressure),
+        ),
         shared_query_cache_entries: load(&g.shared_query_cache_entries),
         shared_query_cache_bytes_est,
         type_cache_count: load(&g.type_cache_count),

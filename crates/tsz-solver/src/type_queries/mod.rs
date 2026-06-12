@@ -34,6 +34,7 @@ pub mod data;
 pub mod extended;
 pub mod extended_constructors;
 pub mod flow;
+pub mod global_interfaces;
 pub mod iterable;
 pub mod mapped;
 pub mod mapped_declaration_surface;
@@ -93,6 +94,7 @@ pub use extended_constructors::{
 
 pub use data::*;
 pub use flow::*;
+pub use global_interfaces::*;
 pub use iterable::*;
 pub use mapped::*;
 pub use mapped_declaration_surface::*;
