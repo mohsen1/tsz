@@ -32,6 +32,8 @@ pub struct PerfCounterSnapshot {
     pub interner: InternerCounters,
     /// Solver relation limit-result cache (issue #13241).
     pub relation_limit_cache: RelationLimitCacheCounters,
+    /// Solver concrete-form materialization counters (issue #13242).
+    pub solver_materialization: SolverMaterializationCounters,
     /// Solver evaluator memo lifecycle (issue #13097): what the per-run
     /// fresh-evaluator pattern recomputes and discards.
     pub evaluator_memo: EvaluatorMemoCounters,
@@ -479,6 +481,19 @@ pub struct RelationLimitCacheCounters {
     pub maybe_promotions: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SolverMaterializationCounters {
+    pub union_subtype_reduction_calls: u64,
+    pub union_subtype_reduction_members_total: u64,
+    pub union_subtype_reduction_members_max: u64,
+    pub union_subtype_reduction_pairwise_budget_total: u64,
+    pub union_subtype_reduction_shallow_checks: u64,
+    pub property_instantiation_walks: u64,
+    pub property_instantiation_properties_total: u64,
+    pub property_instantiation_properties_max: u64,
+    pub property_instantiation_changed: u64,
+}
+
 /// Solver evaluator memo-lifecycle counters (issue #13097): how much work
 /// the per-call fresh-`TypeEvaluator` pattern repeats or discards within a
 /// single file scope.
@@ -659,6 +674,27 @@ impl PerfCounters {
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
                 maybe_promotions: load(&c.relation_maybe_promotions),
+            },
+            solver_materialization: SolverMaterializationCounters {
+                union_subtype_reduction_calls: load(&c.union_subtype_reduction_calls),
+                union_subtype_reduction_members_total: load(
+                    &c.union_subtype_reduction_members_total,
+                ),
+                union_subtype_reduction_members_max: load(&c.union_subtype_reduction_members_max),
+                union_subtype_reduction_pairwise_budget_total: load(
+                    &c.union_subtype_reduction_pairwise_budget_total,
+                ),
+                union_subtype_reduction_shallow_checks: load(
+                    &c.union_subtype_reduction_shallow_checks,
+                ),
+                property_instantiation_walks: load(&c.property_instantiation_walks),
+                property_instantiation_properties_total: load(
+                    &c.property_instantiation_properties_total,
+                ),
+                property_instantiation_properties_max: load(
+                    &c.property_instantiation_properties_max,
+                ),
+                property_instantiation_changed: load(&c.property_instantiation_changed),
             },
             evaluator_memo: EvaluatorMemoCounters {
                 constructions: load(&c.eval_evaluator_constructions),

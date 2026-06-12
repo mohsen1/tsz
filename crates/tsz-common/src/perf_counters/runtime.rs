@@ -143,6 +143,17 @@ pub struct PerfCounters {
     /// band-conditional `LimitTrue` entries.
     pub relation_maybe_promotions: AtomicU64,
 
+    // ─── solver concrete materialization (issue #13242) ─────────────────
+    pub union_subtype_reduction_calls: AtomicU64,
+    pub union_subtype_reduction_members_total: AtomicU64,
+    pub union_subtype_reduction_members_max: AtomicU64,
+    pub union_subtype_reduction_pairwise_budget_total: AtomicU64,
+    pub union_subtype_reduction_shallow_checks: AtomicU64,
+    pub property_instantiation_walks: AtomicU64,
+    pub property_instantiation_properties_total: AtomicU64,
+    pub property_instantiation_properties_max: AtomicU64,
+    pub property_instantiation_changed: AtomicU64,
+
     // ─── solver evaluator memo lifecycle (issue #13097) ──────────────────
     /// `TypeEvaluator` constructions (each is a fresh per-run memo set).
     pub eval_evaluator_constructions: AtomicU64,
@@ -312,6 +323,15 @@ impl PerfCounters {
                 CHECKER_CREATION_REASON_COUNT],
             relation_limit_cache_hits: AtomicU64::new(0),
             relation_maybe_promotions: AtomicU64::new(0),
+            union_subtype_reduction_calls: AtomicU64::new(0),
+            union_subtype_reduction_members_total: AtomicU64::new(0),
+            union_subtype_reduction_members_max: AtomicU64::new(0),
+            union_subtype_reduction_pairwise_budget_total: AtomicU64::new(0),
+            union_subtype_reduction_shallow_checks: AtomicU64::new(0),
+            property_instantiation_walks: AtomicU64::new(0),
+            property_instantiation_properties_total: AtomicU64::new(0),
+            property_instantiation_properties_max: AtomicU64::new(0),
+            property_instantiation_changed: AtomicU64::new(0),
             eval_evaluator_constructions: AtomicU64::new(0),
             eval_local_memo_hits: AtomicU64::new(0),
             eval_compute_nodes: AtomicU64::new(0),
@@ -1296,6 +1316,40 @@ pub fn record_relation_maybe_promotion() {
     counters()
         .relation_maybe_promotions
         .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one concrete union-subtype reduction attempt.
+#[inline]
+pub fn record_union_subtype_reduction(member_count: u64, pairwise_budget: u64) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.union_subtype_reduction_calls
+        .fetch_add(1, Ordering::Relaxed);
+    c.union_subtype_reduction_members_total
+        .fetch_add(member_count, Ordering::Relaxed);
+    c.union_subtype_reduction_pairwise_budget_total
+        .fetch_add(pairwise_budget, Ordering::Relaxed);
+    record_max(&c.union_subtype_reduction_members_max, member_count);
+}
+
+/// Record a concrete object/callable property-instantiation walk.
+#[inline]
+pub fn record_property_instantiation_walk(property_count: u64, changed: bool) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.property_instantiation_walks
+        .fetch_add(1, Ordering::Relaxed);
+    c.property_instantiation_properties_total
+        .fetch_add(property_count, Ordering::Relaxed);
+    record_max(&c.property_instantiation_properties_max, property_count);
+    if changed {
+        c.property_instantiation_changed
+            .fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// Record a `TypeEvaluator` construction (issue #13097 memo-lifecycle audit).
