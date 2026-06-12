@@ -267,6 +267,33 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+        if arg_str.starts_with('{')
+            && let Some(display_ty) = param_display_type
+            && self.ctx.types.get_display_properties(display_ty).is_some()
+            && !self.target_preserves_literal_surface(param_type)
+        {
+            // Parameters inferred from another fresh object literal can carry
+            // literal spellings only through display provenance (for example
+            // `NoInfer<T>` when `T` was inferred from `{ x: 3, y: 2 }`).
+            // tsc renders these parameter surfaces as annotation-like object
+            // members, so widen the display-property literals at the type
+            // level and print without the stale literal side table (#13075).
+            let widened = self.widen_annotation_literals_for_display(
+                display_ty,
+                crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+            );
+            if widened.display_residue {
+                param_str = self.format_type_diagnostic_widened(widened.type_id);
+            } else if widened.type_id != display_ty {
+                param_str = self.format_type_for_diagnostic_role(
+                    widened.type_id,
+                    DiagnosticTypeDisplayRole::CallParameter {
+                        argument: arg_type,
+                        argument_idx: idx,
+                    },
+                );
+            }
+        }
         if let Some((generic_arg_str, generic_param_str)) =
             self.generic_direct_primitive_mismatch_display(arg_type, param_type, idx)
         {

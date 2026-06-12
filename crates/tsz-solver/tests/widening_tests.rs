@@ -1087,11 +1087,7 @@ fn annotation_widen_all(interner: &TypeInterner, type_id: TypeId) -> AnnotationW
     widen_annotation_literals_for_display(interner, type_id, AnnotationLiteralWideningPolicy::ALL)
 }
 
-fn property_type<'a>(
-    interner: &TypeInterner,
-    shape: &'a crate::types::ObjectShape,
-    name: &str,
-) -> TypeId {
+fn property_type(interner: &TypeInterner, shape: &crate::types::ObjectShape, name: &str) -> TypeId {
     let atom = interner.intern_string(name);
     shape
         .properties
