@@ -340,6 +340,12 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// currently depend on checking files in deterministic order with a
 /// progressively warmed `SharedQueryCache`.
 ///
+/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` is a diagnosis-only escape hatch for
+/// the DOM/webworker gate-lift campaign: it bypasses only the order-sensitive
+/// global-lib gate so forced-parallel rows can be byte-compared against the
+/// sequential baseline without also changing tiny-batch or wildcard-barrel
+/// policy.
+///
 /// Investigated 2026-06 while attempting to lift the DOM gate for the
 /// ts-toolbelt row: the blocker is not (only) racing shared state. Checking
 /// `ts-toolbelt/sources/Function/AutoPath.ts` *alone* (cold caches, fully
@@ -383,10 +389,11 @@ const fn should_use_sequential_fresh_checking(
     work_item_count: usize,
     has_large_wildcard_barrel: bool,
     has_parallel_order_sensitive_global_lib: bool,
+    force_parallel_order_sensitive_global_lib: bool,
 ) -> bool {
     work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
         || has_large_wildcard_barrel
-        || has_parallel_order_sensitive_global_lib
+        || (has_parallel_order_sensitive_global_lib && !force_parallel_order_sensitive_global_lib)
 }
 
 const fn needs_separate_boxed_prime_checker(
@@ -1283,21 +1290,18 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     work_items: &work_items,
                     large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
                 });
-            // Experiment escape hatch for the parallel fresh-checking gate
-            // lift campaign: force the rayon path regardless of the
-            // DOM-lib/barrel heuristics so livelock/determinism repros can be
-            // driven from the env without rebuilding.
-            let force_parallel_experiment =
+            // Experiment escape hatch for the DOM/webworker fresh-checking
+            // gate-lift campaign: force the rayon path past that one heuristic
+            // so livelock/determinism repros can be driven from the env
+            // without also bypassing tiny-batch or wildcard-barrel policy.
+            let force_parallel_order_sensitive_global_lib =
                 std::env::var_os("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK").is_some();
-            let use_sequential_checking = if force_parallel_experiment {
-                false
-            } else {
-                should_use_sequential_fresh_checking(
-                    work_items.len(),
-                    has_large_wildcard_barrel,
-                    has_parallel_order_sensitive_global_lib,
-                )
-            };
+            let use_sequential_checking = should_use_sequential_fresh_checking(
+                work_items.len(),
+                has_large_wildcard_barrel,
+                has_parallel_order_sensitive_global_lib,
+                force_parallel_order_sensitive_global_lib,
+            );
             // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): the sequential
             // no-emit path *can* construct one `CheckerState` and re-target
             // it across files via `CheckerContext::switch_to_file` instead
