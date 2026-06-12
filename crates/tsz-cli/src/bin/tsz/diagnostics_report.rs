@@ -110,6 +110,7 @@ struct DiagnosticsReport {
     residency_arena_kb: f64,
     residency_file_count: usize,
     residency_bound_kb: f64,
+    residency_retained_kb: f64,
     residency_pressure: &'static str,
     residency_has_pre_merge: bool,
     residency_pre_merge_kb: f64,
@@ -209,6 +210,7 @@ fn build_diagnostics_report(
         report.residency_arena_kb = rs.unique_arena_estimated_bytes as f64 / 1024.0;
         report.residency_file_count = rs.file_count;
         report.residency_bound_kb = rs.total_bound_file_bytes as f64 / 1024.0;
+        report.residency_retained_kb = rs.retained_file_state_bytes_est() as f64 / 1024.0;
         report.residency_pressure = residency_pressure_label(ResidencyBudget::default().assess(rs));
         report.residency_has_pre_merge = rs.pre_merge_bind_total_bytes > 0;
         report.residency_pre_merge_kb = rs.pre_merge_bind_total_bytes as f64 / 1024.0;
@@ -447,6 +449,11 @@ fn render_diagnostics_report(report: &DiagnosticsReport, extended: bool) -> Stri
             out,
             "Bound files:                   {} ({:.1}K)",
             report.residency_file_count, report.residency_bound_kb,
+        );
+        let _ = writeln!(
+            out,
+            "Retained file state:           {:.1}K",
+            report.residency_retained_kb
         );
         let _ = writeln!(
             out,
