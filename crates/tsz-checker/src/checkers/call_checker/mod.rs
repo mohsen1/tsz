@@ -321,7 +321,7 @@ impl CheckerState<'_> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        if !crate::query_boundaries::common::contains_generic_indexed_access_surface(
+        if !crate::query_boundaries::checkers::call::contains_generic_indexed_access_surface_for_call(
             self.ctx.types,
             target,
         ) {
@@ -350,7 +350,7 @@ impl CheckerState<'_> {
         type_id: TypeId,
     ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
         if let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+            crate::query_boundaries::checkers::call::object_shape_for_call(self.ctx.types, type_id)
         {
             return Some(shape);
         }
@@ -360,7 +360,7 @@ impl CheckerState<'_> {
             return None;
         }
 
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+        crate::query_boundaries::checkers::call::object_shape_for_call(self.ctx.types, evaluated)
     }
 
     fn type_has_named_property_for_call_compat(&mut self, type_id: TypeId, name: &str) -> bool {
@@ -376,12 +376,12 @@ impl CheckerState<'_> {
         type_id: TypeId,
         name: &str,
     ) -> bool {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        matches!(
-            self.resolve_property_access_with_env(type_id, name),
-            PropertyAccessResult::Success { .. }
-                | PropertyAccessResult::PossiblyNullOrUndefined { .. }
-        ) || crate::query_boundaries::common::has_property_by_str(self.ctx.types, type_id, name)
+        let access = self.resolve_property_access_with_env(type_id, name);
+        crate::query_boundaries::checkers::call::property_access_is_present_for_call(&access)
+            || crate::query_boundaries::checkers::call::has_property_by_str_for_call(
+                self.ctx.types,
+                type_id,
+                name,
+            )
     }
 }
