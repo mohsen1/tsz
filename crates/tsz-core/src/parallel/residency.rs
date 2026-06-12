@@ -60,14 +60,18 @@ pub struct MergedProgramResidencyStats {
 }
 
 impl MergedProgram {
-    /// Return residency-oriented counters for the current merged program.
-    #[must_use]
-    pub fn residency_stats(&self) -> MergedProgramResidencyStats {
+    /// Collect every unique `NodeArena` retained by the merged program,
+    /// deduplicated by pointer identity. `include_lib_binders` additionally
+    /// walks the lib `BinderState` arena maps (lib arenas are usually also
+    /// reachable through the merged `symbol_arenas`/`declaration_arenas`
+    /// maps, but the dedup makes the extra walk safe either way).
+    fn collect_unique_arenas(
+        &self,
+        include_lib_binders: bool,
+    ) -> rustc_hash::FxHashMap<usize, &Arc<tsz_parser::parser::NodeArena>> {
         use rustc_hash::FxHashMap;
         use tsz_parser::parser::NodeArena;
 
-        // Collect unique arenas by pointer identity, keeping a reference to
-        // each for size estimation.
         let mut unique_arena_map: FxHashMap<usize, &Arc<NodeArena>> = FxHashMap::default();
 
         for file in &self.files {
@@ -84,6 +88,31 @@ impl MergedProgram {
                 unique_arena_map.entry(ptr).or_insert(arena);
             }
         }
+        if include_lib_binders {
+            for binder in self.lib_binders.iter() {
+                for arena in binder.symbol_arenas.values() {
+                    let ptr = Arc::as_ptr(arena) as usize;
+                    unique_arena_map.entry(ptr).or_insert(arena);
+                }
+                for arenas in binder.declaration_arenas.values() {
+                    for arena in arenas {
+                        let ptr = Arc::as_ptr(arena) as usize;
+                        unique_arena_map.entry(ptr).or_insert(arena);
+                    }
+                }
+            }
+        }
+        unique_arena_map
+    }
+
+    /// Return residency-oriented counters for the current merged program.
+    #[must_use]
+    pub fn residency_stats(&self) -> MergedProgramResidencyStats {
+        // Collect unique arenas by pointer identity, keeping a reference to
+        // each for size estimation. Lib binder arenas are excluded here to
+        // keep `--diagnostics-json` numbers comparable with prior runs; the
+        // perf-counter breakdown includes them.
+        let unique_arena_map = self.collect_unique_arenas(false);
 
         let unique_arena_count = unique_arena_map.len();
         let unique_arena_estimated_bytes: usize = unique_arena_map
@@ -152,6 +181,119 @@ impl MergedProgram {
             dep_graph_cycle_count: dep_cycle_count,
             dep_graph_unresolved_count: dep_unresolved,
         }
+    }
+
+    /// Estimate the heap bytes of the program-wide symbol state retained by
+    /// the merge: the merged `SymbolArena`, global/file-local symbol tables,
+    /// module export tables, semantic-def entries, and the map overhead of
+    /// the declaration-arena lookup tables (the arenas themselves are
+    /// counted by the unique-arena walk).
+    fn program_symbol_state_bytes_est(&self) -> usize {
+        use std::mem::size_of;
+        const ENTRY_OVERHEAD: usize = 16;
+
+        let mut size = self.symbols.estimated_size_bytes();
+        size += self.globals.estimated_size_bytes();
+        size += self.lib_globals.estimated_size_bytes();
+        size += self
+            .file_locals
+            .iter()
+            .map(super::super::binder::SymbolTable::estimated_size_bytes)
+            .sum::<usize>();
+        for (name, table) in self.module_exports.iter() {
+            size += ENTRY_OVERHEAD + name.capacity() + table.estimated_size_bytes();
+        }
+        for entry in self.semantic_defs.values() {
+            size += ENTRY_OVERHEAD + size_of::<crate::binder::SemanticDefEntry>();
+            size += entry.name.capacity();
+            size += entry
+                .type_param_names
+                .iter()
+                .map(|n| size_of::<String>() + n.capacity())
+                .sum::<usize>();
+            size += entry
+                .enum_member_names
+                .iter()
+                .map(|n| size_of::<String>() + n.capacity())
+                .sum::<usize>();
+            size += entry
+                .extends_names
+                .iter()
+                .map(|n| size_of::<String>() + n.capacity())
+                .sum::<usize>();
+            size += entry
+                .implements_names
+                .iter()
+                .map(|n| size_of::<String>() + n.capacity())
+                .sum::<usize>();
+        }
+        // Program-wide arena lookup tables: count entry overhead only (the
+        // pointed-to arenas are owned by the unique-arena category).
+        size += self.symbol_arenas.len() * (ENTRY_OVERHEAD + size_of::<u32>() + size_of::<usize>());
+        size += self
+            .declaration_arenas
+            .values()
+            .map(|arenas| {
+                ENTRY_OVERHEAD + size_of::<(u32, u32)>() + arenas.len() * size_of::<usize>()
+            })
+            .sum::<usize>();
+        size += self
+            .sym_to_decl_indices
+            .values()
+            .map(|indices| ENTRY_OVERHEAD + size_of::<u32>() + indices.len() * size_of::<u32>())
+            .sum::<usize>();
+        size += self.cross_file_node_symbols.len()
+            * (ENTRY_OVERHEAD + size_of::<usize>() + size_of::<usize>());
+        size += self.alias_partners.len() * (ENTRY_OVERHEAD + 2 * size_of::<u32>());
+        size
+    }
+
+    /// Record the per-category residency breakdown into the process-wide
+    /// perf-counter gauges (issue #13249 step 1).
+    ///
+    /// Zero overhead when `TSZ_PERF_COUNTERS` is unset: the gate is checked
+    /// before any walk happens. When enabled, this walks every retained
+    /// arena, bound file, lib binder, and program-wide map exactly once —
+    /// intended to be called a single time at the end of a batch compile,
+    /// immediately before the CLI writes the perf-counter JSON snapshot.
+    pub fn record_residency_breakdown(&self) {
+        use tsz_common::perf_counters as pc;
+        if !pc::enabled() {
+            return;
+        }
+
+        let unique_arena_map = self.collect_unique_arenas(true);
+        let ast_unique_arena_bytes_est: usize = unique_arena_map
+            .values()
+            .map(|a| a.estimated_size_bytes())
+            .sum();
+
+        let bound_file_state_bytes_est: usize =
+            self.files.iter().map(|f| f.estimated_size_bytes()).sum();
+
+        let lib_binder_symbol_bytes_est: usize = self
+            .lib_binders
+            .iter()
+            .map(|binder| binder.symbols.estimated_size_bytes())
+            .sum();
+
+        pc::record_merged_program_residency(&pc::MergedProgramResidencyRecord {
+            ast_unique_arena_count: unique_arena_map.len() as u64,
+            ast_unique_arena_bytes_est: ast_unique_arena_bytes_est as u64,
+            bound_file_count: self.files.len() as u64,
+            bound_file_state_bytes_est: bound_file_state_bytes_est as u64,
+            lib_binder_count: self.lib_binders.len() as u64,
+            lib_binder_symbol_bytes_est: lib_binder_symbol_bytes_est as u64,
+            program_symbol_state_bytes_est: self.program_symbol_state_bytes_est() as u64,
+            definition_store_bytes_est: self.definition_store.estimated_size_bytes() as u64,
+            type_interner_bytes_est: self.type_interner.estimated_size_bytes() as u64,
+            skeleton_index_bytes_est: self
+                .skeleton_index
+                .as_ref()
+                .map_or(0, |idx| idx.estimated_size_bytes())
+                as u64,
+            pre_merge_bind_total_bytes_est: self.pre_merge_bind_total_bytes as u64,
+        });
     }
 }
 

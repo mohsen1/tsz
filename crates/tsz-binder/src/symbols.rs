@@ -333,6 +333,31 @@ impl Symbol {
         }
     }
 
+    /// Estimate the heap bytes owned by this symbol beyond
+    /// `size_of::<Symbol>()` (name, declaration lists, member tables).
+    ///
+    /// Capacity-based estimate for residency accounting (#13249 step 1);
+    /// called only at perf-counter snapshot time, never on a hot path.
+    #[must_use]
+    pub fn estimated_heap_bytes(&self) -> usize {
+        let mut size = self.escaped_name.capacity();
+        size += self.declarations.capacity() * std::mem::size_of::<NodeIndex>();
+        size += self.stable_declarations.capacity() * std::mem::size_of::<StableLocation>();
+        if let Some(exports) = &self.exports {
+            size += std::mem::size_of::<SymbolTable>() + exports.estimated_size_bytes();
+        }
+        if let Some(members) = &self.members {
+            size += std::mem::size_of::<SymbolTable>() + members.estimated_size_bytes();
+        }
+        if let Some(module) = &self.import_module {
+            size += module.capacity();
+        }
+        if let Some(name) = &self.import_name {
+            size += name.capacity();
+        }
+        size
+    }
+
     /// Check if symbol has all specified flags.
     #[must_use]
     pub const fn has_flags(&self, flags: u32) -> bool {
@@ -552,6 +577,21 @@ impl SymbolTable {
     pub fn iter(&self) -> impl Iterator<Item = (&String, &SymbolId)> {
         self.symbols.iter()
     }
+
+    /// Estimate the heap bytes owned by this table (map buckets + name
+    /// strings). Capacity-based estimate for residency accounting (#13249
+    /// step 1); called only at perf-counter snapshot time.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        // FxHashMap per-bucket overhead: hash + alignment padding.
+        const BUCKET_OVERHEAD: usize = 16;
+        let mut size = self.symbols.capacity()
+            * (BUCKET_OVERHEAD + std::mem::size_of::<String>() + std::mem::size_of::<SymbolId>());
+        for name in self.symbols.keys() {
+            size += name.capacity();
+        }
+        size
+    }
 }
 
 // =============================================================================
@@ -734,6 +774,28 @@ impl SymbolArena {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.symbols.is_empty()
+    }
+
+    /// Estimate the heap bytes owned by this arena: symbol slots, per-symbol
+    /// heap (names, declaration lists, member tables), and the name index.
+    ///
+    /// Capacity-based estimate for residency accounting (#13249 step 1);
+    /// walks every symbol, so call only at perf-counter snapshot time.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        const BUCKET_OVERHEAD: usize = 16;
+        let mut size = self.symbols.capacity() * std::mem::size_of::<Symbol>();
+        for sym in self.symbols.iter() {
+            size += sym.estimated_heap_bytes();
+        }
+        size += self.name_index.capacity()
+            * (BUCKET_OVERHEAD
+                + std::mem::size_of::<String>()
+                + std::mem::size_of::<Vec<SymbolId>>());
+        for (name, ids) in self.name_index.iter() {
+            size += name.capacity() + ids.capacity() * std::mem::size_of::<SymbolId>();
+        }
+        size
     }
 
     /// Reserve additional capacity for the symbol arena and its name index.
