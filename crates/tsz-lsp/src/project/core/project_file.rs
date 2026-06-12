@@ -62,6 +62,8 @@ pub struct ProjectFile {
     pub(crate) strict: bool,
     /// Flag indicating if caches were invalidated and diagnostics need re-computation
     pub(crate) diagnostics_dirty: bool,
+    // Cached diagnostics from the last clean check. Reused when `diagnostics_dirty` is false.
+    pub(crate) cached_diagnostics: Option<Vec<LspDiagnostic>>,
     /// Position-independent hash of the file's public API (exports, re-exports, augmentations).
     /// Used to avoid invalidating dependent files when only function bodies or comments change.
     pub(crate) export_signature: ExportSignature,
@@ -714,6 +716,7 @@ impl ProjectFile {
         // invalidated to force re-computation with the shared interner.
         self.type_cache = None;
         self.scope_cache.clear();
+        self.cached_diagnostics = None;
         self.diagnostics_dirty = true;
     }
 
@@ -802,6 +805,12 @@ impl ProjectFile {
     }
 
     pub fn get_diagnostics(&mut self) -> Vec<LspDiagnostic> {
+        if !self.diagnostics_dirty {
+            if let Some(diagnostics) = &self.cached_diagnostics {
+                return diagnostics.clone();
+            }
+        }
+
         let file_name = self.file_name.clone();
         let source_text = self.parser.get_source_text();
         let compiler_options = tsz_checker::context::CheckerOptions {
@@ -864,6 +873,7 @@ impl ProjectFile {
             .collect();
 
         self.type_cache = Some(checker.extract_cache());
+        self.cached_diagnostics = Some(diagnostics.clone());
         self.diagnostics_dirty = false;
         diagnostics
     }
