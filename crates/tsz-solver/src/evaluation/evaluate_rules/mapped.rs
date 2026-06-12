@@ -5,6 +5,7 @@
 mod display_order;
 mod key_types;
 mod keyof_constraint;
+mod keys_guard;
 
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
@@ -1445,8 +1446,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         (!keys.keys.is_empty() && (keys.has_string || keys.has_number)).then_some(keys)
     }
 
-    /// Extract mapped keys from a type (for mapped type iteration).
-    pub(super) fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
+    /// Extract mapped keys (for mapped iteration); guarded via `keys_guard`.
+    fn extract_mapped_keys_impl(&mut self, type_id: TypeId) -> Option<MappedKeys> {
         let key = self.interner().lookup(type_id)?;
 
         let mut keys = MappedKeys {

@@ -882,10 +882,16 @@ impl TypeEnvironment {
     /// delegation results to be visible without explicit merge-back: the child
     /// checker writes to `DefinitionStore` and the parent reads via this fallback.
     pub fn get_def(&self, def_id: DefId) -> Option<TypeId> {
-        self.def_types
-            .get(&def_id.0)
-            .copied()
-            .or_else(|| self.definition_store.as_ref()?.get_body(def_id))
+        self.def_types.get(&def_id.0).copied().or_else(|| {
+            let body = self.definition_store.as_ref()?.get_body(def_id)?;
+            tracing::debug!(
+                target: "tsz::defstore_read",
+                def_id = def_id.0,
+                body = body.0,
+                "store fallback body read (local env miss)"
+            );
+            Some(body)
+        })
     }
 
     /// Get a `DefId`'s type parameters.
