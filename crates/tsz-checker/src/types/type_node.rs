@@ -42,8 +42,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         }
 
-        let scope_cache_key =
-            TypeParameterScopeCacheKey::from_scope(&self.ctx.type_parameter_scope);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            self.depth.leave();
+            return TypeId::ERROR;
+        };
+        let scoped_cache_allowed = node.kind != syntax_kind_ext::MAPPED_TYPE;
+        let scope_cache_key = scoped_cache_allowed
+            .then(|| TypeParameterScopeCacheKey::from_scope(&self.ctx.type_parameter_scope))
+            .flatten();
 
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
@@ -78,11 +84,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // calls get_type_from_type_reference() which emits diagnostics
         // (TS2314, TS2304, etc.). If we cache here, the checker's handler
         // finds the cached result and skips the diagnostic-emitting path.
-        let is_type_ref = self
-            .ctx
-            .arena
-            .get(idx)
-            .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE);
+        let is_type_ref = node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE;
         if !is_type_ref {
             if let Some(key) = scope_cache_key {
                 self.ctx
