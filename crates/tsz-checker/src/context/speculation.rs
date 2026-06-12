@@ -264,6 +264,27 @@ impl<'a> CheckerContext<'a> {
         );
     }
 
+    /// True when a diagnostic snapshot has observed no writes that rollback
+    /// needs to undo.
+    ///
+    /// Speculative probes often complete without emitting diagnostics. In that
+    /// hot no-op case, restoring the COW dedup snapshots and rebuilding the
+    /// auxiliary diagnostic indices only replays identical state. Keep the
+    /// guard strict: if the diagnostic vector, deferred TS2454 list, emitted
+    /// dedup set, or overload marker set diverged from the snapshot, the normal
+    /// rollback path still owns cleanup and grammar-diagnostic preservation.
+    fn diagnostic_snapshot_unchanged(&self, snap: &DiagnosticSnapshot) -> bool {
+        self.diagnostics.len() == snap.diagnostics_len
+            && self.deferred_ts2454_errors.len() == snap.deferred_ts2454_len
+            && self
+                .diagnostic_indices
+                .emitted
+                .ptr_eq(&snap.emitted_diagnostics)
+            && self
+                .no_overload_call_nodes
+                .ptr_eq(&snap.no_overload_call_nodes)
+    }
+
     /// Roll back to a diagnostic-only snapshot, discarding all speculative
     /// diagnostics and restoring the dedup set.
     ///
@@ -275,6 +296,10 @@ impl<'a> CheckerContext<'a> {
     /// body when the surrounding static field initializer is evaluated
     /// speculatively).
     pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        if self.diagnostic_snapshot_unchanged(snap) {
+            return;
+        }
+
         let truncate_at = self.clamped_diag_len(snap);
         cleanup_ts2454_dedup(
             &mut self.emitted_ts2454_errors,
@@ -356,6 +381,10 @@ impl<'a> CheckerContext<'a> {
         snap: &DiagnosticSnapshot,
         mut keep: impl FnMut(&Diagnostic) -> bool,
     ) {
+        if self.diagnostic_snapshot_unchanged(snap) {
+            return;
+        }
+
         let split_at = self.clamped_diag_len(snap);
         let speculative = self.diagnostics.split_off(split_at);
         self.diagnostic_indices
