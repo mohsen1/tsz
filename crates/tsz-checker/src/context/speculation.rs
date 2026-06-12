@@ -41,7 +41,8 @@ use tsz_solver::TypeId;
 use crate::diagnostics::Diagnostic;
 
 use super::{
-    CheckerContext, CowCache, PendingImplicitAnyKind, PendingImplicitAnyVar, RequestCacheKey,
+    CheckerContext, CowCache, DiagnosticIndices, PendingImplicitAnyKind, PendingImplicitAnyVar,
+    RequestCacheKey,
 };
 
 // ---------------------------------------------------------------------------
@@ -97,9 +98,8 @@ fn is_always_emit_grammar_code(code: u32) -> bool {
 pub(crate) struct DiagnosticSnapshot {
     /// Length of `ctx.diagnostics` at snapshot time (truncation point).
     pub diagnostics_len: usize,
-    /// O(1) `CowCache` snapshot of `ctx.diagnostic_indices.emitted` for
-    /// dedup restoration.
-    pub emitted_diagnostics: CowCache<FxHashSet<(u32, u32)>>,
+    /// Snapshot of diagnostic dedup and auxiliary suppression indices.
+    pub diagnostic_indices: DiagnosticIndices,
     /// Clone of nested no-overload call markers for recovery-aware overload
     /// candidate rejection.
     pub no_overload_call_nodes: CowCache<FxHashSet<u32>>,
@@ -203,7 +203,7 @@ impl<'a> CheckerContext<'a> {
     pub(crate) fn snapshot_diagnostics(&self) -> DiagnosticSnapshot {
         DiagnosticSnapshot {
             diagnostics_len: self.diagnostics.len(),
-            emitted_diagnostics: self.diagnostic_indices.emitted.clone(),
+            diagnostic_indices: self.diagnostic_indices.clone(),
             no_overload_call_nodes: self.no_overload_call_nodes.clone(),
             deferred_ts2454_len: self.deferred_ts2454_errors.len(),
         }
@@ -279,7 +279,8 @@ impl<'a> CheckerContext<'a> {
             && self
                 .diagnostic_indices
                 .emitted
-                .ptr_eq(&snap.emitted_diagnostics)
+                .ptr_eq(&snap.diagnostic_indices.emitted)
+            && self.diagnostic_indices.aux_eq(&snap.diagnostic_indices)
             && self
                 .no_overload_call_nodes
                 .ptr_eq(&snap.no_overload_call_nodes)
@@ -313,7 +314,7 @@ impl<'a> CheckerContext<'a> {
         self.diagnostics.truncate(truncate_at);
         self.diagnostic_indices
             .emitted
-            .clone_from(&snap.emitted_diagnostics);
+            .clone_from(&snap.diagnostic_indices.emitted);
         self.no_overload_call_nodes
             .clone_from(&snap.no_overload_call_nodes);
         for diag in preserved {
@@ -389,7 +390,7 @@ impl<'a> CheckerContext<'a> {
         let speculative = self.diagnostics.split_off(split_at);
         self.diagnostic_indices
             .emitted
-            .clone_from(&snap.emitted_diagnostics);
+            .clone_from(&snap.diagnostic_indices.emitted);
         self.no_overload_call_nodes
             .clone_from(&snap.no_overload_call_nodes);
         // Truncate deferred TS2454 errors to match rollback_diagnostics behavior.
@@ -502,7 +503,7 @@ impl<'a> CheckerContext<'a> {
         self.diagnostics.truncate(truncate_at);
         self.diagnostic_indices
             .emitted
-            .clone_from(&snap.emitted_diagnostics);
+            .clone_from(&snap.diagnostic_indices.emitted);
         self.no_overload_call_nodes
             .clone_from(&snap.no_overload_call_nodes);
         self.truncate_deferred_ts2454(snap);
