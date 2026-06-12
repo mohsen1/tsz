@@ -369,10 +369,7 @@ impl BinderState {
                 };
 
                 // Synthesize a "default" export symbol for cross-file import resolution.
-                let container_sym = self
-                    .scope_chain
-                    .get(self.current_scope_idx)
-                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                let container_sym = self.current_container_symbol();
 
                 // This enables `import X from './file'` to resolve the default export.
 
@@ -469,11 +466,10 @@ impl BinderState {
 
                         // Check if we're inside a namespace
                         let current_namespace_sym_id = self
-                            .scope_chain
-                            .get(self.current_scope_idx)
-                            .and_then(|ctx| {
-                                (ctx.container_kind == ContainerKind::Module)
-                                    .then_some(ctx.container_node)
+                            .current_persistent_scope()
+                            .and_then(|scope| {
+                                (scope.kind == ContainerKind::Module)
+                                    .then_some(scope.container_node)
                             })
                             .and_then(|container_idx| self.get_node_symbol(container_idx));
 
@@ -552,10 +548,7 @@ impl BinderState {
                                             orig_sym.is_exported = true;
                                         }
 
-                                        let container_sym =
-                                            self.scope_chain.get(self.current_scope_idx).and_then(
-                                                |ctx| self.get_node_symbol(ctx.container_node),
-                                            );
+                                        let container_sym = self.current_container_symbol();
 
                                         // Create export symbol (EXPORT_VALUE for value exports)
                                         let export_sym_id = self
@@ -810,10 +803,7 @@ impl BinderState {
                         Self::import_export_identifier_atom(arena, export.export_clause);
                     let is_umd = export.module_specifier.is_none()
                         && node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
-                    let container_sym = self
-                        .scope_chain
-                        .get(self.current_scope_idx)
-                        .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                    let container_sym = self.current_container_symbol();
 
                     let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
                     if let Some(sym) = self.symbols.get_mut(sym_id) {

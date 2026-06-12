@@ -4,7 +4,7 @@
 //! control-flow analysis, and language service features:
 //! - `Symbol`, `SymbolId`, `SymbolTable`, `SymbolArena`
 //! - `FlowNode`, `FlowNodeId`, `FlowNodeArena`
-//! - `Scope`, `ScopeId`, `ContainerKind`, `ScopeContext`
+//! - `Scope`, `ScopeId`, `ContainerKind`
 //! - `BinderState` - Name resolution and symbol table construction
 //! - `LibFile` - Lib file loading for built-in type definitions
 
@@ -19,7 +19,7 @@ pub mod symbols;
 
 // Re-export core data types at crate root for convenience.
 pub use flow::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
-pub use scopes::{ContainerKind, Scope, ScopeContext, ScopeId};
+pub use scopes::{ContainerKind, Scope, ScopeId};
 pub use state::declaration_summary::DeclarationSummary;
 pub use state::export_surface::{ExportSurface, ExportedSymbol, NamedReexport, WildcardReexport};
 pub use state::{

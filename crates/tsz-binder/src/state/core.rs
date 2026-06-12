@@ -6,8 +6,8 @@ use super::{BinderState, BinderStateScopeInputs, LibContext};
 use crate::lib_loader;
 use crate::modules::resolution_debug::ModuleResolutionDebugger;
 use crate::{
-    ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, Symbol, SymbolArena,
-    SymbolId, SymbolTable, flow_flags, symbol_flags,
+    ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeId, Symbol, SymbolArena, SymbolId,
+    SymbolTable, flow_flags, symbol_flags,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
@@ -126,8 +126,6 @@ impl BinderState {
             flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
-            scope_chain: Vec::with_capacity(32),
-            current_scope_idx: 0,
             node_symbols: Arc::new(FxHashMap::with_capacity_and_hasher(256, Default::default())),
             module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
             symbol_arenas: Arc::new(FxHashMap::default()),
@@ -199,8 +197,6 @@ impl BinderState {
             self.unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
         }
         self.current_flow = FlowNodeId::NONE;
-        self.scope_chain.clear();
-        self.current_scope_idx = 0;
         Arc::make_mut(&mut self.node_symbols).clear();
         Arc::make_mut(&mut self.module_declaration_exports_publicly).clear();
         Arc::make_mut(&mut self.symbol_arenas).clear();
@@ -367,8 +363,6 @@ impl BinderState {
             flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
-            scope_chain: Vec::new(),
-            current_scope_idx: 0,
             node_symbols,
             module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
             symbol_arenas: Arc::new(FxHashMap::default()),
@@ -493,8 +487,6 @@ impl BinderState {
             flow_nodes,
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
-            scope_chain: Vec::new(),
-            current_scope_idx: 0,
             node_symbols,
             module_declaration_exports_publicly,
             symbol_arenas,
@@ -542,17 +534,7 @@ impl BinderState {
         };
         if let Some(root_scope) = binder.scopes.first() {
             binder.current_scope = root_scope.table.clone();
-            // `ScopeContext::new` already initialises `locals` to an empty
-            // `SymbolTable`. Production scope-chain readers only access
-            // `container_node`, `container_kind`, and `parent_idx` — never
-            // `locals` — so cloning the root scope's table into it was
-            // dead work (a full `FxHashMap<String, SymbolId>` deep copy
-            // per `from_bound_state_with_scopes_and_augmentations` call,
-            // which fires once per file checker spawn).
-            let root_context = ScopeContext::new(root_scope.kind, root_scope.container_node, None);
-            binder.scope_chain.push(root_context);
             binder.current_scope_id = ScopeId(0);
-            binder.current_scope_idx = 0;
         }
         binder.recompute_module_export_equals_non_module();
         binder
@@ -605,6 +587,21 @@ impl BinderState {
         {
             self.current_scope_id = scope.parent;
         }
+    }
+
+    /// The persistent scope currently being bound (`scopes[current_scope_id]`).
+    pub(crate) fn current_persistent_scope(&self) -> Option<&Scope> {
+        if self.current_scope_id.is_none() {
+            return None;
+        }
+        self.scopes.get(self.current_scope_id.0 as usize)
+    }
+
+    /// Symbol of the container node owning the current persistent scope
+    /// (namespace, class, function, ...), if one has been bound.
+    pub(crate) fn current_container_symbol(&self) -> Option<SymbolId> {
+        self.current_persistent_scope()
+            .and_then(|scope| self.get_node_symbol(scope.container_node))
     }
 
     /// Declare a symbol in the current persistent scope.
@@ -1033,11 +1030,6 @@ impl BinderState {
             }
         }
 
-        // Initialize scope chain with source file scope (legacy)
-        self.scope_chain.clear();
-        self.scope_chain
-            .push(ScopeContext::new(ContainerKind::SourceFile, root, None));
-        self.current_scope_idx = 0;
         // Pre-size current_scope for top-level declarations
         self.current_scope = if estimated_decl_count > 16 {
             SymbolTable::with_capacity(estimated_decl_count)
@@ -1655,8 +1647,12 @@ impl BinderState {
         // Use the new merge helper that properly remaps SymbolIds
         self.merge_lib_contexts_into_binder(&lib_contexts);
 
-        // Also merge into the current scope if we're at the root level
-        if self.scope_chain.len() <= 1 {
+        // Also merge into the current scope if we're at the root level.
+        // The persistent scope arena is append-only and only holds more than
+        // the root scope once binding has entered a nested scope, so
+        // `scopes.len() <= 1` is the pre-binding root state (every caller
+        // merges libs before `bind_source_file` populates the arena).
+        if self.scopes.len() <= 1 {
             for (name, sym_id) in self.file_locals.iter() {
                 if !self.current_scope.has(name) {
                     self.current_scope.set(name.clone(), *sym_id);
@@ -1817,10 +1813,6 @@ impl BinderState {
         }
 
         // Reset transient binding state while keeping existing symbols and scopes.
-        self.scope_chain.clear();
-        self.scope_chain
-            .push(ScopeContext::new(ContainerKind::SourceFile, root, None));
-        self.current_scope_idx = 0;
         self.scope_stack.clear();
         self.current_scope = self.file_locals.clone();
         self.hoisted_vars.clear();
