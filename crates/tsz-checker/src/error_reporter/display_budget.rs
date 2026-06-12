@@ -46,6 +46,7 @@ struct DisplayBudget {
     visits: u32,
     eval_fuel: u32,
     eval_memo: FxHashMap<TypeId, TypeId>,
+    exhausted: bool,
 }
 
 thread_local! {
@@ -77,6 +78,7 @@ impl DisplayBudgetScope {
                         visits: DISPLAY_VISIT_BUDGET,
                         eval_fuel: DISPLAY_EVAL_FUEL,
                         eval_memo: FxHashMap::default(),
+                        exhausted: false,
                     });
                 });
             }
@@ -93,7 +95,7 @@ impl Drop for DisplayBudgetScope {
             if depth.get() == 0 {
                 ACTIVE.with(|active| {
                     if let Some(budget) = active.borrow_mut().take()
-                        && (budget.visits == 0 || budget.eval_fuel == 0)
+                        && budget.exhausted
                     {
                         tracing::debug!(
                             visits_left = budget.visits,
@@ -115,6 +117,7 @@ fn try_consume(counter: fn(&mut DisplayBudget) -> &mut u32) -> bool {
         Some(budget) => {
             let counter = counter(budget);
             if *counter == 0 {
+                budget.exhausted = true;
                 false
             } else {
                 *counter -= 1;
@@ -165,6 +168,9 @@ pub(crate) fn record_eval(type_id: TypeId, result: TypeId) {
     }
     ACTIVE.with(|active| {
         if let Some(budget) = active.borrow_mut().as_mut() {
+            if budget.exhausted {
+                return;
+            }
             budget.eval_memo.insert(type_id, result);
         }
     });
@@ -236,6 +242,18 @@ mod tests {
             assert_eq!(cached_eval(TypeId::STRING), Some(TypeId::NUMBER));
         }
         let _scope = DisplayBudgetScope::enter();
+        assert_eq!(cached_eval(TypeId::STRING), None);
+    }
+
+    #[test]
+    fn exhausted_budget_does_not_record_eval_memo() {
+        let _scope = DisplayBudgetScope::enter();
+        for _ in 0..DISPLAY_EVAL_FUEL {
+            assert!(try_consume_eval_fuel());
+        }
+        assert!(!try_consume_eval_fuel());
+
+        record_eval(TypeId::STRING, TypeId::NUMBER);
         assert_eq!(cached_eval(TypeId::STRING), None);
     }
 }

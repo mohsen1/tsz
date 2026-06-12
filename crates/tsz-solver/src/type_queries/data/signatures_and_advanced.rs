@@ -1413,22 +1413,26 @@ fn resolve_concrete_conditional_branch(
     db: &dyn TypeDatabase,
     cond: &crate::types::ConditionalType,
 ) -> Option<TypeId> {
-    resolve_concrete_conditional_result(db, cond, cond.check_type)
+    let mut evaluator = TypeEvaluator::new(db);
+    resolve_concrete_conditional_result(db, &mut evaluator, cond, cond.check_type)
 }
 
 fn resolve_concrete_conditional_result(
     db: &dyn TypeDatabase,
+    evaluator: &mut TypeEvaluator<'_>,
     cond: &crate::types::ConditionalType,
     check_input: TypeId,
 ) -> Option<TypeId> {
-    let check_type = crate::evaluation::evaluate::evaluate_type(db, check_input);
-    let extends_type = crate::evaluation::evaluate::evaluate_type(db, cond.extends_type);
+    let check_type = evaluator.evaluate(check_input);
+    let extends_type = evaluator.evaluate(cond.extends_type);
 
     if let Some(TypeData::Union(members)) = db.lookup(check_type) {
         let members = db.type_list(members);
         let mut results = Vec::new();
         for &member in members.iter() {
-            results.push(resolve_concrete_conditional_result(db, cond, member)?);
+            results.push(resolve_concrete_conditional_result(
+                db, evaluator, cond, member,
+            )?);
         }
         return Some(crate::utils::union_or_single(db, results));
     }
@@ -1443,8 +1447,7 @@ fn resolve_concrete_conditional_result(
     if let Some(TypeData::StringIntrinsic { kind, type_arg }) = db.lookup(extends_type)
         && type_arg == TypeId::STRING
     {
-        let transformed =
-            crate::evaluation::evaluate::evaluate_type(db, db.string_intrinsic(kind, check_type));
+        let transformed = evaluator.evaluate(db.string_intrinsic(kind, check_type));
         return Some(if transformed == check_type {
             cond.true_type
         } else {
@@ -1455,7 +1458,6 @@ fn resolve_concrete_conditional_result(
     if contains_type_parameters_db(db, extends_type)
         && !contains_type_parameters_db(db, cond.check_type)
     {
-        let evaluator = TypeEvaluator::new(db);
         if evaluator.type_contains_infer(cond.extends_type) {
             let mut bindings = rustc_hash::FxHashMap::default();
             let mut visited = FxHashSet::default();
@@ -1468,7 +1470,7 @@ fn resolve_concrete_conditional_result(
                 &mut checker,
             ) {
                 let substituted = evaluator.substitute_infer(cond.true_type, &bindings);
-                let evaluated = crate::evaluation::evaluate::evaluate_type(db, substituted);
+                let evaluated = evaluator.evaluate(substituted);
                 return Some(evaluated);
             }
             return Some(cond.false_type);
