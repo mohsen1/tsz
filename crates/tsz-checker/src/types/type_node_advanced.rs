@@ -1272,6 +1272,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && symbol.has_any_flags(symbol_flags::VALUE)
             && (!symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
                 || symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+            && !Self::is_string_literal_module_symbol(self.ctx.arena, symbol)
         {
             return Some(sym_id);
         }
@@ -1282,12 +1283,35 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && symbol.has_any_flags(symbol_flags::VALUE)
                 && (!symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
                     || symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                && !Self::is_string_literal_module_symbol(lib_ctx.arena.as_ref(), symbol)
             {
                 return Some(sym_id);
             }
         }
 
         None
+    }
+
+    fn is_string_literal_module_symbol(
+        arena: &tsz_parser::parser::node::NodeArena,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(node) = arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                return false;
+            }
+            let Some(module) = arena.get_module(node) else {
+                return false;
+            };
+            arena.get(module.name).is_some_and(|name_node| {
+                name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    || name_node.kind
+                        == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            })
+        })
     }
 
     /// Emit TS2693 for a type-only symbol used in a typeof type query.

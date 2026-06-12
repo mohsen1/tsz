@@ -67,17 +67,6 @@
 #      parser_improvement_expression_recovery_tests::empty_element_access_*.
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
-# globalThisAmbientModules.ts: ACCEPTED DRIFT, tracked in #13363. Exact-head
-# ready-review aggregate CI on unrelated performance branches repeatedly reports
-# this row alongside the already-accepted deeplyNestedMappedTypes.ts and
-# propTypeValidatorInference.ts rows:
-# - PR #13358 run 27444825341
-# - PR #13359 run 27444375678
-# - PR #13323 run 27444324287
-# Owner hypothesis: checker globalThis ambient-module property filtering /
-# symbol-surface construction. tsc reports TS2339 for quoted ambient-module
-# property access on `typeof globalThis`; tsz currently diverges on the row.
 # deeplyNestedMappedTypes.ts: RE-JUSTIFIED (failure mode corrected). Earlier
 # evidence described spurious TS2344/TS2464; tsz no longer emits those. Verified
 # against the authoritative tsc baseline
