@@ -92,6 +92,54 @@ gg(ff);
 }
 
 #[test]
+fn nested_conditional_alias_callback_param_keeps_variance_acceptance() {
+    // Nested repro shape from `conditionalTypes2.ts` / TypeScript #33568.
+    // The public relation query must not treat the variance prepass rejection
+    // as definitive when a conditional alias body forwards through wrapped
+    // applications that still carry type parameters.
+    let source = r#"
+declare function consume(response: RootResponse<string>): void;
+declare function register<Response>(callback: Callback<Response>): void;
+
+interface Callback<Response> {
+    (response: RootResponse<Response>): void;
+}
+
+type RootResponse<Response> =
+    Response extends RecordLike ? RecordResponse<Response> : ValueResponse<Response>;
+
+interface RecordLike {
+    readonly Id: string;
+}
+
+declare type RecordResponse<T extends RecordLike> = ValueResponse<T> & {
+    sendRecord(): void;
+};
+
+declare type ValueResponse<T> = {
+    sendValue(name: keyof PropertiesOfType<T, string>): void;
+};
+
+declare type PropertyNamesOfType<T, RestrictToType> = {
+    [PropertyName in Extract<keyof T, string>]: T[PropertyName] extends RestrictToType ? PropertyName : never
+}[Extract<keyof T, string>];
+
+declare type PropertiesOfType<T, RestrictToType> = Pick<
+    T,
+    PropertyNamesOfType<Required<T>, RestrictToType>
+>;
+
+register(consume);
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes = codes(&diags);
+    assert!(
+        !codes.contains(&2416) && !codes.contains(&2322) && !codes.contains(&2345),
+        "expected nested callback assignment to stay clean. Codes: {codes:?}"
+    );
+}
+
+#[test]
 fn covariant_application_to_constrained_param_target_rejects_wider_to_narrower() {
     // Anti-regression: COVARIANT containers still reject the wider-to-narrower
     // direction. `Covariant<A>` -> `Covariant<B>` fails when B extends A,

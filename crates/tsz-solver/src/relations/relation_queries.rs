@@ -842,13 +842,15 @@ fn alias_body_application_uses_type_parameters<R: TypeResolver>(
     let Some(body) = resolver.resolve_lazy(def_id, db) else {
         return false;
     };
-    let Some(app_id) = crate::visitor::application_id(db, body) else {
-        return false;
-    };
-    let app = db.type_application(app_id);
-    app.args
-        .iter()
-        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+    crate::visitors::visitor_predicates::contains_type_matching(db, body, |key| {
+        let crate::types::TypeData::Application(app_id) = key else {
+            return false;
+        };
+        let app = db.type_application(*app_id);
+        app.args
+            .iter()
+            .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+    })
 }
 
 /// Check if two type parameters are assignable to each other.
