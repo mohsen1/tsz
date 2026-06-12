@@ -30,6 +30,8 @@ pub struct PerfCounterSnapshot {
     pub overlay: OverlayCounters,
     pub resolver: ResolverCounters,
     pub interner: InternerCounters,
+    /// Solver relation limit-result cache (issue #13241).
+    pub relation_limit_cache: RelationLimitCacheCounters,
     /// Per-`CheckerCreationReason` breakdown. Always
     /// `CHECKER_CREATION_REASON_COUNT` long; rows for inactive reasons
     /// carry all-zero counts (matching the text dump's filter behavior
@@ -458,6 +460,16 @@ pub struct ResolverCounters {
     pub candidate_paths_total: u64,
 }
 
+/// Solver relation limit-result cache counters (issue #13241): reuse and
+/// promotion of `Ternary.Maybe`-style limit-hit relation outcomes.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RelationLimitCacheCounters {
+    /// Budget-conditional `LimitTrue` entries that short-circuited a query.
+    pub limit_cache_hits: u64,
+    /// Maybe-stack keys promoted at outermost relation success.
+    pub maybe_promotions: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InternerCounters {
     /// Total `intern` calls across kinds. `None` until the solver intern
@@ -601,6 +613,10 @@ impl PerfCounters {
                 } else {
                     None
                 },
+            },
+            relation_limit_cache: RelationLimitCacheCounters {
+                limit_cache_hits: load(&c.relation_limit_cache_hits),
+                maybe_promotions: load(&c.relation_maybe_promotions),
             },
             by_reason: (0..CHECKER_CREATION_REASON_COUNT)
                 .map(|i| ByReasonRow {

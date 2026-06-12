@@ -24,9 +24,10 @@ use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
-    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
-    TypeData, TypeId, TypeListId, TypeParamInfo, Variance, Visibility,
+    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, RelationCacheValue,
+    StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
+    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
+    Visibility,
 };
 use crate::visitor::is_error_type;
 use dashmap::DashMap;
@@ -90,7 +91,7 @@ impl CachedPolicyRelation {
     const fn shared_slot(
         self,
         shared: &SharedQueryCache,
-    ) -> &DashMap<RelationCacheKey, bool, FxBuildHasher> {
+    ) -> &DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher> {
         match self {
             Self::Subtype => &shared.subtype_cache,
             Self::Assignability => &shared.assignability_cache,
@@ -132,8 +133,8 @@ impl CachedPolicyRelation {
 /// correctness risk. See issue #9507.
 pub struct SharedQueryCache {
     eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
-    subtype_cache: DashMap<RelationCacheKey, bool, FxBuildHasher>,
-    assignability_cache: DashMap<RelationCacheKey, bool, FxBuildHasher>,
+    subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
+    assignability_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
 }
 
 impl SharedQueryCache {
@@ -178,9 +179,9 @@ pub struct QueryCache<'a> {
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
-    subtype_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
+    subtype_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
     /// Separate cache for assignability to prevent loose results from poisoning subtype checks.
-    assignability_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
+    assignability_cache: RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>>,
     property_cache: RefCell<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
     /// Computed variance masks for generic `DefIds`.
     variance_cache: RefCell<FxHashMap<DefId, Arc<[Variance]>>>,
@@ -334,149 +335,6 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    /// Estimate the in-memory size of all caches in bytes.
-    ///
-    /// Accounts for `FxHashMap` bucket overhead, key/value sizes, and heap
-    /// allocations inside cached values (e.g., `Vec<PropertyInfo>` in the
-    /// object-spread cache, `Arc<[Variance]>` in the variance cache).
-    ///
-    /// This is more accurate than `QueryCacheStatistics::estimated_size_bytes()`
-    /// because it reads actual map capacities and heap contents.
-    #[must_use]
-    pub fn estimated_size_bytes(&self) -> usize {
-        // FxHashMap per-bucket overhead: hash + key + value + alignment padding.
-        const BUCKET_OVERHEAD: usize = 64;
-
-        let mut size = std::mem::size_of::<Self>();
-
-        // eval_cache: (TypeId, bool) -> TypeId
-        {
-            let map = self.eval_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<EvaluationCacheKey>()
-                    + std::mem::size_of::<TypeId>());
-        }
-
-        // closed_eval_cache: (TypeId, bool) -> TypeId
-        {
-            let map = self.closed_eval_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<EvaluationCacheKey>()
-                    + std::mem::size_of::<TypeId>());
-        }
-
-        // application_eval_cache: (DefId, SmallVec<[TypeId; 4]>, bool) -> TypeId
-        {
-            let map = self.application_eval_cache.borrow();
-            let base_entry = BUCKET_OVERHEAD
-                + std::mem::size_of::<ApplicationEvalCacheKey>()
-                + std::mem::size_of::<TypeId>();
-            size += map.capacity() * base_entry;
-            // SmallVec spills to heap when > 4 elements; account for spilled entries.
-            for key in map.keys() {
-                if key.1.spilled() {
-                    size += key.1.capacity() * std::mem::size_of::<TypeId>();
-                }
-            }
-        }
-
-        // element_access_cache
-        {
-            let map = self.element_access_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<ElementAccessTypeCacheKey>()
-                    + std::mem::size_of::<TypeId>());
-        }
-
-        // object_spread_properties_cache: TypeId -> Vec<PropertyInfo>
-        {
-            let map = self.object_spread_properties_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<TypeId>()
-                    + std::mem::size_of::<Vec<PropertyInfo>>());
-            for props in map.values() {
-                size += props.capacity() * std::mem::size_of::<PropertyInfo>();
-            }
-        }
-
-        // subtype_cache
-        {
-            let map = self.subtype_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<RelationCacheKey>()
-                    + std::mem::size_of::<bool>());
-        }
-
-        // assignability_cache
-        {
-            let map = self.assignability_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<RelationCacheKey>()
-                    + std::mem::size_of::<bool>());
-        }
-
-        // property_cache
-        {
-            let map = self.property_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<PropertyAccessCacheKey>()
-                    + std::mem::size_of::<PropertyAccessResult>());
-        }
-
-        // variance_cache: DefId -> Arc<[Variance]>
-        {
-            let map = self.variance_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<DefId>()
-                    + std::mem::size_of::<Arc<[Variance]>>());
-            // Account for the Arc-allocated slice contents
-            for arc in map.values() {
-                size += arc.len() * std::mem::size_of::<Variance>();
-            }
-        }
-
-        // canonical_cache
-        {
-            let map = self.canonical_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + 2 * std::mem::size_of::<TypeId>());
-        }
-
-        // intersection_merge_cache: TypeId -> Option<TypeId>
-        {
-            let map = self.intersection_merge_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<TypeId>()
-                    + std::mem::size_of::<Option<TypeId>>());
-        }
-
-        // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
-        // CanonicalSubst's inline SmallVec buffer is included in the
-        // `InstantiationCacheKey` size; spilled entries pay extra heap.
-        size += self.instantiation_cache.capacity()
-            * (BUCKET_OVERHEAD
-                + std::mem::size_of::<InstantiationCacheKey>()
-                + std::mem::size_of::<TypeId>());
-
-        // subtype_reduction_cache: (SortedTypeIds, u8) -> Arc<[TypeId]>
-        // Inline buffer is part of `SubtypeReductionKey`; the cached value
-        // is `Arc<[TypeId]>` (16 bytes) plus the heap slice it points at.
-        size += self.subtype_reduction_cache.capacity()
-            * (BUCKET_OVERHEAD
-                + std::mem::size_of::<SubtypeReductionKey>()
-                + std::mem::size_of::<std::sync::Arc<[TypeId]>>());
-
-        size
-    }
-
     pub fn reset_relation_cache_stats(&self) {
         self.application_eval_cache_hits.set(0);
         self.application_eval_cache_misses.set(0);
@@ -527,7 +385,7 @@ impl<'a> QueryCache<'a> {
     const fn relation_local_cache(
         &self,
         relation: CachedPolicyRelation,
-    ) -> &RefCell<FxHashMap<RelationCacheKey, bool>> {
+    ) -> &RefCell<FxHashMap<RelationCacheKey, RelationCacheValue>> {
         match relation {
             CachedPolicyRelation::Subtype => &self.subtype_cache,
             CachedPolicyRelation::Assignability => &self.assignability_cache,
@@ -550,11 +408,15 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    fn lookup_policy_relation_cache(
+    /// Look up the full cached relation entry (definitive or budget-conditional).
+    ///
+    /// Any found entry counts as a hit; the caller decides whether a
+    /// `LimitTrue` entry's fuel band makes it usable for the current query.
+    fn lookup_policy_relation_cache_value(
         &self,
         relation: CachedPolicyRelation,
         key: RelationCacheKey,
-    ) -> Option<bool> {
+    ) -> Option<RelationCacheValue> {
         if let Some(result) = self
             .relation_local_cache(relation)
             .borrow()
@@ -582,18 +444,36 @@ impl<'a> QueryCache<'a> {
         None
     }
 
+    /// Boolean view of the relation cache: surfaces only definitive entries.
+    fn lookup_policy_relation_cache(
+        &self,
+        relation: CachedPolicyRelation,
+        key: RelationCacheKey,
+    ) -> Option<bool> {
+        self.lookup_policy_relation_cache_value(relation, key)
+            .and_then(RelationCacheValue::as_definitive)
+    }
+
     fn insert_policy_relation_cache(
         &self,
         relation: CachedPolicyRelation,
         key: RelationCacheKey,
         result: bool,
     ) {
+        let value = RelationCacheValue::from_bool(result);
         self.relation_local_cache(relation)
             .borrow_mut()
-            .insert(key, result);
+            .insert(key, value);
         if let Some(shared) = self.shared {
-            relation.shared_slot(shared).insert(key, result);
+            relation.shared_slot(shared).insert(key, value);
         }
+    }
+
+    /// Whether a `LimitTrue` entry's fuel band covers the current query's
+    /// remaining global subtype fuel budget (and the policy is enabled).
+    fn limit_true_usable(fuel_band: u32) -> bool {
+        crate::caches::limit_policy::limit_result_cache_enabled()
+            && crate::relations::subtype::cache::remaining_global_subtype_fuel() <= fuel_band
     }
 
     fn is_cached_policy_relation(
@@ -617,11 +497,31 @@ impl<'a> QueryCache<'a> {
         });
         let key = relation.cache_key(source, target, policy);
 
-        if let Some(result) = self.lookup_policy_relation_cache(relation, key) {
-            if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, trace_op, result, true);
+        match self.lookup_policy_relation_cache_value(relation, key) {
+            Some(RelationCacheValue::True) => {
+                if let Some(query_id) = trace_query_id {
+                    query_trace::relation_end(query_id, trace_op, true, true);
+                }
+                return true;
             }
-            return result;
+            Some(RelationCacheValue::False) => {
+                if let Some(query_id) = trace_query_id {
+                    query_trace::relation_end(query_id, trace_op, false, true);
+                }
+                return false;
+            }
+            Some(RelationCacheValue::LimitTrue { fuel_band })
+                if Self::limit_true_usable(fuel_band) =>
+            {
+                tsz_common::perf_counters::record_relation_limit_cache_hit();
+                if let Some(query_id) = trace_query_id {
+                    query_trace::relation_end(query_id, trace_op, true, true);
+                }
+                return true;
+            }
+            // A larger budget is available: recompute honestly below and
+            // let the definitive insert overwrite the limit entry.
+            Some(RelationCacheValue::LimitTrue { .. }) | None => {}
         }
 
         let result = query_relation(
@@ -1549,30 +1449,47 @@ impl QueryDatabase for QueryCache<'_> {
         // calls. Only persist entries where the result differs from the input
         // (identity mappings are free to recompute) and skip intrinsics.
         //
-        // CORRECTNESS GATE: a run that hit a recursion / depth / iteration /
-        // union-complexity limit must NOT persist its results here. The
-        // `eval_cache` key is `(TypeId, options)` — it does not capture the
-        // ambient stack depth at which a bail occurred — so a depth-bailed
-        // intermediate (e.g. a recursive array alias `RecArray<T> =
-        // Array<T | RecArray<T>>` evaluated while the def-depth was already high,
-        // collapsing to `error`) would otherwise be cached and then read back at
-        // top level where it should have converged. That poisons later
-        // type-checking (an `error` element silently satisfies assignability) in a
-        // declaration/cache-order-dependent way — the exact non-determinism that
-        // makes recursive-utility fixtures flip with surrounding code. This
-        // mirrors the gate the evaluator already applies to `closed_eval_cache`
-        // and `application_eval_cache` (see `recursion_limit_hit`).
+        // CORRECTNESS GATE: a limit-truncated result must NOT be persisted
+        // here. The `eval_cache` key is `(TypeId, options)` — it does not
+        // capture the ambient stack depth at which a bail occurred — so a
+        // depth-bailed intermediate (e.g. a recursive array alias
+        // `RecArray<T> = Array<T | RecArray<T>>` evaluated while the
+        // def-depth was already high, collapsing to `error`) would otherwise
+        // be cached and then read back at top level where it should have
+        // converged. That poisons later type-checking (an `error` element
+        // silently satisfies assignability) in a declaration/cache-order-
+        // dependent way — the exact non-determinism that makes
+        // recursive-utility fixtures flip with surrounding code.
+        //
+        // The discrimination is per-entry (issue #13241, extending the
+        // PR #12902 application-eval epoch split): the top-level result is
+        // gated on the run-sticky `recursion_limit_hit` (its subtree IS the
+        // whole run), while drained intermediates are filtered through the
+        // evaluator's per-node `tainted` set, so the clean intermediates of a
+        // run whose *unrelated sibling* subtree bailed are still persisted
+        // instead of being recomputed from scratch on every later query.
+        // A union-complexity overflow is not routed through the evaluator's
+        // limit epoch, so it conservatively suppresses all writes, as before.
         let newly_union_too_complex =
             self.interner.is_union_too_complex() && !union_too_complex_before;
-        if !evaluator.recursion_limit_hit() && !newly_union_too_complex {
+        let top_level_clean = !evaluator.recursion_limit_hit();
+        if !newly_union_too_complex
+            && (top_level_clean || crate::caches::limit_policy::limit_result_cache_enabled())
+        {
+            let tainted = evaluator.take_tainted();
             let mut cache = self.eval_cache.borrow_mut();
-            cache.insert(key, result);
-            // Also write to shared cache for cross-file benefit.
-            if let Some(shared) = self.shared {
-                shared.eval_cache.insert(key, result);
+            if top_level_clean {
+                cache.insert(key, result);
+                // Also write to shared cache for cross-file benefit.
+                if let Some(shared) = self.shared {
+                    shared.eval_cache.insert(key, result);
+                }
             }
             for (intermediate_id, intermediate_result) in evaluator.drain_cache() {
-                if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
+                if intermediate_id != intermediate_result
+                    && !intermediate_id.is_intrinsic()
+                    && !tainted.contains(&intermediate_id)
+                {
                     let ikey = request.with_type_id(intermediate_id).cache_key();
                     cache.entry(ikey).or_insert(intermediate_result);
                     if let Some(shared) = self.shared {
@@ -1701,6 +1618,74 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
         self.insert_policy_relation_cache(CachedPolicyRelation::Subtype, key, result);
+    }
+
+    fn lookup_subtype_cache_value(&self, key: RelationCacheKey) -> Option<RelationCacheValue> {
+        self.lookup_policy_relation_cache_value(CachedPolicyRelation::Subtype, key)
+    }
+
+    /// Promote a coinductively validated maybe-key to definitive `true`.
+    ///
+    /// Never overwrites an existing definitive entry (a sibling checker may
+    /// hold an honest `false`); upgrades an existing `LimitTrue` to definitive.
+    fn promote_subtype_cache_true(&self, key: RelationCacheKey) {
+        {
+            let mut local = self.subtype_cache.borrow_mut();
+            match local.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if matches!(entry.get(), RelationCacheValue::LimitTrue { .. }) {
+                        entry.insert(RelationCacheValue::True);
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(RelationCacheValue::True);
+                }
+            }
+        }
+        if let Some(shared) = self.shared {
+            match shared.subtype_cache.entry(key) {
+                dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                    if matches!(entry.get(), RelationCacheValue::LimitTrue { .. }) {
+                        *entry.get_mut() = RelationCacheValue::True;
+                    }
+                }
+                dashmap::mapref::entry::Entry::Vacant(slot) => {
+                    slot.insert(RelationCacheValue::True);
+                }
+            }
+        }
+    }
+
+    /// Record an assumed-related fuel-limit verdict valid up to `fuel_band`.
+    ///
+    /// Never overwrites a definitive entry; merges with an existing
+    /// `LimitTrue` by keeping the larger band (the stronger statement).
+    fn insert_subtype_limit_true(&self, key: RelationCacheKey, fuel_band: u32) {
+        let merge = |existing: &mut RelationCacheValue| {
+            if let RelationCacheValue::LimitTrue {
+                fuel_band: existing_band,
+            } = existing
+            {
+                *existing_band = (*existing_band).max(fuel_band);
+            }
+        };
+        {
+            let mut local = self.subtype_cache.borrow_mut();
+            match local.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => merge(entry.get_mut()),
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(RelationCacheValue::LimitTrue { fuel_band });
+                }
+            }
+        }
+        if let Some(shared) = self.shared {
+            match shared.subtype_cache.entry(key) {
+                dashmap::mapref::entry::Entry::Occupied(mut entry) => merge(entry.get_mut()),
+                dashmap::mapref::entry::Entry::Vacant(slot) => {
+                    slot.insert(RelationCacheValue::LimitTrue { fuel_band });
+                }
+            }
+        }
     }
 
     fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
@@ -1899,3 +1884,8 @@ impl QueryDatabase for QueryCache<'_> {
 #[cfg(test)]
 #[path = "../../tests/db_tests.rs"]
 mod tests;
+
+// `estimated_size_bytes` lives in a child module to keep this shard under
+// the 2000-line file-size cap; child modules retain private-field access.
+#[path = "query_cache_size.rs"]
+mod size;

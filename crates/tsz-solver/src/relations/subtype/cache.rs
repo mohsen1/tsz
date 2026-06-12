@@ -9,11 +9,14 @@
 //! - Pre-evaluation intrinsic checks (Object/Function interfaces)
 //! - Meta-type evaluation bridging
 
+use crate::caches::limit_policy::limit_result_cache_enabled;
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
-use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
+use crate::types::{
+    IntrinsicKind, RelationCacheKey, RelationCacheValue, TypeApplicationId, TypeData, TypeId,
+};
 use crate::visitor::{
     application_id, array_element_type, conditional_type_id, contains_this_type, enum_components,
     lazy_def_id, literal_value, type_param_info, union_list_id,
@@ -118,7 +121,48 @@ pub fn reset_subtype_thread_local_state() {
 // Maximum number of non-trivial subtype checks per top-level call chain.
 // Generous enough for complex real-world types (react, fp-ts) but restrictive
 // enough to prevent runaway recursion from hanging.
-const MAX_GLOBAL_SUBTYPE_FUEL: u32 = 10_000;
+pub(crate) const MAX_GLOBAL_SUBTYPE_FUEL: u32 = 10_000;
+
+/// Remaining global subtype fuel budget for the current thread's in-flight
+/// relation chain. `MAX_GLOBAL_SUBTYPE_FUEL` when no chain is in flight.
+///
+/// Used to decide whether a budget-conditional
+/// [`RelationCacheValue::LimitTrue`] entry is honest for the current query:
+/// the recorded verdict only holds for queries whose remaining budget is at
+/// most the entry's `fuel_band` (a larger budget could complete the
+/// comparison honestly and must recompute).
+#[inline]
+pub(crate) fn remaining_global_subtype_fuel() -> u32 {
+    GLOBAL_SUBTYPE_STATE.with(|s| MAX_GLOBAL_SUBTYPE_FUEL.saturating_sub(unpack_fuel(s.get())))
+}
+
+/// One recorded `Ternary.Maybe`-style relation outcome awaiting validation by
+/// the outermost frame of its checker instance (tsc `maybeKeys` parity).
+///
+/// `fuel_band: None` marks a cycle-derived Maybe: on outermost success the
+/// coinductive assumption is validated and the key is promoted to a
+/// definitive `true`. `fuel_band: Some(band)` marks a fuel-limit Maybe: on
+/// outermost success it is promoted to a budget-conditional
+/// [`RelationCacheValue::LimitTrue`] entry honest up to `band`.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct MaybeRelationEntry {
+    key: RelationCacheKey,
+    fuel_band: Option<u32>,
+}
+
+/// Frame-entry snapshot captured by `check_subtype` and consumed by
+/// `finish_relation_frame` at every frame exit: the maybe-stack watermark,
+/// the promotability of this frame's verdicts, whether the budget chain was
+/// pristine at entry (fuel-band honesty), and the cache-poisoning sentinel
+/// counters whose stability gates promotion.
+#[derive(Copy, Clone, Debug)]
+struct RelationFrameSnapshot {
+    maybe_start: usize,
+    frame_promotable: bool,
+    pristine_budget_chain: bool,
+    lazy_failures_at_entry: u64,
+    weak_sensitivity_at_entry: u64,
+}
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a Lazy type resolved to an Enum with the same DefId.
@@ -379,12 +423,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && let Some(db) = self.query_db
         {
             let key = self.make_cache_key(source, target);
-            if let Some(cached) = db.lookup_subtype_cache(key) {
-                return if cached {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                };
+            match db.lookup_subtype_cache_value(key) {
+                Some(RelationCacheValue::True) => return SubtypeResult::True,
+                Some(RelationCacheValue::False) => return SubtypeResult::False,
+                // Budget-conditional assumed-related verdict (tsc
+                // `Ternary.Maybe` parity): honest only when this query's
+                // remaining fuel budget is no larger than the recorded
+                // run's. Under a raised budget, fall through and recompute
+                // (fuel-band cache honesty).
+                Some(RelationCacheValue::LimitTrue { fuel_band })
+                    if limit_result_cache_enabled()
+                        && remaining_global_subtype_fuel() <= fuel_band =>
+                {
+                    tsz_common::perf_counters::record_relation_limit_cache_hit();
+                    return SubtypeResult::DepthExceeded;
+                }
+                Some(RelationCacheValue::LimitTrue { .. }) | None => {}
             }
         }
 
@@ -432,6 +486,55 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // does not encode. Caching it would let a result computed under one
         // enforcement state be served to a sibling check under another.
         let weak_sensitivity_at_entry = weak_type_sensitivity_count();
+
+        // ── Limit-hit maybe-stack (tsc `maybeKeys` parity, issue #13241) ────
+        // Frame-entry snapshot of the maybe stack. Every completion path of
+        // this frame (after the recursion guard is entered) routes through
+        // `finish_relation_frame`, which:
+        //   - truncates the stack to this snapshot when the frame resolves to
+        //     a definitive `False` (Maybe entries recorded inside this frame's
+        //     subtree depended on an in-flight assumption this failure
+        //     invalidates — tsc discards those maybeKeys the same way);
+        //   - records this frame's key when it resolves to a Maybe verdict
+        //     (`CycleDetected` / `DepthExceeded`) in a promotable context;
+        //   - promotes (on overall success) or discards (on failure) all
+        //     surviving entries when the outermost frame of this checker
+        //     instance completes.
+        let maybe_start = self.maybe_keys.len();
+        let frame_promotable = can_use_shared_relation_cache
+            && !self.bypass_evaluation
+            && !self.identity_cycle_check
+            && self.query_db.is_some()
+            && limit_result_cache_enabled();
+        // A fuel-limit Maybe verdict may only be recorded when every budget
+        // dimension was pristine at this frame's entry: full global fuel
+        // (`global_depth == 0`), a fresh per-instance iteration budget, and no
+        // enclosing cross-operation solver frames. Any later query then holds
+        // an equal-or-smaller budget in every dimension, so reusing the
+        // assumed-related verdict is monotonically safe — a smaller budget
+        // can only bail earlier with the same answer (fuel-band honesty).
+        // The `global_depth == 0` short-circuit keeps the two extra reads off
+        // the hot nested-frame path.
+        let pristine_budget_chain = global_depth == 0
+            && self.guard.iterations() == 0
+            && crate::recursion::solver_stack_frame_depth() == 0;
+
+        let frame_snapshot = RelationFrameSnapshot {
+            maybe_start,
+            frame_promotable,
+            pristine_budget_chain,
+            lazy_failures_at_entry,
+            weak_sensitivity_at_entry,
+        };
+
+        // Helper macro: run the maybe-stack completion protocol for this
+        // frame. Must be invoked at every exit taken after `guard.enter`
+        // succeeded, after the corresponding `guard.leave`.
+        macro_rules! finish_frame {
+            ($result:expr) => {
+                self.finish_relation_frame($result, frame_snapshot, source, target);
+            };
+        }
 
         // Helper macro to decrement global depth and optionally reset fuel on early returns.
         macro_rules! leave_global {
@@ -640,8 +743,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 });
                 if found_cycle {
                     self.guard.leave(pair);
+                    let result = self.result_on_cycle(source, target);
+                    finish_frame!(result);
                     leave_global!();
-                    return self.result_on_cycle(source, target);
+                    return result;
                 }
             }
         }
@@ -650,14 +755,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Check reversed pair for bivariant cross-recursion
             if self.def_guard.is_visiting(&(t_def, s_def)) {
                 self.guard.leave(pair);
+                let result = self.result_on_cycle(source, target);
+                finish_frame!(result);
                 leave_global!();
-                return self.result_on_cycle(source, target);
+                return result;
             }
             match self.def_guard.enter((s_def, t_def)) {
                 RecursionResult::Cycle => {
                     self.guard.leave(pair);
+                    let result = self.result_on_cycle(source, target);
+                    finish_frame!(result);
                     leave_global!();
-                    return self.result_on_cycle(source, target);
+                    return result;
                 }
                 RecursionResult::Entered => Some((s_def, t_def)),
                 _ => None,
@@ -692,6 +801,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         self.def_guard.leave(dp);
                     }
                     self.guard.leave(pair);
+                    finish_frame!(SubtypeResult::False);
                     leave_global!();
                     return SubtypeResult::False;
                 }
@@ -700,6 +810,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
+                finish_frame!(result);
                 leave_global!();
                 return result;
             }
@@ -726,6 +837,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
+                finish_frame!(SubtypeResult::True);
                 leave_global!();
                 return SubtypeResult::True;
             }
@@ -786,6 +898,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         self.def_guard.leave(dp);
                     }
                     self.guard.leave(pair);
+                    finish_frame!(SubtypeResult::True);
                     leave_global!();
                     return SubtypeResult::True;
                 }
@@ -794,6 +907,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
+                finish_frame!(result);
                 leave_global!();
                 return result;
             }
@@ -918,6 +1032,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let key = self.make_cache_key(source, target);
                     cache_definitive!(db, key, result);
                 }
+                finish_frame!(result);
                 leave_global!();
                 return result;
             }
@@ -977,6 +1092,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let key = self.make_cache_key(source, target);
                 cache_definitive!(db, key, result);
             }
+            finish_frame!(result);
             leave_global!();
             return result;
         }
@@ -998,6 +1114,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let key = self.make_cache_key(source, target);
                 cache_definitive!(db, key, result);
             }
+            finish_frame!(result);
             leave_global!();
             return result;
         }
@@ -1042,6 +1159,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
+                finish_frame!(result);
                 leave_global!();
                 return result;
             }
@@ -1086,6 +1204,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             cache_definitive!(db, key, result);
         }
 
+        finish_frame!(result);
+
         // Decrement global depth; reset fuel when outermost call completes.
         // PERF: Single TLS access for both depth and fuel.
         GLOBAL_SUBTYPE_STATE.with(|s| {
@@ -1099,6 +1219,84 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         });
 
         result
+    }
+
+    /// Maybe-stack completion protocol for one `check_subtype` frame
+    /// (tsc `maybeKeys` parity, issue #13241).
+    ///
+    /// Called at every frame exit taken after the recursion guard was entered
+    /// (after the matching `guard.leave`). Semantics, mirroring tsc's
+    /// `recursiveTypeRelatedTo` / `resetMaybeStack`:
+    ///
+    /// - A definitive `False` invalidates every Maybe entry recorded within
+    ///   this frame's subtree: those verdicts may have leaned on an in-flight
+    ///   coinductive assumption that this failure refutes, so they are
+    ///   discarded (truncated back to `maybe_start`).
+    /// - A Maybe verdict (`CycleDetected` / `DepthExceeded`) records this
+    ///   frame's relation key for later validation. Cycle verdicts are
+    ///   recorded at any depth (their assumption frame is an ancestor in this
+    ///   same instance and will either succeed — validating them — or fail
+    ///   and truncate them). Fuel verdicts are recorded only for frames that
+    ///   started a pristine budget chain (`pristine_budget_chain`), where the
+    ///   fuel band is the full budget and every other budget dimension
+    ///   (instance depth, iteration count, shared solver frames) is at its
+    ///   pristine maximum — so any later query reuses the verdict from an
+    ///   equal-or-smaller budget, which is monotonically safe.
+    /// - When the outermost frame of this checker instance completes
+    ///   (`guard.depth() == 0`), surviving entries are promoted on overall
+    ///   success — cycle entries to definitive `true` (the coinductive
+    ///   assumption set is self-consistent), fuel entries to band-conditional
+    ///   `LimitTrue` — or discarded on failure. Promotion is additionally
+    ///   gated on the unresolved-`Lazy` / weak-type-sensitivity counters
+    ///   having been stable across the whole outermost window, the same
+    ///   discipline `cache_definitive!` applies to definitive writes.
+    fn finish_relation_frame(
+        &mut self,
+        result: SubtypeResult,
+        frame: RelationFrameSnapshot,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        match result {
+            SubtypeResult::False => {
+                self.maybe_keys.truncate(frame.maybe_start);
+            }
+            SubtypeResult::CycleDetected => {
+                if frame.frame_promotable {
+                    self.maybe_keys.push(MaybeRelationEntry {
+                        key: self.make_cache_key(source, target),
+                        fuel_band: None,
+                    });
+                }
+            }
+            SubtypeResult::DepthExceeded => {
+                if frame.frame_promotable && frame.pristine_budget_chain {
+                    self.maybe_keys.push(MaybeRelationEntry {
+                        key: self.make_cache_key(source, target),
+                        fuel_band: Some(MAX_GLOBAL_SUBTYPE_FUEL),
+                    });
+                }
+            }
+            SubtypeResult::True => {}
+        }
+
+        // Outermost frame of this checker instance: validate or discard.
+        if self.guard.depth() == 0 && !self.maybe_keys.is_empty() {
+            let entries = std::mem::take(&mut self.maybe_keys);
+            if result.is_true()
+                && lazy_resolve_failure_count() == frame.lazy_failures_at_entry
+                && weak_type_sensitivity_count() == frame.weak_sensitivity_at_entry
+                && let Some(db) = self.query_db
+            {
+                for entry in entries {
+                    match entry.fuel_band {
+                        None => db.promote_subtype_cache_true(entry.key),
+                        Some(band) => db.insert_subtype_limit_true(entry.key, band),
+                    }
+                    tsz_common::perf_counters::record_relation_maybe_promotion();
+                }
+            }
+        }
     }
 
     /// Returns the appropriate cycle result based on the current mode.

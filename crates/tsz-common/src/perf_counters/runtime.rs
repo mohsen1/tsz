@@ -132,6 +132,17 @@ pub struct PerfCounters {
     /// clone per reason, not just the average.
     pub overlay_copy_max_entries_by_reason: [AtomicU64; CHECKER_CREATION_REASON_COUNT],
 
+    // ─── solver relation limit-result cache (issue #13241) ──────────────
+    /// Times a budget-conditional `LimitTrue` relation entry short-circuited
+    /// a subtype query (the recorded fuel band covered the query's remaining
+    /// budget). Each hit avoids re-burning a full limit-hit relation chain.
+    pub relation_limit_cache_hits: AtomicU64,
+    /// Maybe-stack keys promoted into the relation cache at outermost
+    /// relation success (tsc `maybeKeys` promotion parity): cycle-derived
+    /// keys promoted to definitive `true` plus fuel-derived keys promoted to
+    /// band-conditional `LimitTrue` entries.
+    pub relation_maybe_promotions: AtomicU64,
+
     // ─── interner ────────────────────────────────────────────────────────
     pub interner_intern_calls: AtomicU64,
     pub interner_intern_hits: AtomicU64,
@@ -260,6 +271,8 @@ impl PerfCounters {
                 CHECKER_CREATION_REASON_COUNT],
             overlay_copy_max_entries_by_reason: [const { AtomicU64::new(0) };
                 CHECKER_CREATION_REASON_COUNT],
+            relation_limit_cache_hits: AtomicU64::new(0),
+            relation_maybe_promotions: AtomicU64::new(0),
             interner_intern_calls: AtomicU64::new(0),
             interner_intern_hits: AtomicU64::new(0),
             interner_intern_misses: AtomicU64::new(0),
@@ -1207,6 +1220,30 @@ pub fn record_interner_string_intern_call() {
     }
     counters()
         .interner_string_intern_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a budget-conditional `LimitTrue` relation cache hit (a limit-hit
+/// relation verdict was reused instead of re-burning the relation chain).
+#[inline]
+pub fn record_relation_limit_cache_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .relation_limit_cache_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one maybe-stack key promoted into the relation cache at outermost
+/// relation success (tsc `maybeKeys` promotion parity).
+#[inline]
+pub fn record_relation_maybe_promotion() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .relation_maybe_promotions
         .fetch_add(1, Ordering::Relaxed);
 }
 

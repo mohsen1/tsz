@@ -24,6 +24,7 @@ mod json_tests {
             "overlay",
             "resolver",
             "interner",
+            "relation_limit_cache",
             "by_reason",
             "delegate_miss_classification",
             "delegate_declaration_file_miss_residues",

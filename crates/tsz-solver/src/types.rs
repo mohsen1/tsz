@@ -482,6 +482,47 @@ impl RelationCacheKey {
     }
 }
 
+/// Stored outcome of a relation query in the cross-checker relation caches.
+///
+/// `True` / `False` are definitive, budget-independent verdicts. `LimitTrue`
+/// records a `tsc` `Ternary.Maybe`-style assumed-related verdict produced when
+/// a relation chain exhausted its global fuel budget. It is honest only for a
+/// later query whose *remaining* fuel budget at lookup time is at most
+/// `fuel_band` (the budget the recorded run started with): a query holding a
+/// larger budget could complete the comparison honestly and must recompute
+/// instead of reusing the truncated verdict (fuel-band cache honesty).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RelationCacheValue {
+    /// Definitively related.
+    True,
+    /// Definitively not related.
+    False,
+    /// Assumed related because the computation hit the global fuel limit
+    /// while `fuel_band` units of budget were available at its entry.
+    LimitTrue {
+        /// Remaining global subtype fuel at the recorded run's entry.
+        fuel_band: u32,
+    },
+}
+
+impl RelationCacheValue {
+    /// Wrap a definitive boolean verdict.
+    #[must_use]
+    pub const fn from_bool(related: bool) -> Self {
+        if related { Self::True } else { Self::False }
+    }
+
+    /// The definitive verdict, or `None` for budget-conditional entries.
+    #[must_use]
+    pub const fn as_definitive(self) -> Option<bool> {
+        match self {
+            Self::True => Some(true),
+            Self::False => Some(false),
+            Self::LimitTrue { .. } => None,
+        }
+    }
+}
+
 /// Priority levels for generic type inference constraints.
 ///
 /// TypeScript uses a multi-pass inference algorithm where constraints are processed
