@@ -3,18 +3,17 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 
 pub(super) fn scoped_type_node_cache_allowed(arena: &NodeArena, idx: NodeIndex, kind: u16) -> bool {
-    // Tuple nodes can participate in recursive conditional and constraint
-    // evaluation. The scoped cache key captures lexical type-parameter
-    // bindings, but not recursion/fuel/constraint state, so tuples must fall
-    // through and recompute under generic scope.
-    if kind != syntax_kind_ext::ARRAY_TYPE
-        && kind != syntax_kind_ext::UNION_TYPE
-        && kind != syntax_kind_ext::INTERSECTION_TYPE
-    {
+    // Tuples, unions, and intersections can participate in recursive
+    // conditional/constraint evaluation. The scoped cache key captures lexical
+    // type-parameter bindings, but not recursion/fuel/relation state, so those
+    // nodes must fall through and recompute under generic scope. Keep this
+    // cache limited to simple array annotations, where the resolved container
+    // shape is determined by the scoped element type alone.
+    if kind != syntax_kind_ext::ARRAY_TYPE {
         return false;
     }
 
-    // Even simple container nodes can be stateful when they sit under a
+    // Even simple array nodes can be stateful when they sit under a
     // constraint/evaluation-sensitive type node. In those contexts the visible
     // lexical type-parameter bindings are not a complete cache key: recursion
     // fuel, mapped-key state, indexed-access resolution, and conditional
