@@ -724,7 +724,7 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     apply_policy_bits_to_subtype_checker(&mut checker.subtype, policy);
 }
 
-fn configure_subtype_checker_policy<'a, R: TypeResolver>(
+const fn configure_subtype_checker_policy<'a, R: TypeResolver>(
     checker: SubtypeChecker<'a, R>,
     policy: RelationPolicy,
 ) -> SubtypeChecker<'a, R> {
