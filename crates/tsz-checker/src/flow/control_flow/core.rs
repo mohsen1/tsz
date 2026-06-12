@@ -732,7 +732,6 @@ impl<'a> FlowAnalyzer<'a> {
             .with_switch_reference_cache(&ctx.flow_switch_reference_cache)
             .with_numeric_atom_cache(&ctx.flow_numeric_atom_cache)
             .with_reference_match_cache(&ctx.flow_reference_match_cache)
-            .with_alias_base_assignment_cache(&ctx.symbol_flow_memo.alias_base_assignment)
             .with_type_environment(&ctx.type_environment)
             .with_checker_context(ctx)
             .with_narrowing_cache(&ctx.narrowing_cache)
