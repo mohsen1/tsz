@@ -1113,7 +1113,25 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .cached_cross_file_symbol_type(sym_id, file_idx as u32)
         {
-            return cached;
+            // Declaration-file class symbols gate the SYMBOL-bucket shortcut
+            // on the instance side being recoverable; see
+            // `class_instance_recoverable` (#13185). The gate is scoped to
+            // declaration files because they have no other ClassInstance
+            // writer (the class delegation path skips `.d.ts`), while
+            // recomputing a `.ts` class here mid-check can degrade its
+            // heritage-merged shape (aliasUsage* conformance family).
+            let declaration_file_class = self.file_index_is_declaration_file(file_idx)
+                && self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .and_then(|binder| binder.get_symbol(sym_id))
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS));
+            if !declaration_file_class
+                || self.ctx.class_instance_recoverable(sym_id, file_idx as u32)
+            {
+                return cached;
+            }
         }
 
         // Check cache first

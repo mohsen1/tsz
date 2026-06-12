@@ -351,6 +351,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
+            // Class-instance extraction must apply on this path too: when a
+            // `DefKind::Class` body resolves to the constructor (value side),
+            // instantiating it directly would produce a `typeof C`-shaped
+            // application for a type-position reference (#13185). Mirror the
+            // known-params path's unwrap; `typeof C<Args>` bases were already
+            // returned above.
+            let resolved = self.extract_class_instance_body(def_id, resolved);
             let extracted_params = self.extract_type_params_from_type(resolved);
             if !extracted_params.is_empty() && extracted_params.len() == args.len() {
                 self.evaluate_application_with_extracted_params(
@@ -806,7 +813,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
         let shape = self.interner.callable_shape(cs_id);
         match shape.construct_signatures.first() {
-            Some(construct_sig) => construct_sig.return_type,
+            Some(construct_sig) => {
+                tracing::trace!(
+                    def_id = def_id.0,
+                    instance = construct_sig.return_type.0,
+                    "extract_class_instance_body: unwrapped construct-signature return"
+                );
+                construct_sig.return_type
+            }
             None => resolved,
         }
     }
