@@ -634,12 +634,12 @@ impl BinderState {
         export_name: &str,
     ) -> Option<SymbolId> {
         // Check cache first for fast path
-        let cache_key = (module_specifier.to_string(), export_name.to_string());
         if let Some(&cached) = self
             .resolved_export_cache
             .read()
             .expect("RwLock not poisoned")
-            .get(&cache_key)
+            .get(module_specifier)
+            .and_then(|module_cache| module_cache.get(export_name))
         {
             return cached;
         }
@@ -658,7 +658,9 @@ impl BinderState {
         self.resolved_export_cache
             .write()
             .expect("resolved_export_cache RwLock poisoned")
-            .insert(cache_key, result);
+            .entry(module_specifier.to_string())
+            .or_default()
+            .insert(export_name.to_string(), result);
         result
     }
 
@@ -690,12 +692,12 @@ impl BinderState {
             );
         }
 
-        let cache_key = (module_specifier.to_string(), export_name.to_string());
         if let Some(&cached) = self
             .resolved_export_type_only_cache
             .read()
             .expect("resolved_export_type_only_cache RwLock poisoned")
-            .get(&cache_key)
+            .get(module_specifier)
+            .and_then(|module_cache| module_cache.get(export_name))
         {
             return cached;
         }
@@ -711,7 +713,9 @@ impl BinderState {
         self.resolved_export_type_only_cache
             .write()
             .expect("resolved_export_type_only_cache RwLock poisoned")
-            .insert(cache_key, result);
+            .entry(module_specifier.to_string())
+            .or_default()
+            .insert(export_name.to_string(), result);
         result
     }
 
