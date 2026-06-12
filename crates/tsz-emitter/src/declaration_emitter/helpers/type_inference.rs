@@ -666,9 +666,9 @@ impl<'a> DeclarationEmitter<'a> {
         let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
             (&self.type_cache, self.type_interner, self.binder)
         {
-            DeclarationEmitter::with_type_info(
+            DeclarationEmitter::with_shared_type_info(
                 self.arena,
-                type_cache.clone(),
+                std::sync::Arc::clone(type_cache),
                 type_interner,
                 binder,
             )
