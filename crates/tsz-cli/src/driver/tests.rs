@@ -100,6 +100,7 @@ fn compilation_cache_build_info_uses_source_hash_for_file_version() {
         std::slice::from_ref(&source_path),
         dir.path(),
         &ResolvedCompilerOptions::default(),
+        None,
     );
     let file_info = build_info
         .get_file_info("src/index.ts")
@@ -144,6 +145,7 @@ fn build_info_round_trip_preserves_dependency_order() {
         std::slice::from_ref(&main),
         base,
         &ResolvedCompilerOptions::default(),
+        None,
     );
     let restored = build_info_to_compilation_cache(&build_info, base);
     let restored_deps = restored

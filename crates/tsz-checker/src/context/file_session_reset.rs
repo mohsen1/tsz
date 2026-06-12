@@ -89,6 +89,41 @@ impl<'a> CheckerContext<'a> {
     /// save/restore mechanism scoped to overload/generic checking;
     /// this reset is for *successful* file completion only.
     pub fn reset_for_next_file(&mut self) {
+        // Reset-cache high-water sampling is opt-in because it observes many
+        // checker caches at a semantic boundary; ordinary perf-counter runs
+        // must remain invisible to conformance/parity behavior.
+        if tsz_common::perf_counters::enabled_fast()
+            && std::env::var_os("TSZ_RECORD_FILE_SESSION_RESET_CACHE_STATS").is_some()
+        {
+            let stats = self.cache_statistics();
+            tsz_common::perf_counters::record_file_session_reset_cache_statistics(
+                tsz_common::perf_counters::FileSessionResetCacheStatistics {
+                    total_entries: stats.entries() as u64,
+                    total_bytes: stats.estimated_size_bytes() as u64,
+                    namespace_member_entries: stats.namespace_member_resolution_cache_entries
+                        as u64,
+                    namespace_member_bytes: stats
+                        .namespace_member_resolution_cache_estimated_size_bytes
+                        as u64,
+                    export_equals_entries: stats.export_equals_named_cache_entries as u64,
+                    export_equals_bytes: stats.export_equals_named_cache_estimated_size_bytes
+                        as u64,
+                    nested_namespace_entries: stats.nested_namespace_candidates_cache_entries
+                        as u64,
+                    nested_namespace_bytes: stats
+                        .nested_namespace_candidates_cache_estimated_size_bytes
+                        as u64,
+                    lowering_entity_name_entries: stats
+                        .lowering_entity_name_resolution_cache_entries
+                        as u64,
+                    lowering_entity_name_bytes: stats
+                        .lowering_entity_name_resolution_cache_estimated_size_bytes
+                        as u64,
+                    env_eval_entries: stats.env_eval_cache_entries as u64,
+                    env_eval_bytes: stats.env_eval_cache_estimated_size_bytes as u64,
+                },
+            );
+        }
         // Attribution counter: increments only on the sequential session-
         // reuse path (T2.1.B). Zero on the default construction-per-file
         // path, so reuse vs construct is observable from a single counter.
@@ -303,6 +338,9 @@ impl<'a> CheckerContext<'a> {
             .clear();
         self.type_reference_validation_caches
             .assignability_eval_memo
+            .clear();
+        self.type_reference_validation_caches
+            .assignability_failure_memo
             .clear();
         self.in_conditional_extends_depth = 0;
         self.typeof_param_scope.clear();

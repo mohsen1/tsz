@@ -35,6 +35,21 @@ route `ExcessProperty` suppression through
 checker-specific member normalization, but the decision about which target
 shapes suppress EPC now lives in the assignability boundary.
 
+### Failure-analysis memo (single pass per key)
+
+Reason-collecting executions are shared through the stamp-guarded
+`AssignabilityFailureMemo` (issue #13243). `execute_relation_request` and
+`analyze_assignability_failure` both key the raw solver analysis on
+`(prepared source, prepared target, solver flags, sound mode)` under the same
+session stamp as the `evaluate_type_for_assignability` memo, so a failing
+TS2322/TS2345 pair walks the relation engine once: the gateway's captured
+analysis is replayed when the error reporter re-analyzes the same pair.
+Decision-only requests, the overload subtype pass, non-`Assignable` solver
+kinds, and env-resolver executions (`relation_outcome_with_env`) never consult
+or populate the memo. Entries are dropped whenever the stamp moves and are
+never written for depth/iteration/fuel-degraded passes. Counters:
+`relation_failure_reason_walks` / `relation_failure_memo_hits`.
+
 ## Field Map
 
 | Field | Constructors / builders | Current consumers | Effect today |

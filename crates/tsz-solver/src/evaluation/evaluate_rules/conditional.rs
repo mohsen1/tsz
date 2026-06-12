@@ -1552,28 +1552,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             return true;
         }
-        // Check if the evaluated target is structurally the Function interface
-        // (has apply, call, bind properties) — this catches cases where the
+        // Canonical query (issue #13090): boxed-registry identity first, then
+        // the shared structural fallback — this catches cases where the
         // Function type was resolved from a Lazy(DefId) to its ObjectShape form.
-        if let Some(
-            crate::types::TypeData::Object(shape_id)
-            | crate::types::TypeData::ObjectWithIndex(shape_id),
-        ) = interner.lookup(extends_type)
-        {
-            let shape = interner.object_shape(shape_id);
-            if shape.properties.len() <= 20 {
-                let apply = interner.intern_string("apply");
-                let call = interner.intern_string("call");
-                let bind = interner.intern_string("bind");
-                let has_apply = shape.properties.iter().any(|p| p.name == apply);
-                let has_call = shape.properties.iter().any(|p| p.name == call);
-                let has_bind = shape.properties.iter().any(|p| p.name == bind);
-                if has_apply && has_call && has_bind {
-                    return true;
-                }
-            }
-        }
-        false
+        crate::type_queries::is_global_function_interface(interner, extends_type)
     }
 
     fn function_intrinsic_extends_callable_target(
