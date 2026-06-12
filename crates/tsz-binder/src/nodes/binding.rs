@@ -1319,6 +1319,9 @@ impl BinderState {
         declaration: NodeIndex,
         is_exported: bool,
     ) -> SymbolId {
+        let name_atom = arena.get_identifier_at(declaration).and_then(|ident| {
+            (ident.atom != tsz_common::interner::AstAtom::NONE).then_some(ident.atom)
+        });
         if let Some(existing_id) = self.current_scope.get(name) {
             // Check if the existing symbol is in the local symbol table.
             // If not (e.g., it's from a lib binder), we should create a new local symbol
@@ -1344,12 +1347,14 @@ impl BinderState {
                     }
                 }
                 // Update current_scope to point to the local symbol (shadowing)
-                self.current_scope.set(owned_name.clone(), sym_id);
+                self.current_scope
+                    .set_with_atom(owned_name.clone(), name_atom, sym_id);
                 // CRITICAL: Also update file_locals to shadow lib symbol in file-level scope
                 // This ensures symbol resolution finds the local symbol instead of the lib one
-                self.file_locals.set(owned_name.clone(), sym_id);
+                self.file_locals
+                    .set_with_atom(owned_name.clone(), name_atom, sym_id);
                 Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
-                self.declare_in_persistent_scope(owned_name, sym_id);
+                self.declare_in_persistent_scope_with_atom(owned_name, name_atom, sym_id);
                 return sym_id;
             }
 
@@ -1472,10 +1477,12 @@ impl BinderState {
                             .or_insert_with(|| lib_arenas.clone());
                     }
                 }
-                self.current_scope.set(owned_name.clone(), sym_id);
-                self.file_locals.set(owned_name.clone(), sym_id);
+                self.current_scope
+                    .set_with_atom(owned_name.clone(), name_atom, sym_id);
+                self.file_locals
+                    .set_with_atom(owned_name.clone(), name_atom, sym_id);
                 Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
-                self.declare_in_persistent_scope(owned_name, sym_id);
+                self.declare_in_persistent_scope_with_atom(owned_name, name_atom, sym_id);
                 return sym_id;
             }
             // In merged namespace blocks, a non-exported variable must not merge with an
@@ -1511,9 +1518,10 @@ impl BinderState {
                         sym.parent = parent_id;
                     }
                 }
-                self.current_scope.set(owned_name.clone(), sym_id);
+                self.current_scope
+                    .set_with_atom(owned_name.clone(), name_atom, sym_id);
                 Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
-                self.declare_in_persistent_scope(owned_name, sym_id);
+                self.declare_in_persistent_scope_with_atom(owned_name, name_atom, sym_id);
                 return sym_id;
             }
 
@@ -1547,9 +1555,10 @@ impl BinderState {
                         sym.parent = parent_id;
                     }
                 }
-                self.current_scope.set(owned_name.clone(), sym_id);
+                self.current_scope
+                    .set_with_atom(owned_name.clone(), name_atom, sym_id);
                 Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
-                self.declare_in_persistent_scope(owned_name, sym_id);
+                self.declare_in_persistent_scope_with_atom(owned_name, name_atom, sym_id);
                 return sym_id;
             }
 
@@ -1610,7 +1619,7 @@ impl BinderState {
             }
 
             Arc::make_mut(&mut self.node_symbols).insert(declaration.0, existing_id);
-            self.declare_in_persistent_scope(name.to_string(), existing_id);
+            self.declare_in_persistent_scope_with_atom(name.to_string(), name_atom, existing_id);
             return existing_id;
         }
 
@@ -1640,7 +1649,7 @@ impl BinderState {
                     sym.is_exported = true;
                 }
             }
-            self.declare_in_persistent_scope(name.to_string(), existing_id);
+            self.declare_in_persistent_scope_with_atom(name.to_string(), name_atom, existing_id);
             return existing_id;
         }
 
@@ -1664,7 +1673,8 @@ impl BinderState {
                 sym.parent = parent_id;
             }
         }
-        self.current_scope.set(owned_name.clone(), sym_id);
+        self.current_scope
+            .set_with_atom(owned_name.clone(), name_atom, sym_id);
 
         // Keep source-file declarations visible through file_locals.
         // This is required for nested module scopes resolving references to
@@ -1682,11 +1692,12 @@ impl BinderState {
                 .get(self.current_scope_id.0 as usize)
                 .is_some_and(|scope| scope.kind == ContainerKind::SourceFile)
         {
-            self.file_locals.set(owned_name.clone(), sym_id);
+            self.file_locals
+                .set_with_atom(owned_name.clone(), name_atom, sym_id);
         }
 
         Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
-        self.declare_in_persistent_scope(owned_name, sym_id);
+        self.declare_in_persistent_scope_with_atom(owned_name, name_atom, sym_id);
 
         // Record declaration event (new symbol)
         self.debugger

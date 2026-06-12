@@ -511,6 +511,13 @@ impl Symbol {
 pub struct SymbolTable {
     /// Symbols indexed by their escaped name (using `FxHashMap` for faster hashing)
     symbols: Arc<FxHashMap<String, SymbolId>>,
+    /// Symbols indexed by parsed identifier `AstAtom` when the binder had one.
+    ///
+    /// This is a migration index for #13073: string keys remain authoritative
+    /// for compatibility, while parsed identifiers can avoid hashing their
+    /// escaped text on hot resolution paths.
+    #[serde(skip)]
+    atom_symbols: Arc<FxHashMap<tsz_common::interner::AstAtom, SymbolId>>,
 }
 
 impl SymbolTable {
@@ -518,6 +525,7 @@ impl SymbolTable {
     pub fn new() -> Self {
         Self {
             symbols: Arc::new(FxHashMap::default()),
+            atom_symbols: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -531,6 +539,10 @@ impl SymbolTable {
                 capacity,
                 Default::default(),
             )),
+            atom_symbols: Arc::new(FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            )),
         }
     }
 
@@ -540,14 +552,52 @@ impl SymbolTable {
         self.symbols.get(name).copied()
     }
 
+    /// Get a symbol by parsed identifier atom.
+    #[must_use]
+    pub fn get_by_atom(&self, atom: tsz_common::interner::AstAtom) -> Option<SymbolId> {
+        if atom == tsz_common::interner::AstAtom::NONE {
+            return None;
+        }
+        self.atom_symbols.get(&atom).copied()
+    }
+
+    /// Get a symbol by atom when present, falling back to escaped text.
+    #[must_use]
+    pub fn get_by_atom_or_name(
+        &self,
+        atom: tsz_common::interner::AstAtom,
+        name: &str,
+    ) -> Option<SymbolId> {
+        self.get_by_atom(atom).or_else(|| self.get(name))
+    }
+
     /// Set a symbol by name.
     pub fn set(&mut self, name: String, symbol: SymbolId) {
         Arc::make_mut(&mut self.symbols).insert(name, symbol);
     }
 
+    /// Set a symbol by name and, when available, by parsed identifier atom.
+    pub fn set_with_atom(
+        &mut self,
+        name: String,
+        atom: Option<tsz_common::interner::AstAtom>,
+        symbol: SymbolId,
+    ) {
+        self.set(name, symbol);
+        if let Some(atom) = atom
+            && atom != tsz_common::interner::AstAtom::NONE
+        {
+            Arc::make_mut(&mut self.atom_symbols).insert(atom, symbol);
+        }
+    }
+
     /// Remove a symbol by name.
     pub fn remove(&mut self, name: &str) -> Option<SymbolId> {
-        Arc::make_mut(&mut self.symbols).remove(name)
+        let removed = Arc::make_mut(&mut self.symbols).remove(name);
+        if let Some(symbol) = removed {
+            Arc::make_mut(&mut self.atom_symbols).retain(|_, id| *id != symbol);
+        }
+        removed
     }
 
     /// Check if a name exists in the table.
@@ -571,6 +621,7 @@ impl SymbolTable {
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
         Arc::make_mut(&mut self.symbols).clear();
+        Arc::make_mut(&mut self.atom_symbols).clear();
     }
 
     /// Iterate over symbols.
@@ -587,6 +638,10 @@ impl SymbolTable {
         const BUCKET_OVERHEAD: usize = 16;
         let mut size = self.symbols.capacity()
             * (BUCKET_OVERHEAD + std::mem::size_of::<String>() + std::mem::size_of::<SymbolId>());
+        size += self.atom_symbols.capacity()
+            * (BUCKET_OVERHEAD
+                + std::mem::size_of::<tsz_common::interner::AstAtom>()
+                + std::mem::size_of::<SymbolId>());
         for name in self.symbols.keys() {
             size += name.capacity();
         }
