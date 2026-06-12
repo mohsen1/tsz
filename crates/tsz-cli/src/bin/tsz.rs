@@ -67,7 +67,7 @@ fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     locale::init_locale(args.locale.as_deref());
 
     match select_command(&mut args, &cwd) {
-        Command::Batch => run_batch_mode(),
+        Command::Batch { residency_budget } => run_batch_mode(residency_budget),
         Command::Init => init::handle_init(&args, &cwd),
         Command::ShowConfig => handle_show_config(&args, &cwd),
         Command::ListFilesOnly => handle_list_files_only(&args, &cwd),
@@ -108,7 +108,7 @@ fn validate_locale_or_exit(args: &CliArgs) {
 /// and separates the (process-exiting) argument validation that runs while the
 /// command is selected from the code that executes it.
 enum Command {
-    Batch,
+    Batch { residency_budget: bool },
     Init,
     ShowConfig,
     ListFilesOnly,
@@ -126,7 +126,9 @@ enum Command {
 fn select_command(args: &mut CliArgs, cwd: &std::path::Path) -> Command {
     // Handle --batch: enter batch compilation mode
     if args.batch {
-        return Command::Batch;
+        return Command::Batch {
+            residency_budget: args.batch_residency_budget,
+        };
     }
 
     // Handle --init: create tsconfig.json
@@ -236,7 +238,7 @@ const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
 /// Each iteration creates fresh `CliArgs` — no state is shared between compilations.
 /// If tsz panics during any compilation, the process exits naturally (no `catch_unwind`).
 /// The pool manager detects EOF on stdout and respawns a fresh worker.
-fn run_batch_mode() -> Result<()> {
+fn run_batch_mode(residency_budget: bool) -> Result<()> {
     use std::io::{BufRead, Write};
 
     let stdin = std::io::stdin();
@@ -273,14 +275,18 @@ fn run_batch_mode() -> Result<()> {
         let project_path = std::path::Path::new(project_dir);
 
         // Build args matching what the conformance runner passes per test
-        let batch_args = CliArgs::parse_from([
+        let mut batch_args_raw = vec![
             "tsz",
             "--project",
             project_dir,
             "--noEmit",
             "--pretty",
             "false",
-        ]);
+        ];
+        if residency_budget {
+            batch_args_raw.push("--extendedDiagnostics");
+        }
+        let batch_args = CliArgs::parse_from(batch_args_raw);
 
         // Match subprocess mode for code paths that still consult process cwd
         // during JS module/JSDoc symbol resolution. Keep passing project_path

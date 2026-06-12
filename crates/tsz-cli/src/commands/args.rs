@@ -736,6 +736,16 @@ pub struct CliArgs {
     #[arg(long, hide = true)]
     pub batch: bool,
 
+    /// Internal perf/residency probe: collect extended diagnostics for each
+    /// `--batch` project so retained file-state pressure is visible without
+    /// changing the default lightweight batch protocol.
+    #[arg(
+        long = "batchResidencyBudget",
+        alias = "batch-residency-budget",
+        hide = true
+    )]
+    pub batch_residency_budget: bool,
+
     // ==================== Internal: explicit-false markers ====================
     /// Internal side-channel populated by `preprocess_args` when the user passes
     /// `--flag false` for a plain `bool` compiler-option flag. Each value is the

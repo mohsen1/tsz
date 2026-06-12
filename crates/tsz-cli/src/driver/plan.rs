@@ -572,6 +572,7 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
                 | "ignoreConfig"
                 | "listFilesOnly"
                 | "batch"
+                | "batchResidencyBudget"
                 // Removed/unsupported legacy flags; silently ignore so a leftover
                 // `--foo false` doesn't break compilation.
                 | "keyofStringsOnly"
