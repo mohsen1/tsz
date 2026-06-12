@@ -141,6 +141,52 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+# Seal the module-path escape hatch around the #8204 tiered solver API: the
+# flat-root ratchet above pins re-exported symbol names, but the solver still
+# declares `pub mod operations`/`relations`/`evaluation`/..., so downstream
+# crates can reach computation internals by full module path
+# (`tsz_solver::operations::widening::widen_type`). This pins those references
+# in the emitter/LSP/CLI/wasm source trees at the current count; migrating a
+# site to a tiered facade or checker query-boundary helper should ratchet the
+# cap down in the same diff.
+#
+# Transitional exceptions pinned by the current cap (#8204 successor debt —
+# each file below still reaches computation modules by path and is the
+# migration backlog for sealing the tiered API):
+#   - crates/tsz-cli/src/bin/tsz.rs (relations::subtype thread-local reset)
+#   - crates/tsz-cli/src/driver/check_tests/check_tests_part2.rs
+#     (operations::property::PropertyAccessResult)
+#   - crates/tsz-emitter/src/declaration_emitter/core/emit_class_properties.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/generic_call_literal.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/type_inference.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/
+#     type_inference_return_normalization.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/variable_decl.rs
+#   - crates/tsz-emitter/src/declaration_emitter/helpers/
+#     variable_decl_type_helpers.rs
+#     (operations::widening / operations iterator helpers)
+#   - crates/tsz-emitter/src/lowering/helpers_private_fields.rs
+#     (operations::compound_assignment)
+#   - crates/tsz-lsp/src/code_actions/code_action_extract.rs
+#     (operations::compound_assignment)
+#   - crates/tsz-lsp/src/completions/mod.rs (objects apparent-member helpers)
+#
+# Each entry:
+#   (description, search_roots, exclude_path_prefixes, max_references).
+MODULE_PATH_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
+    (
+        "Solver API boundary: module-path computation imports in emitter/LSP/CLI/wasm (#8204)",
+        [
+            ROOT / "crates" / "tsz-emitter" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-cli" / "src",
+            ROOT / "crates" / "tsz-wasm" / "src",
+        ],
+        (),
+        16,
+    ),
+]
+
 # Pin the producer-side compatibility surface that still re-exports solver
 # computation/construction APIs from the crate root. The zero wildcard guard
 # below prevents broad `pub use module::*` growth; this count makes explicit
@@ -249,7 +295,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted 3163→3155 after arch-smoke caught current-main slack in the
         # live direct-reference count.
-        3155,
+        #
+        # Ratcheted 3155→3040 after the #8204 module-path ratchet PR's
+        # arch-smoke run caught current-main slack in the live count.
+        3040,
     ),
 ]
 
