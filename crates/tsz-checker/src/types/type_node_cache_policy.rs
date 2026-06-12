@@ -30,9 +30,13 @@ pub(super) fn scoped_type_node_cache_allowed(arena: &NodeArena, idx: NodeIndex, 
         if let Some(parent_node) = arena.get(parent) {
             match parent_node.kind {
                 syntax_kind_ext::CONDITIONAL_TYPE
+                | syntax_kind_ext::CONSTRUCTOR_TYPE
+                | syntax_kind_ext::FUNCTION_TYPE
                 | syntax_kind_ext::INDEXED_ACCESS_TYPE
                 | syntax_kind_ext::INFER_TYPE
                 | syntax_kind_ext::MAPPED_TYPE
+                | syntax_kind_ext::PARAMETER
+                | syntax_kind_ext::REST_TYPE
                 | syntax_kind_ext::TYPE_LITERAL
                 | syntax_kind_ext::TYPE_OPERATOR
                 | syntax_kind_ext::TYPE_PARAMETER
