@@ -124,9 +124,6 @@ pub use tsz_common::span;
 // SourceFile - Owns source text and provides &str references
 pub mod source_file;
 
-// Diagnostics - Error collection, formatting, and reporting
-pub mod diagnostics;
-
 // Enums - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::enums;
 

@@ -6,6 +6,7 @@
 use crate::state::FileFeatures;
 use crate::{ContainerKind, FlowNodeId, SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
+use tsz_common::interner::AstAtom;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -28,6 +29,12 @@ pub(crate) struct SemanticDefDetails {
 }
 
 impl BinderState {
+    fn identifier_atom(arena: &NodeArena, index: NodeIndex) -> Option<AstAtom> {
+        arena
+            .get_identifier_at(index)
+            .and_then(|ident| (ident.atom != AstAtom::NONE).then_some(ident.atom))
+    }
+
     /// Append a `(name, declaration)` entry to the `module_augmentations`
     /// table for the given target module specifier.
     pub(crate) fn record_module_augmentation_entry(
@@ -158,7 +165,14 @@ impl BinderState {
                         .push(crate::state::GlobalAugmentation::new(idx, flags));
                 }
 
-                let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
+                let sym_id = self.declare_symbol_with_atom(
+                    arena,
+                    name,
+                    Self::identifier_atom(arena, decl.name),
+                    flags,
+                    idx,
+                    is_exported,
+                );
                 Arc::make_mut(&mut self.node_symbols).insert(decl.name.0, sym_id);
                 self.record_semantic_def(
                     sym_id,
@@ -249,8 +263,14 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
-                let sym_id =
-                    self.declare_symbol(arena, name, symbol_flags::FUNCTION, idx, is_exported);
+                let sym_id = self.declare_symbol_with_atom(
+                    arena,
+                    name,
+                    Self::identifier_atom(arena, func.name),
+                    symbol_flags::FUNCTION,
+                    idx,
+                    is_exported,
+                );
                 if self.in_global_augmentation {
                     self.record_global_value_augmentation(
                         name,
@@ -283,23 +303,7 @@ impl BinderState {
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
             self.with_fresh_flow(|binder| {
-                // Bind parameters
-                for &param_idx in &func.parameters.nodes {
-                    binder.bind_parameter(arena, param_idx);
-                }
-
-                // Hoisting: Collect var and function declarations from the function body
-                // This ensures declarations are accessible throughout the function scope
-                // before their actual declaration point (JavaScript hoisting behavior)
-                //
-                // Note: Function declarations in blocks are block-scoped in strict mode
-                // and external modules. In non-strict scripts, they hoist (Annex B).
-                binder.collect_hoisted_from_node(arena, func.body);
-                binder.process_hoisted_functions(arena);
-                binder.process_hoisted_vars(arena);
-
-                // Bind body
-                binder.bind_node(arena, func.body);
+                binder.bind_function_body_parts(arena, &func.parameters, func.body);
             });
 
             self.exit_scope(arena);
@@ -314,9 +318,10 @@ impl BinderState {
             self.bind_modifiers(arena, param.modifiers.as_ref());
             if let Some(name) = Self::get_identifier_name(arena, param.name) {
                 tracing::debug!(param_name = %name, param_name_idx = param.name.0, "Binding parameter");
-                let sym_id = self.declare_symbol(
+                let sym_id = self.declare_symbol_with_atom(
                     arena,
                     name,
+                    Self::identifier_atom(arena, param.name),
                     symbol_flags::FUNCTION_SCOPED_VARIABLE,
                     idx,
                     false,
@@ -389,7 +394,14 @@ impl BinderState {
             }
             // Use the parameter node as the declaration so the checker can
             // distinguish parameter-property PROPERTY symbols from regular ones.
-            self.declare_symbol(arena, name, flags, param_idx, false);
+            self.declare_symbol_with_atom(
+                arena,
+                name,
+                Self::identifier_atom(arena, param.name),
+                flags,
+                param_idx,
+                false,
+            );
         }
     }
 
@@ -440,9 +452,10 @@ impl BinderState {
                         type_param_name = %name,
                         "Binding type parameter"
                     );
-                    let sym_id = self.declare_symbol(
+                    let sym_id = self.declare_symbol_with_atom(
                         arena,
                         name,
+                        Self::identifier_atom(arena, type_param.name),
                         symbol_flags::TYPE_PARAMETER,
                         param_idx,
                         false,
@@ -450,6 +463,69 @@ impl BinderState {
                     Arc::make_mut(&mut self.node_symbols).insert(type_param.name.0, sym_id);
                 }
             }
+        }
+    }
+
+    /// Bind the shared function-body template: parameters, hoisted
+    /// declarations, then the body itself.
+    ///
+    /// Hoisting collects `var` and function declarations from the function
+    /// body before binding it, so declarations are accessible throughout the
+    /// function scope before their actual declaration point (JavaScript
+    /// hoisting behavior). Function declarations in blocks are block-scoped
+    /// in strict mode and external modules; in non-strict scripts they hoist
+    /// (Annex B).
+    ///
+    /// Statement order is load-bearing for flow-graph construction; every
+    /// call site previously inlined this exact sequence.
+    fn bind_function_body_parts(
+        &mut self,
+        arena: &NodeArena,
+        parameters: &NodeList,
+        body: NodeIndex,
+    ) {
+        for &param_idx in &parameters.nodes {
+            self.bind_parameter(arena, param_idx);
+        }
+        self.collect_hoisted_from_node(arena, body);
+        self.process_hoisted_functions(arena);
+        self.process_hoisted_vars(arena);
+        self.bind_node(arena, body);
+    }
+
+    /// Bind an IIFE body inline in the outer flow context (no `FlowStart`
+    /// node). This preserves narrowing from the outer scope and propagates
+    /// assignments inside the IIFE to the outer scope's control flow.
+    ///
+    /// Return statements are redirected to a fresh branch label; after the
+    /// body is bound, the fall-through flow merges into that label and the
+    /// label is finalized the way tsc's `finishFlowLabel` does.
+    ///
+    /// Ordering invariant: the fall-through antecedent is added before the
+    /// return label is popped from `return_targets`.
+    fn bind_iife_body(&mut self, arena: &NodeArena, parameters: &NodeList, body: NodeIndex) {
+        let return_label = self.create_branch_label();
+        self.return_targets.push(return_label);
+
+        self.bind_function_body_parts(arena, parameters, body);
+
+        // Merge the fall-through flow with the return label
+        self.add_antecedent(return_label, self.current_flow);
+        let return_label = self
+            .return_targets
+            .pop()
+            .expect("return_targets pushed before function body binding");
+
+        // Finalize: if the return label has antecedents, use it as current flow.
+        // This mirrors tsc's finishFlowLabel behavior.
+        if let Some(label_node) = self.flow_nodes.get(return_label) {
+            match label_node.antecedent.len() {
+                0 => self.current_flow = self.unreachable_flow,
+                1 => self.current_flow = label_node.antecedent[0],
+                _ => self.current_flow = return_label,
+            }
+        } else {
+            self.current_flow = self.unreachable_flow;
         }
     }
 
@@ -474,38 +550,11 @@ impl BinderState {
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
             if is_iife {
-                // IIFE: bind body inline in the outer flow context (no FlowStart node).
-                let return_label = self.create_branch_label();
-                self.return_targets.push(return_label);
-
                 tracing::debug!(
                     param_count = func.parameters.nodes.len(),
                     "Binding arrow IIFE parameters"
                 );
-                for &param_idx in &func.parameters.nodes {
-                    self.bind_parameter(arena, param_idx);
-                }
-                self.collect_hoisted_from_node(arena, func.body);
-                self.process_hoisted_functions(arena);
-                self.process_hoisted_vars(arena);
-                self.bind_node(arena, func.body);
-
-                // Merge fall-through with return flows
-                self.add_antecedent(return_label, self.current_flow);
-                let return_label = self
-                    .return_targets
-                    .pop()
-                    .expect("return_targets pushed before function body binding");
-
-                if let Some(label_node) = self.flow_nodes.get(return_label) {
-                    match label_node.antecedent.len() {
-                        0 => self.current_flow = self.unreachable_flow,
-                        1 => self.current_flow = label_node.antecedent[0],
-                        _ => self.current_flow = return_label,
-                    }
-                } else {
-                    self.current_flow = self.unreachable_flow;
-                }
+                self.bind_iife_body(arena, &func.parameters, func.body);
             } else {
                 // Non-IIFE: isolated flow scope
                 self.with_fresh_flow_inner(
@@ -514,13 +563,7 @@ impl BinderState {
                             param_count = func.parameters.nodes.len(),
                             "Binding arrow function parameters"
                         );
-                        for &param_idx in &func.parameters.nodes {
-                            binder.bind_parameter(arena, param_idx);
-                        }
-                        binder.collect_hoisted_from_node(arena, func.body);
-                        binder.process_hoisted_functions(arena);
-                        binder.process_hoisted_vars(arena);
-                        binder.bind_node(arena, func.body);
+                        binder.bind_function_body_parts(arena, &func.parameters, func.body);
                     },
                     true,
                 );
@@ -567,48 +610,12 @@ impl BinderState {
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
             if is_iife {
-                // IIFE: bind body inline in the outer flow context (no FlowStart node).
-                // This preserves narrowing and propagates assignments to the outer scope.
-                let return_label = self.create_branch_label();
-                self.return_targets.push(return_label);
-
-                for &param_idx in &func.parameters.nodes {
-                    self.bind_parameter(arena, param_idx);
-                }
-                self.collect_hoisted_from_node(arena, func.body);
-                self.process_hoisted_functions(arena);
-                self.process_hoisted_vars(arena);
-                self.bind_node(arena, func.body);
-
-                // Merge the fall-through flow with the return label
-                self.add_antecedent(return_label, self.current_flow);
-                let return_label = self
-                    .return_targets
-                    .pop()
-                    .expect("return_targets pushed before function body binding");
-
-                // Finalize: if the return label has antecedents, use it as current flow.
-                // This mirrors tsc's finishFlowLabel behavior.
-                if let Some(label_node) = self.flow_nodes.get(return_label) {
-                    match label_node.antecedent.len() {
-                        0 => self.current_flow = self.unreachable_flow,
-                        1 => self.current_flow = label_node.antecedent[0],
-                        _ => self.current_flow = return_label,
-                    }
-                } else {
-                    self.current_flow = self.unreachable_flow;
-                }
+                self.bind_iife_body(arena, &func.parameters, func.body);
             } else {
                 // Non-IIFE: isolated flow scope with captured enclosing flow
                 self.with_fresh_flow_inner(
                     |binder| {
-                        for &param_idx in &func.parameters.nodes {
-                            binder.bind_parameter(arena, param_idx);
-                        }
-                        binder.collect_hoisted_from_node(arena, func.body);
-                        binder.process_hoisted_functions(arena);
-                        binder.process_hoisted_vars(arena);
-                        binder.bind_node(arena, func.body);
+                        binder.bind_function_body_parts(arena, &func.parameters, func.body);
                     },
                     true,
                 );
@@ -1029,8 +1036,14 @@ impl BinderState {
                 return;
             }
 
-            let sym_id =
-                self.declare_symbol(arena, name, symbol_flags::INTERFACE, idx, is_exported);
+            let sym_id = self.declare_symbol_with_atom(
+                arena,
+                name,
+                Self::identifier_atom(arena, iface.name),
+                symbol_flags::INTERFACE,
+                idx,
+                is_exported,
+            );
             let tp_count = iface
                 .type_parameters
                 .as_ref()
@@ -1207,8 +1220,14 @@ impl BinderState {
                     },
                 );
             } else {
-                let sym_id =
-                    self.declare_symbol(arena, name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+                let sym_id = self.declare_symbol_with_atom(
+                    arena,
+                    name,
+                    Self::identifier_atom(arena, alias.name),
+                    symbol_flags::TYPE_ALIAS,
+                    idx,
+                    is_exported,
+                );
                 let tp_count = alias
                     .type_parameters
                     .as_ref()
@@ -1261,7 +1280,14 @@ impl BinderState {
                 symbol_flags::REGULAR_ENUM
             };
 
-            let enum_sym_id = self.declare_symbol(arena, name, enum_flags, idx, is_exported);
+            let enum_sym_id = self.declare_symbol_with_atom(
+                arena,
+                name,
+                Self::identifier_atom(arena, enum_decl.name),
+                enum_flags,
+                idx,
+                is_exported,
+            );
 
             // Collect enum member names at bind time for stable identity.
             let enum_member_names: Vec<String> = enum_decl

@@ -32,9 +32,16 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::PathBuf;
 
 const COMMON_PATH: &str = "src/query_boundaries/common.rs";
 const DIAGNOSTICS_PATH: &str = "src/query_boundaries/diagnostics.rs";
+
+/// Resolve a checker-crate-relative path against the manifest directory so
+/// the scan works regardless of the test runner's working directory.
+fn checker_path(relative: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
+}
 
 /// Snapshot of every `pub(crate) fn` defined in `common.rs`. Sorted and unique.
 /// Regenerate with the command documented in the module header.
@@ -57,6 +64,7 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "classify_for_predicate_signature",
     "classify_for_traversal",
     "classify_for_type_resolution",
+    "classify_identity_mapped",
     "classify_literal_type",
     "classify_namespace_member",
     "classify_promise_type",
@@ -73,9 +81,11 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "contains_conditional_type",
     "contains_error_type",
     "contains_error_type_in_args",
+    "contains_file_relative_content",
     "contains_free_type_parameters",
     "contains_generic_indexed_access_surface",
     "contains_generic_type_parameters",
+    "contains_index_access_type",
     "contains_infer_types",
     "contains_keyof_type",
     "contains_lazy_def_id",
@@ -96,6 +106,7 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "find_property_by_str",
     "find_property_in_object",
     "find_property_in_object_by_str",
+    "format_excess_property_name",
     "function_shape_for_type",
     "function_shape_id",
     "get_application_base",
@@ -113,7 +124,6 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "get_iterator_info",
     "get_merged_object_shape_for_type",
     "get_noinfer_inner",
-    "get_object_symbol",
     "get_private_brand_name",
     "get_private_field_name",
     "get_readonly_inner",
@@ -138,6 +148,7 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "intersect_constructor_returns",
     "intersection_list_id",
     "intersection_members",
+    "intersection_or_single",
     "is_array_or_tuple_type",
     "is_array_type",
     "is_bare_infer_placeholder",
@@ -146,6 +157,8 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "is_callable_type",
     "is_conditional_type",
     "is_constructor_like_type",
+    "is_definitely_nullish",
+    "is_distributive_conditional_with_deferred_check",
     "is_empty_object_type",
     "is_enum_type",
     "is_error_type",
@@ -202,10 +215,12 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "keyof_inner_type",
     "keyof_object_properties",
     "lazy_def_id",
+    "lazy_resolve_failure_count",
     "literal_value",
     "map_compound_members_if_changed",
     "mapped_type_id",
     "mapped_type_info",
+    "mapped_type_is_deferred_generic",
     "needs_evaluation_for_merge",
     "new_binary_op_evaluator",
     "no_infer_inner_type",
@@ -333,8 +348,8 @@ fn extract_pub_crate_fns(source: &str) -> BTreeSet<String> {
 
 #[test]
 fn common_pub_crate_fn_surface_matches_allowlist() {
-    let source =
-        fs::read_to_string(COMMON_PATH).expect("failed to read query_boundaries/common.rs");
+    let source = fs::read_to_string(checker_path(COMMON_PATH))
+        .expect("failed to read query_boundaries/common.rs");
     let actual = extract_pub_crate_fns(&source);
     let allowed: BTreeSet<String> = ALLOWED_COMMON_PUB_CRATE_FNS
         .iter()
@@ -350,20 +365,22 @@ fn common_pub_crate_fn_surface_matches_allowlist() {
          A domain-specific semantic policy helper belongs in its named domain boundary module \
          (diagnostics / type_predicates / key_constraints / assignability / ...), not common.rs. \
          If this is an intentional cross-domain primitive, add it to ALLOWED_COMMON_PUB_CRATE_FNS \
-         in src/tests/common_boundary_export_ratchets.rs (see the regeneration command in that file)."
+         in tests/arch_source_scans/common_boundary_export_ratchets.rs (see the regeneration \
+         command in that file)."
     );
     assert!(
         removed.is_empty(),
         "pub(crate) fn definitions were removed from query_boundaries/common.rs but the ratchet \
          allowlist still lists them: {removed:?}. Regenerate ALLOWED_COMMON_PUB_CRATE_FNS in \
-         src/tests/common_boundary_export_ratchets.rs so the quarantine snapshot stays accurate."
+         tests/arch_source_scans/common_boundary_export_ratchets.rs so the quarantine snapshot \
+         stays accurate."
     );
 }
 
 #[test]
 fn migrated_helpers_do_not_reappear_in_common() {
-    let source =
-        fs::read_to_string(COMMON_PATH).expect("failed to read query_boundaries/common.rs");
+    let source = fs::read_to_string(checker_path(COMMON_PATH))
+        .expect("failed to read query_boundaries/common.rs");
     let mut violations = Vec::new();
     for name in migrated_out_of_common() {
         if defines_fn(&source, name) {
@@ -380,9 +397,9 @@ fn migrated_helpers_do_not_reappear_in_common() {
 
 #[test]
 fn display_widening_cluster_is_owned_by_diagnostics() {
-    let common =
-        fs::read_to_string(COMMON_PATH).expect("failed to read query_boundaries/common.rs");
-    let diagnostics = fs::read_to_string(DIAGNOSTICS_PATH)
+    let common = fs::read_to_string(checker_path(COMMON_PATH))
+        .expect("failed to read query_boundaries/common.rs");
+    let diagnostics = fs::read_to_string(checker_path(DIAGNOSTICS_PATH))
         .expect("failed to read query_boundaries/diagnostics.rs");
     for name in DISPLAY_WIDENING_IN_DIAGNOSTICS {
         assert!(

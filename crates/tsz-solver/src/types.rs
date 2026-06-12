@@ -8,6 +8,11 @@ use serde::Serialize;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Hand-maintained `PartialEq`/`Eq`/`Hash` impls for the interned shape types
+/// (`PropertyInfo`, `IndexSignature`, `ObjectShape`, `CallableShape`), with
+/// per-field identity decisions made explicit via exhaustive destructuring.
+mod shape_identity;
+
 /// A lightweight handle to an interned type.
 /// Equality check is O(1) - just compare the u32 values.
 ///
@@ -1000,38 +1005,6 @@ pub struct PropertyInfo {
     pub single_quoted_name: bool,
 }
 
-impl PartialEq for PropertyInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.type_id == other.type_id
-            && self.write_type == other.write_type
-            && self.optional == other.optional
-            && self.readonly == other.readonly
-            && self.is_method == other.is_method
-            && self.visibility == other.visibility
-            && self.parent_id == other.parent_id
-            && self.is_string_named == other.is_string_named
-            && self.is_symbol_named == other.is_symbol_named
-    }
-}
-
-impl Eq for PropertyInfo {}
-
-impl std::hash::Hash for PropertyInfo {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self.type_id.hash(state);
-        self.write_type.hash(state);
-        self.optional.hash(state);
-        self.readonly.hash(state);
-        self.is_method.hash(state);
-        self.visibility.hash(state);
-        self.parent_id.hash(state);
-        self.is_string_named.hash(state);
-        self.is_symbol_named.hash(state);
-    }
-}
-
 impl PropertyInfo {
     /// Create a property with default settings (non-optional, non-readonly, public).
     /// Sets `write_type` equal to `type_id`.
@@ -1172,45 +1145,6 @@ pub struct IndexSignature {
     pub param_name: Option<Atom>,
 }
 
-impl PartialEq for IndexSignature {
-    fn eq(&self, other: &Self) -> bool {
-        // param_name is cosmetic (for display only) and excluded from equality
-        self.key_type == other.key_type
-            && self.value_type == other.value_type
-            && self.readonly == other.readonly
-    }
-}
-
-impl Eq for IndexSignature {}
-
-impl std::hash::Hash for IndexSignature {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // param_name is excluded from hash to match PartialEq
-        self.key_type.hash(state);
-        self.value_type.hash(state);
-        self.readonly.hash(state);
-    }
-}
-
-fn index_signature_display_eq(
-    left: &Option<IndexSignature>,
-    right: &Option<IndexSignature>,
-) -> bool {
-    match (left, right) {
-        (Some(left), Some(right)) => left == right && left.param_name == right.param_name,
-        (None, None) => true,
-        _ => false,
-    }
-}
-
-fn hash_index_signature_display<H: std::hash::Hasher>(
-    index: &Option<IndexSignature>,
-    state: &mut H,
-) {
-    std::hash::Hash::hash(index, state);
-    std::hash::Hash::hash(&index.as_ref().and_then(|idx| idx.param_name), state);
-}
-
 /// Combined index signature information for a type
 /// Provides convenient access to both string and number index signatures
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
@@ -1274,43 +1208,6 @@ pub struct ObjectShape {
     pub number_index: Option<IndexSignature>,
     /// Nominal identity for class instance types (prevents structural interning of distinct classes)
     pub symbol: Option<tsz_binder::SymbolId>,
-}
-
-impl PartialEq for ObjectShape {
-    fn eq(&self, other: &Self) -> bool {
-        // Include symbol in equality check to ensure different classes get different TypeIds
-        // The Solver does structural subtyping explicitly, not via PartialEq
-        self.flags == other.flags
-            && self.properties == other.properties
-            && (!self.flags.contains(ObjectFlags::PRESERVE_DECLARATION_ORDER)
-                || self
-                    .properties
-                    .iter()
-                    .zip(&other.properties)
-                    .all(|(left, right)| left.declaration_order == right.declaration_order))
-            && index_signature_display_eq(&self.string_index, &other.string_index)
-            && index_signature_display_eq(&self.number_index, &other.number_index)
-            && self.symbol == other.symbol
-    }
-}
-
-impl Eq for ObjectShape {}
-
-impl std::hash::Hash for ObjectShape {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Include the `symbol` field in hash for nominal interning
-        // This ensures different classes get different TypeIds
-        self.flags.hash(state);
-        self.properties.hash(state);
-        if self.flags.contains(ObjectFlags::PRESERVE_DECLARATION_ORDER) {
-            for prop in &self.properties {
-                prop.declaration_order.hash(state);
-            }
-        }
-        hash_index_signature_display(&self.string_index, state);
-        hash_index_signature_display(&self.number_index, state);
-        self.symbol.hash(state);
-    }
 }
 
 impl ObjectShape {
@@ -1532,36 +1429,6 @@ impl CallableShape {
         } else {
             self.call_signatures.last()
         }
-    }
-}
-
-impl PartialEq for CallableShape {
-    fn eq(&self, other: &Self) -> bool {
-        // Include symbol in equality check to ensure different classes get different TypeIds
-        // The Solver does structural subtyping explicitly, not via PartialEq
-        self.call_signatures == other.call_signatures
-            && self.construct_signatures == other.construct_signatures
-            && self.properties == other.properties
-            && index_signature_display_eq(&self.string_index, &other.string_index)
-            && index_signature_display_eq(&self.number_index, &other.number_index)
-            && self.symbol == other.symbol
-            && self.is_abstract == other.is_abstract
-    }
-}
-
-impl Eq for CallableShape {}
-
-impl std::hash::Hash for CallableShape {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Include the `symbol` field in hash for nominal interning
-        // This ensures different classes get different TypeIds
-        self.call_signatures.hash(state);
-        self.construct_signatures.hash(state);
-        self.properties.hash(state);
-        hash_index_signature_display(&self.string_index, state);
-        hash_index_signature_display(&self.number_index, state);
-        self.symbol.hash(state);
-        self.is_abstract.hash(state);
     }
 }
 

@@ -510,7 +510,9 @@ fn seed_resolution_caches(binder: &mut BinderState) {
         .resolved_export_cache
         .write()
         .expect("not poisoned")
-        .insert(("stub.ts".to_string(), "x".to_string()), Some(SymbolId(99)));
+        .entry("stub.ts".to_string())
+        .or_default()
+        .insert("x".to_string(), Some(SymbolId(99)));
     binder
         .resolved_identifier_cache
         .write()
@@ -520,10 +522,9 @@ fn seed_resolution_caches(binder: &mut BinderState) {
         .resolved_export_type_only_cache
         .write()
         .expect("not poisoned")
-        .insert(
-            ("stub.ts".to_string(), "T".to_string()),
-            Some((SymbolId(88), true)),
-        );
+        .entry("stub.ts".to_string())
+        .or_default()
+        .insert("T".to_string(), Some((SymbolId(88), true)));
     binder
         .find_enclosing_scope_cache
         .write()

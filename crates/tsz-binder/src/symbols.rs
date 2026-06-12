@@ -511,6 +511,13 @@ impl Symbol {
 pub struct SymbolTable {
     /// Symbols indexed by their escaped name (using `FxHashMap` for faster hashing)
     symbols: Arc<FxHashMap<String, SymbolId>>,
+    /// Symbols indexed by parsed identifier `AstAtom` when the binder had one.
+    ///
+    /// This is a migration index for #13073: string keys remain authoritative
+    /// for compatibility, while parsed identifiers can avoid hashing their
+    /// escaped text on hot resolution paths.
+    #[serde(skip)]
+    atom_symbols: Arc<FxHashMap<tsz_common::interner::AstAtom, SymbolId>>,
 }
 
 impl SymbolTable {
@@ -518,6 +525,7 @@ impl SymbolTable {
     pub fn new() -> Self {
         Self {
             symbols: Arc::new(FxHashMap::default()),
+            atom_symbols: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -531,6 +539,10 @@ impl SymbolTable {
                 capacity,
                 Default::default(),
             )),
+            atom_symbols: Arc::new(FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            )),
         }
     }
 
@@ -540,14 +552,60 @@ impl SymbolTable {
         self.symbols.get(name).copied()
     }
 
+    /// Get a symbol by parsed identifier atom.
+    #[must_use]
+    pub fn get_by_atom(&self, atom: tsz_common::interner::AstAtom) -> Option<SymbolId> {
+        if atom == tsz_common::interner::AstAtom::NONE {
+            return None;
+        }
+        self.atom_symbols.get(&atom).copied()
+    }
+
+    /// Get a symbol by atom when present, falling back to escaped text.
+    #[must_use]
+    pub fn get_by_atom_or_name(
+        &self,
+        atom: tsz_common::interner::AstAtom,
+        name: &str,
+    ) -> Option<SymbolId> {
+        self.get_by_atom(atom).or_else(|| self.get(name))
+    }
+
+    /// Find the parsed identifier atom that currently points at `symbol`.
+    #[must_use]
+    pub fn atom_for_symbol(&self, symbol: SymbolId) -> Option<tsz_common::interner::AstAtom> {
+        self.atom_symbols
+            .iter()
+            .find_map(|(&atom, &id)| (id == symbol).then_some(atom))
+    }
+
     /// Set a symbol by name.
     pub fn set(&mut self, name: String, symbol: SymbolId) {
         Arc::make_mut(&mut self.symbols).insert(name, symbol);
     }
 
+    /// Set a symbol by name and, when available, by parsed identifier atom.
+    pub fn set_with_atom(
+        &mut self,
+        name: String,
+        atom: Option<tsz_common::interner::AstAtom>,
+        symbol: SymbolId,
+    ) {
+        self.set(name, symbol);
+        if let Some(atom) = atom
+            && atom != tsz_common::interner::AstAtom::NONE
+        {
+            Arc::make_mut(&mut self.atom_symbols).insert(atom, symbol);
+        }
+    }
+
     /// Remove a symbol by name.
     pub fn remove(&mut self, name: &str) -> Option<SymbolId> {
-        Arc::make_mut(&mut self.symbols).remove(name)
+        let removed = Arc::make_mut(&mut self.symbols).remove(name);
+        if let Some(symbol) = removed {
+            Arc::make_mut(&mut self.atom_symbols).retain(|_, id| *id != symbol);
+        }
+        removed
     }
 
     /// Check if a name exists in the table.
@@ -571,6 +629,7 @@ impl SymbolTable {
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
         Arc::make_mut(&mut self.symbols).clear();
+        Arc::make_mut(&mut self.atom_symbols).clear();
     }
 
     /// Iterate over symbols.
@@ -587,6 +646,10 @@ impl SymbolTable {
         const BUCKET_OVERHEAD: usize = 16;
         let mut size = self.symbols.capacity()
             * (BUCKET_OVERHEAD + std::mem::size_of::<String>() + std::mem::size_of::<SymbolId>());
+        size += self.atom_symbols.capacity()
+            * (BUCKET_OVERHEAD
+                + std::mem::size_of::<tsz_common::interner::AstAtom>()
+                + std::mem::size_of::<SymbolId>());
         for name in self.symbols.keys() {
             size += name.capacity();
         }
@@ -624,6 +687,18 @@ pub struct SymbolArena {
     /// Maintained incrementally on `alloc`/`alloc_from`; rebuilt automatically
     /// after deserialization.
     #[serde(skip)]
+    shared_name_index: Arc<FxHashMap<String, Vec<SymbolId>>>,
+    /// Private append-side name-to-SymbolId index for symbols allocated after a
+    /// shared prefix split.
+    ///
+    /// When a cloned premerged lib arena is split for append, the lib
+    /// `name_index` moves into `shared_name_index` and this map starts empty.
+    /// Appending a user symbol then mutates only this small private map instead
+    /// of copy-on-writing the whole lib name index. If an appended symbol has
+    /// the same name as a shared-prefix symbol, the shared vector for that name
+    /// is copied into this map before appending so `find_all_by_name` can still
+    /// return a single borrowed slice in the old lookup order.
+    #[serde(skip)]
     name_index: Arc<FxHashMap<String, Vec<SymbolId>>>,
 }
 
@@ -647,6 +722,7 @@ impl<'de> Deserialize<'de> for SymbolArena {
             shared_prefix: raw.shared_prefix,
             symbols: Arc::new(raw.symbols),
             base_offset: raw.base_offset,
+            shared_name_index: Arc::new(FxHashMap::default()),
             name_index: Arc::new(FxHashMap::default()),
         };
         arena.rebuild_name_index();
@@ -666,6 +742,7 @@ impl SymbolArena {
             shared_prefix: Arc::new(Vec::new()),
             symbols: Arc::new(Vec::new()),
             base_offset: 0,
+            shared_name_index: Arc::new(FxHashMap::default()),
             name_index: Arc::new(FxHashMap::default()),
         }
     }
@@ -678,6 +755,7 @@ impl SymbolArena {
             shared_prefix: Arc::new(Vec::new()),
             symbols: Arc::new(Vec::new()),
             base_offset: base,
+            shared_name_index: Arc::new(FxHashMap::default()),
             name_index: Arc::new(FxHashMap::default()),
         }
     }
@@ -693,6 +771,7 @@ impl SymbolArena {
             shared_prefix: Arc::new(Vec::new()),
             symbols: Arc::new(Vec::with_capacity(safe_capacity)),
             base_offset: 0,
+            shared_name_index: Arc::new(FxHashMap::default()),
             name_index: Arc::new(FxHashMap::with_capacity_and_hasher(
                 safe_capacity,
                 Default::default(),
@@ -713,12 +792,7 @@ impl SymbolArena {
                 .checked_add(u32::try_from(next_index).expect("symbol arena length exceeds u32"))
                 .expect("symbol arena allocation overflows u32"),
         );
-        if !name.is_empty() {
-            Arc::make_mut(&mut self.name_index)
-                .entry(name.clone())
-                .or_default()
-                .push(id);
-        }
+        self.push_name_index(&name, id);
         Arc::make_mut(&mut self.symbols).push(Symbol::new(id, flags, name));
         id
     }
@@ -737,12 +811,7 @@ impl SymbolArena {
                 .checked_add(u32::try_from(next_index).expect("symbol arena length exceeds u32"))
                 .expect("symbol arena allocation overflows u32"),
         );
-        if !source.escaped_name.is_empty() {
-            Arc::make_mut(&mut self.name_index)
-                .entry(source.escaped_name.clone())
-                .or_default()
-                .push(id);
-        }
+        self.push_name_index(&source.escaped_name, id);
         let mut cloned = source.clone();
         cloned.id = id;
         Arc::make_mut(&mut self.symbols).push(cloned);
@@ -826,6 +895,15 @@ impl SymbolArena {
         for (name, ids) in self.name_index.iter() {
             size += name.capacity() + ids.capacity() * std::mem::size_of::<SymbolId>();
         }
+        if Arc::strong_count(&self.shared_name_index) == 1 {
+            size += self.shared_name_index.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<String>()
+                    + std::mem::size_of::<Vec<SymbolId>>());
+            for (name, ids) in self.shared_name_index.iter() {
+                size += name.capacity() + ids.capacity() * std::mem::size_of::<SymbolId>();
+            }
+        }
         size
     }
 
@@ -840,6 +918,7 @@ impl SymbolArena {
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
         self.shared_prefix = Arc::new(Vec::new());
+        self.shared_name_index = Arc::new(FxHashMap::default());
         Arc::make_mut(&mut self.symbols).clear();
         Arc::make_mut(&mut self.name_index).clear();
     }
@@ -848,6 +927,7 @@ impl SymbolArena {
     /// Call this after deserialization or after `reserve_symbol_ids` if
     /// indexed lookups are needed on those placeholder entries.
     pub fn rebuild_name_index(&mut self) {
+        self.shared_name_index = Arc::new(FxHashMap::default());
         let name_index = Arc::make_mut(&mut self.name_index);
         name_index.clear();
         for sym in self.shared_prefix.iter() {
@@ -881,6 +961,7 @@ impl SymbolArena {
     pub fn find_by_name(&self, name: &str) -> Option<SymbolId> {
         self.name_index
             .get(name)
+            .or_else(|| self.shared_name_index.get(name))
             .and_then(|ids| ids.first().copied())
     }
 
@@ -895,7 +976,10 @@ impl SymbolArena {
     #[inline]
     #[must_use]
     pub fn find_all_by_name(&self, name: &str) -> &[SymbolId] {
-        self.name_index.get(name).map_or(&[], Vec::as_slice)
+        self.name_index
+            .get(name)
+            .or_else(|| self.shared_name_index.get(name))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Iterate over all symbols in the arena.
@@ -917,6 +1001,8 @@ impl SymbolArena {
         }
         self.shared_prefix = Arc::clone(&self.symbols);
         self.symbols = Arc::new(Vec::new());
+        self.shared_name_index = Arc::clone(&self.name_index);
+        self.name_index = Arc::new(FxHashMap::default());
     }
 
     fn materialize_shared_prefix(&mut self) {
@@ -930,6 +1016,29 @@ impl SymbolArena {
         materialized.extend(self.symbols.iter().cloned());
         self.shared_prefix = Arc::new(Vec::new());
         self.symbols = Arc::new(materialized);
+        if !self.shared_name_index.is_empty() {
+            let name_index = Arc::make_mut(&mut self.name_index);
+            for (name, ids) in self.shared_name_index.iter() {
+                name_index
+                    .entry(name.clone())
+                    .or_insert_with(|| ids.clone());
+            }
+            self.shared_name_index = Arc::new(FxHashMap::default());
+        }
+    }
+
+    fn push_name_index(&mut self, name: &str, id: SymbolId) {
+        if name.is_empty() {
+            return;
+        }
+
+        let name_index = Arc::make_mut(&mut self.name_index);
+        if !name_index.contains_key(name)
+            && let Some(shared_ids) = self.shared_name_index.get(name)
+        {
+            name_index.insert(name.to_owned(), shared_ids.clone());
+        }
+        name_index.entry(name.to_owned()).or_default().push(id);
     }
 
     /// Reserve `SymbolIds` in this arena by pre-allocating placeholder symbols.
@@ -1086,5 +1195,37 @@ mod tests {
         // base_offset + 2 (i.e. continue past the reserved range).
         assert_eq!(next, SymbolId(base + 2));
         assert_eq!(arena.get(next).map(|s| s.id), Some(next));
+    }
+
+    #[test]
+    fn shared_prefix_name_index_survives_private_append() {
+        let mut arena = SymbolArena::new();
+        let array_id = arena.alloc(0, "Array".to_owned());
+        arena.share_current_symbols_for_append();
+
+        let local_id = arena.alloc(0, "Local".to_owned());
+
+        assert_eq!(arena.find_by_name("Array"), Some(array_id));
+        assert_eq!(arena.find_all_by_name("Array"), &[array_id]);
+        assert_eq!(arena.find_by_name("Local"), Some(local_id));
+        assert_eq!(arena.find_all_by_name("Local"), &[local_id]);
+        assert!(arena.shared_name_index.contains_key("Array"));
+        assert!(!arena.name_index.contains_key("Array"));
+    }
+
+    #[test]
+    fn shared_prefix_name_index_preserves_duplicate_lookup_order() {
+        let mut arena = SymbolArena::new();
+        let shared_id = arena.alloc(0, "Iterator".to_owned());
+        arena.share_current_symbols_for_append();
+
+        let local_id = arena.alloc(0, "Iterator".to_owned());
+
+        assert_eq!(arena.find_by_name("Iterator"), Some(shared_id));
+        assert_eq!(arena.find_all_by_name("Iterator"), &[shared_id, local_id]);
+        assert_eq!(
+            arena.name_index.get("Iterator").map(Vec::as_slice),
+            Some([shared_id, local_id].as_slice())
+        );
     }
 }

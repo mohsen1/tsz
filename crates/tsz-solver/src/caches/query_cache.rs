@@ -1867,9 +1867,17 @@ impl QueryDatabase for QueryCache<'_> {
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::operations::property::PropertyAccessResult {
-        self.resolve_property_access_with_options(
+        self.resolve_property_access_atom(object_type, self.interner.intern_string(prop_name))
+    }
+
+    fn resolve_property_access_atom(
+        &self,
+        object_type: TypeId,
+        prop_atom: Atom,
+    ) -> crate::operations::property::PropertyAccessResult {
+        self.property_access_atom_with_options(
             object_type,
-            prop_name,
+            prop_atom,
             self.no_unchecked_indexed_access(),
         )
     }
@@ -1880,27 +1888,11 @@ impl QueryDatabase for QueryCache<'_> {
         prop_name: &str,
         no_unchecked_indexed_access: bool,
     ) -> crate::operations::property::PropertyAccessResult {
-        // QueryCache doesn't have full TypeResolver capability, so use PropertyAccessEvaluator
-        // with the current QueryDatabase.
-        let prop_atom = self.interner.intern_string(prop_name);
-        let exact_optional_property_types =
-            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
-        let key = (
+        self.property_access_atom_with_options(
             object_type,
-            prop_atom,
+            self.interner.intern_string(prop_name),
             no_unchecked_indexed_access,
-            exact_optional_property_types,
-        );
-        if let Some(result) = self.check_property_cache(key) {
-            return result;
-        }
-
-        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
-        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
-        evaluator.set_exact_optional_property_types(exact_optional_property_types);
-        let result = evaluator.resolve_property_access(object_type, prop_name);
-        self.insert_property_cache(key, result);
-        result
+        )
     }
 
     fn resolve_any_index_access(
@@ -2019,3 +2011,7 @@ mod tests;
 // the 2000-line file-size cap; child modules retain private-field access.
 #[path = "query_cache_size.rs"]
 mod size;
+
+// `Atom`-keyed property access lives in a child module for the same reason.
+#[path = "query_cache_property.rs"]
+mod property;

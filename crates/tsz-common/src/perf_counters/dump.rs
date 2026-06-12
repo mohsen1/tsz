@@ -37,6 +37,13 @@ impl PerfCounters {
              CheckerState::new          {:>12}\n  \
              ::with_parent_cache        {:>12}\n  \
              ::reset_for_next_file      {:>12}\n  \
+             reset cache entries max    {:>12}\n  \
+             reset cache bytes max      {:>12}\n  \
+             reset ns-member entries    {:>12}\n  \
+             reset export= entries      {:>12}\n  \
+             reset nested-ns entries    {:>12}\n  \
+             reset lowering entries     {:>12}\n  \
+             reset env-eval entries     {:>12}\n  \
              copy_symbol_file_targets   {:>12}\n  \
              overlay entries copied     {:>12}\n  \
              overlay entries (max)      {:>12}\n  \
@@ -95,6 +102,13 @@ impl PerfCounters {
             snap.checker.state_constructed,
             snap.checker.with_parent_cache_constructed,
             snap.checker.file_session_resets,
+            snap.checker.file_session_reset_cache_entries_max,
+            snap.checker.file_session_reset_cache_bytes_max,
+            snap.checker.file_session_reset_namespace_member_entries_max,
+            snap.checker.file_session_reset_export_equals_entries_max,
+            snap.checker.file_session_reset_nested_namespace_entries_max,
+            snap.checker.file_session_reset_lowering_entity_name_entries_max,
+            snap.checker.file_session_reset_env_eval_entries_max,
             snap.overlay.copy_calls,
             snap.overlay.entries_total,
             snap.overlay.entries_max,

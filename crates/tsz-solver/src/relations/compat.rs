@@ -13,8 +13,8 @@ use crate::types::{
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, index_access_parts, intrinsic_kind,
-    is_empty_object_type_through_type_constraints, is_error_type, keyof_inner_type, lazy_def_id,
-    mapped_type_id, tuple_list_id, type_param_info, union_list_id,
+    is_empty_object_type_through_type_constraints, is_error_type, keyof_inner_type, mapped_type_id,
+    tuple_list_id, type_param_info, union_list_id,
 };
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -505,55 +505,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Detect whether a type is the global `Object` interface from lib.d.ts.
     ///
-    /// Checks via resolver boxed type lookup, Lazy DefId matching, and structural
-    /// detection (an `ObjectShape` with `constructor`, `toString`, `valueOf`,
-    /// `hasOwnProperty`, and `isPrototypeOf` properties).
+    /// Delegates to the canonical query in `type_queries::global_interfaces`
+    /// (issue #13090): boxed-registry identity first, then the shared
+    /// structural fallback for pre-evaluated `ObjectShape` forms.
     pub(crate) fn is_global_object_interface_target(&self, target: TypeId) -> bool {
-        if self
-            .subtype
-            .resolver
-            .is_boxed_type_id(target, IntrinsicKind::Object)
-            || self
-                .subtype
-                .resolver
-                .get_boxed_type(IntrinsicKind::Object)
-                .is_some_and(|boxed| boxed == target)
-        {
-            return true;
-        }
-        if lazy_def_id(self.interner, target).is_some_and(|def_id| {
-            self.subtype
-                .resolver
-                .is_boxed_def_id(def_id, IntrinsicKind::Object)
-        }) {
-            return true;
-        }
-        // Intrinsic OBJECT was already caught by the boxed-type checks above;
-        // other intrinsics never resolve to Object/ObjectWithIndex shapes.
-        if target.is_intrinsic() {
-            return false;
-        }
-        match self.interner.lookup(target) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                // Object interface has exactly 7 properties (constructor, toString,
-                // toLocaleString, valueOf, hasOwnProperty, isPrototypeOf,
-                // propertyIsEnumerable). Use tight cap to avoid matching derived
-                // types like Boolean (8 props) or Number (~10 props).
-                if shape.properties.len() > 7 {
-                    return false;
-                }
-                let constructor = self.interner.intern_string("constructor");
-                let has_own = self.interner.intern_string("hasOwnProperty");
-                let is_proto = self.interner.intern_string("isPrototypeOf");
-                let prop_is_enum = self.interner.intern_string("propertyIsEnumerable");
-                shape.properties.iter().any(|p| p.name == constructor)
-                    && shape.properties.iter().any(|p| p.name == has_own)
-                    && shape.properties.iter().any(|p| p.name == is_proto)
-                    && shape.properties.iter().any(|p| p.name == prop_is_enum)
-            }
-            _ => false,
-        }
+        crate::type_queries::is_global_object_interface_with_resolver(
+            self.interner,
+            self.subtype.resolver,
+            target,
+        )
     }
 
     /// Check if a source type is a type parameter (possibly wrapped in unions/intersections).
@@ -630,44 +590,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn is_function_target_member(&self, member: TypeId) -> bool {
-        let is_function_object_shape = if member.is_intrinsic() {
-            false
-        } else {
-            self.is_function_object_shape_member(member)
-        };
         intrinsic_kind(self.interner, member) == Some(IntrinsicKind::Function)
-            || is_function_object_shape
-            || self
-                .subtype
-                .resolver
-                .get_boxed_type(IntrinsicKind::Function)
-                .is_some_and(|boxed| boxed == member)
-            || lazy_def_id(self.interner, member).is_some_and(|def_id| {
-                self.subtype
-                    .resolver
-                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
-            })
-    }
-
-    fn is_function_object_shape_member(&self, member: TypeId) -> bool {
-        match self.interner.lookup(member) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                // Function interface has ~15 properties (own + inherited Object).
-                // Cap at 20 to avoid false positives on large interfaces.
-                if shape.properties.len() > 20 {
-                    false
-                } else {
-                    let apply = self.interner.intern_string("apply");
-                    let call = self.interner.intern_string("call");
-                    let bind = self.interner.intern_string("bind");
-                    shape.properties.iter().any(|prop| prop.name == apply)
-                        && shape.properties.iter().any(|prop| prop.name == call)
-                        && shape.properties.iter().any(|prop| prop.name == bind)
-                }
-            }
-            _ => false,
-        }
+            || crate::type_queries::is_global_function_interface_with_resolver(
+                self.interner,
+                self.subtype.resolver,
+                member,
+            )
     }
 
     /// Create a new compatibility checker with a resolver.

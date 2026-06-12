@@ -24,6 +24,8 @@ mod residency_tests {
             type_interner_bytes_est: 60,
             skeleton_index_bytes_est: 7,
             pre_merge_bind_total_bytes_est: 999,
+            retained_file_state_bytes_est: 1_200,
+            retained_file_state_pressure: ResidencyPressureLevel::Medium,
         });
         record_shared_query_cache_residency(21, 80);
         record_type_cache_residency(2, 90);
@@ -41,6 +43,11 @@ mod residency_tests {
         assert_eq!(residency.type_interner_bytes_est, 60);
         assert_eq!(residency.skeleton_index_bytes_est, 7);
         assert_eq!(residency.pre_merge_bind_total_bytes_est, 999);
+        assert_eq!(residency.retained_file_state_bytes_est, 1_200);
+        assert_eq!(
+            residency.retained_file_state_pressure,
+            ResidencyPressureLevel::Medium
+        );
         assert_eq!(residency.shared_query_cache_entries, 21);
         assert_eq!(residency.shared_query_cache_bytes_est, 80);
         assert_eq!(residency.type_cache_count, 2);
@@ -56,6 +63,8 @@ mod residency_tests {
         let json = serde_json::to_value(&snap).expect("serializes");
         assert_eq!(json["residency"]["ast_unique_arena_bytes_est"], 1_000);
         assert_eq!(json["residency"]["type_interner_bytes_est"], 60);
+        assert_eq!(json["residency"]["retained_file_state_bytes_est"], 1_200);
+        assert_eq!(json["residency"]["retained_file_state_pressure"], "medium");
         assert_eq!(json["residency"]["tracked_total_bytes_est"], 1_557);
     }
 
