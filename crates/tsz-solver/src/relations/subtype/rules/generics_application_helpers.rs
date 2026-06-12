@@ -373,11 +373,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         else {
             return false;
         };
-        matches!(
-            crate::type_queries::classify_body_for_arg_preservation(self.interner, body),
-            crate::type_queries::BodyArgPreservation::ConditionalInfer
-                | crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
-        ) || crate::type_queries::contains_infer_types_db(self.interner, body)
+        matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            || matches!(
+                crate::type_queries::classify_body_for_arg_preservation(self.interner, body),
+                crate::type_queries::BodyArgPreservation::ConditionalInfer
+                    | crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+            )
+            || crate::type_queries::contains_infer_types_db(self.interner, body)
     }
 
     fn type_reaches_def(
@@ -484,22 +486,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             return None;
         }
-        let source_args_contain_type_parameters =
-            args_contain_type_parameters(self.interner, &s_app.args);
-        let method_receiver_fallback = source_args_contain_type_parameters
-            && self.expanded_application_pair_has_method_property(
-                resolved_source,
-                s_app_id,
-                resolved_target,
-                t_app_id,
-            );
-        let conditional_infer_alias = self.conditional_infer_alias_base(s_app.base)
-            || self.conditional_infer_alias_base(t_app.base);
-        if source_args_contain_type_parameters
-            && (!variances.iter().any(|v| v.has_direct_usage())
-                || conditional_infer_alias
-                || method_receiver_fallback)
-        {
+        // Type-parameter arguments make a variance rejection inconclusive: the
+        // expanded structural forms can introduce implicit index signatures
+        // (homomorphic mapped types) or conditional-recursion identities that
+        // change the outcome. The relation falls through to structural
+        // comparison for these, so the explanation must do the same.
+        if args_contain_type_parameters(self.interner, &s_app.args) {
             return None;
         }
 

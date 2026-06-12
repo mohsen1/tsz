@@ -828,22 +828,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // definitive: incompatible type args means incompatible generic types.
         let rejection_unreliable =
             variances.iter().any(|v| v.rejection_unreliable()) || family_via_forwarding;
-        if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
-            let source_args_contain_type_parameters =
-                args_contain_type_parameters(self.interner, &s_args);
-            if !source_args_contain_type_parameters
-                || (variances.iter().any(|v| v.has_direct_usage())
-                    && !self.conditional_infer_alias_base(s_app.base)
-                    && !self.conditional_infer_alias_base(t_app.base)
-                    && !self.expanded_application_pair_has_method_property(
-                        self.interner.application(s_app.base, s_app.args.to_vec()),
-                        s_app_id,
-                        self.interner.application(t_app.base, t_app.args.to_vec()),
-                        t_app_id,
-                    ))
-            {
-                return Some(SubtypeResult::False);
-            }
+        if any_checked
+            && !all_ok
+            && !needs_structural_fallback
+            && !rejection_unreliable
+            && !args_contain_type_parameters(self.interner, &s_args)
+        {
+            return Some(SubtypeResult::False);
         }
 
         if any_checked

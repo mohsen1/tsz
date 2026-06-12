@@ -242,6 +242,66 @@ register(consume);
 }
 
 #[test]
+fn recursive_tuple_conditional_with_free_number_params_reports_declared_mismatches() {
+    // `recursiveConditionalTypes.ts` reports both tuple-length assignments.
+    // The diagnostic stays anchored on the declared conditional alias
+    // applications instead of falling through to a reduced tuple detail.
+    let source = r#"
+type TupleOf<T, N extends number> = N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<number, M>) {
+    tn = tm;
+    tm = tn;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2322).at(7, 5).with_message_fragment(
+                "Type 'TupleOf<number, M>' is not assignable to type 'TupleOf<number, N>'.",
+            ),
+            DiagnosticShape::code(2322).at(8, 5).with_message_fragment(
+                "Type 'TupleOf<number, N>' is not assignable to type 'TupleOf<number, M>'.",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn recursive_tuple_conditional_with_target_type_param_reports_declared_mismatches() {
+    // The source application has a concrete tuple-length argument, while the
+    // target argument is a type parameter constrained to that concrete length.
+    // `tsc` still reports both assignments against the declared alias forms.
+    let source = r#"
+type TupleOf<T, N extends number> = N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f<N extends 1>(one: TupleOf<number, 1>, tn: TupleOf<number, N>) {
+    one = tn;
+    tn = one;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2322).at(7, 5).with_message_fragment(
+                "Type 'TupleOf<number, N>' is not assignable to type '[number]'.",
+            ),
+            DiagnosticShape::code(2322).at(8, 5).with_message_fragment(
+                "Type 'TupleOf<number, 1>' is not assignable to type 'TupleOf<number, N>'.",
+            ),
+        ],
+    );
+}
+
+#[test]
 fn covariant_application_to_constrained_param_target_rejects_wider_to_narrower() {
     // Anti-regression: COVARIANT containers still reject the wider-to-narrower
     // direction. `Covariant<A>` -> `Covariant<B>` fails when B extends A,

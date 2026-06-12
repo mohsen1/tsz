@@ -805,28 +805,22 @@ pub fn check_application_variance<R: TypeResolver>(
         return None;
     }
 
-    let variances = if same_base_same_arity {
+    if !same_base_same_arity {
+        return None;
+    }
+
+    let variances = {
         let def_id = lazy_def_id(db, s_app.base)?;
         resolver.get_type_param_variance(def_id).or_else(|| {
             crate::relations::variance::compute_type_param_variances_with_resolver_cached(
                 db, resolver, query_db, def_id,
             )
         })?
-    } else {
-        return None;
     };
     if variances.len() != s_app.args.len() {
         return None;
     }
 
-    // This public pre-evaluation boundary must be conservative. The solver
-    // engine still owns positive App/App variance decisions after the ordinary
-    // relation reaches `SubtypeChecker::try_variance_fast_path`; accepting here
-    // can skip structural expansion before conditional, recursive, mapped, and
-    // declared-variance bodies have been observed. Reliable rejections are
-    // different: if the same-base variance mask has direct non-mapped usage and
-    // carries no structural-fallback/unreliable marker, structural expansion can
-    // erase the raw type-argument mismatch that `tsc` reports.
     let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
     let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
     if needs_structural_fallback || rejection_unreliable {
@@ -894,7 +888,12 @@ pub fn check_application_variance<R: TypeResolver>(
         return Some(false);
     }
 
-    // Positive outcomes still fall through structurally at this boundary.
+    // Both positive and negative outcomes still fall through structurally at
+    // this boundary. Even concrete-looking application arguments can normalize
+    // through recursive conditionals, global aliases, mapped/indexed access, or
+    // declared-variance bodies before `tsc` decides assignability. The ordinary
+    // solver relation path owns definitive App/App variance decisions after
+    // those structural hooks have been observed.
     None
 }
 

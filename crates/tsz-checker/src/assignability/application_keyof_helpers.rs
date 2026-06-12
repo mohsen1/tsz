@@ -182,8 +182,8 @@ impl<'a> CheckerState<'a> {
         if source_base != target_base || source_args.len() != target_args.len() {
             return false;
         }
-        if self.application_base_is_conditional_infer_alias(source_base)
-            || self.application_base_is_conditional_infer_alias(target_base)
+        if self.application_base_is_conditional_alias(source_base)
+            || self.application_base_is_conditional_alias(target_base)
         {
             return false;
         }
@@ -234,8 +234,12 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn application_base_is_conditional_infer_alias(&self, base: TypeId) -> bool {
-        crate::query_boundaries::conditional_infer_alias::application_base_uses_conditional_infer(
+    fn application_base_is_conditional_alias(&self, base: TypeId) -> bool {
+        crate::query_boundaries::conditional_infer_alias::application_base_is_raw_conditional_alias(
+            self.ctx.types.as_type_database(),
+            &self.ctx,
+            base,
+        ) || crate::query_boundaries::conditional_infer_alias::application_base_uses_conditional_infer(
             self.ctx.types.as_type_database(),
             &self.ctx,
             base,
