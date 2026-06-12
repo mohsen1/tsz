@@ -1784,10 +1784,7 @@ fn collect_retained_lib_symbol_refs(
         retain_if_lib(sym_id, lib_symbol_ids, retained);
     }
 
-    for sym in binder.symbols.iter() {
-        if lib_symbol_ids.contains(&sym.id) {
-            continue;
-        }
+    for sym in binder.symbols.iter_private_symbols() {
         retain_if_lib(sym.parent, lib_symbol_ids, retained);
         if let Some(exports) = sym.exports.as_ref() {
             collect_lib_ids_from_table(exports, lib_symbol_ids, retained);

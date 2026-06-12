@@ -870,6 +870,16 @@ impl SymbolArena {
         self.shared_prefix.is_empty() && self.symbols.is_empty()
     }
 
+    /// Iterate only symbols allocated after the shared-prefix split.
+    ///
+    /// User-file binders cloned from a premerged lib binder keep the lib
+    /// universe in `shared_prefix` and append file-local/user symbols into
+    /// `symbols`. Callers that only need to inspect user allocations can avoid
+    /// walking the immutable lib prefix.
+    pub fn iter_private_symbols(&self) -> impl Iterator<Item = &Symbol> {
+        self.symbols.iter()
+    }
+
     /// Estimate the heap bytes owned by this arena: symbol slots, per-symbol
     /// heap (names, declaration lists, member tables), and the name index.
     ///
