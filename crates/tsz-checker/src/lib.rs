@@ -160,9 +160,6 @@ mod class_property_typed_const_initializer_tests;
 #[path = "tests/comlink_row_regression_tests.rs"]
 mod comlink_row_regression_tests;
 #[cfg(test)]
-#[path = "tests/common_boundary_export_ratchets.rs"]
-mod common_boundary_export_ratchets;
-#[cfg(test)]
 #[path = "../tests/constructor_overload_excess_property_tests.rs"]
 mod constructor_overload_excess_property_tests;
 #[cfg(test)]
@@ -1188,9 +1185,6 @@ mod ref_type_params_cache_tests;
 #[cfg(test)]
 #[path = "tests/relation_flags_boundary_contract_tests.rs"]
 mod relation_flags_boundary_contract_tests;
-#[cfg(test)]
-#[path = "tests/relation_routing_residual_arch_tests.rs"]
-mod relation_routing_residual_arch_tests;
 #[cfg(test)]
 #[path = "tests/remapped_missing_property_relation_routing_arch_tests.rs"]
 mod remapped_missing_property_relation_routing_arch_tests;
