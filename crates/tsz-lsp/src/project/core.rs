@@ -1349,7 +1349,7 @@ impl Project {
         let resolved = importer_dir.join(specifier);
 
         // Normalize the path by resolving .. and . components
-        let normalized = self.normalize_path(&resolved);
+        let normalized = normalize_path_for_compare(&resolved);
 
         // Check exact match
         let target_str = target.to_string_lossy();
@@ -1365,7 +1365,7 @@ impl Project {
             && target_stem == resolved_stem
         {
             // Normalize target as well for comparison
-            let normalized_target = self.normalize_path(target);
+            let normalized_target = normalize_path_for_compare(target);
             let normalized_target_path = Path::new(&normalized_target);
             // Check if parent dirs match
             if normalized_path.parent() == normalized_target_path.parent() {
@@ -1374,32 +1374,6 @@ impl Project {
         }
 
         false
-    }
-
-    /// Simple path normalization that resolves . and .. components without filesystem access.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn normalize_path(&self, path: &Path) -> String {
-        let path_str = path.to_string_lossy();
-
-        // Split by / and process components
-        let components: Vec<&str> = path_str.split('/').collect();
-        let mut result = Vec::new();
-
-        for component in components {
-            if component == "." {
-                // Skip current directory component
-                continue;
-            } else if component == ".." {
-                // Pop from result if possible
-                if !result.is_empty() && result.last() != Some(&"") {
-                    result.pop();
-                }
-            } else {
-                result.push(component);
-            }
-        }
-
-        result.join("/")
     }
 
     /// Check if a path represents a directory (vs a file).
@@ -1493,6 +1467,23 @@ fn is_relative_specifier(spec: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 fn path_to_slash_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+/// Lexically resolve `.` and `..` components (no filesystem access) for
+/// comparing a joined `importer_dir + specifier` spelling against a rename
+/// target path.
+///
+/// Delegates to the canonical
+/// [`tsz_common::module_resolution::path_identity::normalize_segments`]:
+/// `..` clamps at the filesystem root (as the historical `split('/')` loop
+/// already did via its leading-`""` sentinel) and an unmatched `..` on a
+/// relative path is kept rather than dropped, so an importer escaping the
+/// project root can no longer alias an in-project target spelling.
+#[cfg(not(target_arch = "wasm32"))]
+fn normalize_path_for_compare(path: &Path) -> String {
+    tsz_common::module_resolution::path_identity::normalize_segments(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1620,4 +1611,43 @@ fn parse_tsconfig_file(path: &std::path::Path) -> Option<TsConfigSettings> {
     }
 
     Some(settings)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod normalize_path_for_compare_tests {
+    use super::normalize_path_for_compare;
+    use std::path::Path;
+
+    #[test]
+    fn collapses_join_artifacts_for_import_target_matching() {
+        // Pinned before routing through path_identity::normalize_segments:
+        // the call-site domain is `importer_dir.join(specifier)` spellings.
+        assert_eq!(
+            normalize_path_for_compare(Path::new("/src/./a/../b.ts")),
+            "/src/b.ts"
+        );
+        assert_eq!(
+            normalize_path_for_compare(Path::new("/src/utils/../types.ts")),
+            "/src/types.ts"
+        );
+    }
+
+    #[test]
+    fn clamps_excess_parent_segments_at_root() {
+        // Both the historical split('/') loop (via its leading-"" sentinel)
+        // and the canonical helper clamp `..` at the filesystem root.
+        assert_eq!(
+            normalize_path_for_compare(Path::new("/a/../../b.ts")),
+            "/b.ts"
+        );
+    }
+
+    #[test]
+    fn keeps_unmatched_parent_on_relative_importer() {
+        // Canonical semantics (changed from the historical loop, which
+        // dropped the unmatched `..` and produced `x.ts`): an importer
+        // escaping the project root can no longer alias an in-project
+        // target spelling.
+        assert_eq!(normalize_path_for_compare(Path::new("../x.ts")), "../x.ts");
+    }
 }

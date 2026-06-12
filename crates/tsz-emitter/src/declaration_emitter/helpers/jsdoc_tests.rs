@@ -265,3 +265,32 @@ fn jsdoc_type_expression_requires_real_tag_boundary() {
         Some("string".to_string())
     );
 }
+
+#[test]
+fn ambient_module_relative_specifier_resolves_against_current_module() {
+    // Pinned before routing the collapse loop through
+    // path_identity::apply_slash_segments_lossy.
+    assert_eq!(
+        DeclarationEmitter::resolve_ambient_module_relative_specifier("pkg/mod", "./sib"),
+        "pkg/sib"
+    );
+    assert_eq!(
+        DeclarationEmitter::resolve_ambient_module_relative_specifier("pkg/sub/mod", "../other/x"),
+        "pkg/other/x"
+    );
+    // Embedded `.` and empty segments are skipped.
+    assert_eq!(
+        DeclarationEmitter::resolve_ambient_module_relative_specifier("pkg/mod", ".//./sib"),
+        "pkg/sib"
+    );
+}
+
+#[test]
+fn ambient_module_relative_specifier_drops_unmatched_parent_segments() {
+    // Historical (and preserved) underflow policy: a `..` that escapes the
+    // virtual module root is silently dropped, not kept or bailed on.
+    assert_eq!(
+        DeclarationEmitter::resolve_ambient_module_relative_specifier("mod", "../../x"),
+        "x"
+    );
+}
