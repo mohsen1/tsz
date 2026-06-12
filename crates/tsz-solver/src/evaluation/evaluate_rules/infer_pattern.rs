@@ -1780,6 +1780,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(alias) = self.interner().get_display_alias(source)
                         && alias != source
                     {
+                        if visited.contains(&(alias, expanded_pattern)) {
+                            return true;
+                        }
                         let mut alias_bindings = bindings.clone();
                         let mut alias_visited = visited.clone();
                         if self.match_infer_pattern(
