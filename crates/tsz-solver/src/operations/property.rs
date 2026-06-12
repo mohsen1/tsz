@@ -855,7 +855,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 LiteralValue::BigInt(_) => self.resolve_bigint_property(prop_name, prop_atom),
             },
 
-            TypeData::TemplateLiteral(_) => self.resolve_string_property(prop_name, prop_atom),
+            TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. } => {
+                self.resolve_string_property(prop_name, prop_atom)
+            }
 
             // Application: handle nominally (preserve class/interface identity)
             TypeData::Application(app_id) => {
@@ -1080,8 +1082,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // StringIntrinsic (Uppercase<T>, Lowercase<T>, etc.) — resolve as string
-            TypeData::StringIntrinsic { .. } => self.resolve_string_property(prop_name, prop_atom),
-
             _ => {
                 // Unknown type key - try apparent members before giving up
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
