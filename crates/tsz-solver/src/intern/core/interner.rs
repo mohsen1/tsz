@@ -149,7 +149,7 @@ impl PredicateCacheEntry {
     }
 
     #[inline]
-    fn set(&mut self, kind: PredicateCacheKind, result: bool) {
+    const fn set(&mut self, kind: PredicateCacheKind, result: bool) {
         let bit = kind.bit();
         self.known |= bit;
         if result {
