@@ -68,7 +68,8 @@ impl<'a> CheckerState<'a> {
         // `export type { } from "..."` — when the export clause is present
         // (NAMED_EXPORTS) and contains zero specifiers, nothing is actually
         // imported from the module, so tsc does not require the module to
-        // exist. We match that behavior structurally on the AST shape:
+        // exist (and emits no extension diagnostics either). We match that
+        // behavior structurally on the AST shape:
         // export_decl + NAMED_EXPORTS clause + empty elements list.
         if self.export_named_clause_is_empty(export_decl.export_clause) {
             return;
@@ -109,7 +110,6 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.report_unresolved_imports {
             return;
         }
-
         // Re-exports report TS2307 per declaration site. Clear the per-module
         // dedupe entry up front so each `export ... from "x"` statement gets
         // one chance to report unresolved-module diagnostics, while still

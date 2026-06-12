@@ -64,6 +64,12 @@ assert.match(
   "bench shard waits should allow a nonzero shard status when the runner produced a complete benchmark artifact",
 );
 
+assert.match(
+  workflow,
+  /publish:[\s\S]+needs: bench[\s\S]+if: always\(\) && \(needs\.bench\.result == 'success' \|\| needs\.bench\.result == 'failure'\)[\s\S]+Merge benchmark results/,
+  "bench publish should run after failed shard jobs so uploaded complete shard artifacts can still be merged instead of pinning the website to stale data",
+);
+
 assert.doesNotMatch(
   workflow,
   /source "bench-status-\$\{\{ matrix\.label \}\}\.env"/,

@@ -243,6 +243,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let cross_file_symbol_is_class =
+            cross_file_symbol.is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS));
         let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
 
         if !is_known_cross_file
@@ -499,12 +501,21 @@ impl<'a> CheckerState<'a> {
                         symbol_type_cache_from_symbol_arena,
                     )
             {
-                if let Some(p) = perf {
-                    p.delegate_cross_arena_cache_hits_cross_file
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // Class symbols gate the SYMBOL-bucket shortcut on the
+                // instance side being recoverable; see
+                // `class_instance_recoverable` (#13185).
+                if !cross_file_symbol_is_class
+                    || self
+                        .ctx
+                        .class_instance_recoverable(sym_id, cache_file_idx as u32)
+                {
+                    if let Some(p) = perf {
+                        p.delegate_cross_arena_cache_hits_cross_file
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    self.ctx.symbol_types.insert(sym_id, cached_type);
+                    return Some((cached_type, cached_params));
                 }
-                self.ctx.symbol_types.insert(sym_id, cached_type);
-                return Some((cached_type, cached_params));
             }
 
             if let Some((result, params)) =
@@ -975,6 +986,20 @@ impl<'a> CheckerState<'a> {
                     result,
                     result_params.clone(),
                 );
+                // Publish the class INSTANCE type next to the SYMBOL (value)
+                // entry; without it the SYMBOL entry cannot satisfy class
+                // reads (see `class_instance_recoverable`, #13185).
+                if !symbol_type_cache_from_symbol_arena
+                    && cross_file_symbol_is_class
+                    && let Some(inst) = self.ctx.symbol_instance_types.get(&sym_id).copied()
+                {
+                    self.ctx.cache_cross_file_class_instance_type(
+                        sym_id,
+                        target_file_idx as u32,
+                        inst,
+                        result_params.clone(),
+                    );
+                }
             }
 
             // Record completed *sentinel* results in the session memo so

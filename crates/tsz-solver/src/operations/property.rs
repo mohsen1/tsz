@@ -882,7 +882,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // Use nominal resolution for Application types
                 // This preserves class/interface identity instead of structurally expanding
-                self.resolve_application_property(app_id, prop_name, prop_atom)
+                self.resolve_application_property(obj_type, app_id, prop_name, prop_atom)
             }
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types

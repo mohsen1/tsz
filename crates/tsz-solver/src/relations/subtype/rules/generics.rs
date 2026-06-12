@@ -280,6 +280,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// If variance is unavailable or bases differ, fall back to structural expansion.
     pub(crate) fn check_application_to_application_subtype(
         &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
         s_app_id: TypeApplicationId,
         t_app_id: TypeApplicationId,
     ) -> SubtypeResult {
@@ -322,12 +324,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let s_new = if s_new_args.len() != s_app.args.len() {
                     self.interner.application(s_app.base, s_new_args.clone())
                 } else {
-                    self.interner.application(s_app.base, s_app.args.clone())
+                    source_type
                 };
                 let t_new = if t_new_args.len() != t_app.args.len() {
                     self.interner.application(t_app.base, t_new_args.clone())
                 } else {
-                    self.interner.application(t_app.base, t_app.args.clone())
+                    target_type
                 };
                 return self.check_subtype(s_new, t_new);
             }
@@ -371,8 +373,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
         let same_application_family =
             (same_arity && s_app.base == t_app.base) || variance_def_id.is_some();
-        let source_type = self.interner.application(s_app.base, s_app.args.clone());
-        let target_type = self.interner.application(t_app.base, t_app.args.clone());
 
         if !same_application_family
             && s_app.args.len() == 1
@@ -609,8 +609,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - Generic types without variance annotations
         // - Type aliases with complex transformations
         // =======================================================================
-        let s_expanded = self.try_expand_application(s_app_id);
-        let t_expanded = self.try_expand_application(t_app_id);
+        let s_expanded = self.try_expand_application_type(source_type, s_app_id);
+        let t_expanded = self.try_expand_application_type(target_type, t_app_id);
         let result = match (s_expanded, t_expanded) {
             (Some(s_struct), Some(t_struct)) => self.check_subtype(s_struct, t_struct),
             (Some(s_struct), None) => self.check_subtype(s_struct, target_type),
@@ -921,6 +921,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns `Some(result)` if variance gives a conclusive answer, `None` otherwise.
     pub(crate) fn try_variance_against_union_target(
         &mut self,
+        source_type: TypeId,
         s_app_id: TypeApplicationId,
         target: TypeId,
     ) -> Option<SubtypeResult> {
@@ -955,8 +956,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Variance rejected the Application member. Check if the source
                 // is a subtype of any non-Application member (e.g., undefined).
                 // For a non-nullable Application type, this is typically false.
-                let s_app = self.interner.type_application(s_app_id);
-                let source_type = self.interner.application(s_app.base, s_app.args.clone());
                 for &non_app in &non_app_members {
                     if self.check_subtype(source_type, non_app).is_true() {
                         return Some(SubtypeResult::True);
@@ -981,8 +980,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         t_app_id: TypeApplicationId,
     ) -> SubtypeResult {
         // Try to resolve both applications to see if they are mapped types
-        let s_resolved = self.try_resolve_application_body(s_app_id);
-        let t_resolved = self.try_resolve_application_body(t_app_id);
+        let s_resolved = self.try_resolve_application_body(source, s_app_id);
+        let t_resolved = self.try_resolve_application_body(target, t_app_id);
 
         // If both resolve to mapped types, try direct mapped-to-mapped comparison
         if let (Some(s_body), Some(t_body)) = (s_resolved, t_resolved)
@@ -1000,7 +999,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Try to resolve the body of a type application (instantiated with its args),
     /// without requiring concrete expansion. This resolves the base type alias/interface
     /// body and instantiates it with the provided type arguments.
-    fn try_resolve_application_body(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
+    fn try_resolve_application_body(
+        &mut self,
+        app_type: TypeId,
+        app_id: TypeApplicationId,
+    ) -> Option<TypeId> {
         use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
@@ -1046,7 +1049,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
-        let app_type = self.interner.application(app.base, app.args.clone());
         let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,
             self.query_db,
@@ -1090,7 +1092,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.depth_result();
         }
 
-        let result = match self.try_expand_application(app_id) {
+        let result = match self.try_expand_application_type(source, app_id) {
             Some(expanded) => self.check_subtype(expanded, target),
             None => {
                 let s_eval = self.evaluate_type(source);
@@ -1169,7 +1171,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.depth_result();
         }
 
-        let result = match self.try_expand_application(app_id) {
+        let result = match self.try_expand_application_type(target, app_id) {
             Some(expanded) => {
                 let expanded_result = self.check_subtype(source, expanded);
                 if expanded_result.is_true() {
@@ -1845,10 +1847,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         None
     }
 
-    /// Try to expand an Application type to its structural form.
-    /// Returns None if the application cannot be expanded (missing type params or body).
-    ///
-    pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
+    /// Try to expand an Application while preserving the caller's known
+    /// interned `TypeId` for the application itself.
+    pub(crate) fn try_expand_application_type(
+        &mut self,
+        app_type: TypeId,
+        app_id: TypeApplicationId,
+    ) -> Option<TypeId> {
         use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
@@ -1935,7 +1940,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Create substitution and instantiate
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
-        let app_type = self.interner.application(app.base, app.args.clone());
 
         let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,

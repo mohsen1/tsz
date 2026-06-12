@@ -1223,7 +1223,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         if let Some(app_id) = application_id(self.interner, target)
-            && let Some(expanded) = self.subtype.try_expand_application(app_id)
+            && let Some(expanded) = self.subtype.try_expand_application_type(target, app_id)
             && let Some(t_mapped_id) = mapped_type_id(self.interner, expanded)
             && self.is_source_assignable_to_homomorphic_mapped_target(source, t_mapped_id)
         {

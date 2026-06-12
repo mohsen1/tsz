@@ -27,6 +27,8 @@ pub(crate) mod lib_namespace_direct;
 pub(crate) mod lib_prime;
 pub(crate) mod lib_resolution;
 pub(crate) mod lib_resolution_heritage;
+#[cfg(test)]
+mod lib_resolution_integration_tests;
 pub(crate) mod lib_resolution_member;
 pub(crate) mod lib_resolution_selected;
 pub(crate) mod lib_scoped_heritage;

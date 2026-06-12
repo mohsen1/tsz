@@ -98,6 +98,44 @@ const FIXTURE_FILES: &[(&str, &str)] = &[
 
 const FIXTURE_TSCONFIG: &str = include_str!("fixtures/parallel_agreement/tsconfig.json");
 
+/// Second witness family (#13255 witness 3 residual): shared lib interface
+/// defs whose bodies were observed mid-derivation. Before the atomic
+/// `(symbol, file)` -> `DefId` stabilization, the lib-clone attribution fix,
+/// and the monotone-completion publication gate, forced-parallel runs
+/// nondeterministically resolved a built-in iterator interface to its
+/// pre-heritage-merge form (own members only) and emitted a false TS2741
+/// ("Property 'next' is missing in type '{ [Symbol.iterator](): ... }'")
+/// that the sequential run does not produce.
+const LIB_ITER_FIXTURE_FILES: &[(&str, &str)] = &[
+    (
+        "src/conveyor.ts",
+        include_str!("fixtures/parallel_agreement_lib_iter/conveyor.ts"),
+    ),
+    (
+        "src/gadgets.ts",
+        include_str!("fixtures/parallel_agreement_lib_iter/gadgets.ts"),
+    ),
+    (
+        "src/helpers.ts",
+        include_str!("fixtures/parallel_agreement_lib_iter/helpers.ts"),
+    ),
+    (
+        "src/mesh.ts",
+        include_str!("fixtures/parallel_agreement_lib_iter/mesh.ts"),
+    ),
+    (
+        "src/types.ts",
+        include_str!("fixtures/parallel_agreement_lib_iter/types.ts"),
+    ),
+    (
+        "src/voyage.ts",
+        include_str!("fixtures/parallel_agreement_lib_iter/voyage.ts"),
+    ),
+];
+
+const LIB_ITER_FIXTURE_TSCONFIG: &str =
+    include_str!("fixtures/parallel_agreement_lib_iter/tsconfig.json");
+
 fn run_project(tsz_bin: &Path, project_dir: &Path, force_parallel: bool) -> String {
     let mut cmd = Command::new(tsz_bin);
     cmd.args(["-p", "tsconfig.json", "--pretty", "false"])
@@ -111,20 +149,22 @@ fn run_project(tsz_bin: &Path, project_dir: &Path, force_parallel: bool) -> Stri
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// Forced-parallel fresh checking must produce byte-identical diagnostics to
-/// the default sequential path on a generic-heavy multi-file project.
-#[test]
-fn forced_parallel_diagnostics_match_sequential() {
+fn assert_parallel_matches_sequential(
+    name: &str,
+    files: &[(&str, &str)],
+    tsconfig: &str,
+    attempts: usize,
+) {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping parallel agreement test: tsz binary not found");
         return;
     };
-    let temp = TempDir::new("witness").expect("temp dir");
+    let temp = TempDir::new(name).expect("temp dir");
     std::fs::create_dir_all(temp.path.join("src")).expect("src dir");
-    for (rel, contents) in FIXTURE_FILES {
+    for (rel, contents) in files {
         std::fs::write(temp.path.join(rel), contents).expect("write fixture file");
     }
-    std::fs::write(temp.path.join("tsconfig.json"), FIXTURE_TSCONFIG).expect("write tsconfig");
+    std::fs::write(temp.path.join("tsconfig.json"), tsconfig).expect("write tsconfig");
 
     let sequential = run_project(&tsz_bin, &temp.path, false);
     assert!(
@@ -132,11 +172,31 @@ fn forced_parallel_diagnostics_match_sequential() {
         "sequential run should be reproducible"
     );
 
-    for attempt in 0..3 {
+    for attempt in 0..attempts {
         let parallel = run_project(&tsz_bin, &temp.path, true);
         assert_eq!(
             parallel, sequential,
             "forced-parallel diagnostics diverged from sequential on attempt {attempt}"
         );
     }
+}
+
+/// Forced-parallel fresh checking must produce byte-identical diagnostics to
+/// the default sequential path on a generic-heavy multi-file project.
+#[test]
+fn forced_parallel_diagnostics_match_sequential() {
+    assert_parallel_matches_sequential("witness", FIXTURE_FILES, FIXTURE_TSCONFIG, 3);
+}
+
+/// Forced-parallel fresh checking must not observe in-flight shared lib
+/// interface def bodies (#13255 witness 3: pre-heritage iterator interface
+/// forms produced schedule-dependent false TS2741/TS2339).
+#[test]
+fn forced_parallel_lib_iterator_heritage_matches_sequential() {
+    assert_parallel_matches_sequential(
+        "lib_iter",
+        LIB_ITER_FIXTURE_FILES,
+        LIB_ITER_FIXTURE_TSCONFIG,
+        5,
+    );
 }

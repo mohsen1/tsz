@@ -630,7 +630,7 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        if let Some(all_arenas) = self.ctx.all_arenas.as_ref()
+        if let Some(all_arenas) = self.ctx.all_arenas.clone()
             && let Some(ref sym_name) = sym_name
         {
             for (file_idx, arena) in all_arenas.iter().enumerate() {
@@ -669,18 +669,13 @@ impl<'a> CheckerState<'a> {
                 // which only searches the *current* arena and returns None
                 // for cross-file classes — so the constructor type leaks
                 // into the instance position.
+                // Only short-circuit when the INSTANCE side is also
+                // recoverable; see `class_instance_recoverable` (#13185).
                 if let Some((cached_type, cached_params)) = self
                     .ctx
                     .cached_cross_file_symbol_type(sym_id, file_idx as u32)
+                    && self.ctx.class_instance_recoverable(sym_id, file_idx as u32)
                 {
-                    if let Some((inst_type, _)) = self
-                        .ctx
-                        .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
-                        && inst_type != TypeId::ANY
-                        && inst_type != TypeId::ERROR
-                    {
-                        self.ctx.symbol_instance_types.insert(sym_id, inst_type);
-                    }
                     return (cached_type, cached_params.as_ref().clone());
                 }
                 // Found class in another file's arena. Create a child checker
@@ -776,6 +771,16 @@ impl<'a> CheckerState<'a> {
                     && inst != TypeId::ERROR
                 {
                     self.ctx.symbol_instance_types.insert(sym_id, inst);
+                    // Publish the instance side next to the SYMBOL bucket
+                    // entry so sibling checkers can recover it; declaration-
+                    // file classes have no other ClassInstance writer
+                    // (#13185).
+                    self.ctx.cache_cross_file_class_instance_type(
+                        sym_id,
+                        file_idx as u32,
+                        inst,
+                        Vec::new(),
+                    );
                 }
                 for (k, v) in child_instance_types {
                     self.ctx.symbol_instance_types.entry_or_insert(k, v);
