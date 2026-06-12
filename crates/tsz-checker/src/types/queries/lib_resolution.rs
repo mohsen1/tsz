@@ -1196,13 +1196,8 @@ impl<'a> CheckerState<'a> {
         // Finalize after heritage merge — `merge_lib_interface_heritage`
         // above may have produced a new TypeId; helper rewires type→def
         // and the DefId body so literal and annotation paths agree.
-        // Heritage-incomplete forms (#12299) publish without enrolling the
-        // def in the monotone-completion gate: they are missing inherited
-        // members and the recovery drain below must stay able to overwrite
-        // them, while sibling parallel checkers must not treat them as the
-        // def's settled shared form.
         if let Some(ty) = lib_type_id {
-            self.register_finalized_lib_body_with_completeness(name, ty, !heritage_incomplete);
+            self.register_finalized_lib_body(name, ty);
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId
             // when has_local_interface_decl was a false positive (NodeIndex
