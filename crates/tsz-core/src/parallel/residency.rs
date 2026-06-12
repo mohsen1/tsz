@@ -341,7 +341,14 @@ impl ResidencyBudget {
     /// Assess memory pressure from residency stats.
     #[must_use]
     pub const fn assess(&self, stats: &MergedProgramResidencyStats) -> MemoryPressure {
-        let total = stats.pre_merge_bind_total_bytes + stats.total_bound_file_bytes;
+        // `pre_merge_bind_total_bytes` is a transient merge-time footprint:
+        // owned merge paths release consumed `BindResult`s after their data has
+        // been copied into `MergedProgram`. Residency pressure must therefore
+        // use retained file state only; otherwise future eviction wiring would
+        // react to bytes that no longer exist after merge.
+        let total = stats
+            .total_bound_file_bytes
+            .saturating_add(stats.unique_arena_estimated_bytes);
         if total >= self.high_watermark_bytes {
             MemoryPressure::High
         } else if total >= self.low_watermark_bytes {
