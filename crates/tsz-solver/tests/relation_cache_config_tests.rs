@@ -47,7 +47,11 @@ mod cache_agreement;
 /// assignability cache keys for the same `(STRING, NUMBER)` pair. Centralises
 /// the build-two-keys / `assert_ne!` shape used by the per-flag partition
 /// regression tests below.
-fn assert_assignability_partitions(name: &str, on: RelationPolicy, off: RelationPolicy) {
+///
+/// `pub(crate)`: also reused by the exhaustive-destructuring tripwire in
+/// `relations::relation_queries::tests`, which must live next to
+/// `RelationPolicy` to see its private `flags` field.
+pub(crate) fn assert_assignability_partitions(name: &str, on: RelationPolicy, off: RelationPolicy) {
     let key_on =
         RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, on.cache_config());
     let key_off =
@@ -56,7 +60,7 @@ fn assert_assignability_partitions(name: &str, on: RelationPolicy, off: Relation
 }
 
 /// Subtype-cache counterpart of [`assert_assignability_partitions`].
-fn assert_subtype_partitions(name: &str, on: RelationPolicy, off: RelationPolicy) {
+pub(crate) fn assert_subtype_partitions(name: &str, on: RelationPolicy, off: RelationPolicy) {
     let key_on = RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, on.cache_config());
     let key_off = RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, off.cache_config());
     assert_ne!(key_on, key_off, "{name} must partition the cache");
