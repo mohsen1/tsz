@@ -267,6 +267,14 @@ pub enum RelationCacheKind {
     Subtype,
     /// TypeScript assignability (Lawyer layer).
     Assignable,
+    /// Checker-final assignability: the Lawyer relation verdict combined
+    /// with the checker's post-relation compatibility gates (iterator
+    /// protocol, namespace property mismatch, alias-application argument
+    /// rejection, keyof literal membership). Entries under this kind are
+    /// written and read only by the `tsz-checker` assignability boundary, so
+    /// a cached verdict is authoritative without checker post-processing and
+    /// never collides with raw Lawyer-relation entries.
+    CheckerAssignable,
     /// Variable-redeclaration identity.
     Identical,
 }
@@ -468,6 +476,24 @@ impl RelationCacheKey {
             source,
             target,
             relation: RelationCacheKind::Assignable,
+            config,
+        }
+    }
+
+    /// Typed builder for checker-final assignability cache entries.
+    ///
+    /// See [`RelationCacheKind::CheckerAssignable`]: only the `tsz-checker`
+    /// assignability boundary constructs these keys, so checker-final
+    /// verdicts never share a slot with raw Lawyer-relation entries.
+    pub const fn for_checker_assignability(
+        source: TypeId,
+        target: TypeId,
+        config: RelationCacheConfig,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            relation: RelationCacheKind::CheckerAssignable,
             config,
         }
     }

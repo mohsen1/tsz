@@ -34,6 +34,8 @@ pub struct PerfCounterSnapshot {
     pub relation_limit_cache: RelationLimitCacheCounters,
     /// Relation failure-reason single-pass campaign (issue #13243).
     pub relation_failure: RelationFailureCounters,
+    /// Checker assignability-gauntlet de-accretion (issue #13243 step 4).
+    pub assignability_gauntlet: AssignabilityGauntletCounters,
     /// Solver concrete-form materialization counters (issue #13242).
     pub solver_materialization: SolverMaterializationCounters,
     /// Solver evaluator memo lifecycle (issue #13097): what the per-run
@@ -509,6 +511,22 @@ pub struct RelationFailureCounters {
     pub memo_hits: u64,
 }
 
+/// Checker assignability-gauntlet counters (issue #13243 step 4): relation
+/// executions vs checker-final cache short-circuits, plus post-relation gate
+/// probes and the verdict overrides they produce.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AssignabilityGauntletCounters {
+    /// Relation executions through the checker-final assignability funnel.
+    pub final_relation_runs: u64,
+    /// Checker-final verdicts served from the relation cache without
+    /// post-relation gate work.
+    pub final_cache_hits: u64,
+    /// Executions of the post-relation true-override gate group.
+    pub post_pass_probes: u64,
+    /// Post-relation gate rejections of a relation-true verdict.
+    pub post_pass_overrides: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SolverMaterializationCounters {
     pub union_subtype_reduction_calls: u64,
@@ -740,6 +758,12 @@ impl PerfCounters {
             relation_failure: RelationFailureCounters {
                 reason_walks: load(&c.relation_failure_reason_walks),
                 memo_hits: load(&c.relation_failure_memo_hits),
+            },
+            assignability_gauntlet: AssignabilityGauntletCounters {
+                final_relation_runs: load(&c.assignability_final_relation_runs),
+                final_cache_hits: load(&c.assignability_final_cache_hits),
+                post_pass_probes: load(&c.assignability_post_pass_probes),
+                post_pass_overrides: load(&c.assignability_post_pass_overrides),
             },
             solver_materialization: SolverMaterializationCounters {
                 union_subtype_reduction_calls: load(&c.union_subtype_reduction_calls),

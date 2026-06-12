@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
     /// Callers that need a fresh read must reset the context fields before
     /// invoking the relation.
     #[inline]
-    pub(super) fn propagate_overflow_flags(&self, depth_exceeded: bool, iteration_exceeded: bool) {
+    pub(crate) fn propagate_overflow_flags(&self, depth_exceeded: bool, iteration_exceeded: bool) {
         let mut overflow = self.ctx.relation_overflow.get();
         overflow.merge(depth_exceeded, iteration_exceeded);
         self.ctx.relation_overflow.set(overflow);
@@ -509,14 +509,21 @@ impl<'a> CheckerState<'a> {
             target,
         ) {
             let flags = self.ctx.pack_relation_flags();
-            let cache_key = crate::query_boundaries::assignability::assignability_cache_key(
+            // Probe both the checker-final funnel slot (default gauntlet)
+            // and the raw Lawyer-relation slot (flag-variant gateways).
+            let final_key =
+                crate::query_boundaries::assignability::checker_final_assignability_cache_key(
+                    source, target, flags,
+                );
+            let raw_key = crate::query_boundaries::assignability::assignability_cache_key(
                 source, target, flags,
             );
             if self
                 .ctx
                 .types
-                .lookup_assignability_cache(cache_key)
+                .lookup_assignability_cache(final_key)
                 .is_some()
+                || self.ctx.types.lookup_assignability_cache(raw_key).is_some()
             {
                 return;
             }

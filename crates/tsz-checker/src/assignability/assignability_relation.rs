@@ -58,7 +58,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn namespace_source_has_matching_property_mismatch(
+    pub(in crate::assignability_domain) fn namespace_source_has_matching_property_mismatch(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -914,46 +914,38 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
+        // Checker-final relation funnel: relation verdict plus the
+        // post-relation *true-override* gates (alias-application argument
+        // rejection, iterator protocol, namespace property mismatch, keyof
+        // literal membership), cached as one authoritative answer. A cache
+        // hit returns without re-running any of those gates (issue #13243
+        // step 4). Those gates can only downgrade a `true` verdict, so the
+        // cached answer is authoritative.
+        let result = crate::query_boundaries::assignability::cached_final_assignability(
+            self,
+            source,
+            target,
+            false,
+            "is_assignable_to",
+        );
 
-        if result && self.same_type_alias_application_args_reject(source, target) {
-            return false;
-        }
-
+        // The conditional-infer covariant-source acceptance and the this-bound
+        // retry stay OUTSIDE the checker-final cache: both are `!result`
+        // *accept* overrides keyed on the *raw* (pre-normalization) pair, and
+        // many raw pairs evaluate onto one cached (source, target) slot, so
+        // folding either into the normalized funnel slot would leak one raw
+        // pair's verdict onto the others. Because they only ever flip a
+        // `false` to `true` (never downgrade a cached `true`), cache honesty
+        // is preserved.
         if !result
             && self
                 .conditional_infer_alias_covariant_source_constraint_accepts(raw_source, raw_target)
         {
             return true;
         }
-        if result
-            && self
-                .checker_only_assignability_failure_reason(source, target)
-                .is_some()
-        {
-            return false;
-        }
-
-        if result && self.namespace_source_has_matching_property_mismatch(source, target) {
-            return false;
-        }
 
         if !result && self.is_assignable_with_target_this_bound_to_source(raw_source, raw_target) {
             return true;
-        }
-
-        // Post-check: keyof type checking logic
-        if let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
-            && let Some(source_atom) = get_string_literal_value(self.ctx.types, source)
-        {
-            let source_str = self.ctx.types.resolve_atom(source_atom);
-            let allowed_keys = get_allowed_keys(self.ctx.types, keyof_type);
-            // Only reject when we could determine concrete keys. An empty set means
-            // the inner type couldn't be resolved (e.g., ThisType, TypeParameter,
-            // or Application). In that case, trust the solver's result.
-            if !allowed_keys.is_empty() && !allowed_keys.contains(&source_str) {
-                return false;
-            }
         }
 
         result
@@ -1782,12 +1774,13 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check assignability with the current `TypeEnvironment` but without
-    /// consulting the checker's relation caches.
+    /// Check assignability with the current `TypeEnvironment` as the
+    /// relation resolver.
     ///
-    /// Generic call/new inference uses this after instantiation to avoid stale
-    /// relation answers while still going through the same input preparation as
-    /// the normal assignability gateway.
+    /// Generic call/new inference uses this after instantiation so lazy refs
+    /// resolve through the live environment, while still going through the
+    /// same input preparation and checker-final relation funnel as the
+    /// normal assignability gateway.
     pub fn is_assignable_to_with_env(&mut self, source: TypeId, target: TypeId) -> bool {
         if source == target {
             return true;
@@ -1833,51 +1826,17 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
-        let result = {
-            let env = self.ctx.type_env.borrow();
-            let flags = self.ctx.pack_relation_flags();
-            let overrides = CheckerOverrideProvider::new(self, Some(&*env));
-            let relation_result = cached_assignability_with_overrides(
-                &AssignabilityQueryInputs {
-                    db: self.ctx.types,
-                    resolver: &*env,
-                    source,
-                    target,
-                    flags,
-                    inheritance_graph: &self.ctx.inheritance_graph,
-                    sound_mode: self.ctx.sound_mode(),
-                },
-                &overrides,
-            );
-            self.propagate_overflow_flags(
-                relation_result.depth_exceeded,
-                relation_result.iteration_exceeded,
-            );
-            relation_result.is_related()
-        };
-
-        if result
-            && self
-                .checker_only_assignability_failure_reason(source, target)
-                .is_some()
-        {
-            return false;
-        }
-
-        if let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
-            && let Some(source_atom) = get_string_literal_value(self.ctx.types, source)
-        {
-            let source_str = self.ctx.types.resolve_atom(source_atom);
-            let allowed_keys = get_allowed_keys(self.ctx.types, keyof_type);
-            // Only reject when we could determine concrete keys. An empty set means
-            // the inner type couldn't be resolved (e.g., ThisType, TypeParameter,
-            // or Application). In that case, trust the solver's result.
-            if !allowed_keys.is_empty() && !allowed_keys.contains(&source_str) {
-                return false;
-            }
-        }
-
-        result
+        // Same checker-final funnel as `is_assignable_to`, with the
+        // `TypeEnvironment` resolver: relation verdict plus the shared
+        // post-relation true-override gates, cached as one authoritative
+        // answer (issue #13243 step 4).
+        crate::query_boundaries::assignability::cached_final_assignability(
+            self,
+            source,
+            target,
+            true,
+            "is_assignable_to_with_env",
+        )
     }
 
     /// Check if `source` type is assignable to `target` type with bivariant function parameter checking.

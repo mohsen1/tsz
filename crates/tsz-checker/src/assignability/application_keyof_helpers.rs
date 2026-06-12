@@ -6,6 +6,62 @@ use tsz_solver::TypeId;
 use crate::query_boundaries::application_keyof as query;
 
 impl<'a> CheckerState<'a> {
+    /// Post-relation true-override gate group for the checker-final
+    /// assignability funnel (issue #13243 step 4).
+    ///
+    /// When the Lawyer relation reports `true`, these checker-side
+    /// compatibility gates can still reject the assignment:
+    /// 1. same-alias application argument rejection (`Alias<A>` vs `Alias<B>`
+    ///    whose unwitnessed arguments differ),
+    /// 2. iterator-protocol display mismatches the solver relation cannot
+    ///    observe,
+    /// 3. namespace-module source property mismatches,
+    /// 4. a string-literal source outside a resolvable `keyof` target's key
+    ///    set.
+    ///
+    /// The combined verdict is cached by the funnel under the dedicated
+    /// `RelationCacheKind::CheckerAssignable` key, so a cached answer is
+    /// authoritative and these gates only run on cache misses.
+    pub(crate) fn assignability_true_override_rejects(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        tsz_common::perf_counters::record_assignability_post_pass_probe();
+        let rejects = self.same_type_alias_application_args_reject(source, target)
+            || self
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some()
+            || self.namespace_source_has_matching_property_mismatch(source, target)
+            || self.string_literal_source_outside_keyof_target(source, target);
+        if rejects {
+            tsz_common::perf_counters::record_assignability_post_pass_override();
+        }
+        rejects
+    }
+
+    /// A string-literal source is not assignable to a `keyof` target whose
+    /// key set is concretely resolvable and does not contain the literal.
+    /// An empty key set means the `keyof` operand could not be resolved
+    /// (e.g. `ThisType`, `TypeParameter`, or `Application`); in that case
+    /// the solver relation verdict stands.
+    fn string_literal_source_outside_keyof_target(&self, source: TypeId, target: TypeId) -> bool {
+        let Some(keyof_type) =
+            crate::query_boundaries::assignability::get_keyof_type(self.ctx.types, target)
+        else {
+            return false;
+        };
+        let Some(source_atom) = crate::query_boundaries::assignability::get_string_literal_value(
+            self.ctx.types,
+            source,
+        ) else {
+            return false;
+        };
+        let source_str = self.ctx.types.resolve_atom(source_atom);
+        let allowed_keys =
+            crate::query_boundaries::assignability::get_allowed_keys(self.ctx.types, keyof_type);
+        !allowed_keys.is_empty() && !allowed_keys.contains(&source_str)
+    }
     pub(crate) fn application_info_or_display_alias(
         &self,
         type_id: TypeId,
