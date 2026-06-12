@@ -15,6 +15,8 @@
 #   TSZ_BENCH_WARMUP=1              Warmup runs per case.
 #   TSZ_BENCH_THRESHOLD_PCT=12      Allowed regression per case (%).
 #   TSZ_BENCH_BASELINE_FILE=...     Baseline JSON path.
+#   TSZ_BENCH_OUTPUT_JSON=...       Optional measurement report path.
+#   TSZ_BENCH_CASE_FILTER=a,b,c     Optional comma-separated case allowlist.
 #
 # Flags:
 #   --update-baseline               Replace baseline with current measurements.
@@ -49,6 +51,8 @@ Environment:
   TSZ_BENCH_WARMUP=1
   TSZ_BENCH_THRESHOLD_PCT=12
   TSZ_BENCH_BASELINE_FILE=.git/tsz-microbench-baseline.json
+  TSZ_BENCH_OUTPUT_JSON=
+  TSZ_BENCH_CASE_FILTER=
 EOF
 }
 
@@ -90,6 +94,8 @@ RUNS="${TSZ_BENCH_RUNS:-4}"
 WARMUP="${TSZ_BENCH_WARMUP:-1}"
 THRESHOLD_PCT="${TSZ_BENCH_THRESHOLD_PCT:-12}"
 BASELINE_FILE="${TSZ_BENCH_BASELINE_FILE:-$ROOT_DIR/.git/tsz-microbench-baseline.json}"
+OUTPUT_JSON="${TSZ_BENCH_OUTPUT_JSON:-}"
+CASE_FILTER="${TSZ_BENCH_CASE_FILTER:-}"
 
 profile_dir="$PROFILE"
 if [[ "$PROFILE" == "dev" ]]; then
@@ -175,6 +181,44 @@ register_generated "keyof_chain_20"                generate_keyof_chain_file    
 register_generated "overload_resolution_25"        generate_overload_resolution_file          25
 register_generated "object_literal_assign_20"      generate_object_literal_assign_file        20
 
+if [[ -n "$CASE_FILTER" ]]; then
+    requested_case_names=()
+    IFS=',' read -r -a requested_case_names <<< "$CASE_FILTER"
+    normalized_case_names=()
+    for raw_case_name in "${requested_case_names[@]}"; do
+        case_name="${raw_case_name#"${raw_case_name%%[![:space:]]*}"}"
+        case_name="${case_name%"${case_name##*[![:space:]]}"}"
+        [[ -n "$case_name" ]] || continue
+        normalized_case_names+=("$case_name")
+    done
+
+    filtered_names=()
+    filtered_files=()
+    missing_cases=()
+    for requested_case_name in "${normalized_case_names[@]}"; do
+        found_case=false
+        for idx in "${!MICROBENCH_CASE_NAMES[@]}"; do
+            case_name="${MICROBENCH_CASE_NAMES[$idx]}"
+            if [[ "$case_name" == "$requested_case_name" ]]; then
+                filtered_names+=("$case_name")
+                filtered_files+=("${MICROBENCH_CASE_FILES[$idx]}")
+                found_case=true
+                break
+            fi
+        done
+        if [[ "$found_case" != "true" ]]; then
+            missing_cases+=("$requested_case_name")
+        fi
+    done
+    if [[ "${#missing_cases[@]}" -gt 0 ]]; then
+        echo "Unknown TSZ_BENCH_CASE_FILTER case(s): ${missing_cases[*]}" >&2
+        exit 2
+    fi
+
+    MICROBENCH_CASE_NAMES=("${filtered_names[@]}")
+    MICROBENCH_CASE_FILES=("${filtered_files[@]}")
+fi
+
 if [[ "$NO_BUILD" != true ]]; then
     echo "   Building benchmark binary (profile=$PROFILE)..."
     CARGO_TARGET_DIR="$TARGET_DIR" cargo build --quiet --profile "$PROFILE" -p tsz-cli --bin tsz
@@ -194,6 +238,10 @@ case_args=()
 for idx in "${!MICROBENCH_CASE_NAMES[@]}"; do
     case_args+=(--case "${MICROBENCH_CASE_NAMES[$idx]}=${MICROBENCH_CASE_FILES[$idx]}")
 done
+output_args=()
+if [[ -n "$OUTPUT_JSON" ]]; then
+    output_args=(--output-json "$OUTPUT_JSON")
+fi
 
 node "$SCRIPT_DIR/precommit-microbench.mjs" \
     --bin "$TSZ_BIN" \
@@ -203,4 +251,5 @@ node "$SCRIPT_DIR/precommit-microbench.mjs" \
     --warmup "$WARMUP" \
     --update-baseline "$update_flag" \
     --profile "$PROFILE" \
+    "${output_args[@]}" \
     "${case_args[@]}"
