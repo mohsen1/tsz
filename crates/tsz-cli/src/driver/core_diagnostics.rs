@@ -418,6 +418,13 @@ pub(super) fn compile_inner(
     // Only create when loading from BuildInfo (not when a cache is provided)
     let mut local_cache: Option<CompilationCache> = None;
 
+    // `latestChangedDtsFile` from the previously saved BuildInfo. tsc seeds
+    // its builder state with the old program's value and only reassigns it
+    // when a declaration file is actually written, so an incremental save
+    // that emits no declaration output must preserve the prior value rather
+    // than clear it.
+    let mut prior_latest_changed_dts_file: Option<String> = None;
+
     // Load BuildInfo only when incremental compilation is enabled and no cache was provided.
     // A standalone `tsBuildInfoFile` path does not activate build info reads/writes.
     if cache.is_none() && resolved.incremental {
@@ -429,6 +436,7 @@ pub(super) fn compile_inner(
                     Ok(Some(build_info)) => {
                         // Create a local cache from BuildInfo
                         local_cache = Some(build_info_to_compilation_cache(&build_info, &base_dir));
+                        prior_latest_changed_dts_file = build_info.latest_changed_dts_file;
                         tracing::info!("Loaded BuildInfo from: {}", build_info_path.display());
                     }
                     Ok(None) => {
@@ -1157,12 +1165,14 @@ pub(super) fn compile_inner(
         .iter()
         .any(|diag| diag.category == DiagnosticCategory::Error);
 
-    // Find the most recent .d.ts file for BuildInfo tracking
-    let latest_changed_dts_file = if !emitted_files.is_empty() {
-        find_latest_dts_file(&emitted_files, &base_dir)
-    } else {
-        None
-    };
+    // Most recent declaration output for BuildInfo tracking. When this build
+    // wrote no declaration file, carry the previously saved value forward:
+    // tsc preserves `latestChangedDtsFile` across no-emit incremental saves
+    // (`createBuilderProgramState` seeds it from the old program state and
+    // the write-file callback only reassigns it when a declaration file is
+    // written).
+    let latest_changed_dts_file =
+        find_latest_dts_file(&emitted_files, &base_dir).or(prior_latest_changed_dts_file);
 
     // Save BuildInfo if incremental compilation is enabled
     if should_save_build_info && !has_error {
@@ -1171,8 +1181,16 @@ pub(super) fn compile_inner(
         {
             // Build BuildInfo from the cache (which has been updated by collect_diagnostics)
             // If local_cache exists (from BuildInfo), use it; otherwise create minimal info
-            let mut build_info = if let Some(ref lc) = local_cache {
-                compilation_cache_to_build_info(lc, &file_paths, &base_dir, &resolved)
+            // The most recent declaration output (used for cross-project
+            // invalidation) is assigned at construction time in both branches.
+            let build_info = if let Some(ref lc) = local_cache {
+                compilation_cache_to_build_info(
+                    lc,
+                    &file_paths,
+                    &base_dir,
+                    &resolved,
+                    latest_changed_dts_file,
+                )
             } else {
                 // No cache available - create minimal BuildInfo with just file info
                 BuildInfo {
@@ -1187,12 +1205,10 @@ pub(super) fn compile_inner(
                                 .replace('\\', "/")
                         })
                         .collect(),
+                    latest_changed_dts_file,
                     ..Default::default()
                 }
             };
-
-            // Set the most recent .d.ts file for cross-project invalidation
-            build_info.latest_changed_dts_file = latest_changed_dts_file;
 
             if let Err(e) = build_info.save(&build_info_path) {
                 let build_info_path_text = build_info_path.display().to_string();
