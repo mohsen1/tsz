@@ -16,6 +16,8 @@ parse_entries = mod.parse_entries
 normalized_entries = mod.normalized_entries
 entry_set = mod.entry_set
 check_growth = mod.check_growth
+entry_comment_blocks = mod.entry_comment_blocks
+documented_temporary_additions = mod.documented_temporary_additions
 check_integrity = mod.check_integrity
 
 
@@ -122,6 +124,57 @@ class GrowthTests(unittest.TestCase):
         added, removed = check_growth(base, head)
         self.assertEqual(added, frozenset())
         self.assertEqual(removed, frozenset())
+
+
+class DocumentedTemporaryAdditionTests(unittest.TestCase):
+    def test_entry_comment_blocks_use_adjacent_comments(self):
+        text = (
+            "# detached\n"
+            "\n"
+            "# tracked by issue #1\n"
+            "TypeScript/tests/cases/compiler/foo.ts\n"
+        )
+        self.assertEqual(
+            entry_comment_blocks(text),
+            {
+                "TypeScript/tests/cases/compiler/foo.ts": [
+                    "tracked by issue #1",
+                ],
+            },
+        )
+
+    def test_documented_temporary_addition_is_allowed(self):
+        text = (
+            "# Tracked by issue #123\n"
+            "# Exact evidence: merge-group run 1 failed.\n"
+            "# Removal condition: stable after fix.\n"
+            "TypeScript/tests/cases/compiler/foo.ts\n"
+        )
+        documented, rejected = documented_temporary_additions(
+            text,
+            frozenset(["TypeScript/tests/cases/compiler/foo.ts"]),
+        )
+        self.assertEqual(
+            documented,
+            frozenset(["TypeScript/tests/cases/compiler/foo.ts"]),
+        )
+        self.assertEqual(rejected, frozenset())
+
+    def test_undocumented_temporary_addition_is_rejected(self):
+        text = (
+            "# Tracked by issue #123\n"
+            "# Exact evidence: merge-group run 1 failed.\n"
+            "TypeScript/tests/cases/compiler/foo.ts\n"
+        )
+        documented, rejected = documented_temporary_additions(
+            text,
+            frozenset(["TypeScript/tests/cases/compiler/foo.ts"]),
+        )
+        self.assertEqual(documented, frozenset())
+        self.assertEqual(
+            rejected,
+            frozenset(["TypeScript/tests/cases/compiler/foo.ts"]),
+        )
 
 
 class IntegrityTests(unittest.TestCase):

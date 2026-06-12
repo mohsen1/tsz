@@ -2,8 +2,10 @@
 """Guard the accepted-conformance-regression ledger.
 
 The accepted-regression file records conformance tests that are temporarily
-allowed to fail.  Its budget is monotonically non-increasing on main: a PR
-may remove entries (progress) but must never add new ones (regression debt).
+allowed to fail.  Its default budget is monotonically non-increasing on main:
+a PR may remove entries (progress), and new entries are rejected unless their
+adjacent ledger comments name an issue, exact evidence, and a removal
+condition.
 The ledger must also stay canonical (no duplicate, non-normalized, or
 malformed entries) so the visible counter and the CI aggregate matcher agree.
 
@@ -29,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 from accepted_regressions import (  # noqa: E402  (path injected above)
     check_growth,
     check_integrity,
+    documented_temporary_additions,
     entry_set,
 )
 
@@ -67,9 +70,10 @@ def _report_integrity(ref_label: str, text: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Guard the accepted-regression ledger: additions are never allowed, "
-            "removals are always allowed, and the ledger must stay canonical "
-            "(no duplicate / non-normalized / malformed entries)."
+            "Guard the accepted-regression ledger: silent additions are never "
+            "allowed, removals are always allowed, documented temporary "
+            "additions require issue-linked evidence, and the ledger must stay "
+            "canonical (no duplicate / non-normalized / malformed entries)."
         )
     )
     parser.add_argument(
@@ -149,15 +153,29 @@ def main(argv: list[str] | None = None) -> int:
         for entry in sorted(removed):
             print(f"  - {entry}")
     if added:
-        print(f"Added entries ({len(added)}) — this is not allowed:")
-        for entry in sorted(added):
+        documented, rejected = documented_temporary_additions(head_text, added)
+        if documented:
+            print(f"Documented temporary additions ({len(documented)}):")
+            for entry in sorted(documented):
+                print(f"  + {entry}")
+        if rejected:
+            print(
+                f"Undocumented added entries ({len(rejected)}) — this is not allowed:"
+            )
+        for entry in sorted(rejected):
             print(f"  + {entry}")
             print(f"::error::accepted-regression ledger must not grow: {entry} was added.")
+        if rejected:
+            print(
+                "File a parity issue and track each regression with exact CI "
+                "evidence and a removal condition before adding entries to "
+                "conformance-accepted-regressions.txt."
+            )
+            return 1
         print(
-            "File a parity issue and track each regression there instead of "
-            "adding entries to conformance-accepted-regressions.txt."
+            "Accepted-regression growth gate passed with documented temporary "
+            "addition(s). Remove them when their tracking issue closes."
         )
-        return 1
 
     if not integrity_ok:
         return 1
