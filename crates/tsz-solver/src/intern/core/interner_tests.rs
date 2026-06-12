@@ -298,3 +298,169 @@ mod append_protocol {
         });
     }
 }
+
+/// Interning-identity invariants for the hand-maintained shape `Eq`/`Hash`
+/// impls in `types/shape_identity.rs` (#13099). These pin which fields are
+/// identity-bearing: cosmetic fields must not split interned ids, while
+/// display-preserving fields (index-signature `param_name`, and
+/// `declaration_order` under `PRESERVE_DECLARATION_ORDER`) deliberately must.
+mod shape_identity {
+    use super::*;
+    use crate::types::IndexSignature;
+
+    fn named_prop(interner: &TypeInterner, name: &str) -> PropertyInfo {
+        PropertyInfo::new(interner.intern_string(name), TypeId::STRING)
+    }
+
+    fn string_index_sig(interner: &TypeInterner, param_name: Option<&str>) -> IndexSignature {
+        IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: param_name.map(|name| interner.intern_string(name)),
+        }
+    }
+
+    fn shape_with_string_index(interner: &TypeInterner, param_name: Option<&str>) -> ObjectShape {
+        ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: Vec::new(),
+            string_index: Some(string_index_sig(interner, param_name)),
+            number_index: None,
+            symbol: None,
+        }
+    }
+
+    #[test]
+    fn cosmetic_property_fields_do_not_split_interned_ids() {
+        let interner = TypeInterner::new();
+        let base = named_prop(&interner, "alpha");
+
+        let mut quoted = base.clone();
+        quoted.single_quoted_name = true;
+        let mut prototype = base.clone();
+        prototype.is_class_prototype = true;
+        let mut ordered = base.clone();
+        ordered.declaration_order = 42;
+
+        let base_id = interner.object(vec![base]);
+        assert_eq!(
+            interner.object(vec![quoted]),
+            base_id,
+            "single_quoted_name is cosmetic quote style and must not split interning"
+        );
+        assert_eq!(
+            interner.object(vec![prototype]),
+            base_id,
+            "is_class_prototype is declaration-site metadata and must not split interning"
+        );
+        assert_eq!(
+            interner.object(vec![ordered]),
+            base_id,
+            "declaration_order is display-only without PRESERVE_DECLARATION_ORDER"
+        );
+    }
+
+    #[test]
+    fn semantic_property_fields_split_interned_ids() {
+        let interner = TypeInterner::new();
+        let base = named_prop(&interner, "alpha");
+        let mut optional = base.clone();
+        optional.optional = true;
+        let mut string_named = base.clone();
+        string_named.is_string_named = true;
+
+        let base_id = interner.object(vec![base]);
+        assert_ne!(
+            interner.object(vec![optional]),
+            base_id,
+            "optional is structural and must split interning"
+        );
+        assert_ne!(
+            interner.object(vec![string_named]),
+            base_id,
+            "is_string_named distinguishes \"100\" from 100 keys and must split interning"
+        );
+    }
+
+    #[test]
+    fn object_index_signature_param_name_is_display_preserving() {
+        let interner = TypeInterner::new();
+
+        // `IndexSignature` itself treats param_name as cosmetic...
+        assert_eq!(
+            string_index_sig(&interner, Some("key")),
+            string_index_sig(&interner, Some("idx")),
+            "IndexSignature eq ignores param_name"
+        );
+
+        // ...but `ObjectShape` re-adds it via index_signature_display_eq so the
+        // printer can reproduce the source parameter name after interning.
+        let key_id = interner.object_with_index(shape_with_string_index(&interner, Some("key")));
+        let renamed_id =
+            interner.object_with_index(shape_with_string_index(&interner, Some("idx")));
+        let unnamed_id = interner.object_with_index(shape_with_string_index(&interner, None));
+        assert_ne!(
+            key_id, renamed_id,
+            "different index-signature param_name must intern to distinct object ids"
+        );
+        assert_ne!(key_id, unnamed_id);
+        assert_eq!(
+            interner.object_with_index(shape_with_string_index(&interner, Some("key"))),
+            key_id,
+            "same param_name must re-intern to the same id"
+        );
+    }
+
+    #[test]
+    fn callable_index_signature_param_name_is_display_preserving() {
+        let interner = TypeInterner::new();
+        let with_name = |param_name: Option<&str>| CallableShape {
+            string_index: Some(string_index_sig(&interner, param_name)),
+            ..CallableShape::default()
+        };
+
+        let key_id = interner.callable(with_name(Some("key")));
+        let renamed_id = interner.callable(with_name(Some("idx")));
+        assert_ne!(
+            key_id, renamed_id,
+            "different index-signature param_name must intern to distinct callable ids"
+        );
+        assert_eq!(
+            interner.callable(with_name(Some("key"))),
+            key_id,
+            "same param_name must re-intern to the same id"
+        );
+    }
+
+    #[test]
+    fn preserve_declaration_order_makes_property_order_identity_bearing() {
+        let interner = TypeInterner::new();
+        let alpha = named_prop(&interner, "alpha");
+        let beta = PropertyInfo::new(interner.intern_string("beta"), TypeId::NUMBER);
+
+        // Without the flag, source order is cosmetic: constructors backfill
+        // declaration_order from insertion order, but it stays identity-exempt.
+        let ab = interner.object(vec![alpha.clone(), beta.clone()]);
+        let ba = interner.object(vec![beta.clone(), alpha.clone()]);
+        assert_eq!(
+            ab, ba,
+            "without PRESERVE_DECLARATION_ORDER, declaration order must not split interning"
+        );
+
+        // With the flag, the same properties in a different source order stay
+        // distinct so diagnostics can print source/display order after widening.
+        let flag = ObjectFlags::PRESERVE_DECLARATION_ORDER;
+        let ab_ordered = interner.object_with_flags(vec![alpha.clone(), beta.clone()], flag);
+        let ba_ordered = interner.object_with_flags(vec![beta.clone(), alpha.clone()], flag);
+        assert_ne!(
+            ab_ordered, ba_ordered,
+            "PRESERVE_DECLARATION_ORDER makes declaration order identity-bearing"
+        );
+        assert_eq!(
+            interner.object_with_flags(vec![alpha, beta], flag),
+            ab_ordered,
+            "same declaration order must re-intern to the same id"
+        );
+    }
+}
