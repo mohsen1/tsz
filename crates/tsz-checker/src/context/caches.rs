@@ -610,10 +610,11 @@ pub type AssignabilityEvalStamp = (u64, u64, u64, u64);
 /// That evaluation is a recursive normalization pipeline with only a cycle
 /// guard; constraint validation and relation preparation re-run it for the
 /// same `TypeId`s thousands of times per file (measured ~94% repeated
-/// outermost calls on the ts-toolbelt project row, issue #8356). Entries are
-/// only written for outermost, fuel-clean evaluations and are dropped
-/// wholesale whenever the session stamp moves, so a hit always returns
-/// exactly what a fresh evaluation under the current environment would.
+/// outermost calls on the ts-toolbelt project row, issue #8356, plus nested
+/// repeats in issue #13243). Entries are only written for fuel-clean
+/// evaluations that completed outside the active cycle-truncation case and are
+/// dropped wholesale whenever the session stamp moves, so a hit always
+/// returns exactly what a fresh evaluation under the current environment would.
 #[derive(Debug, Default)]
 pub struct AssignabilityEvalMemo {
     stamp: Option<AssignabilityEvalStamp>,

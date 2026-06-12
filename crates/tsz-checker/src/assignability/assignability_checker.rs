@@ -1476,13 +1476,14 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     ///
-    /// Outermost calls are memoized per checker session: the recursive
+    /// Completed calls are memoized per checker session: the recursive
     /// normalization below is deterministic while the type environments and
-    /// symbol-type caches are unchanged, and constraint validation re-requests
+    /// symbol-type caches are unchanged, and assignability paths re-request
     /// the same `TypeId`s heavily (~94% repeated outermost calls on the
-    /// ts-toolbelt project row, issue #8356). Nested calls are never served
-    /// from or written to the memo so the cycle-guard semantics (re-entered
-    /// types evaluate to themselves) are preserved exactly.
+    /// ts-toolbelt project row, issue #8356, with nested repeats called out in
+    /// issue #13243). The active recursion stack still wins over the memo, so
+    /// cycle-guard semantics (re-entered types evaluate to themselves) are
+    /// preserved exactly.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         use crate::state_domain::type_environment::lazy::{
             global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
@@ -1507,9 +1508,13 @@ impl<'a> CheckerState<'a> {
                 Default::default();
         }
 
-        let outermost = ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow().is_empty());
-        if outermost
-            && let Some(stamp) = self.assignability_eval_memo_stamp()
+        let already_visiting =
+            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow().contains(&type_id));
+        if already_visiting {
+            return type_id;
+        }
+
+        if let Some(stamp) = self.assignability_eval_memo_stamp()
             && let Some(memoized) = self
                 .ctx
                 .type_reference_validation_caches
@@ -1541,8 +1546,7 @@ impl<'a> CheckerState<'a> {
         // The stamp is recomputed on purpose: evaluation grows the type
         // environments, and the result is valid for that *post*-evaluation
         // state; the lookup-time stamp would file the entry as already stale.
-        if outermost
-            && result != TypeId::ERROR
+        if result != TypeId::ERROR
             && !refs_resolution_fuel_exhausted()
             && !global_resolution_fuel_exhausted()
             && !self.ctx.depth_exceeded.get()
