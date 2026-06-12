@@ -706,6 +706,13 @@ pub struct CheckerContext<'a> {
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
 
+    /// Shared alias-base-assignment cache used by flow narrowing.
+    /// Key: (`target_reference_node`, `alias_decl_pos`) -> whether a
+    /// containing-function assignment after the alias declaration targets the
+    /// reference or its base.
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_alias_base_assignment_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+
     /// Symbol-stable flow memo tables reused across `FlowAnalyzer` instances
     /// within a single file check.
     pub symbol_flow_memo: SymbolFlowMemoCaches,

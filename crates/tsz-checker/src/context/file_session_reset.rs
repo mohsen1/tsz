@@ -210,6 +210,7 @@ impl<'a> CheckerContext<'a> {
         self.flow_switch_reference_cache.borrow_mut().clear();
         self.flow_numeric_atom_cache.borrow_mut().clear();
         self.flow_reference_match_cache.borrow_mut().clear();
+        self.flow_alias_base_assignment_cache.borrow_mut().clear();
         self.symbol_flow_memo.clear();
         self.symbol_flow_confirmed.borrow_mut().clear();
         self.emitted_ts2454_errors.clear();
