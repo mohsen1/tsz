@@ -6,8 +6,8 @@
 use crate::caches::instantiation_cache::InstantiationCacheKey;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::def::DefId;
-use crate::intern::TypeInterner;
 use crate::intern::type_factory::TypeFactory;
+use crate::intern::{PredicateCacheKind, TypeInterner};
 use crate::narrowing;
 use crate::objects::ObjectLiteralBuilder;
 use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
@@ -622,114 +622,115 @@ pub trait TypeDatabase:
 
 impl TypePredicateCache for TypeInterner {
     fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_this_cache.get(&type_id).map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsThis)
     }
 
     fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_this_cache.insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsThis, result);
     }
 
     fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_infer_cache.get(&type_id).map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsInfer)
     }
 
     fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_infer_cache.insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsInfer, result);
     }
 
     fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_type_query_cache.get(&type_id).map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsTypeQuery)
     }
 
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_type_query_cache.insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsTypeQuery, result);
     }
 
     fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_type_params_cache.get(&type_id).map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsTypeParams)
     }
 
     fn set_contains_type_params_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_type_params_cache.insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsTypeParams, result);
     }
 
     fn contains_lazy_or_recursive_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_lazy_or_recursive_cache
-            .get(&type_id)
-            .map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsLazyOrRecursive)
     }
 
     fn set_contains_lazy_or_recursive_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_lazy_or_recursive_cache
-            .insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsLazyOrRecursive, result);
     }
 
     fn contains_unresolved_application_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_unresolved_application_cache
-            .get(&type_id)
-            .map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsUnresolvedApplication)
     }
 
     fn set_contains_unresolved_application_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_unresolved_application_cache
-            .insert(type_id, result);
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::ContainsUnresolvedApplication,
+            result,
+        );
     }
 
     fn contains_resolver_dependent_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_resolver_dependent_cache
-            .get(&type_id)
-            .map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsResolverDependent)
     }
 
     fn set_contains_resolver_dependent_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_resolver_dependent_cache
-            .insert(type_id, result);
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::ContainsResolverDependent,
+            result,
+        );
     }
 
     fn contains_conditional_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_conditional_cache.get(&type_id).map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsConditional)
     }
 
     fn set_contains_conditional_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_conditional_cache.insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsConditional, result);
     }
 
     fn contains_param_or_infer_root_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_param_or_infer_root_cache
-            .get(&type_id)
-            .map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsParamOrInferRoot)
     }
 
     fn set_contains_param_or_infer_root_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_param_or_infer_root_cache
-            .insert(type_id, result);
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::ContainsParamOrInferRoot,
+            result,
+        );
     }
 
     fn contains_generic_params_root_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_generic_params_root_cache
-            .get(&type_id)
-            .map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsGenericParamsRoot)
     }
 
     fn set_contains_generic_params_root_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_generic_params_root_cache
-            .insert(type_id, result);
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::ContainsGenericParamsRoot,
+            result,
+        );
     }
 
     fn eval_contains_infer_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.eval_contains_infer_cache.get(&type_id).map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::EvalContainsInfer)
     }
 
     fn set_eval_contains_infer_cache(&self, type_id: TypeId, result: bool) {
-        self.eval_contains_infer_cache.insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::EvalContainsInfer, result);
     }
 
     fn contains_file_relative_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_file_relative_cache.get(&type_id).map(|v| *v)
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsFileRelative)
     }
 
     fn set_contains_file_relative_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_file_relative_cache.insert(type_id, result);
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsFileRelative, result);
     }
 }
 

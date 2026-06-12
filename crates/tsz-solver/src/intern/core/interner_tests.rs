@@ -1,5 +1,5 @@
 use super::*;
-use crate::caches::db::TypeDatabase;
+use crate::caches::db::{TypeDatabase, TypePredicateCache};
 
 #[test]
 fn interned_type_limit_fallback_poison_returns_error() {
@@ -67,11 +67,9 @@ fn estimated_size_accounts_for_retained_predicate_caches() {
     let interner = TypeInterner::new();
     let before = interner.estimated_size_bytes();
 
-    interner.contains_this_cache.insert(TypeId::NUMBER, true);
-    interner.contains_infer_cache.insert(TypeId::STRING, false);
-    interner
-        .contains_type_query_cache
-        .insert(TypeId::BOOLEAN, true);
+    interner.set_contains_this_type_cache(TypeId::NUMBER, true);
+    interner.set_contains_infer_types_cache(TypeId::STRING, false);
+    interner.set_contains_type_query_cache(TypeId::BOOLEAN, true);
 
     assert!(
         interner.estimated_size_bytes() > before,

@@ -4,7 +4,8 @@
 //! interned types: literals, unions, intersections, objects, functions, etc.
 
 use super::interner::{
-    CachedUnionMember, TYPE_LIST_INLINE, TypeInterner, TypeListBuffer, TypeShard,
+    CachedUnionMember, PredicateCacheEntry, TYPE_LIST_INLINE, TypeInterner, TypeListBuffer,
+    TypeShard,
 };
 use crate::def::DefId;
 use crate::types::{
@@ -1720,30 +1721,10 @@ impl TypeInterner {
         // --- Auxiliary caches ---
         size += self.identity_comparable_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_this_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_infer_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_type_query_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_type_params_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_lazy_or_recursive_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_unresolved_application_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_resolver_dependent_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_conditional_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_param_or_infer_root_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_generic_params_root_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.eval_contains_infer_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.contains_file_relative_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.predicate_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<TypeId>()
+                + std::mem::size_of::<PredicateCacheEntry>());
         size += self
             .union_normalize_cache
             .iter()

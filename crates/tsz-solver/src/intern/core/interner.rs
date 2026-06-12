@@ -109,6 +109,62 @@ pub(crate) struct InternedTypeLimitContext {
     pub(crate) fallback_type: TypeId,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PredicateCacheKind {
+    ContainsThis = 0,
+    ContainsInfer = 1,
+    ContainsTypeQuery = 2,
+    ContainsTypeParams = 3,
+    ContainsLazyOrRecursive = 4,
+    ContainsUnresolvedApplication = 5,
+    ContainsResolverDependent = 6,
+    ContainsConditional = 7,
+    ContainsParamOrInferRoot = 8,
+    ContainsGenericParamsRoot = 9,
+    EvalContainsInfer = 10,
+    ContainsFileRelative = 11,
+}
+
+impl PredicateCacheKind {
+    const fn bit(self) -> u16 {
+        1u16 << (self as u8)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PredicateCacheEntry {
+    known: u16,
+    truthy: u16,
+}
+
+impl PredicateCacheEntry {
+    #[inline]
+    const fn get(self, kind: PredicateCacheKind) -> Option<bool> {
+        let bit = kind.bit();
+        if self.known & bit == 0 {
+            None
+        } else {
+            Some(self.truthy & bit != 0)
+        }
+    }
+
+    #[inline]
+    fn set(&mut self, kind: PredicateCacheKind, result: bool) {
+        let bit = kind.bit();
+        self.known |= bit;
+        if result {
+            self.truthy |= bit;
+        } else {
+            self.truthy &= !bit;
+        }
+    }
+
+    #[inline]
+    const fn has(self, kind: PredicateCacheKind) -> bool {
+        self.known & kind.bit() != 0
+    }
+}
+
 /// Type interning table with lock-free concurrent access.
 ///
 /// Uses sharded `DashMap` structures for all internal storage, enabling
@@ -135,54 +191,14 @@ pub struct TypeInterner {
     pub(super) applications: ConcurrentValueInterner<TypeApplication>,
     /// Cache for `is_identity_comparable_type` checks (memoized O(1) lookup after first computation)
     pub(super) identity_comparable_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Cache for `contains_this_type` checks. Result is stable per TypeId
-    /// within a single interner, so memoizing project-wide eliminates the
-    /// repeated recursive walk that showed up at ~5% of total CPU on
-    /// multi-file workloads.
-    pub(crate) contains_this_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Cache for `contains_infer_types_db` checks. Evaluation/cache filtering
-    /// and conditional subtype paths ask this repeatedly for the same
-    /// conditional/application shapes.
-    pub(crate) contains_infer_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Cache for `contains_type_query_db` checks. Results are immutable per
-    /// `TypeId` and shared across evaluator instances.
-    pub(crate) contains_type_query_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Per-`TypeId` caches for deep `contains_*` content walks (immutable per
-    /// `TypeId`; O(1) on repeat shapes). `contains_resolver_dependent_cache`
-    /// backs `is_substitution_dependent_type`, the `closed_eval_cache` gate.
-    pub(crate) contains_type_params_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    pub(crate) contains_lazy_or_recursive_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    pub(crate) contains_unresolved_application_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    pub(crate) contains_resolver_dependent_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Alias-opaque `contains Conditional` cache for the closed-eval gate.
-    /// The answer is immutable per `TypeId` and avoids repeated subtree walks
-    /// on dense recursive mapped/conditional/index-access expansions.
-    pub(crate) contains_conditional_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Per-`TypeId` cache for the narrow
-    /// `visitor_predicates::contains_type_parameters` walk
-    /// (`TypeParameter | Infer` predicate). Recursive conditional evaluation
-    /// and instantiation gates re-ask this for the same shared subtrees
-    /// constantly.
-    pub(crate) contains_param_or_infer_root_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Root-result cache for the depth-limited
-    /// `contains_generic_type_parameters_db` walk
-    /// (`TypeParameter | Infer | BoundParameter` predicate). Same purity
-    /// argument as `contains_param_or_infer_root_cache`; display-alias
-    /// bookkeeping re-asks this for the same application args after every
-    /// evaluation.
-    pub(crate) contains_generic_params_root_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Per-node cache for the evaluator's `type_contains_infer` walk.
-    /// That walk differs from `contains_infer_types_db` (it descends
-    /// `Application` bases and matches only structural `Infer` nodes), so it
-    /// gets its own slot. Entries are only written for fully-explored
-    /// (cycle-untainted) subtrees; the answer is immutable per `TypeId`.
-    pub(crate) eval_contains_infer_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Per-node cache for the `contains_file_relative_content_db` walk
-    /// (`UnresolvedTypeName | TypeQuery | UniqueSymbol | ModuleNamespace |
-    /// ThisType | Recursive` predicate). Gates which constraint-validation
-    /// proofs may be published to program-wide caches shared across file
-    /// checkers.
-    pub(crate) contains_file_relative_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Packed per-`TypeId` caches for immutable structural content predicates.
+    ///
+    /// Each bit records one predicate's known/truthy state. This preserves the
+    /// existing accessor surface while replacing the independent
+    /// `DashMap<TypeId, bool>` tables for content predicates with one shared
+    /// table. Predicate identity remains part of the key through the bit, so
+    /// distinct walks do not alias each other.
+    pub(crate) predicate_cache: DashMap<TypeId, PredicateCacheEntry, FxBuildHasher>,
     /// Result memo for `normalize_union`, keyed by the exact flattened
     /// pre-normalization member list. Normalization (semantic sort, dedup,
     /// absorption passes, subtype reduction) is deterministic in the input
@@ -363,25 +379,66 @@ impl TypeInterner {
     pub fn type_predicate_cache_statistics(&self) -> TypePredicateCacheStatistics {
         TypePredicateCacheStatistics {
             identity_comparable_cache_entries: self.identity_comparable_cache.len(),
-            contains_this_cache_entries: self.contains_this_cache.len(),
-            contains_infer_cache_entries: self.contains_infer_cache.len(),
-            contains_type_query_cache_entries: self.contains_type_query_cache.len(),
-            contains_type_params_cache_entries: self.contains_type_params_cache.len(),
-            contains_lazy_or_recursive_cache_entries: self.contains_lazy_or_recursive_cache.len(),
+            contains_this_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsThis),
+            contains_infer_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsInfer),
+            contains_type_query_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsTypeQuery),
+            contains_type_params_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsTypeParams),
+            contains_lazy_or_recursive_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsLazyOrRecursive),
             contains_unresolved_application_cache_entries: self
-                .contains_unresolved_application_cache
-                .len(),
-            contains_resolver_dependent_cache_entries: self.contains_resolver_dependent_cache.len(),
-            contains_conditional_cache_entries: self.contains_conditional_cache.len(),
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsUnresolvedApplication),
+            contains_resolver_dependent_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsResolverDependent),
+            contains_conditional_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsConditional),
             contains_param_or_infer_root_cache_entries: self
-                .contains_param_or_infer_root_cache
-                .len(),
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsParamOrInferRoot),
             contains_generic_params_root_cache_entries: self
-                .contains_generic_params_root_cache
-                .len(),
-            eval_contains_infer_cache_entries: self.eval_contains_infer_cache.len(),
-            contains_file_relative_cache_entries: self.contains_file_relative_cache.len(),
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsGenericParamsRoot),
+            eval_contains_infer_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::EvalContainsInfer),
+            contains_file_relative_cache_entries: self
+                .predicate_cache_entries_for(PredicateCacheKind::ContainsFileRelative),
         }
+    }
+
+    #[inline]
+    pub(crate) fn predicate_cache_get(
+        &self,
+        type_id: TypeId,
+        kind: PredicateCacheKind,
+    ) -> Option<bool> {
+        self.predicate_cache
+            .get(&type_id)
+            .and_then(|entry| entry.get(kind))
+    }
+
+    #[inline]
+    pub(crate) fn predicate_cache_set(
+        &self,
+        type_id: TypeId,
+        kind: PredicateCacheKind,
+        result: bool,
+    ) {
+        match self.predicate_cache.entry(type_id) {
+            Entry::Occupied(mut entry) => entry.get_mut().set(kind, result),
+            Entry::Vacant(entry) => {
+                let mut value = PredicateCacheEntry::default();
+                value.set(kind, result);
+                entry.insert(value);
+            }
+        }
+    }
+
+    fn predicate_cache_entries_for(&self, kind: PredicateCacheKind) -> usize {
+        self.predicate_cache
+            .iter()
+            .filter(|entry| entry.value().has(kind))
+            .count()
     }
 
     /// Create a new type interner with pre-registered intrinsics.
@@ -406,18 +463,7 @@ impl TypeInterner {
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_this_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_type_query_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_type_params_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_lazy_or_recursive_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_unresolved_application_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_resolver_dependent_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_conditional_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_param_or_infer_root_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_generic_params_root_cache: DashMap::with_hasher(FxBuildHasher),
-            eval_contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
-            contains_file_relative_cache: DashMap::with_hasher(FxBuildHasher),
+            predicate_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
