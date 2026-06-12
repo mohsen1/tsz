@@ -6,7 +6,7 @@ use crate::diagnostics::{Diagnostic, diagnostic_codes};
 
 #[derive(Clone, Default)]
 pub(crate) struct DiagnosticIndices {
-    pub(crate) emitted: FxHashSet<(u32, u32)>,
+    pub(crate) emitted: super::CowCache<FxHashSet<(u32, u32)>>,
     ts2353_2561_positions: BTreeSet<u32>,
     ts2322_msg_spans: FxHashMap<u64, Vec<(u32, u32)>>,
 }

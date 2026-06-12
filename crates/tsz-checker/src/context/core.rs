@@ -1557,7 +1557,7 @@ impl<'a> CheckerContext<'a> {
             // pure memo entries and are cheaply recomputed; real-symbol and
             // per-node keys are program-stable and kept.
             flow_analysis_cache: {
-                let mut cache = self.flow_analysis_cache.into_inner();
+                let mut cache = self.flow_analysis_cache.into_inner().into_inner();
                 cache.retain(|(_, symbol, _), _| {
                     crate::control_flow::is_session_stable_flow_cache_symbol(*symbol)
                 });

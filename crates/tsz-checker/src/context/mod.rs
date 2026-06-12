@@ -11,8 +11,8 @@ mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
 pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
-    AssignabilityEvalMemo, AssignabilityEvalStamp, NarrowableIdentifierCache, NodeTypeCache,
-    SharedConstraintProofCache, SymbolTypeCache, TypeNodeSurfaceCaches,
+    AssignabilityEvalMemo, AssignabilityEvalStamp, CowCache, NarrowableIdentifierCache,
+    NodeTypeCache, SharedConstraintProofCache, SymbolTypeCache, TypeNodeSurfaceCaches,
     TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
@@ -445,7 +445,7 @@ pub struct CheckerContext<'a> {
 
     /// Cached namespace object types for enums (for `typeof Enum` / `keyof typeof Enum`).
     /// Maps enum `SymbolId` → namespace object `TypeId` with member names as properties.
-    pub enum_namespace_types: FxHashMap<SymbolId, TypeId>,
+    pub enum_namespace_types: CowCache<FxHashMap<SymbolId, TypeId>>,
 
     /// Cached types for variable declarations (used for TS2403 checks).
     pub var_decl_types: FxHashMap<SymbolId, TypeId>,
@@ -461,17 +461,17 @@ pub struct CheckerContext<'a> {
     /// Keyed by (`namespace_name`, `member_name`) and stores both hits and misses.
     /// This avoids repeatedly rescanning all binders for hot qualified React lookups
     /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
-    pub namespace_member_resolution_cache: RefCell<NamespaceMemberResolutionCache>,
+    pub namespace_member_resolution_cache: RefCell<CowCache<NamespaceMemberResolutionCache>>,
 
     /// Per-checker cache for named exports resolved through `export=`.
     /// Misses are cached only for lookups that enter without alias-cycle state.
-    pub export_equals_named_cache: RefCell<ExportEqualsNamedCache>,
+    pub export_equals_named_cache: RefCell<CowCache<ExportEqualsNamedCache>>,
 
     /// Per-checker cache for nested namespace candidates found through namespace exports.
     /// Keyed by `namespace_name` and stores the candidate nested namespace symbols with
     /// their owning file index. This avoids rescanning every binder when resolving many
     /// different members from the same nested namespace.
-    pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
+    pub nested_namespace_candidates_cache: RefCell<CowCache<NestedNamespaceCandidatesCache>>,
 
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
@@ -490,7 +490,7 @@ pub struct CheckerContext<'a> {
     /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both
     /// hits and misses to avoid repeatedly walking the same symbol graph during
     /// declaration-file interface/type lowering.
-    pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
+    pub lowering_entity_name_resolution_cache: RefCell<CowCache<FxHashMap<String, Option<DefId>>>>,
 
     /// Per-checker cache for cross-file namespace export resolution.
     /// Keyed by the requesting file and module specifier because relative
@@ -528,13 +528,13 @@ pub struct CheckerContext<'a> {
     /// Names currently being resolved in `merge_lib_interface_heritage`.
     /// Used to break cycles in the `resolve_lib_type_by_name` ↔ `merge_lib_interface_heritage`
     /// mutual recursion (e.g., Array extends ReadonlyArray which extends Iterable ...).
-    pub lib_heritage_in_progress: FxHashSet<String>,
+    pub lib_heritage_in_progress: CowCache<FxHashSet<String>>,
 
     /// Cached types for nodes (dense flat-vec, O(1) lookup by node index).
     pub node_types: NodeTypeCache,
 
     /// Request-aware cache for audited non-empty request paths only.
-    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
+    pub request_node_types: CowCache<FxHashMap<(u32, RequestCacheKey), TypeId>>,
 
     /// Object-literal diagnostic recovery and active initializer state.
     pub object_literal_tracking: ObjectLiteralTracking,
@@ -573,7 +573,7 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for `resolve_jsdoc_typedef_type`.
     /// Prevents infinite recursion when a JSDoc `@typedef` references itself
     /// (e.g., `@typedef {... | Json[]} Json`).
-    pub jsdoc_typedef_resolving: RefCell<rustc_hash::FxHashSet<String>>,
+    pub jsdoc_typedef_resolving: RefCell<CowCache<rustc_hash::FxHashSet<String>>>,
 
     /// Recursion guard for *generic* JSDoc `@typedef` resolution, mapping the
     /// typedef name currently being expanded to the `DefId` of its lazy alias.
@@ -582,15 +582,14 @@ pub struct CheckerContext<'a> {
     /// `Application(Lazy(DefId), args)` instead of eagerly re-expanding the body,
     /// which would otherwise recurse until the stack overflows. The solver then
     /// resolves the alias coinductively, keyed by `(DefId, type args)`.
-    pub jsdoc_generic_typedef_resolving: RefCell<rustc_hash::FxHashMap<String, DefId>>,
+    pub jsdoc_generic_typedef_resolving: RefCell<CowCache<rustc_hash::FxHashMap<String, DefId>>>,
 
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     /// Prevents re-traversing the flow graph for the same symbol/flow combination.
     /// Fixes performance regression on binaryArithmeticControlFlowGraphNotTooLarge.ts
     /// where each operand in a + b + c was triggering fresh graph traversals.
-    pub flow_analysis_cache:
-        RefCell<FxHashMap<(tsz_binder::FlowNodeId, tsz_binder::SymbolId, TypeId), TypeId>>,
+    pub flow_analysis_cache: RefCell<CowCache<FlowAnalysisCacheMap>>,
 
     /// Interner that gives property/element reference *paths* (`a.b`) a
     /// session-stable synthetic cache symbol, so `flow_analysis_cache` is shared
@@ -639,7 +638,7 @@ pub struct CheckerContext<'a> {
     /// is skipped entirely, returning the declared type directly.
     /// This eliminates O(N) flow cache misses for N sequential accesses to the same
     /// identifier (e.g., 34 references to `options` in sequential statements).
-    pub symbol_flow_confirmed: RefCell<FxHashMap<(SymbolId, TypeId), tsz_binder::FlowNodeId>>,
+    pub symbol_flow_confirmed: RefCell<CowCache<SymbolFlowConfirmedMap>>,
 
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index. Used by flow narrowing to get
@@ -650,7 +649,7 @@ pub struct CheckerContext<'a> {
     /// When TS2454 fires, `check_flow_usage` returns the declared type (un-narrowed).
     /// The second narrowing pass in `get_type_of_node` must NOT re-narrow these nodes,
     /// otherwise the declared type gets overridden with the narrowed type.
-    pub daa_error_nodes: FxHashSet<u32>,
+    pub daa_error_nodes: CowCache<FxHashSet<u32>>,
 
     /// Deferred TS2454 diagnostics that survive speculative rollback.
     /// `check_flow_usage` can run inside speculative call-checker contexts
@@ -662,7 +661,7 @@ pub struct CheckerContext<'a> {
     /// Nodes where `check_flow_usage` already applied flow narrowing.
     /// The second narrowing pass in `get_type_of_node` must skip these to avoid
     /// double-narrowing (e.g., `any` → `string` → `string & Object`).
-    pub flow_narrowed_nodes: FxHashSet<u32>,
+    pub flow_narrowed_nodes: CowCache<FxHashSet<u32>>,
 
     /// `TypeIds` whose lazy/type-query refs have been walked and resolved.
     /// This avoids repeated deep traversals in `ensure_refs_resolved`.
@@ -694,7 +693,7 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for JS expando property reads.
     /// Prevents `NS.K = class { return new NS.K() }`-style self-reference loops
     /// from recursively re-evaluating the same expando property via the RHS.
-    pub expando_property_resolution_set: FxHashSet<String>,
+    pub expando_property_resolution_set: CowCache<FxHashSet<String>>,
 
     /// Maps `file_id` -> module specifier for import-qualified type display.
     /// When a type is defined in a module file, the formatter qualifies its name
@@ -895,14 +894,14 @@ pub struct CheckerContext<'a> {
     /// speculative context. Used so overload resolution can reject outer
     /// candidates whose callback bodies contain a failed nested overload even
     /// when the nested diagnostic is rolled back or suppressed for recovery.
-    pub no_overload_call_nodes: FxHashSet<u32>,
+    pub no_overload_call_nodes: CowCache<FxHashSet<u32>>,
     /// Callback return-type TS2322 diagnostics that were emitted during
     /// function body checking but may be pruned by arg collection filters.
     /// Stored separately so they can be restored after pruning and used to
     /// suppress the outer TS2345 argument mismatch.
     pub callback_return_type_errors: Vec<Diagnostic>,
     /// Set of modules that have already had TS2307 emitted (prevents duplicate emissions).
-    pub modules_with_ts2307_emitted: FxHashSet<String>,
+    pub modules_with_ts2307_emitted: CowCache<FxHashSet<String>>,
     /// Deferred truthiness diagnostics (TS2872/TS2873) that survive speculative
     /// rollbacks. These are purely syntactic facts emitted during binary
     /// expression evaluation but lost when call-resolution speculation rolls
@@ -963,7 +962,7 @@ pub struct CheckerContext<'a> {
     /// Deferred implicit-any candidates keyed by variable symbol.
     /// Bare implicit-any declarations stay capture-only, while evolving empty
     /// arrays also report on unsafe same-scope reads.
-    pub pending_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyVar>,
+    pub pending_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyVar>>,
     /// Closure/function-expression sites whose return expressions read a variable
     /// symbol currently being resolved. Used to centralize TS7022/TS7023/TS7024
     /// emission and suppress downstream relation noise from the circularity.
@@ -974,7 +973,7 @@ pub struct CheckerContext<'a> {
     pub non_closure_circular_return_tracking_depth: usize,
     /// Variables that have already had TS7034 emitted, keyed by the deferred
     /// implicit-any classification that triggered it.
-    pub reported_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyKind>,
+    pub reported_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyKind>>,
 
     /// Inheritance graph tracking class/interface relationships
     pub inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph,
@@ -988,11 +987,11 @@ pub struct CheckerContext<'a> {
     /// Prevents duplicate diagnostics when `get_type_of_function` is called multiple
     /// times for the same closure (e.g., once with contextual type during call
     /// resolution, then again without context during body checking).
-    pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
+    pub implicit_any_checked_closures: CowCache<FxHashSet<NodeIndex>>,
     /// Closures that have already been checked with a real contextual parameter type.
     /// Preserve this across cache clears so later context-free rechecks do not
     /// emit false TS7006/TS7031 diagnostics.
-    pub implicit_any_contextual_closures: FxHashSet<NodeIndex>,
+    pub implicit_any_contextual_closures: CowCache<FxHashSet<NodeIndex>>,
     /// Closures that were processed during type env building without contextual types.
     /// These closures deferred TS7006 checking (because `is_checking_statements` was false).
     /// After `is_checking_statements` is set to true, these closures need a re-check
@@ -1566,7 +1565,7 @@ pub struct CheckerContext<'a> {
     /// Track which (node, symbol) pairs have already emitted TS2454 errors
     /// to avoid duplicate errors when the same usage is checked multiple times.
     /// Key: (`node_position`, `symbol_id`)
-    pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
+    pub emitted_ts2454_errors: CowCache<FxHashSet<(u32, SymbolId)>>,
 
     /// Track which (`interface_type`, `property_name`, `is_number_index`) combinations
     /// have already emitted TS2411 errors for merged interface declarations.

@@ -5,6 +5,88 @@ use tsz_binder::SymbolId;
 use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
+/// O(1)-cloneable copy-on-write wrapper for checker cache collections.
+///
+/// Speculation snapshots (`CheckerContext::snapshot_full` /
+/// `snapshot_return_type`) and child-checker construction
+/// (`CheckerContext::with_parent_cache`) historically deep-cloned whole cache
+/// maps to get an isolated copy, paying O(cache-size) per snapshot/child even
+/// when nothing was subsequently mutated. `CowCache` makes the snapshot an
+/// `Arc` bump instead, following the `NodeArena`/`NodeTypeCache` idiom
+/// (PR #13033): `clone()` is O(1), and the first mutable access after a clone
+/// detaches the map via [`Arc::make_mut`], so the deep copy is paid at most
+/// once per diverging holder — and never for snapshots that are dropped or
+/// rolled back without intervening writes.
+///
+/// Isolation semantics are unchanged from a deep clone: every writer goes
+/// through `DerefMut` (`Arc::make_mut`), so mutations on one holder are never
+/// visible through another holder's `Arc`, regardless of write order.
+///
+/// Method-call reads (`get`, `contains_key`, `iter`, `len`, ...) auto-deref
+/// immutably and never copy; only `&mut self` collection methods (`insert`,
+/// `remove`, `retain`, `clear`, `extend`, `entry`) trigger the copy-on-write
+/// detach. Avoid calling mutating methods that are likely no-ops (e.g.
+/// `remove` of a probably-absent key) on a probably-shared holder.
+#[derive(Debug)]
+pub struct CowCache<T: Clone>(Arc<T>);
+
+impl<T: Clone> CowCache<T> {
+    #[inline]
+    pub fn new(value: T) -> Self {
+        Self(Arc::new(value))
+    }
+
+    /// Unwrap into the inner collection, cloning only when still shared.
+    #[inline]
+    pub fn into_inner(self) -> T {
+        Arc::try_unwrap(self.0).unwrap_or_else(|shared| (*shared).clone())
+    }
+
+    /// `true` when both wrappers share the same underlying allocation
+    /// (used by tests asserting snapshot/COW behavior).
+    #[inline]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<T: Clone> Clone for CowCache<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+
+    #[inline]
+    fn clone_from(&mut self, source: &Self) {
+        if !Arc::ptr_eq(&self.0, &source.0) {
+            self.0 = Arc::clone(&source.0);
+        }
+    }
+}
+
+impl<T: Clone + Default> Default for CowCache<T> {
+    #[inline]
+    fn default() -> Self {
+        Self(Arc::new(T::default()))
+    }
+}
+
+impl<T: Clone> std::ops::Deref for CowCache<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: Clone> std::ops::DerefMut for CowCache<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
 /// File-local synthetic type-node surface caches.
 #[derive(Debug, Default)]
 pub struct TypeNodeSurfaceCaches {
@@ -576,6 +658,73 @@ impl Default for SymbolTypeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cow_cache_clone_is_shared_until_first_write() {
+        let mut live: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        live.insert(1, 10);
+        let snapshot = live.clone();
+        assert!(live.ptr_eq(&snapshot));
+
+        // Reads through either holder never detach.
+        assert_eq!(live.get(&1), Some(&10));
+        assert_eq!(snapshot.get(&1), Some(&10));
+        assert!(live.ptr_eq(&snapshot));
+
+        // First write detaches the writer; the snapshot is isolated.
+        live.insert(2, 20);
+        assert!(!live.ptr_eq(&snapshot));
+        assert_eq!(live.get(&2), Some(&20));
+        assert_eq!(snapshot.get(&2), None);
+        assert_eq!(snapshot.get(&1), Some(&10));
+    }
+
+    #[test]
+    fn cow_cache_clone_from_restores_sharing_with_snapshot() {
+        let mut live: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        live.insert(1, 10);
+        let snapshot = live.clone();
+        live.insert(2, 20);
+
+        // Rollback: O(1) Arc swap back to the snapshot state.
+        live.clone_from(&snapshot);
+        assert!(live.ptr_eq(&snapshot));
+        assert_eq!(live.get(&2), None);
+        assert_eq!(live.get(&1), Some(&10));
+
+        // Rolling back twice is a no-op that keeps sharing.
+        live.clone_from(&snapshot);
+        assert!(live.ptr_eq(&snapshot));
+    }
+
+    #[test]
+    fn cow_cache_parent_writes_after_child_snapshot_stay_isolated() {
+        // `with_parent_cache` ordering: the child snapshots first, the parent
+        // keeps mutating afterwards. Parent writes must not leak into the
+        // child (and vice versa), exactly as with a deep clone.
+        let mut parent: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        parent.insert(1, 10);
+        let mut child = parent.clone();
+
+        parent.insert(2, 20);
+        assert_eq!(child.get(&2), None);
+
+        child.insert(3, 30);
+        assert_eq!(parent.get(&3), None);
+        assert_eq!(parent.get(&2), Some(&20));
+        assert_eq!(child.get(&1), Some(&10));
+    }
+
+    #[test]
+    fn cow_cache_into_inner_clones_only_when_shared() {
+        let mut live: CowCache<FxHashMap<u32, u32>> = CowCache::default();
+        live.insert(1, 10);
+        let snapshot = live.clone();
+        let inner = live.into_inner();
+        assert_eq!(inner.get(&1), Some(&10));
+        // The outstanding snapshot still sees its state.
+        assert_eq!(snapshot.get(&1), Some(&10));
+    }
 
     #[test]
     fn node_type_cache_absent_remove_does_not_detach_shared_snapshot() {

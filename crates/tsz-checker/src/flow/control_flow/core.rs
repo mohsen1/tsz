@@ -14,7 +14,7 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{ParamInfo, TupleElement, TypeId, TypePredicate};
 
-type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
+type FlowCache = crate::context::CowCache<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 /// Session-scoped interner mapping a structural reference *path*
@@ -717,10 +717,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set the flow analysis cache to avoid redundant graph traversals.
-    pub const fn with_flow_cache(
-        mut self,
-        cache: &'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>,
-    ) -> Self {
+    pub const fn with_flow_cache(mut self, cache: &'a RefCell<FlowCache>) -> Self {
         self.flow_cache = Some(cache);
         self
     }
