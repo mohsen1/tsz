@@ -1322,6 +1322,18 @@ impl BinderState {
         let name_atom = arena.get_identifier_at(declaration).and_then(|ident| {
             (ident.atom != tsz_common::interner::AstAtom::NONE).then_some(ident.atom)
         });
+        self.declare_symbol_with_atom(arena, name, name_atom, flags, declaration, is_exported)
+    }
+
+    pub(crate) fn declare_symbol_with_atom(
+        &mut self,
+        arena: &NodeArena,
+        name: &str,
+        name_atom: Option<tsz_common::interner::AstAtom>,
+        flags: u32,
+        declaration: NodeIndex,
+        is_exported: bool,
+    ) -> SymbolId {
         if let Some(existing_id) = self.current_scope.get(name) {
             // Check if the existing symbol is in the local symbol table.
             // If not (e.g., it's from a lib binder), we should create a new local symbol
