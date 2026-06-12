@@ -98,7 +98,12 @@ export interface ManeuverEnvelopeInput {
   readonly beacons: readonly ManeuverBeacon[];
   readonly windows: readonly ManeuverWindow[];
   readonly topology: ManeuverTopology;
-  readonly metadata: DeepReadonly<Record<string, unknown>>;
+  // NOTE: kept as a plain record on purpose. A `DeepReadonly<...>` alias
+  // application at this position exercises the still-open program-def
+  // generic-alias in-flight publication channel (issue #13255 residue),
+  // which would make this fixture's parallel-vs-sequential byte equality
+  // flaky for reasons unrelated to the lib-def channel it pins.
+  readonly metadata: Record<string, unknown>;
 }
 
 export interface ManeuverSummary {
