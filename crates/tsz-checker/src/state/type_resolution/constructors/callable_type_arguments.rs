@@ -1,9 +1,12 @@
 use crate::query_boundaries::common::{self as common_query, TypeSubstitution};
+use crate::query_boundaries::construct_signatures::{
+    call_only_callable_type, call_signature_from_function_shape, instantiated_callable_from_base,
+};
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeList;
 use tsz_solver::def::DefKind;
-use tsz_solver::{CallSignature, CallableShape, TypeId};
+use tsz_solver::{CallSignature, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Apply explicit type arguments to a callable type for function calls.
@@ -104,16 +107,12 @@ impl<'a> CheckerState<'a> {
                 self.evaluate_substituted_signatures(&mut instantiated_calls);
                 self.evaluate_substituted_signatures(&mut instantiated_constructs);
 
-                let new_shape = CallableShape {
-                    call_signatures: instantiated_calls,
-                    construct_signatures: instantiated_constructs,
-                    properties: shape.properties.clone(),
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol: None,
-                    is_abstract: false,
-                };
-                factory.callable(new_shape)
+                instantiated_callable_from_base(
+                    self.ctx.types,
+                    &shape,
+                    instantiated_calls,
+                    instantiated_constructs,
+                )
             }
             query::SignatureTypeKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
@@ -121,13 +120,13 @@ impl<'a> CheckerState<'a> {
                     return callee_type;
                 }
 
-                let sig = tsz_solver::CallSignature {
-                    type_params: shape.type_params.clone(),
-                    params: shape.params.clone(),
-                    this_type: None,
-                    return_type: shape.return_type,
-                    type_predicate: shape.type_predicate,
-                    is_method: shape.is_method,
+                let sig = {
+                    let mut sig =
+                        call_signature_from_function_shape(shape.as_ref().clone(), shape.is_method);
+                    // This path deliberately drops the `this` parameter: an
+                    // instantiation expression yields a bare call signature.
+                    sig.this_type = None;
+                    sig
                 };
                 let instantiated_call = if type_args.len() < shape.type_params.len() {
                     if self.all_remaining_defaults_resolved(&sig, &type_args) {
@@ -165,16 +164,7 @@ impl<'a> CheckerState<'a> {
                 // See `evaluate_substituted_signatures` for why.
                 self.evaluate_substituted_signatures(&mut instantiated_calls);
 
-                let new_shape = CallableShape {
-                    call_signatures: instantiated_calls,
-                    construct_signatures: vec![],
-                    properties: vec![],
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                };
-                factory.callable(new_shape)
+                call_only_callable_type(self.ctx.types, instantiated_calls)
             }
             _ => callee_type,
         }
