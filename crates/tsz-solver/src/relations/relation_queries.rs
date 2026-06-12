@@ -785,18 +785,30 @@ pub fn check_application_variance<R: TypeResolver>(
     } else {
         None
     };
+    let is_conditional_alias_base = |base| {
+        if query_db.is_some_and(|query_db| query_db.is_conditional_alias_base(base)) {
+            return true;
+        }
+        let Some(def_id) = lazy_def_id(db, base) else {
+            return false;
+        };
+        let Some(body) = resolver.get_def_raw_body(def_id, db) else {
+            return false;
+        };
+        matches!(db.lookup(body), Some(TypeData::Conditional(_)))
+    };
 
     // Conditional type aliases with concrete (non-type-parameter) arguments
     // must expand structurally so tsc's recursion-identity depth cap can apply.
     // The solver's internal fast path is allowed to conclude more cases for
     // subtype recursion, but this public query boundary historically fell
     // through for concrete conditional aliases.
-    if let Some(def_id) = def_id
-        && let Some(body) = resolver.get_def_raw_body(def_id, db)
-        && matches!(db.lookup(body), Some(TypeData::Conditional(_)))
+    if same_base_same_arity
+        && (is_conditional_alias_base(s_app.base) || is_conditional_alias_base(t_app.base))
         && !s_app
             .args
             .iter()
+            .chain(t_app.args.iter())
             .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
     {
         return None;
