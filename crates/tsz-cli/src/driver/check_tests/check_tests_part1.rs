@@ -705,8 +705,16 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
         "tiny batches stay sequential for deterministic cross-file behavior"
     );
     assert!(
-        should_use_sequential_fresh_checking(large_project, true, false, false),
-        "large wildcard barrels stay on the deterministic sequential fallback"
+        should_use_sequential_fresh_checking(10, false, true, true),
+        "the force-parallel experiment must not bypass tiny-batch policy"
+    );
+    assert!(
+        !should_use_sequential_fresh_checking(large_project, true, false, false),
+        "large wildcard barrels stay parallel-eligible after the #13244 gate lift"
+    );
+    assert!(
+        !should_use_sequential_fresh_checking(large_project, true, true, true),
+        "large wildcard-barrel detection is not a scheduling veto, even in forced DOM probes"
     );
     assert!(
         should_use_sequential_fresh_checking(large_project, false, true, false),
@@ -715,14 +723,6 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
     assert!(
         !should_use_sequential_fresh_checking(large_project, false, true, true),
         "the force-parallel experiment should bypass only the order-sensitive global-lib gate"
-    );
-    assert!(
-        should_use_sequential_fresh_checking(10, false, true, true),
-        "the force-parallel experiment must not bypass tiny-batch policy"
-    );
-    assert!(
-        should_use_sequential_fresh_checking(large_project, true, true, true),
-        "the force-parallel experiment must not bypass wildcard-barrel policy"
     );
 }
 

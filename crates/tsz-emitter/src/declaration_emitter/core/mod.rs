@@ -84,7 +84,7 @@ pub struct DeclarationEmitter<'a> {
     pub(super) root_file_paths: FxHashSet<String>,
     /// Global symbol-to-arena mapping from all program files, enabling cross-file
     /// symbol source path resolution for TS2883 portability checks.
-    pub(super) global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    pub(super) global_symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// In declaration bundles, duplicate global `var` declarations share the
     /// first emitted type instead of each file independently narrowing its own
     /// initializer.

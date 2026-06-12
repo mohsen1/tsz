@@ -334,8 +334,8 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// Decide whether fresh per-file checkers run sequentially instead of on the
 /// rayon pool.
 ///
-/// Tiny batches stay sequential to avoid pool overhead. Large wildcard
-/// barrels (PR #5881) and DOM/webworker-lib projects (PR #7312) stay
+/// Tiny batches stay sequential to avoid pool overhead. DOM/webworker-lib
+/// projects (PR #7312) stay
 /// sequential because correctness and termination on type-heavy projects
 /// currently depend on checking files in deterministic order with a
 /// progressively warmed `SharedQueryCache`.
@@ -343,8 +343,12 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` is a diagnosis-only escape hatch for
 /// the DOM/webworker gate-lift campaign: it bypasses only the order-sensitive
 /// global-lib gate so forced-parallel rows can be byte-compared against the
-/// sequential baseline without also changing tiny-batch or wildcard-barrel
-/// policy.
+/// sequential baseline without also changing tiny-batch policy.
+///
+/// Large wildcard barrels are still detected and tested separately, but they
+/// no longer force the entire project onto one core: the mutation-isolation
+/// and cold-start cache work that landed before #13244 made the whole-project
+/// fallback too blunt for large-ts-repo-sized projects.
 ///
 /// Investigated 2026-06 while attempting to lift the DOM gate for the
 /// ts-toolbelt row: the blocker is not (only) racing shared state. Checking
@@ -387,12 +391,11 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// mutation-isolation campaign makes shared def state schedule-independent.
 const fn should_use_sequential_fresh_checking(
     work_item_count: usize,
-    has_large_wildcard_barrel: bool,
+    _has_large_wildcard_barrel: bool,
     has_parallel_order_sensitive_global_lib: bool,
     force_parallel_order_sensitive_global_lib: bool,
 ) -> bool {
     work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
-        || has_large_wildcard_barrel
         || (has_parallel_order_sensitive_global_lib && !force_parallel_order_sensitive_global_lib)
 }
 
@@ -492,7 +495,7 @@ pub(super) fn collect_diagnostics(
     cache: Option<&mut CompilationCache>,
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
 ) -> CollectDiagnosticsResult {
-    collect_diagnostics_with_source_resolutions(input, cache, type_cache_output, None)
+    collect_diagnostics_with_source_resolutions(input, cache, type_cache_output, None, None)
 }
 
 pub(super) fn collect_diagnostics_with_source_resolutions(
@@ -502,6 +505,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     source_module_resolutions: Option<
         &FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
     >,
+    source_module_resolution_misses: Option<&FxHashSet<SourceModuleResolutionKey>>,
 ) -> CollectDiagnosticsResult {
     let &CollectDiagnosticsInput {
         program,
@@ -608,6 +612,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         options,
         base_dir,
         source_module_resolutions,
+        source_module_resolution_misses,
         program_file_index: &program_file_index,
         program_paths: &program_paths,
         package_redirects: &package_redirects,
@@ -1291,9 +1296,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
                 });
             // Experiment escape hatch for the DOM/webworker fresh-checking
-            // gate-lift campaign: force the rayon path past that one heuristic
-            // so livelock/determinism repros can be driven from the env
-            // without also bypassing tiny-batch or wildcard-barrel policy.
+            // gate-lift campaign: force the rayon path past that one
+            // heuristic so livelock/determinism repros can be driven from the
+            // env without also bypassing tiny-batch policy.
             let force_parallel_order_sensitive_global_lib =
                 std::env::var_os("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK").is_some();
             let use_sequential_checking = should_use_sequential_fresh_checking(
