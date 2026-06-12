@@ -880,6 +880,12 @@ impl SymbolArena {
         self.symbols.iter()
     }
 
+    /// Number of symbols held in the shared prefix.
+    #[must_use]
+    pub fn shared_prefix_len(&self) -> usize {
+        self.shared_prefix.len()
+    }
+
     /// Estimate the heap bytes owned by this arena: symbol slots, per-symbol
     /// heap (names, declaration lists, member tables), and the name index.
     ///
