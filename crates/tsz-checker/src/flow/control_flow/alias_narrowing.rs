@@ -23,8 +23,6 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         antecedent_id: FlowNodeId,
     ) -> bool {
-        use tsz_binder::flow_flags;
-
         // Get the alias declaration position
         let alias_pos = match self.binder.get_symbol(alias_sym_id) {
             Some(sym) if sym.value_declaration.is_some() => self
