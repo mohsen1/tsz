@@ -1314,7 +1314,13 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
             {
                 let key = (flow_node, sym_id, cached);
-                let flow_cached = self.ctx.flow_analysis_cache.borrow().get(&key).copied();
+                let flow_cached = self
+                    .ctx
+                    .flow_shared
+                    .flow_analysis_cache
+                    .borrow()
+                    .get(&key)
+                    .copied();
                 if let Some(flow_cached) = flow_cached {
                     // The flow cache stores raw analysis results; apply the
                     // same finalization as the full paths so a cache hit
@@ -1529,6 +1535,7 @@ impl<'a> CheckerState<'a> {
                     // Also populate the flow_analysis_cache for this exact key
                     // so subsequent cached-path lookups are instant.
                     self.ctx
+                        .flow_shared
                         .flow_analysis_cache
                         .borrow_mut()
                         .insert((flow_node, sym_id, result), result);

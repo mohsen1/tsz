@@ -23,10 +23,12 @@ impl<'a> FlowAnalyzer<'a> {
         // Reusable buffers to avoid heap allocations in hot path.
         // Use try_borrow_mut to handle re-entrancy safely (e.g. during bidirectional narrowing).
         // PERF: Only allocate local fallback buffers when shared buffers are unavailable.
-        let mut worklist_borrow = self.flow_worklist.and_then(|b| b.try_borrow_mut().ok());
-        let mut in_worklist_borrow = self.flow_in_worklist.and_then(|b| b.try_borrow_mut().ok());
-        let mut visited_borrow = self.flow_visited.and_then(|b| b.try_borrow_mut().ok());
-        let mut results_borrow = self.flow_results.and_then(|b| b.try_borrow_mut().ok());
+        let mut worklist_borrow = self.flow_worklist().and_then(|b| b.try_borrow_mut().ok());
+        let mut in_worklist_borrow = self
+            .flow_in_worklist()
+            .and_then(|b| b.try_borrow_mut().ok());
+        let mut visited_borrow = self.flow_visited().and_then(|b| b.try_borrow_mut().ok());
+        let mut results_borrow = self.flow_results().and_then(|b| b.try_borrow_mut().ok());
 
         let mut local_worklist;
         let mut local_in_worklist;
@@ -130,7 +132,7 @@ impl<'a> FlowAnalyzer<'a> {
                 && !skip_cache_for_explicit_unknown_switch
                 && !skip_cache_for_exhaustive_unknown_typeof
                 && (!initial_has_type_params || is_loop_label_node)
-                && let Some(cache) = self.flow_cache
+                && let Some(cache) = self.flow_cache()
             {
                 let key = (current_flow, cache_symbol, initial_type);
                 if let Some(&cached_type) = cache.borrow().get(&key) {
@@ -1050,7 +1052,7 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        if cacheable_walk && let Some(cache) = self.flow_cache {
+        if cacheable_walk && let Some(cache) = self.flow_cache() {
             let mut cache = cache.borrow_mut();
             for (key, value) in pending_cache_writes {
                 cache.insert(key, value);

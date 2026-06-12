@@ -153,11 +153,15 @@ impl<'a> CheckerContext<'a> {
         let nested_namespace_candidates_cache = self.nested_namespace_candidates_cache.borrow();
         let lowering_entity_name_resolution_cache =
             self.lowering_entity_name_resolution_cache.borrow();
-        let flow_analysis_cache = self.flow_analysis_cache.borrow();
-        let flow_switch_reference_cache = self.flow_switch_reference_cache.borrow();
-        let flow_numeric_atom_cache = self.flow_numeric_atom_cache.borrow();
-        let flow_reference_match_cache = self.flow_reference_match_cache.borrow();
-        let flow_alias_base_assignment_cache = self.symbol_flow_memo.alias_base_assignment.borrow();
+        let flow_analysis_cache = self.flow_shared.flow_analysis_cache.borrow();
+        let flow_switch_reference_cache = self.flow_shared.flow_switch_reference_cache.borrow();
+        let flow_numeric_atom_cache = self.flow_shared.flow_numeric_atom_cache.borrow();
+        let flow_reference_match_cache = self.flow_shared.flow_reference_match_cache.borrow();
+        let flow_alias_base_assignment_cache = self
+            .flow_shared
+            .symbol_flow_memo
+            .alias_base_assignment
+            .borrow();
         let class_chain_summary_cache = self.class_chain_summary_cache.borrow();
         let env_eval_cache = self.env_eval_cache.borrow();
         let class_symbol_to_decl_cache = self.class_symbol_to_decl_cache.borrow();

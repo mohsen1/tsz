@@ -202,29 +202,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(in crate::types_domain) fn flow_analyzer_for_property_reads(&self) -> FlowAnalyzer<'_> {
-        FlowAnalyzer::with_node_types(
-            self.ctx.arena,
-            self.ctx.binder,
-            self.ctx.types,
-            &self.ctx.node_types,
-        )
-        .with_flow_cache(&self.ctx.flow_analysis_cache)
-        .with_flow_reference_keys(&self.ctx.flow_reference_keys)
-        .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
-        .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
-        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_alias_base_assignment_cache(&self.ctx.symbol_flow_memo.alias_base_assignment)
-        .with_type_environment(&self.ctx.type_environment)
-        .with_checker_context(&self.ctx)
-        .with_narrowing_cache(&self.ctx.narrowing_cache)
-        .with_call_type_predicates(&self.ctx.call_type_predicates)
-        .with_flow_buffers(
-            &self.ctx.flow_worklist,
-            &self.ctx.flow_in_worklist,
-            &self.ctx.flow_visited,
-            &self.ctx.flow_results,
-        )
-        .with_destructured_bindings(&self.ctx.destructured_bindings)
+        FlowAnalyzer::from_ctx(&self.ctx)
     }
 
     pub(in crate::types_domain::property_access_helpers) fn expando_read_is_within_initializing_scope(

@@ -61,6 +61,7 @@ impl<'a> CheckerState<'a> {
         if let Some(key) = optional_property_chain_cache_key.as_ref()
             && let Some(&cached) = self
                 .ctx
+                .flow_shared
                 .narrowing_cache
                 .optional_property_chain_cache
                 .borrow()

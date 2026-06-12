@@ -385,15 +385,16 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) checker_context: Option<&'a crate::context::CheckerContext<'a>>,
     pub(crate) node_types: Option<&'a crate::context::NodeTypeCache>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
-    /// Optional cache for flow analysis results to avoid redundant graph traversals
-    pub(crate) flow_cache: Option<&'a RefCell<FlowCache>>,
     /// Optional `TypeEnvironment` for resolving Lazy types during narrowing
     pub(crate) type_environment: Option<&'a RefCell<TypeEnvironment>>,
+    /// Context-owned shared flow cache bundle. `Some` iff the analyzer was
+    /// wired from a `CheckerContext` (see `FlowAnalyzer::from_ctx`). The
+    /// bundle is wired whole, so partial cache wiring at a construction site
+    /// is unrepresentable; isolated analyzers (unit tests) run uncached.
+    pub(crate) shared: Option<&'a crate::context::FlowSharedCaches>,
     /// Cache for switch-reference relevance checks.
     /// Key: (`switch_expr_node`, `reference_node`) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
-    /// Optional shared switch-reference cache.
-    pub(crate) shared_switch_reference_cache: Option<&'a ReferenceMatchCache>,
     /// Cache for `is_matching_reference` results.
     /// Key: (`node_a`, `node_b`) -> whether references match (same symbol/property chain).
     /// This avoids O(N²) repeated comparisons during flow analysis with many variables.
@@ -401,52 +402,12 @@ pub struct FlowAnalyzer<'a> {
     /// Cache for `reference_symbol` lookups.
     /// Key: `node` -> resolved symbol (or `None` when not resolvable as a symbol).
     pub(crate) reference_symbol_cache: ReferenceSymbolCache,
-    /// Optional shared reference-match cache from the checker context.
-    /// When provided, this lets multiple `FlowAnalyzer` instances reuse reference
-    /// equivalence results within the same file check.
-    pub(crate) shared_reference_match_cache: Option<&'a ReferenceMatchCache>,
-    /// Optional shared alias-base-assignment cache.
-    /// Key: (`target_reference_node`, `alias_decl_pos`) -> whether any
-    /// containing-function assignment after the alias declaration targets the
-    /// reference or its base.
-    pub(crate) shared_alias_base_assignment_cache: Option<&'a AliasBaseAssignmentCache>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
-    /// Optional shared numeric atom cache.
-    pub(crate) shared_numeric_atom_cache: Option<&'a RefCell<FxHashMap<u64, Atom>>>,
-    /// Optional shared narrowing cache.
-    pub(crate) narrowing_cache: Option<&'a NarrowingCache>,
-    /// Instantiated type predicates from generic call resolutions.
-    /// Keyed by call expression node index.
-    pub(crate) call_type_predicates: Option<&'a CallPredicateMap>,
-    /// Reusable buffers for flow analysis.
-    pub(crate) flow_worklist: Option<&'a RefCell<VecDeque<(FlowNodeId, TypeId)>>>,
-    pub(crate) flow_in_worklist: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
-    pub(crate) flow_visited: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
-    pub(crate) flow_results: Option<&'a RefCell<FxHashMap<FlowNodeId, TypeId>>>,
-    /// Shared cache for last assignment position per symbol.
-    /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
-    pub(crate) shared_symbol_last_assignment_pos:
-        Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>>,
-    /// Shared cache for "symbol is reassigned inside a nested closure".
-    /// Key: `SymbolId` -> whether any reassignment lives in a nested closure.
-    /// The predicate is symbol-stable, so memoizing it avoids a per-reference
-    /// full flow-node scan in `is_effectively_const_for_narrowing`.
-    pub(crate) shared_symbol_nested_closure_assignment:
-        Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, bool>>>,
-    /// Shared cache for a symbol's representative identifier node.
-    /// Key: `SymbolId` -> preferred identifier node (usage over declaration), if any.
-    /// Memoizes the `node_symbols` scan in correlated destructured-binding narrowing.
-    pub(crate) shared_symbol_first_identifier_ref:
-        Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, Option<NodeIndex>>>>,
     pub(crate) destructured_bindings:
         Option<&'a FxHashMap<SymbolId, crate::context::DestructuredBindingInfo>>,
     pub(crate) concrete_this_type: Option<TypeId>,
-    /// Optional shared interner that gives property/element reference paths a
-    /// session-stable synthetic cache symbol, so the flow cache is shared across
-    /// occurrences of the same path instead of being keyed per syntactic node.
-    pub(crate) shared_flow_reference_keys: Option<&'a FlowReferenceKeyInterner>,
     /// Current nesting depth of re-entrant flow-type queries. Narrowing one
     /// reference can require the flow type of *another* reference (e.g. an
     /// aliased condition or optional-chain guard), so `get_flow_type` →
@@ -646,28 +607,14 @@ impl<'a> FlowAnalyzer<'a> {
             checker_context: None,
             node_types: None,
             flow_graph,
-            flow_cache: None,
             type_environment: None,
+            shared: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
-            shared_switch_reference_cache: None,
             reference_match_cache: RefCell::new(FxHashMap::default()),
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
-            shared_reference_match_cache: None,
-            shared_alias_base_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
-            shared_numeric_atom_cache: None,
-            narrowing_cache: None,
-            call_type_predicates: None,
-            flow_worklist: None,
-            flow_in_worklist: None,
-            flow_visited: None,
-            flow_results: None,
-            shared_symbol_last_assignment_pos: None,
-            shared_symbol_nested_closure_assignment: None,
-            shared_symbol_first_identifier_ref: None,
             destructured_bindings: None,
             concrete_this_type: None,
-            shared_flow_reference_keys: None,
             flow_query_depth: Cell::new(0),
         }
     }
@@ -686,134 +633,166 @@ impl<'a> FlowAnalyzer<'a> {
             checker_context: None,
             node_types: Some(node_types),
             flow_graph,
-            flow_cache: None,
             type_environment: None,
+            shared: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
-            shared_switch_reference_cache: None,
             reference_match_cache: RefCell::new(FxHashMap::default()),
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
-            shared_reference_match_cache: None,
-            shared_alias_base_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
-            shared_numeric_atom_cache: None,
-            narrowing_cache: None,
-            call_type_predicates: None,
-            flow_worklist: None,
-            flow_in_worklist: None,
-            flow_visited: None,
-            flow_results: None,
-            shared_symbol_last_assignment_pos: None,
-            shared_symbol_nested_closure_assignment: None,
-            shared_symbol_first_identifier_ref: None,
             destructured_bindings: None,
             concrete_this_type: None,
-            shared_flow_reference_keys: None,
             flow_query_depth: Cell::new(0),
         }
     }
 
-    /// Set a shared interner for property/element reference-path cache keys.
+    /// Wire the context-owned shared flow cache bundle.
+    ///
+    /// The bundle is all-or-nothing: every shared cache the analyzer can use
+    /// comes from this one struct, so a construction site cannot wire a
+    /// partial subset.
+    pub const fn with_shared_caches(
+        mut self,
+        shared: &'a crate::context::FlowSharedCaches,
+    ) -> Self {
+        self.shared = Some(shared);
+        self
+    }
+
+    /// Build a fully wired analyzer from a `CheckerContext`.
+    ///
+    /// This is the single production construction path: the context-owned
+    /// `FlowSharedCaches` bundle, the type environment, the checker context,
+    /// destructured-binding info, and the enclosing-class `this` type are all
+    /// wired here, so individual launch sites cannot drift.
+    pub fn from_ctx(ctx: &'a crate::context::CheckerContext<'a>) -> Self {
+        let analyzer = Self::with_node_types(ctx.arena, ctx.binder, ctx.types, &ctx.node_types)
+            .with_shared_caches(&ctx.flow_shared)
+            .with_type_environment(&ctx.type_environment)
+            .with_checker_context(ctx)
+            .with_destructured_bindings(&ctx.destructured_bindings);
+
+        if let Some(class_info) = &ctx.enclosing_class
+            && let Some(instance_this_type) = class_info.cached_instance_this_type
+        {
+            return analyzer.with_concrete_this_type(instance_this_type);
+        }
+
+        analyzer
+    }
+
+    /// Shared flow-analysis cache (graph-walk results), when wired.
+    #[inline]
+    pub(crate) fn flow_cache(&self) -> Option<&'a RefCell<FlowCache>> {
+        self.shared.map(|s| &s.flow_analysis_cache)
+    }
+
+    /// Shared reference-path key interner, when wired.
     ///
     /// Without it, references that do not resolve to a single symbol (e.g.
     /// `a.b`) fall back to a per-syntactic-node synthetic cache symbol, so each
     /// occurrence re-walks the whole flow graph (O(N²) over N occurrences). With
     /// it, every occurrence of the same path shares cache entries (O(N)).
-    pub const fn with_flow_reference_keys(
-        mut self,
-        interner: &'a FlowReferenceKeyInterner,
-    ) -> Self {
-        self.shared_flow_reference_keys = Some(interner);
-        self
+    #[inline]
+    pub(crate) fn shared_flow_reference_keys(&self) -> Option<&'a FlowReferenceKeyInterner> {
+        self.shared.map(|s| &s.flow_reference_keys)
     }
 
-    /// Set the flow analysis cache to avoid redundant graph traversals.
-    pub const fn with_flow_cache(mut self, cache: &'a RefCell<FlowCache>) -> Self {
-        self.flow_cache = Some(cache);
-        self
+    /// Shared switch-reference relevance cache, when wired.
+    #[inline]
+    pub(crate) fn shared_switch_reference_cache(&self) -> Option<&'a ReferenceMatchCache> {
+        self.shared.map(|s| &s.flow_switch_reference_cache)
     }
 
-    /// Set a shared reference-match cache used by `is_matching_reference`.
-    pub const fn with_reference_match_cache(mut self, cache: &'a ReferenceMatchCache) -> Self {
-        self.shared_reference_match_cache = Some(cache);
-        self
+    /// Shared `is_matching_reference` cache, when wired.
+    #[inline]
+    pub(crate) fn shared_reference_match_cache(&self) -> Option<&'a ReferenceMatchCache> {
+        self.shared.map(|s| &s.flow_reference_match_cache)
     }
 
-    /// Set a shared alias-base-assignment cache.
-    pub const fn with_alias_base_assignment_cache(
-        mut self,
-        cache: &'a RefCell<FxHashMap<(u32, u32), bool>>,
-    ) -> Self {
-        self.shared_alias_base_assignment_cache = Some(cache);
-        self
+    /// Shared alias-base-assignment memo, when wired.
+    /// Key: (`target_reference_node`, `alias_decl_pos`) -> whether any
+    /// containing-function assignment after the alias declaration targets the
+    /// reference or its base.
+    #[inline]
+    pub(crate) fn shared_alias_base_assignment_cache(
+        &self,
+    ) -> Option<&'a AliasBaseAssignmentCache> {
+        self.shared
+            .map(|s| &s.symbol_flow_memo.alias_base_assignment)
     }
 
-    /// Set a shared switch-reference cache.
-    pub const fn with_switch_reference_cache(mut self, cache: &'a ReferenceMatchCache) -> Self {
-        self.shared_switch_reference_cache = Some(cache);
-        self
+    /// Shared numeric atom cache, when wired.
+    #[inline]
+    pub(crate) fn shared_numeric_atom_cache(&self) -> Option<&'a RefCell<FxHashMap<u64, Atom>>> {
+        self.shared.map(|s| &s.flow_numeric_atom_cache)
     }
 
-    /// Set a shared narrowing cache.
-    pub const fn with_narrowing_cache(mut self, cache: &'a NarrowingCache) -> Self {
-        self.narrowing_cache = Some(cache);
-        self
+    /// Shared narrowing cache, when wired.
+    #[inline]
+    pub(crate) fn narrowing_cache(&self) -> Option<&'a NarrowingCache> {
+        self.shared.map(|s| &s.narrowing_cache)
     }
 
-    /// Set instantiated call type predicates from generic call resolutions.
-    pub const fn with_call_type_predicates(mut self, predicates: &'a CallPredicateMap) -> Self {
-        self.call_type_predicates = Some(predicates);
-        self
+    /// Instantiated call type predicates from generic call resolutions, when wired.
+    #[inline]
+    pub(crate) fn call_type_predicates(&self) -> Option<&'a CallPredicateMap> {
+        self.shared.map(|s| &s.call_type_predicates)
     }
 
-    /// Set a shared numeric atom cache.
-    pub const fn with_numeric_atom_cache(
-        mut self,
-        cache: &'a RefCell<FxHashMap<u64, Atom>>,
-    ) -> Self {
-        self.shared_numeric_atom_cache = Some(cache);
-        self
+    /// Reusable flow worklist buffer, when wired.
+    #[inline]
+    pub(crate) fn flow_worklist(&self) -> Option<&'a RefCell<VecDeque<(FlowNodeId, TypeId)>>> {
+        self.shared.map(|s| &s.flow_worklist)
     }
 
-    /// Set reusable flow buffers.
-    pub const fn with_flow_buffers(
-        mut self,
-        worklist: &'a RefCell<VecDeque<(FlowNodeId, TypeId)>>,
-        in_worklist: &'a RefCell<FxHashSet<FlowNodeId>>,
-        visited: &'a RefCell<FxHashSet<FlowNodeId>>,
-        results: &'a RefCell<FxHashMap<FlowNodeId, TypeId>>,
-    ) -> Self {
-        self.flow_worklist = Some(worklist);
-        self.flow_in_worklist = Some(in_worklist);
-        self.flow_visited = Some(visited);
-        self.flow_results = Some(results);
-        self
+    /// Reusable flow in-worklist set, when wired.
+    #[inline]
+    pub(crate) fn flow_in_worklist(&self) -> Option<&'a RefCell<FxHashSet<FlowNodeId>>> {
+        self.shared.map(|s| &s.flow_in_worklist)
     }
 
-    /// Set a shared last-assignment-position cache for "effectively const" detection.
-    pub const fn with_symbol_last_assignment_pos(
-        mut self,
-        cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>,
-    ) -> Self {
-        self.shared_symbol_last_assignment_pos = Some(cache);
-        self
+    /// Reusable flow visited set, when wired.
+    #[inline]
+    pub(crate) fn flow_visited(&self) -> Option<&'a RefCell<FxHashSet<FlowNodeId>>> {
+        self.shared.map(|s| &s.flow_visited)
     }
 
-    /// Set a shared nested-closure-assignment cache for "effectively const" detection.
-    pub const fn with_symbol_nested_closure_assignment(
-        mut self,
-        cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, bool>>,
-    ) -> Self {
-        self.shared_symbol_nested_closure_assignment = Some(cache);
-        self
+    /// Reusable flow results map, when wired.
+    #[inline]
+    pub(crate) fn flow_results(&self) -> Option<&'a RefCell<FxHashMap<FlowNodeId, TypeId>>> {
+        self.shared.map(|s| &s.flow_results)
     }
 
-    /// Set a shared symbol-identifier-node cache for destructured-binding narrowing.
-    pub const fn with_symbol_first_identifier_ref(
-        mut self,
-        cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, Option<NodeIndex>>>,
-    ) -> Self {
-        self.shared_symbol_first_identifier_ref = Some(cache);
-        self
+    /// Shared last-assignment-position memo for "effectively const" detection.
+    /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
+    #[inline]
+    pub(crate) fn shared_symbol_last_assignment_pos(
+        &self,
+    ) -> Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>> {
+        self.shared.map(|s| &s.symbol_flow_memo.last_assignment_pos)
+    }
+
+    /// Shared nested-closure-assignment memo for "effectively const" detection.
+    /// Key: `SymbolId` -> whether any reassignment lives in a nested closure.
+    /// The predicate is symbol-stable, so memoizing it avoids a per-reference
+    /// full flow-node scan in `is_effectively_const_for_narrowing`.
+    #[inline]
+    pub(crate) fn shared_symbol_nested_closure_assignment(
+        &self,
+    ) -> Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, bool>>> {
+        self.shared
+            .map(|s| &s.symbol_flow_memo.nested_closure_assignment)
+    }
+
+    /// Shared representative-identifier memo for destructured-binding narrowing.
+    /// Key: `SymbolId` -> preferred identifier node (usage over declaration), if any.
+    /// Memoizes the `node_symbols` scan in correlated destructured-binding narrowing.
+    #[inline]
+    pub(crate) fn shared_symbol_first_identifier_ref(
+        &self,
+    ) -> Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, Option<NodeIndex>>>> {
+        self.shared
+            .map(|s| &s.symbol_flow_memo.first_identifier_ref)
     }
 
     pub const fn with_destructured_bindings(
@@ -832,7 +811,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Check if a type contains type parameters, using the shared narrowing cache
     /// when available to avoid per-call `FxHashMap` allocation.
     fn contains_type_parameters_cached(&self, type_id: TypeId) -> bool {
-        if let Some(cache) = self.narrowing_cache {
+        if let Some(cache) = self.narrowing_cache() {
             let cached = cache
                 .contains_type_parameters_cache
                 .borrow()
@@ -855,7 +834,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Create a `NarrowingContext`, sharing the pre-allocated cache when available.
     /// This avoids 7 `FxHashMap` allocations per narrowing operation on the hot path.
     pub(super) fn make_narrowing_context(&self) -> NarrowingContext<'_> {
-        if let Some(cache) = self.narrowing_cache {
+        if let Some(cache) = self.narrowing_cache() {
             NarrowingContext::with_cache(self.interner, cache)
         } else {
             NarrowingContext::new(self.interner)
@@ -935,7 +914,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let key = (switch_expr.0, reference.0);
-        if let Some(shared) = self.shared_switch_reference_cache
+        if let Some(shared) = self.shared_switch_reference_cache()
             && let Some(&cached) = shared.borrow().get(&key)
         {
             return cached;
@@ -958,7 +937,7 @@ impl<'a> FlowAnalyzer<'a> {
             // → discriminant_comparison → aliased_discriminant once we allow entry.
             || self.is_aliased_discriminant_switch_expr(switch_expr, reference);
 
-        if let Some(shared) = self.shared_switch_reference_cache {
+        if let Some(shared) = self.shared_switch_reference_cache() {
             shared.borrow_mut().insert(key, affects);
         }
         self.switch_reference_cache
@@ -1048,7 +1027,7 @@ impl<'a> FlowAnalyzer<'a> {
             // We inject under TWO keys: one with initial_type (for the outer check_flow's
             // cache lookup) and one with current_type (for the inner back-edge traversal
             // which uses current_type as its initial_type).
-            if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {
+            if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache()) {
                 let key = (loop_flow_id, sym_id, initial_type);
                 cache.borrow_mut().insert(key, current_type);
                 if current_type != initial_type {
@@ -1079,7 +1058,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // is a pessimistic guess. Once the fixed point is reached, we must update
                 // the cache so subsequent queries with initial_type=entry_type get the
                 // correct converged result, not the stale intermediate.
-                if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache)
+                if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache())
                     && entry_type != current_type
                 {
                     let entry_key = (loop_flow_id, sym_id, entry_type);
@@ -1095,7 +1074,7 @@ impl<'a> FlowAnalyzer<'a> {
         let widened = query::union_types(self.interner, vec![entry_type, initial_type]);
 
         // Update cache with final widened result
-        if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {
+        if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache()) {
             let key = (loop_flow_id, sym_id, initial_type);
             cache.borrow_mut().insert(key, widened);
         }
@@ -1305,7 +1284,7 @@ impl<'a> FlowAnalyzer<'a> {
             return pre_type;
         }
         if self
-            .call_type_predicates
+            .call_type_predicates()
             .is_some_and(|calls| calls.is_invalid_assertion_call(flow.node.0))
         {
             return pre_type;
@@ -1348,7 +1327,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Cache holds solver-instantiated predicates (generic T → concrete type arg).
         // Raw callee type carries the uninstantiated signature; cache must win when present.
         let (assertion_predicate, assertion_params) = if let Some(predicates) =
-            self.call_type_predicates
+            self.call_type_predicates()
             && let Some((pred, params)) = predicates.get(&flow.node.0)
             && pred.asserts
         {

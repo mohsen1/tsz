@@ -47,6 +47,7 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(idx.0, Some(sym_id));
         self.ctx
+            .flow_shared
             .flow_reference_match_cache
             .borrow_mut()
             .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -62,6 +63,7 @@ impl<'a> CheckerState<'a> {
 
         let last_assign_pos = if let Some(&pos) = self
             .ctx
+            .flow_shared
             .symbol_flow_memo
             .last_assignment_pos
             .borrow()
@@ -75,6 +77,7 @@ impl<'a> CheckerState<'a> {
                 .borrow_mut()
                 .insert(idx.0, Some(sym_id));
             self.ctx
+                .flow_shared
                 .flow_reference_match_cache
                 .borrow_mut()
                 .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -107,6 +110,7 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx
+                .flow_shared
                 .symbol_flow_memo
                 .last_assignment_pos
                 .borrow_mut()
@@ -394,6 +398,7 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(idx.0, Some(sym_id));
         self.ctx
+            .flow_shared
             .flow_reference_match_cache
             .borrow_mut()
             .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -478,6 +483,7 @@ impl<'a> CheckerState<'a> {
         // turning N references into an O(N · flow_nodes) cost.
         if let Some(&cached) = self
             .ctx
+            .flow_shared
             .symbol_flow_memo
             .has_non_initializer_assignment
             .borrow()
@@ -489,6 +495,7 @@ impl<'a> CheckerState<'a> {
         let result = self.compute_has_non_initializer_assignment_for_reference(idx, sym_id);
 
         self.ctx
+            .flow_shared
             .symbol_flow_memo
             .has_non_initializer_assignment
             .borrow_mut()
@@ -508,6 +515,7 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(idx.0, Some(sym_id));
         self.ctx
+            .flow_shared
             .flow_reference_match_cache
             .borrow_mut()
             .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -592,39 +600,6 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn flow_analyzer(&self) -> FlowAnalyzer<'_> {
-        let analyzer = FlowAnalyzer::with_node_types(
-            self.ctx.arena,
-            self.ctx.binder,
-            self.ctx.types,
-            &self.ctx.node_types,
-        )
-        .with_flow_cache(&self.ctx.flow_analysis_cache)
-        .with_flow_reference_keys(&self.ctx.flow_reference_keys)
-        .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
-        .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
-        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_alias_base_assignment_cache(&self.ctx.symbol_flow_memo.alias_base_assignment)
-        .with_type_environment(&self.ctx.type_environment)
-        .with_checker_context(&self.ctx)
-        .with_narrowing_cache(&self.ctx.narrowing_cache)
-        .with_call_type_predicates(&self.ctx.call_type_predicates)
-        .with_flow_buffers(
-            &self.ctx.flow_worklist,
-            &self.ctx.flow_in_worklist,
-            &self.ctx.flow_visited,
-            &self.ctx.flow_results,
-        )
-        .with_symbol_last_assignment_pos(&self.ctx.symbol_flow_memo.last_assignment_pos)
-        .with_symbol_nested_closure_assignment(&self.ctx.symbol_flow_memo.nested_closure_assignment)
-        .with_symbol_first_identifier_ref(&self.ctx.symbol_flow_memo.first_identifier_ref)
-        .with_destructured_bindings(&self.ctx.destructured_bindings);
-
-        if let Some(class_info) = &self.ctx.enclosing_class
-            && let Some(instance_this_type) = class_info.cached_instance_this_type
-        {
-            return analyzer.with_concrete_this_type(instance_this_type);
-        }
-
-        analyzer
+        FlowAnalyzer::from_ctx(&self.ctx)
     }
 }

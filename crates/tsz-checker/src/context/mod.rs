@@ -453,6 +453,89 @@ impl SymbolFlowMemoCaches {
     }
 }
 
+/// File-session shared caches wired as one bundle into every context-backed
+/// `FlowAnalyzer`.
+///
+/// Mirrors `SymbolFlowMemoCaches`: `CheckerContext` owns one non-optional
+/// bundle and `FlowAnalyzer::from_ctx` receives it whole, so partial cache
+/// wiring at a `FlowAnalyzer` construction site is unrepresentable.
+#[derive(Debug)]
+pub struct FlowSharedCaches {
+    /// Cache for control flow analysis results.
+    /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
+    /// Prevents re-traversing the flow graph for the same symbol/flow combination.
+    /// Fixes performance regression on binaryArithmeticControlFlowGraphNotTooLarge.ts
+    /// where each operand in a + b + c was triggering fresh graph traversals.
+    pub flow_analysis_cache: RefCell<CowCache<FlowAnalysisCacheMap>>,
+
+    /// Interner that gives property/element reference *paths* (`a.b`) a
+    /// session-stable synthetic cache symbol, so `flow_analysis_cache` is shared
+    /// across occurrences of the same path instead of keyed per syntactic node
+    /// (avoids O(N²) re-walks of the flow graph). Append-only and rebuildable;
+    /// its structural-keyed cache entries are dropped on incremental save.
+    pub flow_reference_keys: RefCell<FxHashMap<Vec<u32>, u32>>,
+
+    /// Reusable buffers for flow analysis to avoid frequent heap allocations in `check_flow`.
+    pub flow_worklist: RefCell<VecDeque<(tsz_binder::FlowNodeId, TypeId)>>,
+    pub flow_in_worklist: RefCell<FxHashSet<tsz_binder::FlowNodeId>>,
+    pub flow_visited: RefCell<FxHashSet<tsz_binder::FlowNodeId>>,
+    pub flow_results: RefCell<FxHashMap<tsz_binder::FlowNodeId, TypeId>>,
+
+    /// Shared cache for narrowing operations (type resolution, property lookup).
+    /// Reused across flow analysis passes to prevent O(N^2) behavior in CFA chains.
+    pub narrowing_cache: tsz_solver::narrowing::NarrowingCache,
+
+    /// Cache for switch-reference relevance checks.
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+
+    /// Cache numeric atom conversions during flow analysis.
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
+
+    /// Shared reference-equivalence cache used by flow narrowing.
+    /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+
+    /// Symbol-stable flow memo tables reused across `FlowAnalyzer` instances
+    /// within a single file check.
+    pub symbol_flow_memo: SymbolFlowMemoCaches,
+
+    /// Instantiated type predicates from generic call resolutions.
+    /// Keyed by call expression node index. Used by flow narrowing to get
+    /// predicates with inferred type arguments applied (e.g., `T` -> `string`).
+    pub call_type_predicates: crate::control_flow::CallPredicateMap,
+}
+
+impl FlowSharedCaches {
+    pub fn new() -> Self {
+        Self {
+            flow_analysis_cache: RefCell::new(CowCache::new(FxHashMap::with_capacity_and_hasher(
+                128,
+                Default::default(),
+            ))),
+            flow_reference_keys: RefCell::new(FxHashMap::default()),
+            flow_worklist: RefCell::new(VecDeque::with_capacity(32)),
+            flow_in_worklist: RefCell::new(FxHashSet::default()),
+            flow_visited: RefCell::new(FxHashSet::default()),
+            flow_results: RefCell::new(FxHashMap::with_capacity_and_hasher(64, Default::default())),
+            narrowing_cache: tsz_solver::narrowing::NarrowingCache::new(),
+            flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
+            flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
+            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
+            symbol_flow_memo: SymbolFlowMemoCaches::default(),
+            call_type_predicates: crate::control_flow::CallPredicateMap::default(),
+        }
+    }
+}
+
+impl Default for FlowSharedCaches {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Shared state for type checking.
 pub struct CheckerContext<'a> {
     /// The `NodeArena` containing the AST.
@@ -665,52 +748,15 @@ pub struct CheckerContext<'a> {
     /// resolves the alias coinductively, keyed by `(DefId, type args)`.
     pub jsdoc_generic_typedef_resolving: RefCell<CowCache<rustc_hash::FxHashMap<String, DefId>>>,
 
-    /// Cache for control flow analysis results.
-    /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
-    /// Prevents re-traversing the flow graph for the same symbol/flow combination.
-    /// Fixes performance regression on binaryArithmeticControlFlowGraphNotTooLarge.ts
-    /// where each operand in a + b + c was triggering fresh graph traversals.
-    pub flow_analysis_cache: RefCell<CowCache<FlowAnalysisCacheMap>>,
-
-    /// Interner that gives property/element reference *paths* (`a.b`) a
-    /// session-stable synthetic cache symbol, so `flow_analysis_cache` is shared
-    /// across occurrences of the same path instead of keyed per syntactic node
-    /// (avoids O(N²) re-walks of the flow graph). Append-only and rebuildable;
-    /// its structural-keyed cache entries are dropped on incremental save.
-    pub flow_reference_keys: RefCell<FxHashMap<Vec<u32>, u32>>,
-
-    /// Reusable buffers for flow analysis to avoid frequent heap allocations in `check_flow`.
-    pub flow_worklist: RefCell<VecDeque<(tsz_binder::FlowNodeId, TypeId)>>,
-    pub flow_in_worklist: RefCell<FxHashSet<tsz_binder::FlowNodeId>>,
-    pub flow_visited: RefCell<FxHashSet<tsz_binder::FlowNodeId>>,
-    pub flow_results: RefCell<FxHashMap<tsz_binder::FlowNodeId, TypeId>>,
-
-    /// Shared cache for narrowing operations (type resolution, property lookup).
-    /// Reused across flow analysis passes to prevent O(N^2) behavior in CFA chains.
-    pub narrowing_cache: tsz_solver::narrowing::NarrowingCache,
+    /// File-session shared flow caches, wired as one bundle into every
+    /// context-backed `FlowAnalyzer` via `FlowAnalyzer::from_ctx`.
+    pub flow_shared: FlowSharedCaches,
 
     /// Cache for `is_narrowable_identifier` results.
     /// This is pure (depends only on AST structure), so it never needs invalidation.
     /// Avoids 4-5 binder/arena lookups per call on the hot cached-node path.
     /// Uses a dense flat array (1 byte per node) instead of `FxHashMap`.
     pub narrowable_identifier_cache: RefCell<NarrowableIdentifierCache>,
-
-    /// Cache for switch-reference relevance checks.
-    /// Reused across `FlowAnalyzer` instances within a single file check.
-    pub flow_switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
-
-    /// Cache numeric atom conversions during flow analysis.
-    /// Reused across `FlowAnalyzer` instances within a single file check.
-    pub flow_numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
-
-    /// Shared reference-equivalence cache used by flow narrowing.
-    /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
-    /// Reused across `FlowAnalyzer` instances within a single file check.
-    pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
-
-    /// Symbol-stable flow memo tables reused across `FlowAnalyzer` instances
-    /// within a single file check.
-    pub symbol_flow_memo: SymbolFlowMemoCaches,
 
     /// Stable flow cache: maps `(SymbolId, DeclaredTypeId)` to the last `FlowNodeId`
     /// where flow analysis confirmed no narrowing (returned the declared type unchanged).
@@ -720,11 +766,6 @@ pub struct CheckerContext<'a> {
     /// This eliminates O(N) flow cache misses for N sequential accesses to the same
     /// identifier (e.g., 34 references to `options` in sequential statements).
     pub symbol_flow_confirmed: RefCell<CowCache<SymbolFlowConfirmedMap>>,
-
-    /// Instantiated type predicates from generic call resolutions.
-    /// Keyed by call expression node index. Used by flow narrowing to get
-    /// predicates with inferred type arguments applied (e.g., `T` -> `string`).
-    pub call_type_predicates: crate::control_flow::CallPredicateMap,
 
     /// Nodes where TS2454 (used before assigned) was emitted.
     /// When TS2454 fires, `check_flow_usage` returns the declared type (un-narrowed).

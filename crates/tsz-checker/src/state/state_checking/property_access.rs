@@ -692,6 +692,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(cached) = self
             .ctx
+            .flow_shared
             .narrowing_cache
             .property_cache
             .borrow()
@@ -768,12 +769,17 @@ impl<'a> CheckerState<'a> {
                 prop_name,
             )
         {
-            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
-                cache_key,
-                Some(tsz_solver::narrowing::CachedPropertyType::explicit(
-                    property_type,
-                )),
-            );
+            self.ctx
+                .flow_shared
+                .narrowing_cache
+                .property_cache
+                .borrow_mut()
+                .insert(
+                    cache_key,
+                    Some(tsz_solver::narrowing::CachedPropertyType::explicit(
+                        property_type,
+                    )),
+                );
             return Some(
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id: property_type,
@@ -797,6 +803,7 @@ impl<'a> CheckerState<'a> {
         {
             if !names.contains(&prop_atom) {
                 self.ctx
+                    .flow_shared
                     .narrowing_cache
                     .property_cache
                     .borrow_mut()
@@ -827,6 +834,7 @@ impl<'a> CheckerState<'a> {
             }
             if !keys.is_empty() && matching_source_keys.is_empty() {
                 self.ctx
+                    .flow_shared
                     .narrowing_cache
                     .property_cache
                     .borrow_mut()
@@ -850,6 +858,7 @@ impl<'a> CheckerState<'a> {
                         // the template for the requested property.
                     } else {
                         self.ctx
+                            .flow_shared
                             .narrowing_cache
                             .property_cache
                             .borrow_mut()
@@ -863,6 +872,7 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if !self.mapped_constraint_accepts_property_name(constraint, prop_name) {
                     self.ctx
+                        .flow_shared
                         .narrowing_cache
                         .property_cache
                         .borrow_mut()
@@ -906,12 +916,17 @@ impl<'a> CheckerState<'a> {
             _ => self.ctx.types.factory().union(property_types),
         };
 
-        self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
-            cache_key,
-            Some(tsz_solver::narrowing::CachedPropertyType::explicit(
-                property_type,
-            )),
-        );
+        self.ctx
+            .flow_shared
+            .narrowing_cache
+            .property_cache
+            .borrow_mut()
+            .insert(
+                cache_key,
+                Some(tsz_solver::narrowing::CachedPropertyType::explicit(
+                    property_type,
+                )),
+            );
 
         Some(
             tsz_solver::operations::property::PropertyAccessResult::Success {
