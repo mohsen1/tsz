@@ -6,6 +6,7 @@
 //! circular resolution, batched diagnostics, Node16 exports failures).
 
 use super::super::*;
+use tsz_common::diagnostics::{Diagnostic, DiagnosticCategory};
 
 #[test]
 fn test_ts2307_error_code_constant() {
@@ -14,7 +15,7 @@ fn test_ts2307_error_code_constant() {
 
 #[test]
 fn test_emit_resolution_error_for_not_found() {
-    let mut diagnostics = DiagnosticBag::new();
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let resolver = ModuleResolver::node_resolver();
 
     let failure = ResolutionFailure::NotFound {
@@ -26,16 +27,17 @@ fn test_emit_resolution_error_for_not_found() {
     resolver.emit_resolution_error(&mut diagnostics, &failure);
 
     assert_eq!(diagnostics.len(), 1);
-    assert!(diagnostics.has_errors());
-    let errors: Vec<_> = diagnostics.errors().collect();
-    assert_eq!(errors[0].code, CANNOT_FIND_MODULE);
-    assert!(errors[0].message.contains("Cannot find module"));
-    assert!(errors[0].message.contains("./missing-module"));
+    assert_eq!(diagnostics[0].category, DiagnosticCategory::Error);
+    assert_eq!(diagnostics[0].code, CANNOT_FIND_MODULE);
+    assert_eq!(
+        diagnostics[0].message_text,
+        "Cannot find module './missing-module' or its corresponding type declarations."
+    );
 }
 
 #[test]
 fn test_emit_resolution_error_all_variants_emit_ts2307() {
-    let mut diagnostics = DiagnosticBag::new();
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let resolver = ModuleResolver::node_resolver();
 
     // All resolution failure variants should emit TS2307 diagnostics
@@ -71,8 +73,9 @@ fn test_emit_resolution_error_all_variants_emit_ts2307() {
     resolver.emit_resolution_error(&mut diagnostics, &failure);
     assert_eq!(diagnostics.len(), 4);
 
-    // Verify all have TS2307 code
-    for diag in diagnostics.errors() {
+    // Verify all are errors with the TS2307 code
+    for diag in &diagnostics {
+        assert_eq!(diag.category, DiagnosticCategory::Error);
         assert_eq!(diag.code, CANNOT_FIND_MODULE);
     }
 }
@@ -87,10 +90,13 @@ fn test_relative_import_failure_produces_ts2307() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert_eq!(diagnostic.file_name, "/src/App.tsx");
-    assert!(diagnostic.message.contains("./components/Button"));
-    assert_eq!(diagnostic.span.start, 20);
-    assert_eq!(diagnostic.span.end, 45);
+    assert_eq!(diagnostic.file, "/src/App.tsx");
+    assert_eq!(
+        diagnostic.message_text,
+        "Cannot find module './components/Button' or its corresponding type declarations."
+    );
+    assert_eq!(diagnostic.span().start, 20);
+    assert_eq!(diagnostic.span().end, 45);
 }
 
 #[test]
@@ -103,7 +109,10 @@ fn test_bare_specifier_failure_produces_ts2307() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert!(diagnostic.message.contains("nonexistent-package"));
+    assert_eq!(
+        diagnostic.message_text,
+        "Cannot find module 'nonexistent-package' or its corresponding type declarations."
+    );
 }
 
 #[test]
@@ -116,7 +125,7 @@ fn test_scoped_package_failure_produces_ts2307() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert!(diagnostic.message.contains("@org/missing-lib"));
+    assert!(diagnostic.message_text.contains("@org/missing-lib"));
 }
 
 #[test]
@@ -130,7 +139,7 @@ fn test_hash_import_failure_produces_ts2307() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert!(diagnostic.message.contains("#utils/helpers"));
+    assert!(diagnostic.message_text.contains("#utils/helpers"));
 }
 
 #[test]
@@ -143,9 +152,9 @@ fn test_path_mapping_failure_produces_ts2307() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert_eq!(diagnostic.file_name, "/project/src/index.ts");
-    assert!(diagnostic.message.contains("Cannot find module"));
-    assert!(diagnostic.message.contains("path mapping"));
+    assert_eq!(diagnostic.file, "/project/src/index.ts");
+    assert!(diagnostic.message_text.contains("Cannot find module"));
+    assert!(diagnostic.message_text.contains("path mapping"));
 }
 
 #[test]
@@ -158,8 +167,8 @@ fn test_package_json_error_produces_ts2307() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert_eq!(diagnostic.file_name, "/project/src/app.ts");
-    assert!(diagnostic.message.contains("Cannot find module"));
+    assert_eq!(diagnostic.file, "/project/src/app.ts");
+    assert!(diagnostic.message_text.contains("Cannot find module"));
 }
 
 #[test]
@@ -172,14 +181,14 @@ fn test_circular_resolution_produces_ts2307() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert_eq!(diagnostic.file_name, "/project/src/a.ts");
-    assert!(diagnostic.message.contains("Cannot find module"));
-    assert!(diagnostic.message.contains("circular"));
+    assert_eq!(diagnostic.file, "/project/src/a.ts");
+    assert!(diagnostic.message_text.contains("Cannot find module"));
+    assert!(diagnostic.message_text.contains("circular"));
 }
 
 #[test]
-fn test_diagnostic_bag_collects_multiple_resolution_errors() {
-    let mut diagnostics = DiagnosticBag::new();
+fn test_diagnostics_collect_multiple_resolution_errors() {
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let resolver = ModuleResolver::node_resolver();
 
     let failures = vec![
@@ -205,11 +214,14 @@ fn test_diagnostic_bag_collects_multiple_resolution_errors() {
     }
 
     assert_eq!(diagnostics.len(), 3);
-    assert_eq!(diagnostics.error_count(), 3);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.category == DiagnosticCategory::Error)
+    );
 
     // Verify all have TS2307 code
-    let codes: Vec<_> = diagnostics.errors().map(|d| d.code).collect();
-    assert!(codes.iter().all(|&c| c == CANNOT_FIND_MODULE));
+    assert!(diagnostics.iter().all(|d| d.code == CANNOT_FIND_MODULE));
 }
 
 #[test]
