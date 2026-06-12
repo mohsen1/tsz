@@ -170,11 +170,18 @@ tsz_process_tree_cpu_seconds() {
 # ordering: a dead process tree has no CPU time left to read.
 tsz_start_timeout_watchdog() {
   local timeout_secs="$1" pid="$2" cpu_file="$3"
+  # The caller captures this function with command substitution, and a
+  # backgrounded job inherits the substitution's stdout pipe. Without the
+  # explicit redirect, $() blocks until the watchdog's sleep finishes, so
+  # EVERY wrapped run pays the full deadline as idle wall time (#13306: this
+  # broke every benchmark row at 15s/iteration and cascaded into the Cloud
+  # Build pool congestion). Detach stdout so the substitution returns as soon
+  # as the pid is echoed.
   (
     sleep "$timeout_secs"
     tsz_process_tree_cpu_seconds "$pid" > "$cpu_file" 2>/dev/null || true
     kill -KILL "$pid" 2>/dev/null || true
-  ) &
+  ) >/dev/null 2>&1 &
   echo $!
 }
 
