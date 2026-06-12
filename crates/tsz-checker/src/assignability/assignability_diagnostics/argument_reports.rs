@@ -66,15 +66,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         let outcome = self.call_arg_relation_outcome(source, target);
-        let mut checker_only_mismatch = None;
+        let mut checker_only_mismatch = false;
         if outcome.related {
-            let mismatch = self
+            checker_only_mismatch = self
                 .checker_only_assignability_failure_reason(source, target)
                 .is_some();
-            if !mismatch {
+            if !checker_only_mismatch {
                 return true;
             }
-            checker_only_mismatch = Some(mismatch);
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
             return true;
@@ -130,10 +129,11 @@ impl<'a> CheckerState<'a> {
         // parameter), contextual typing cannot supply types for the extra
         // source parameters, and the parameter-count mismatch ("Target
         // signature provides too few arguments") must surface as TS2345.
-        let checker_only_mismatch = checker_only_mismatch.unwrap_or_else(|| {
-            self.checker_only_assignability_failure_reason(source, target)
-                .is_some()
-        });
+        if !checker_only_mismatch {
+            checker_only_mismatch = self
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some();
+        }
         if !checker_only_mismatch
             && self.arg_is_callback_with_unannotated_params(arg_idx)
             && self.target_can_contextually_type_callback_params(arg_idx, target)
