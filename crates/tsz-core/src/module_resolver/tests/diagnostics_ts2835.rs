@@ -23,15 +23,11 @@ fn test_import_path_needs_extension_produces_ts2835() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
-    assert_eq!(diagnostic.file_name, "/src/index.mts");
-    assert!(
-        diagnostic
-            .message
-            .contains("Relative import paths need explicit file extensions")
+    assert_eq!(diagnostic.file, "/src/index.mts");
+    assert_eq!(
+        diagnostic.message_text,
+        "Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean './utils.js'?"
     );
-    assert!(diagnostic.message.contains("node16"));
-    assert!(diagnostic.message.contains("nodenext"));
-    assert!(diagnostic.message.contains("./utils.js"));
 }
 
 #[test]
@@ -45,7 +41,7 @@ fn test_import_path_needs_extension_suggests_mjs() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
-    assert!(diagnostic.message.contains("./esm-module.mjs"));
+    assert!(diagnostic.message_text.contains("./esm-module.mjs"));
 }
 
 #[test]
@@ -59,7 +55,7 @@ fn test_import_path_needs_extension_suggests_cjs() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
-    assert!(diagnostic.message.contains("./cjs-module.cjs"));
+    assert!(diagnostic.message_text.contains("./cjs-module.cjs"));
 }
 
 #[test]
@@ -152,7 +148,7 @@ fn test_node16_ts_file_still_gets_ts2834_for_relative_imports() {
             || diag.code == IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
         "Expected TS2834 or TS2835, got TS{}: {}",
         diag.code,
-        diag.message,
+        diag.message_text,
     );
 
     let _ = fs::remove_dir_all(&dir);
@@ -198,12 +194,12 @@ fn test_node16_json_file_produces_ts2835_suggestion() {
     assert_eq!(
         diag.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
         "Expected TS2835 (with .json suggestion), got TS{}: {}",
-        diag.code, diag.message,
+        diag.code, diag.message_text,
     );
     assert!(
-        diag.message.contains("./package.json"),
+        diag.message_text.contains("./package.json"),
         "Expected suggestion to include './package.json', got: {}",
-        diag.message,
+        diag.message_text,
     );
 
     let _ = fs::remove_dir_all(&dir);
@@ -247,12 +243,12 @@ fn test_node16_js_file_package_json_produces_ts2835_suggestion() {
     assert_eq!(
         diag.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
         "Expected TS2835 (with .json suggestion), got TS{}: {}",
-        diag.code, diag.message,
+        diag.code, diag.message_text,
     );
     assert!(
-        diag.message.contains("./package.json"),
+        diag.message_text.contains("./package.json"),
         "Expected suggestion to include './package.json', got: {}",
-        diag.message,
+        diag.message_text,
     );
 
     let _ = fs::remove_dir_all(&dir);
