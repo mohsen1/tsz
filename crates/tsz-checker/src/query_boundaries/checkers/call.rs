@@ -148,7 +148,7 @@ pub(crate) fn object_shape_for_call(
     super::super::common::object_shape_for_type(db, type_id)
 }
 
-pub(crate) fn property_access_is_present_for_call(
+pub(crate) const fn property_access_is_present_for_call(
     result: &super::super::common::PropertyAccessResult,
 ) -> bool {
     matches!(
