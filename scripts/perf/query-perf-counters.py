@@ -68,6 +68,63 @@ def by_reason_rows(snap, optional=False):
     return rows
 
 
+RESET_CACHE_FIELDS = (
+    ("namespace_member", "namespace_member_entries", "namespace_member_bytes"),
+    ("export_equals", "export_equals_entries", "export_equals_bytes"),
+    ("nested_namespace", "nested_namespace_entries", "nested_namespace_bytes"),
+    ("lowering_entity_name", "lowering_entity_name_entries", "lowering_entity_name_bytes"),
+    ("env_eval", "env_eval_entries", "env_eval_bytes"),
+)
+
+
+def reset_cache_value(checker: dict, suffix: str) -> Optional[int]:
+    return checker.get(f"file_session_reset_{suffix}_max")
+
+
+def reset_cache_rows(checker: dict) -> list:
+    rows = []
+    for name, entries_suffix, bytes_suffix in RESET_CACHE_FIELDS:
+        entries = reset_cache_value(checker, entries_suffix)
+        size = reset_cache_value(checker, bytes_suffix)
+        if entries is None and size is None:
+            continue
+        rows.append(
+            {
+                "name": name,
+                "entries": entries or 0,
+                "bytes": size or 0,
+            }
+        )
+    return rows
+
+
+def print_reset_cache_high_water(checker: dict, indent: str = "  ") -> None:
+    entries = checker.get("file_session_reset_cache_entries_max")
+    size = checker.get("file_session_reset_cache_bytes_max")
+    rows = reset_cache_rows(checker)
+    if entries is None and size is None and not rows:
+        return
+
+    print(f"{indent}file-session reset cache high-water:")
+    print(f"{indent}  total_entries={fmt_int(entries)}  total_bytes={fmt_int(size)}")
+    if not rows:
+        return
+
+    rows_by_bytes = sorted(rows, key=lambda row: (-row["bytes"], row["name"]))
+    dominant = rows_by_bytes[0]
+    for row in rows_by_bytes:
+        if row["entries"] == 0 and row["bytes"] == 0:
+            continue
+        print(
+            f"{indent}  {row['name']:<22} "
+            f"entries={fmt_int(row['entries']):>8}  bytes={fmt_int(row['bytes']):>10}"
+        )
+    print(
+        f"{indent}  dominant={dominant['name']} "
+        f"bytes={fmt_int(dominant['bytes'])}"
+    )
+
+
 def print_summary(snap: dict) -> None:
     delegate = snap["delegate"]
     checker = snap["checker"]
@@ -130,6 +187,7 @@ def print_summary(snap: dict) -> None:
         f"  state_constructed={fmt_int(sc)}  with_parent_cache={fmt_int(wpc)}  "
         f"file_session_resets={fmt_int(fsr)}"
     )
+    print_reset_cache_high_water(checker)
     print(
         f"  compute_type_of_symbol  calls={fmt_int(cot_calls)}  "
         f"hits={fmt_int(cot_hits)}  hit%={cot_hit_pct:.2f}"
@@ -287,10 +345,42 @@ def print_diff(post: dict, base: dict) -> None:
         "state_constructed",
         "with_parent_cache_constructed",
         "file_session_resets",
+        "file_session_reset_cache_entries_max",
+        "file_session_reset_cache_bytes_max",
+        "file_session_reset_namespace_member_entries_max",
+        "file_session_reset_namespace_member_bytes_max",
+        "file_session_reset_export_equals_entries_max",
+        "file_session_reset_export_equals_bytes_max",
+        "file_session_reset_nested_namespace_entries_max",
+        "file_session_reset_nested_namespace_bytes_max",
+        "file_session_reset_lowering_entity_name_entries_max",
+        "file_session_reset_lowering_entity_name_bytes_max",
+        "file_session_reset_env_eval_entries_max",
+        "file_session_reset_env_eval_bytes_max",
         "compute_type_of_symbol_calls",
         "compute_type_of_symbol_cache_hits",
     ):
         print(f"  {delta(post['checker'], base['checker'], k)}")
+    post_rows = reset_cache_rows(post["checker"])
+    base_rows = reset_cache_rows(base["checker"])
+    if post_rows or base_rows:
+        post_by_name = {row["name"]: row for row in post_rows}
+        base_by_name = {row["name"]: row for row in base_rows}
+        print("  reset-cache high-water by family:")
+        for name in sorted(set(post_by_name) | set(base_by_name)):
+            post_row = post_by_name.get(name, {"entries": 0, "bytes": 0})
+            base_row = base_by_name.get(name, {"entries": 0, "bytes": 0})
+            entries_delta = post_row["entries"] - base_row["entries"]
+            bytes_delta = post_row["bytes"] - base_row["bytes"]
+            entries_sign = "+" if entries_delta > 0 else ""
+            bytes_sign = "+" if bytes_delta > 0 else ""
+            print(
+                f"    {name:<22} "
+                f"entries {fmt_int(base_row['entries']):>8} → {fmt_int(post_row['entries']):>8} "
+                f"({entries_sign}{fmt_int(entries_delta)})  "
+                f"bytes {fmt_int(base_row['bytes']):>10} → {fmt_int(post_row['bytes']):>10} "
+                f"({bytes_sign}{fmt_int(bytes_delta)})"
+            )
     post_slow = post.get("slow_check_file_timings") or []
     base_slow = base.get("slow_check_file_timings") or []
     if post_slow or base_slow:
