@@ -94,7 +94,10 @@ impl<'a> CheckerState<'a> {
         missing_type_args_become_any: bool,
         strip_on_non_generic_mismatch: bool,
     ) -> TypeId {
-        use tsz_solver::CallableShape;
+        use crate::query_boundaries::construct_signatures::{
+            call_signature_from_function_shape, construct_only_callable_type,
+            instantiated_callable_from_base,
+        };
 
         if type_args.is_empty() && !missing_type_args_become_any {
             return ctor_type;
@@ -129,14 +132,10 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ctor_type)
             && function_shape.is_constructor
         {
-            let sig = tsz_solver::CallSignature {
-                type_params: function_shape.type_params.clone(),
-                params: function_shape.params.clone(),
-                this_type: function_shape.this_type,
-                return_type: function_shape.return_type,
-                type_predicate: function_shape.type_predicate,
-                is_method: function_shape.is_method,
-            };
+            let sig = call_signature_from_function_shape(
+                function_shape.as_ref().clone(),
+                function_shape.is_method,
+            );
             if sig.type_params.is_empty() {
                 return ctor_type;
             }
@@ -170,16 +169,7 @@ impl<'a> CheckerState<'a> {
                 args.truncate(sig.type_params.len());
             }
             let instantiated_construct = self.instantiate_signature(&sig, &args);
-            let new_shape = CallableShape {
-                call_signatures: vec![],
-                construct_signatures: vec![instantiated_construct],
-                properties: vec![],
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            };
-            return self.ctx.types.factory().callable(new_shape);
+            return construct_only_callable_type(self.ctx.types, vec![instantiated_construct]);
         }
 
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, ctor_type) else {
@@ -215,17 +205,13 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .all(|sig| sig.type_params.is_empty())
             {
-                let empty_shape = CallableShape {
-                    call_signatures: shape.call_signatures.clone(),
-                    construct_signatures: vec![],
-                    properties: shape.properties.clone(),
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol: None,
-                    is_abstract: false,
-                };
-                let factory = self.ctx.types.factory();
-                return factory.callable(empty_shape);
+                let call_signatures = shape.call_signatures.clone();
+                return instantiated_callable_from_base(
+                    self.ctx.types,
+                    &shape,
+                    call_signatures,
+                    vec![],
+                );
             }
             return ctor_type;
         }
@@ -273,17 +259,13 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
 
-        let new_shape = CallableShape {
-            call_signatures: shape.call_signatures.clone(),
-            construct_signatures: instantiated_constructs,
-            properties: shape.properties.clone(),
-            string_index: shape.string_index,
-            number_index: shape.number_index,
-            symbol: None,
-            is_abstract: false,
-        };
-        let factory = self.ctx.types.factory();
-        factory.callable(new_shape)
+        let call_signatures = shape.call_signatures.clone();
+        instantiated_callable_from_base(
+            self.ctx.types,
+            &shape,
+            call_signatures,
+            instantiated_constructs,
+        )
     }
 
     pub(crate) fn apply_instantiation_expression_type_arguments(
@@ -1155,18 +1137,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn implicit_any_index_base_instance_type(&self) -> TypeId {
-        self.ctx
-            .types
-            .factory()
-            .object_with_index(tsz_solver::ObjectShape {
-                string_index: Some(tsz_solver::IndexSignature {
-                    key_type: TypeId::STRING,
-                    value_type: TypeId::ANY,
-                    readonly: false,
-                    param_name: None,
-                }),
-                ..tsz_solver::ObjectShape::default()
-            })
+        crate::query_boundaries::type_construction::object_with_string_index_value(
+            self.ctx.types,
+            TypeId::ANY,
+            false,
+        )
     }
 
     /// Sanitize and cache a base-instance result. Drops `Some(ERROR)` to

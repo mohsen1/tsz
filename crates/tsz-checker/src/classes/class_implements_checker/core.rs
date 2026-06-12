@@ -292,13 +292,10 @@ impl<'a> CheckerState<'a> {
                                 sig.is_method = false;
                             }
                             let combined =
-                                self.ctx
-                                    .types
-                                    .factory()
-                                    .callable(tsz_solver::CallableShape {
-                                        call_signatures: sigs,
-                                        ..tsz_solver::CallableShape::default()
-                                    });
+                                crate::query_boundaries::construct_signatures::call_only_callable_type(
+                                    self.ctx.types,
+                                    sigs,
+                                );
                             existing.type_id = combined;
                             existing.write_type = combined;
                             existing.is_method = false;

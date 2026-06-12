@@ -1771,3 +1771,6 @@ path = "tests/imported_ctor_alias_predicate_narrowing_tests.rs"
 [[test]]
 name = "arch_source_scans"
 path = "tests/arch_source_scans.rs"
+[[test]]
+name = "construct_signature_boundary_matrix_tests"
+path = "tests/construct_signature_boundary_matrix_tests.rs"
