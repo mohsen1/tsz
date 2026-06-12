@@ -111,6 +111,12 @@ impl TypeNodeSurfaceCaches {
 /// Checker-local memos for type-reference argument validation.
 #[derive(Debug, Default)]
 pub struct TypeReferenceValidationCaches {
+    /// Generic-scope type-node results keyed by `(NodeIndex, sorted
+    /// type-parameter scope)`. This stays separate from the plain
+    /// `node_types` cache so generic and non-generic resolutions never share a
+    /// node-only entry.
+    pub type_node_scope_types:
+        CowCache<FxHashMap<(u32, super::TypeParameterScopeCacheKey), TypeId>>,
     /// Type-reference argument validations that completed without diagnostics
     /// in the current lexical type-parameter scope.
     pub arg_validation: FxHashSet<(u32, u32, u64)>,

@@ -638,13 +638,6 @@ pub struct CheckerContext<'a> {
     /// Cached types for nodes (dense flat-vec, O(1) lookup by node index).
     pub node_types: NodeTypeCache,
 
-    /// Cached type-node results for active generic scopes.
-    ///
-    /// Keyed by `(NodeIndex, sorted type-parameter scope)`. This stays
-    /// separate from `node_types` so generic and non-generic resolutions never
-    /// share a plain node-only entry.
-    pub type_node_scope_types: CowCache<FxHashMap<(u32, TypeParameterScopeCacheKey), TypeId>>,
-
     /// Request-aware cache for audited non-empty request paths only.
     pub request_node_types: CowCache<FxHashMap<(u32, RequestCacheKey), TypeId>>,
 

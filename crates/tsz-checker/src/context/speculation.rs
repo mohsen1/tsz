@@ -226,7 +226,10 @@ impl<'a> CheckerContext<'a> {
             pending_implicit_any_vars: self.pending_implicit_any_vars.clone(),
             reported_implicit_any_vars: self.reported_implicit_any_vars.clone(),
             implicit_any_checked_closures: self.implicit_any_checked_closures.clone(),
-            type_node_scope_types: self.type_node_scope_types.clone(),
+            type_node_scope_types: self
+                .type_reference_validation_caches
+                .type_node_scope_types
+                .clone(),
             request_node_types: self.request_node_types.clone(),
         }
     }
@@ -240,7 +243,10 @@ impl<'a> CheckerContext<'a> {
             full: self.snapshot_full(),
             cache: CacheSnapshot {
                 node_types: self.node_types.clone(),
-                type_node_scope_types: self.type_node_scope_types.clone(),
+                type_node_scope_types: self
+                    .type_reference_validation_caches
+                    .type_node_scope_types
+                    .clone(),
                 flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
                 flow_narrowed_nodes: self.flow_narrowed_nodes.clone(),
                 daa_error_nodes: self.daa_error_nodes.clone(),
@@ -321,7 +327,8 @@ impl<'a> CheckerContext<'a> {
             .clone_from(&snap.reported_implicit_any_vars);
         self.implicit_any_checked_closures
             .clone_from(&snap.implicit_any_checked_closures);
-        self.type_node_scope_types
+        self.type_reference_validation_caches
+            .type_node_scope_types
             .clone_from(&snap.type_node_scope_types);
         self.request_node_types.clone_from(&snap.request_node_types);
     }
@@ -336,7 +343,8 @@ impl<'a> CheckerContext<'a> {
         );
         self.rollback_full(&snap.full);
         self.node_types.clone_from(&snap.cache.node_types);
-        self.type_node_scope_types
+        self.type_reference_validation_caches
+            .type_node_scope_types
             .clone_from(&snap.cache.type_node_scope_types);
         self.flow_analysis_cache
             .borrow_mut()

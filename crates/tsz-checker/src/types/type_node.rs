@@ -62,7 +62,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
         if let Some(key) = scope_cache_key.as_ref()
-            && let Some(&cached) = self.ctx.type_node_scope_types.get(&(idx.0, key.clone()))
+            && let Some(&cached) = self
+                .ctx
+                .type_reference_validation_caches
+                .type_node_scope_types
+                .get(&(idx.0, key.clone()))
         {
             self.depth.leave();
             return cached;
@@ -81,7 +85,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE);
         if !is_type_ref {
             if let Some(key) = scope_cache_key {
-                self.ctx.type_node_scope_types.insert((idx.0, key), result);
+                self.ctx
+                    .type_reference_validation_caches
+                    .type_node_scope_types
+                    .insert((idx.0, key), result);
             } else {
                 self.ctx.node_types.insert(idx.0, result);
             }
