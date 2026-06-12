@@ -702,6 +702,41 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    /// Create a `FlowAnalyzer` with the checker-owned shared flow state wired.
+    ///
+    /// Keep production construction on this path so new shared flow caches do
+    /// not depend on every caller remembering the same builder chain.
+    pub fn from_context(ctx: &'a crate::context::CheckerContext<'a>) -> Self {
+        let mut analyzer = Self::with_node_types(ctx.arena, ctx.binder, ctx.types, &ctx.node_types)
+            .with_flow_cache(&ctx.flow_analysis_cache)
+            .with_flow_reference_keys(&ctx.flow_reference_keys)
+            .with_switch_reference_cache(&ctx.flow_switch_reference_cache)
+            .with_numeric_atom_cache(&ctx.flow_numeric_atom_cache)
+            .with_reference_match_cache(&ctx.flow_reference_match_cache)
+            .with_type_environment(&ctx.type_environment)
+            .with_checker_context(ctx)
+            .with_narrowing_cache(&ctx.narrowing_cache)
+            .with_call_type_predicates(&ctx.call_type_predicates)
+            .with_flow_buffers(
+                &ctx.flow_worklist,
+                &ctx.flow_in_worklist,
+                &ctx.flow_visited,
+                &ctx.flow_results,
+            )
+            .with_symbol_last_assignment_pos(&ctx.symbol_flow_memo.last_assignment_pos)
+            .with_symbol_nested_closure_assignment(&ctx.symbol_flow_memo.nested_closure_assignment)
+            .with_symbol_first_identifier_ref(&ctx.symbol_flow_memo.first_identifier_ref)
+            .with_destructured_bindings(&ctx.destructured_bindings);
+
+        if let Some(class_info) = &ctx.enclosing_class
+            && let Some(instance_this_type) = class_info.cached_instance_this_type
+        {
+            analyzer = analyzer.with_concrete_this_type(instance_this_type);
+        }
+
+        analyzer
+    }
+
     /// Set a shared interner for property/element reference-path cache keys.
     ///
     /// Without it, references that do not resolve to a single symbol (e.g.

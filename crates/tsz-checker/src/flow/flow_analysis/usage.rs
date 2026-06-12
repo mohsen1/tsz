@@ -1373,18 +1373,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Create a flow analyzer and check definite assignment
-        let analyzer = FlowAnalyzer::with_node_types(
-            self.ctx.arena,
-            self.ctx.binder,
-            self.ctx.types,
-            &self.ctx.node_types,
-        )
-        .with_flow_cache(&self.ctx.flow_analysis_cache)
-        .with_flow_reference_keys(&self.ctx.flow_reference_keys)
-        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_type_environment(&self.ctx.type_environment)
-        .with_checker_context(&self.ctx)
-        .with_destructured_bindings(&self.ctx.destructured_bindings);
+        let analyzer = FlowAnalyzer::from_context(&self.ctx);
 
         // Pre-seed the reference symbol cache when the checker has already
         // resolved the symbol for this reference. This handles cases where
