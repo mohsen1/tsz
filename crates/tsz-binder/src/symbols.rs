@@ -571,6 +571,14 @@ impl SymbolTable {
         self.get_by_atom(atom).or_else(|| self.get(name))
     }
 
+    /// Find the parsed identifier atom that currently points at `symbol`.
+    #[must_use]
+    pub fn atom_for_symbol(&self, symbol: SymbolId) -> Option<tsz_common::interner::AstAtom> {
+        self.atom_symbols
+            .iter()
+            .find_map(|(&atom, &id)| (id == symbol).then_some(atom))
+    }
+
     /// Set a symbol by name.
     pub fn set(&mut self, name: String, symbol: SymbolId) {
         Arc::make_mut(&mut self.symbols).insert(name, symbol);
