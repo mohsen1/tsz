@@ -470,7 +470,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Single-lookup dispatch: resolve property access based on type data.
         // All type variants are handled in one match to avoid redundant interner lookups.
         let Some(key) = self.interner().lookup(obj_type) else {
-            let prop_atom = prop_atom;
             return PropertyAccessResult::PropertyNotFound {
                 type_id: obj_type,
                 property_name: prop_atom,
@@ -501,7 +500,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
 
             TypeData::Intrinsic(kind) => {
-                let prop_atom = prop_atom;
                 match kind {
                     IntrinsicKind::Any => PropertyAccessResult::simple(TypeId::ANY),
                     IntrinsicKind::Unknown => PropertyAccessResult::IsUnknown,
@@ -548,14 +546,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            TypeData::Function(_) => {
-                let prop_atom = prop_atom;
-                self.resolve_function_property(obj_type, prop_name, prop_atom)
-            }
+            TypeData::Function(_) => self.resolve_function_property(obj_type, prop_name, prop_atom),
 
             TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
-                let prop_atom = prop_atom;
                 for prop in &shape.properties {
                     if prop.name == prop_atom {
                         let read_type = self
@@ -593,7 +587,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
-                let prop_atom = prop_atom;
                 let mut results = Vec::with_capacity(members.len());
                 let mut write_results = Vec::with_capacity(members.len());
                 let mut any_from_index = false;
@@ -805,7 +798,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                let prop_atom = prop_atom;
                 if let Some(constraint) = info.constraint {
                     // Skip `this` binding when resolving through a type parameter's
                     // constraint. The checker substitutes `this` with the actual
@@ -856,27 +848,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // TS apparent members: literals inherit primitive wrapper methods.
-            TypeData::Literal(ref literal) => {
-                let prop_atom = prop_atom;
-                match literal {
-                    LiteralValue::String(_) => self.resolve_string_property(prop_name, prop_atom),
-                    LiteralValue::Number(_) => self.resolve_number_property(prop_name, prop_atom),
-                    LiteralValue::Boolean(_) => self.resolve_boolean_property(prop_name, prop_atom),
-                    LiteralValue::BigInt(_) => self.resolve_bigint_property(prop_name, prop_atom),
-                }
-            }
+            TypeData::Literal(ref literal) => match literal {
+                LiteralValue::String(_) => self.resolve_string_property(prop_name, prop_atom),
+                LiteralValue::Number(_) => self.resolve_number_property(prop_name, prop_atom),
+                LiteralValue::Boolean(_) => self.resolve_boolean_property(prop_name, prop_atom),
+                LiteralValue::BigInt(_) => self.resolve_bigint_property(prop_name, prop_atom),
+            },
 
-            TypeData::TemplateLiteral(_) => {
-                let prop_atom = prop_atom;
-                self.resolve_string_property(prop_name, prop_atom)
-            }
+            TypeData::TemplateLiteral(_) => self.resolve_string_property(prop_name, prop_atom),
 
             // Application: handle nominally (preserve class/interface identity)
             TypeData::Application(app_id) => {
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        let prop_atom = prop_atom;
                         return self
                             .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
@@ -889,8 +874,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types
             TypeData::Mapped(mapped_id) => {
-                let prop_atom = prop_atom;
-
                 // Try lazy resolution first - only computes the requested property
                 if let Some(result) =
                     self.resolve_mapped_property_lazy(mapped_id, prop_name, prop_atom)
@@ -936,7 +919,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
                     // Evaluation didn't change the type - try apparent members
-                    let prop_atom = prop_atom;
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -952,7 +934,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        let prop_atom = prop_atom;
                         return self
                             .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
@@ -966,7 +947,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
                     // Evaluation didn't change the type - try apparent members
-                    let prop_atom = prop_atom;
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -984,7 +964,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        let prop_atom = prop_atom;
                         return self
                             .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
@@ -1024,8 +1003,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             );
                         }
                     }
-
-                    let prop_atom = prop_atom;
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -1043,7 +1020,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if evaluated != obj_type {
                     self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
-                    let prop_atom = prop_atom;
                     // KeyOf typically returns string/number/symbol, try string member access
                     self.resolve_string_property(prop_name, prop_atom)
                 }
@@ -1052,7 +1028,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // ThisType: represents 'this' type in a class/interface context
             // Should be resolved to the actual class type by the checker
             TypeData::ThisType => {
-                let prop_atom = prop_atom;
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
                 }
@@ -1068,7 +1043,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        let prop_atom = prop_atom;
                         return self
                             .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
@@ -1089,7 +1063,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.resolve_property_access_inner(resolved, prop_name, Some(prop_atom))
                 } else {
                     // Can't resolve lazy type - try apparent members
-                    let prop_atom = prop_atom;
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -1107,14 +1080,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // StringIntrinsic (Uppercase<T>, Lowercase<T>, etc.) — resolve as string
-            TypeData::StringIntrinsic { .. } => {
-                let prop_atom = prop_atom;
-                self.resolve_string_property(prop_name, prop_atom)
-            }
+            TypeData::StringIntrinsic { .. } => self.resolve_string_property(prop_name, prop_atom),
 
             _ => {
                 // Unknown type key - try apparent members before giving up
-                let prop_atom = prop_atom;
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
                 }
