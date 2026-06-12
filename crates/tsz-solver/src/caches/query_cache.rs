@@ -265,6 +265,10 @@ impl<'a> QueryCache<'a> {
         interner: &'a TypeInterner,
         shared: Option<&'a SharedQueryCache>,
     ) -> Self {
+        // Measurement-only (issue #13097): a fresh `QueryCache` marks a new
+        // file scope for the cross-evaluator memo-loss audit, mirroring the
+        // per-file lifetime of the caches whose loss it measures.
+        crate::evaluation::memo_audit::begin_file_scope();
         QueryCache {
             interner,
             eval_cache: RefCell::new(FxHashMap::default()),

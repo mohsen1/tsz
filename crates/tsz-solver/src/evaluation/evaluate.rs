@@ -182,6 +182,10 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// `eval_cache` keep the *clean* intermediates of a run whose unrelated
     /// subtree hit a limit, instead of dropping the whole run's results.
     tainted: FxHashSet<TypeId>,
+    /// Measurement-only id for the cross-evaluator memo-loss audit
+    /// (issue #13097; see `evaluation::memo_audit`). 0 when perf counters
+    /// are disabled.
+    audit_evaluator_id: u64,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -220,6 +224,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn with_resolver_and_defaults(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        tsz_common::perf_counters::record_eval_evaluator_construction();
         TypeEvaluator {
             interner,
             query_db: None,
@@ -249,6 +254,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             unresolved_def_seen: false,
             closed_eval_writes_allowed: false,
             tainted: FxHashSet::default(),
+            audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
         }
     }
 
@@ -668,6 +674,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Most evaluate() calls are for already-evaluated types (cache hits),
         // so checking the cache first avoids unnecessary guard operations.
         if let Some(&cached) = self.cache.get(&type_id) {
+            tsz_common::perf_counters::record_eval_local_memo_hit();
             // Reading a limit-truncated artifact makes every in-flight
             // ancestor's result artifact-dependent: record a limit event so
             // the epoch-based stamping (and the application-eval epoch gate)
@@ -762,6 +769,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn memo_insert(&mut self, epoch_at_entry: u32, type_id: TypeId, result: TypeId) {
         if self.limit_epoch != epoch_at_entry {
             self.tainted.insert(type_id);
+        } else {
+            // Measurement-only (issue #13097): record clean computes so the
+            // memo audit can count cross-evaluator recomputation.
+            crate::evaluation::memo_audit::record_clean_compute(
+                type_id,
+                self.no_unchecked_indexed_access,
+                result,
+                self.audit_evaluator_id,
+            );
         }
         self.cache.insert(type_id, result);
     }
@@ -769,6 +785,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Actual evaluate logic -- separated so `stacker::maybe_grow` can wrap it.
     fn evaluate_guarded_inner(&mut self, type_id: TypeId) -> TypeId {
         use crate::recursion::RecursionResult;
+
+        tsz_common::perf_counters::record_eval_compute_node();
 
         let _span =
             tracing::trace_span!("evaluate_type", ty = type_id.0, depth = self.guard.depth(),)
@@ -884,6 +902,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     // Additional evaluator support methods live in the nested support module.
+}
+
+impl<R: TypeResolver> Drop for TypeEvaluator<'_, R> {
+    fn drop(&mut self) {
+        // Measurement-only (issue #13097): account for memo entries this
+        // evaluator computed but discarded. Entries persisted through
+        // `drain_cache` were removed before drop and are not counted.
+        // Single branch when `TSZ_PERF_COUNTERS` is unset.
+        if !tsz_common::perf_counters::enabled_fast() {
+            return;
+        }
+        tsz_common::perf_counters::record_eval_dropped_memo_entries(self.cache.len() as u64);
+        tsz_common::perf_counters::record_eval_dropped_aux_entries(
+            (self.conditional_subtype_cache.len() + self.contains_infer_cache.len()) as u64,
+        );
+    }
 }
 
 // Re-enabled evaluate tests - verifying API compatibility

@@ -32,6 +32,9 @@ pub struct PerfCounterSnapshot {
     pub interner: InternerCounters,
     /// Solver relation limit-result cache (issue #13241).
     pub relation_limit_cache: RelationLimitCacheCounters,
+    /// Solver evaluator memo lifecycle (issue #13097): what the per-run
+    /// fresh-evaluator pattern recomputes and discards.
+    pub evaluator_memo: EvaluatorMemoCounters,
     /// Per-`CheckerCreationReason` breakdown. Always
     /// `CHECKER_CREATION_REASON_COUNT` long; rows for inactive reasons
     /// carry all-zero counts (matching the text dump's filter behavior
@@ -476,6 +479,29 @@ pub struct RelationLimitCacheCounters {
     pub maybe_promotions: u64,
 }
 
+/// Solver evaluator memo-lifecycle counters (issue #13097): how much work
+/// the per-call fresh-`TypeEvaluator` pattern repeats or discards within a
+/// single file scope.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EvaluatorMemoCounters {
+    /// `TypeEvaluator` constructions.
+    pub constructions: u64,
+    /// Hits on an evaluator's own per-run memo.
+    pub local_memo_hits: u64,
+    /// Nodes computed past every memo/cache layer.
+    pub compute_nodes: u64,
+    /// Clean computes an earlier same-file evaluator already produced
+    /// (same key and result) but discarded.
+    pub lost_memo_recomputes: u64,
+    /// Same-key clean computes whose result differed across evaluators.
+    pub lost_memo_mismatches: u64,
+    /// Memo entries discarded undrained at evaluator drop.
+    pub dropped_memo_entries: u64,
+    /// Auxiliary memo entries (conditional-subtype / contains-infer)
+    /// discarded at evaluator drop; never drained anywhere.
+    pub dropped_aux_entries: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InternerCounters {
     /// Total `intern` calls across kinds. `None` until the solver intern
@@ -623,6 +649,15 @@ impl PerfCounters {
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
                 maybe_promotions: load(&c.relation_maybe_promotions),
+            },
+            evaluator_memo: EvaluatorMemoCounters {
+                constructions: load(&c.eval_evaluator_constructions),
+                local_memo_hits: load(&c.eval_local_memo_hits),
+                compute_nodes: load(&c.eval_compute_nodes),
+                lost_memo_recomputes: load(&c.eval_lost_memo_recomputes),
+                lost_memo_mismatches: load(&c.eval_lost_memo_mismatches),
+                dropped_memo_entries: load(&c.eval_dropped_memo_entries),
+                dropped_aux_entries: load(&c.eval_dropped_aux_entries),
             },
             by_reason: (0..CHECKER_CREATION_REASON_COUNT)
                 .map(|i| ByReasonRow {
