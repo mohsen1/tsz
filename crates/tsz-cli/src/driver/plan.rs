@@ -1045,13 +1045,16 @@ const fn cli_module_resolution_value(module_resolution: ModuleResolution) -> &'s
     }
 }
 
-/// Selects the most recently modified `.d.ts` file among `emitted_files` and
-/// returns its path relative to `base_dir`, using forward slashes. Returns
-/// `None` if no `.d.ts` files exist or none have readable metadata.
+/// Selects the most recently modified declaration file among `emitted_files`
+/// and returns its path relative to `base_dir`, using forward slashes.
+/// Declaration outputs are matched with the same rule as tsc's
+/// `isDeclarationFileName` (`.d.ts`, `.d.mts`, `.d.cts`, `.d.<ext>.ts`).
+/// Returns `None` if no declaration files exist or none have readable
+/// metadata.
 pub(super) fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<String> {
     let latest = emitted_files
         .iter()
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("d.ts"))
+        .filter(|p| tsz_common::file_extensions::is_ts_declaration_file(p))
         .filter_map(|p| std::fs::metadata(p).ok()?.modified().ok().map(|t| (t, p)))
         .max_by_key(|(t, _)| *t)
         .map(|(_, p)| p)?;
