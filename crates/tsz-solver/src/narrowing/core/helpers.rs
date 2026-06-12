@@ -373,20 +373,15 @@ impl<'a> NarrowingContext<'a> {
         if type_id == TypeId::OBJECT {
             return true;
         }
-        // Check the query database directly for boxed Object interface.
-        // Boxed types are registered on the interner during lib.d.ts processing,
-        // bypassing TypeResolver (which may be a different instance).
-        // Use as_type_database() to disambiguate from TypeResolver's get_boxed_type.
-        let db = self.db.as_type_database();
-        if db.get_boxed_type(crate::types::IntrinsicKind::Object) == Some(type_id) {
-            return true;
-        }
-        if let Some(def_id) = lazy_def_id(self.db, type_id)
-            && db.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Object)
-        {
-            return true;
-        }
-        false
+        // Canonical identity query (issue #13090). Boxed types are registered
+        // on the interner during lib.d.ts processing, bypassing TypeResolver
+        // (which may be a different instance), so the interner-backed registry
+        // via as_type_database() is the authority here.
+        crate::type_queries::is_global_interface_by_identity(
+            self.db.as_type_database(),
+            type_id,
+            crate::types::IntrinsicKind::Object,
+        )
     }
 
     pub(in crate::narrowing) fn narrow_type_param(

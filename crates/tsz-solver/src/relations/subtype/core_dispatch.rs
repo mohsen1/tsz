@@ -803,17 +803,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let is_function_structural = self.is_function_interface_structural(target);
         let is_function_target = intrinsic_kind(self.interner, target)
             == Some(IntrinsicKind::Function)
-            || self
-                .resolver
-                .is_boxed_type_id(target, IntrinsicKind::Function)
-            || self
-                .resolver
-                .get_boxed_type(IntrinsicKind::Function)
-                .is_some_and(|boxed| boxed == target)
-            || lazy_def_id(self.interner, target).is_some_and(|def_id| {
-                self.resolver
-                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
-            })
+            || crate::type_queries::is_global_interface_by_identity_with_resolver(
+                self.interner,
+                self.resolver,
+                target,
+                IntrinsicKind::Function,
+            )
             || is_function_structural;
         if is_function_target {
             if self.is_callable_type(source) {
@@ -839,15 +834,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - `object` (lowercase) includes callable values.
         // - `Object` (capitalized interface) should follow TS structural rules and
         //   exclude bare callable types from primitive-style object assignability.
-        let is_global_object_target = self
-            .resolver
-            .is_boxed_type_id(target, IntrinsicKind::Object)
-            || self
-                .resolver
-                .get_boxed_type(IntrinsicKind::Object)
-                .is_some_and(|boxed| boxed == target)
-            || lazy_def_id(self.interner, target)
-                .is_some_and(|t_def| self.resolver.is_boxed_def_id(t_def, IntrinsicKind::Object));
+        let is_global_object_target =
+            crate::type_queries::is_global_interface_by_identity_with_resolver(
+                self.interner,
+                self.resolver,
+                target,
+                IntrinsicKind::Object,
+            );
         if is_global_object_target {
             let source_eval = self.evaluate_type(source);
             if self.is_global_object_interface_type(source_eval) {

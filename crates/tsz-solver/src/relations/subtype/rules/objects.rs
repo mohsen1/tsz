@@ -1758,19 +1758,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// properties. Our shapes don't include inherited members, so we exempt
     /// `Object` explicitly to match tsc behavior (see TypeScript PR #16047).
     fn is_global_object_shape(&self, shape: &ObjectShape) -> bool {
-        // Object interface has exactly 7 properties: constructor, toString,
-        // toLocaleString, valueOf, hasOwnProperty, isPrototypeOf,
-        // propertyIsEnumerable. Use a tight cap to avoid matching derived
-        // types like Boolean (8+ props) or Number (~10 props).
-        if shape.properties.len() > 7 {
-            return false;
-        }
-        let constructor = self.interner.intern_string("constructor");
-        let has_own = self.interner.intern_string("hasOwnProperty");
-        let is_proto = self.interner.intern_string("isPrototypeOf");
-        shape.properties.iter().any(|p| p.name == constructor)
-            && shape.properties.iter().any(|p| p.name == has_own)
-            && shape.properties.iter().any(|p| p.name == is_proto)
+        // Delegates to the canonical shared structural matcher in
+        // `type_queries::global_interfaces` (issue #13090). Identity cannot be
+        // consulted here: only the bare `ObjectShape` is available, not the
+        // source `TypeId`.
+        crate::type_queries::object_shape_matches_global_object_interface(self.interner, shape)
     }
 
     /// `ObjectWithIndex` source vs `Tuple` target.
