@@ -882,8 +882,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !all_ok
             && !needs_structural_fallback
             && !rejection_unreliable
-            && (variances.iter().any(|v| v.has_direct_usage())
-                || !args_contain_type_parameters(self.interner, &s_args))
+            && !args_contain_type_parameters(self.interner, &s_args)
         {
             return Some(SubtypeResult::False);
         }

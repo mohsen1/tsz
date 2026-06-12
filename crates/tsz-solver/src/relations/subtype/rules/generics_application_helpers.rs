@@ -334,15 +334,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             return None;
         }
-        // Type-parameter arguments are inconclusive only when no direct
-        // non-mapped occurrence pins the variance. Homomorphic mapped and
-        // conditional-forwarding cases keep falling through structurally via
-        // the fallback/unreliable markers above; direct property/callback/
-        // return occurrences should explain the same definitive rejection the
-        // relation fast path uses.
-        if args_contain_type_parameters(self.interner, &s_app.args)
-            && !variances.iter().any(|v| v.has_direct_usage())
-        {
+        // Type-parameter arguments make a variance rejection inconclusive: the
+        // expanded structural forms can introduce implicit index signatures
+        // (homomorphic mapped types) or conditional-recursion identities that
+        // change the outcome. The relation falls through to structural
+        // comparison for these, so the explanation must do the same.
+        if args_contain_type_parameters(self.interner, &s_app.args) {
             return None;
         }
 
