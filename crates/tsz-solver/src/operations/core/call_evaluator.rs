@@ -914,13 +914,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         match self.interner.lookup(member) {
             Some(TypeData::Intrinsic(IntrinsicKind::Function))
             | Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                let apply = self.interner.intern_string("apply");
-                let call = self.interner.intern_string("call");
-                let has_apply = shape.properties.iter().any(|prop| prop.name == apply);
-                let has_call = shape.properties.iter().any(|prop| prop.name == call);
-                has_apply && has_call
+            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
+                // Canonical query (issue #13090). The historical inline sniff
+                // here only probed `apply` + `call` with no property-count cap;
+                // the canonical structural fallback also requires `bind` and
+                // caps the property count, and identity is consulted first.
+                crate::type_queries::is_global_function_interface(self.interner, member)
             }
             Some(TypeData::Union(members_id)) => self
                 .interner
