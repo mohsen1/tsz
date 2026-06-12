@@ -36,6 +36,7 @@ env:
   BENCH_REQUIRE_PGO: "1"
   HYPERFINE_VER: "1.18.0"
   BENCH_MAX_TARGET_AGE_HOURS: "48"
+  BENCH_CATCH_UP_MIN_INTERVAL_HOURS: "4"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
@@ -1673,6 +1674,28 @@ jobs:
             exit 0
           fi
 
+          min_catch_up_interval_hours="${BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4}"
+          if ! [[ "${min_catch_up_interval_hours}" =~ ^[0-9]+$ ]]; then
+            min_catch_up_interval_hours=4
+          fi
+          min_catch_up_interval_seconds=$((min_catch_up_interval_hours * 3600))
+          recent_dispatches="$(
+            gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --limit 20 \
+              --json databaseId,event,createdAt,status,conclusion,headSha,url \
+              --jq '.[] | select(.databaseId != ${{ github.run_id }} and .event == "workflow_dispatch") | [.databaseId, .createdAt, .status, .conclusion, .headSha, .url] | @tsv'
+          )"
+          now_epoch="$(date -u +%s)"
+          while IFS=$'\t' read -r run_id created_at status conclusion run_sha run_url; do
+            [[ -n "${run_id:-}" ]] || continue
+            created_epoch="$(date -u -d "${created_at}" +%s 2>/dev/null || true)"
+            if [[ "${created_epoch}" =~ ^[0-9]+$ &&
+                  $((now_epoch - created_epoch)) -lt "${min_catch_up_interval_seconds}" ]]; then
+              echo "A Bench catch-up dispatch ran within the last ${min_catch_up_interval_hours}h; skipping another dispatch."
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${run_id}" "${created_at}" "${status}" "${conclusion}" "${run_sha}" "${run_url}"
+              exit 0
+            fi
+          done <<< "${recent_dispatches}"
+
           echo "Bench target ${target_sha} did not publish and main is now ${main_sha}; dispatching one catch-up Bench run."
           curl -fsSL \
             -X POST \
@@ -1760,6 +1783,28 @@ jobs:
             printf '%s\n' "${active_dispatches}"
             exit 0
           fi
+
+          min_catch_up_interval_hours="${BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4}"
+          if ! [[ "${min_catch_up_interval_hours}" =~ ^[0-9]+$ ]]; then
+            min_catch_up_interval_hours=4
+          fi
+          min_catch_up_interval_seconds=$((min_catch_up_interval_hours * 3600))
+          recent_dispatches="$(
+            gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --limit 20 \
+              --json databaseId,event,createdAt,status,conclusion,headSha,url \
+              --jq '.[] | select(.databaseId != ${{ github.run_id }} and .databaseId != '"${ACTIVE_RUN_ID}"' and .event == "workflow_dispatch") | [.databaseId, .createdAt, .status, .conclusion, .headSha, .url] | @tsv'
+          )"
+          now_epoch="$(date -u +%s)"
+          while IFS=$'\t' read -r run_id created_at status conclusion run_sha run_url; do
+            [[ -n "${run_id:-}" ]] || continue
+            created_epoch="$(date -u -d "${created_at}" +%s 2>/dev/null || true)"
+            if [[ "${created_epoch}" =~ ^[0-9]+$ &&
+                  $((now_epoch - created_epoch)) -lt "${min_catch_up_interval_seconds}" ]]; then
+              echo "A Bench catch-up dispatch ran within the last ${min_catch_up_interval_hours}h; skipping another dispatch."
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${run_id}" "${created_at}" "${status}" "${conclusion}" "${run_sha}" "${run_url}"
+              exit 0
+            fi
+          done <<< "${recent_dispatches}"
 
           echo "Active Bench run ${ACTIVE_RUN_ID} completed without bench-publish; dispatching one fresh main Bench run for ${main_sha}."
           curl -fsSL \

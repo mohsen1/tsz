@@ -195,6 +195,12 @@ assert.match(
 
 assert.match(
   workflow,
+  /BENCH_CATCH_UP_MIN_INTERVAL_HOURS: "4"/,
+  "benchmark catch-up dispatches should have a configurable cooldown",
+);
+
+assert.match(
+  workflow,
   /active_run_id: \$\{\{ steps\.gate\.outputs\.active_run_id \}\}[\s\S]+active_run_sha: \$\{\{ steps\.gate\.outputs\.active_run_sha \}\}[\s\S]+active_run_url: \$\{\{ steps\.gate\.outputs\.active_run_url \}\}/,
   "bench gate should expose the active benchmark run that caused duplicate automatic runs to skip",
 );
@@ -249,6 +255,12 @@ assert.match(
 
 assert.match(
   workflow,
+  /catch-up:[\s\S]+min_catch_up_interval_hours="\$\{BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4\}"[\s\S]+\.event == "workflow_dispatch"[\s\S]+A Bench catch-up dispatch ran within the last \$\{min_catch_up_interval_hours\}h; skipping another dispatch\.[\s\S]+Bench target \$\{target_sha\} did not publish and main is now \$\{main_sha\}; dispatching one catch-up Bench run\./,
+  "benchmark catch-up should rate-limit repeated workflow_dispatch recovery runs",
+);
+
+assert.match(
+  workflow,
   /Bench target \$\{target_sha\} did not publish and main is now \$\{main_sha\}; dispatching one catch-up Bench run\.[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+'{"ref":"main","inputs":\{"publish_latest_pgo":false\}}'/,
   "benchmark catch-up should dispatch one fresh main benchmark run after a stale non-publish",
 );
@@ -287,6 +299,12 @@ assert.match(
   workflow,
   /--json databaseId,event,headSha,url[\s\S]+\.event == "workflow_dispatch"[\s\S]+A dispatched Bench catch-up is already active; skipping duplicate dispatch\./,
   "active-run catch-up should avoid duplicate workflow_dispatch benchmark catch-ups",
+);
+
+assert.match(
+  workflow,
+  /catch-up-after-active:[\s\S]+min_catch_up_interval_hours="\$\{BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4\}"[\s\S]+\.event == "workflow_dispatch"[\s\S]+A Bench catch-up dispatch ran within the last \$\{min_catch_up_interval_hours\}h; skipping another dispatch\.[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} completed without bench-publish; dispatching one fresh main Bench run for \$\{main_sha\}\./,
+  "active-run catch-up should rate-limit repeated workflow_dispatch recovery runs",
 );
 
 assert.match(
