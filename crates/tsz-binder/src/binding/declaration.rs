@@ -283,23 +283,7 @@ impl BinderState {
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
             self.with_fresh_flow(|binder| {
-                // Bind parameters
-                for &param_idx in &func.parameters.nodes {
-                    binder.bind_parameter(arena, param_idx);
-                }
-
-                // Hoisting: Collect var and function declarations from the function body
-                // This ensures declarations are accessible throughout the function scope
-                // before their actual declaration point (JavaScript hoisting behavior)
-                //
-                // Note: Function declarations in blocks are block-scoped in strict mode
-                // and external modules. In non-strict scripts, they hoist (Annex B).
-                binder.collect_hoisted_from_node(arena, func.body);
-                binder.process_hoisted_functions(arena);
-                binder.process_hoisted_vars(arena);
-
-                // Bind body
-                binder.bind_node(arena, func.body);
+                binder.bind_function_body_parts(arena, &func.parameters, func.body);
             });
 
             self.exit_scope(arena);
@@ -453,6 +437,69 @@ impl BinderState {
         }
     }
 
+    /// Bind the shared function-body template: parameters, hoisted
+    /// declarations, then the body itself.
+    ///
+    /// Hoisting collects `var` and function declarations from the function
+    /// body before binding it, so declarations are accessible throughout the
+    /// function scope before their actual declaration point (JavaScript
+    /// hoisting behavior). Function declarations in blocks are block-scoped
+    /// in strict mode and external modules; in non-strict scripts they hoist
+    /// (Annex B).
+    ///
+    /// Statement order is load-bearing for flow-graph construction; every
+    /// call site previously inlined this exact sequence.
+    fn bind_function_body_parts(
+        &mut self,
+        arena: &NodeArena,
+        parameters: &NodeList,
+        body: NodeIndex,
+    ) {
+        for &param_idx in &parameters.nodes {
+            self.bind_parameter(arena, param_idx);
+        }
+        self.collect_hoisted_from_node(arena, body);
+        self.process_hoisted_functions(arena);
+        self.process_hoisted_vars(arena);
+        self.bind_node(arena, body);
+    }
+
+    /// Bind an IIFE body inline in the outer flow context (no `FlowStart`
+    /// node). This preserves narrowing from the outer scope and propagates
+    /// assignments inside the IIFE to the outer scope's control flow.
+    ///
+    /// Return statements are redirected to a fresh branch label; after the
+    /// body is bound, the fall-through flow merges into that label and the
+    /// label is finalized the way tsc's `finishFlowLabel` does.
+    ///
+    /// Ordering invariant: the fall-through antecedent is added before the
+    /// return label is popped from `return_targets`.
+    fn bind_iife_body(&mut self, arena: &NodeArena, parameters: &NodeList, body: NodeIndex) {
+        let return_label = self.create_branch_label();
+        self.return_targets.push(return_label);
+
+        self.bind_function_body_parts(arena, parameters, body);
+
+        // Merge the fall-through flow with the return label
+        self.add_antecedent(return_label, self.current_flow);
+        let return_label = self
+            .return_targets
+            .pop()
+            .expect("return_targets pushed before function body binding");
+
+        // Finalize: if the return label has antecedents, use it as current flow.
+        // This mirrors tsc's finishFlowLabel behavior.
+        if let Some(label_node) = self.flow_nodes.get(return_label) {
+            match label_node.antecedent.len() {
+                0 => self.current_flow = self.unreachable_flow,
+                1 => self.current_flow = label_node.antecedent[0],
+                _ => self.current_flow = return_label,
+            }
+        } else {
+            self.current_flow = self.unreachable_flow;
+        }
+    }
+
     /// Bind an arrow function expression - creates a scope and binds the body.
     #[tracing::instrument(level = "debug", skip(self, arena, node), fields(arrow_fn_idx = idx.0))]
     pub(crate) fn bind_arrow_function(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
@@ -474,38 +521,11 @@ impl BinderState {
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
             if is_iife {
-                // IIFE: bind body inline in the outer flow context (no FlowStart node).
-                let return_label = self.create_branch_label();
-                self.return_targets.push(return_label);
-
                 tracing::debug!(
                     param_count = func.parameters.nodes.len(),
                     "Binding arrow IIFE parameters"
                 );
-                for &param_idx in &func.parameters.nodes {
-                    self.bind_parameter(arena, param_idx);
-                }
-                self.collect_hoisted_from_node(arena, func.body);
-                self.process_hoisted_functions(arena);
-                self.process_hoisted_vars(arena);
-                self.bind_node(arena, func.body);
-
-                // Merge fall-through with return flows
-                self.add_antecedent(return_label, self.current_flow);
-                let return_label = self
-                    .return_targets
-                    .pop()
-                    .expect("return_targets pushed before function body binding");
-
-                if let Some(label_node) = self.flow_nodes.get(return_label) {
-                    match label_node.antecedent.len() {
-                        0 => self.current_flow = self.unreachable_flow,
-                        1 => self.current_flow = label_node.antecedent[0],
-                        _ => self.current_flow = return_label,
-                    }
-                } else {
-                    self.current_flow = self.unreachable_flow;
-                }
+                self.bind_iife_body(arena, &func.parameters, func.body);
             } else {
                 // Non-IIFE: isolated flow scope
                 self.with_fresh_flow_inner(
@@ -514,13 +534,7 @@ impl BinderState {
                             param_count = func.parameters.nodes.len(),
                             "Binding arrow function parameters"
                         );
-                        for &param_idx in &func.parameters.nodes {
-                            binder.bind_parameter(arena, param_idx);
-                        }
-                        binder.collect_hoisted_from_node(arena, func.body);
-                        binder.process_hoisted_functions(arena);
-                        binder.process_hoisted_vars(arena);
-                        binder.bind_node(arena, func.body);
+                        binder.bind_function_body_parts(arena, &func.parameters, func.body);
                     },
                     true,
                 );
@@ -567,48 +581,12 @@ impl BinderState {
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
             if is_iife {
-                // IIFE: bind body inline in the outer flow context (no FlowStart node).
-                // This preserves narrowing and propagates assignments to the outer scope.
-                let return_label = self.create_branch_label();
-                self.return_targets.push(return_label);
-
-                for &param_idx in &func.parameters.nodes {
-                    self.bind_parameter(arena, param_idx);
-                }
-                self.collect_hoisted_from_node(arena, func.body);
-                self.process_hoisted_functions(arena);
-                self.process_hoisted_vars(arena);
-                self.bind_node(arena, func.body);
-
-                // Merge the fall-through flow with the return label
-                self.add_antecedent(return_label, self.current_flow);
-                let return_label = self
-                    .return_targets
-                    .pop()
-                    .expect("return_targets pushed before function body binding");
-
-                // Finalize: if the return label has antecedents, use it as current flow.
-                // This mirrors tsc's finishFlowLabel behavior.
-                if let Some(label_node) = self.flow_nodes.get(return_label) {
-                    match label_node.antecedent.len() {
-                        0 => self.current_flow = self.unreachable_flow,
-                        1 => self.current_flow = label_node.antecedent[0],
-                        _ => self.current_flow = return_label,
-                    }
-                } else {
-                    self.current_flow = self.unreachable_flow;
-                }
+                self.bind_iife_body(arena, &func.parameters, func.body);
             } else {
                 // Non-IIFE: isolated flow scope with captured enclosing flow
                 self.with_fresh_flow_inner(
                     |binder| {
-                        for &param_idx in &func.parameters.nodes {
-                            binder.bind_parameter(arena, param_idx);
-                        }
-                        binder.collect_hoisted_from_node(arena, func.body);
-                        binder.process_hoisted_functions(arena);
-                        binder.process_hoisted_vars(arena);
-                        binder.bind_node(arena, func.body);
+                        binder.bind_function_body_parts(arena, &func.parameters, func.body);
                     },
                     true,
                 );

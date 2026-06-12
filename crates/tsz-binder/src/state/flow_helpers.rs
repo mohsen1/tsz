@@ -59,74 +59,45 @@ impl BinderState {
         id
     }
 
-    /// Create a flow node for an assignment.
-    pub(crate) fn create_flow_assignment(&mut self, assignment: NodeIndex) -> FlowNodeId {
+    /// Shared template for flow nodes that record an AST node and chain the
+    /// current flow as their antecedent. The five `create_flow_*` wrappers
+    /// below differ only in the `flow_flags` constant they pass here.
+    fn create_flow_node_with_node(&mut self, flags: u32, node_idx: NodeIndex) -> FlowNodeId {
         let current_flow = self.current_flow;
         let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
-        let id = flow_nodes.alloc(flow_flags::ASSIGNMENT);
+        let id = flow_nodes.alloc(flags);
         if let Some(node) = flow_nodes.get_mut(id) {
-            node.node = assignment;
+            node.node = node_idx;
             if current_flow.is_some() {
                 node.antecedent.push(current_flow);
             }
         }
         id
+    }
+
+    /// Create a flow node for an assignment.
+    pub(crate) fn create_flow_assignment(&mut self, assignment: NodeIndex) -> FlowNodeId {
+        self.create_flow_node_with_node(flow_flags::ASSIGNMENT, assignment)
     }
 
     /// Create a flow node for a call expression.
     pub(crate) fn create_flow_call(&mut self, call: NodeIndex) -> FlowNodeId {
-        let current_flow = self.current_flow;
-        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
-        let id = flow_nodes.alloc(flow_flags::CALL);
-        if let Some(node) = flow_nodes.get_mut(id) {
-            node.node = call;
-            if current_flow.is_some() {
-                node.antecedent.push(current_flow);
-            }
-        }
-        id
+        self.create_flow_node_with_node(flow_flags::CALL, call)
     }
 
     /// Create a flow node for array mutation (e.g. push/splice).
     pub(crate) fn create_flow_array_mutation(&mut self, call: NodeIndex) -> FlowNodeId {
-        let current_flow = self.current_flow;
-        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
-        let id = flow_nodes.alloc(flow_flags::ARRAY_MUTATION);
-        if let Some(node) = flow_nodes.get_mut(id) {
-            node.node = call;
-            if current_flow.is_some() {
-                node.antecedent.push(current_flow);
-            }
-        }
-        id
+        self.create_flow_node_with_node(flow_flags::ARRAY_MUTATION, call)
     }
 
     /// Create a flow node for await expression (async suspension point).
     pub(crate) fn create_flow_await_point(&mut self, await_expr: NodeIndex) -> FlowNodeId {
-        let current_flow = self.current_flow;
-        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
-        let id = flow_nodes.alloc(flow_flags::AWAIT_POINT);
-        if let Some(node) = flow_nodes.get_mut(id) {
-            node.node = await_expr;
-            if current_flow.is_some() {
-                node.antecedent.push(current_flow);
-            }
-        }
-        id
+        self.create_flow_node_with_node(flow_flags::AWAIT_POINT, await_expr)
     }
 
     /// Create a flow node for yield expression (generator suspension point).
     pub(crate) fn create_flow_yield_point(&mut self, yield_expr: NodeIndex) -> FlowNodeId {
-        let current_flow = self.current_flow;
-        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
-        let id = flow_nodes.alloc(flow_flags::YIELD_POINT);
-        if let Some(node) = flow_nodes.get_mut(id) {
-            node.node = yield_expr;
-            if current_flow.is_some() {
-                node.antecedent.push(current_flow);
-            }
-        }
-        id
+        self.create_flow_node_with_node(flow_flags::YIELD_POINT, yield_expr)
     }
 
     /// Add an antecedent to a flow node (for merging branches).
