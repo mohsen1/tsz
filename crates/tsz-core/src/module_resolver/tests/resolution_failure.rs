@@ -15,11 +15,13 @@ fn test_resolution_failure_not_found_diagnostic() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
-    assert!(diagnostic.message.contains("Cannot find module"));
-    assert!(diagnostic.message.contains("./missing-module"));
-    assert_eq!(diagnostic.file_name, "/path/to/file.ts");
-    assert_eq!(diagnostic.span.start, 10);
-    assert_eq!(diagnostic.span.end, 30);
+    assert_eq!(
+        diagnostic.message_text,
+        "Cannot find module './missing-module' or its corresponding type declarations."
+    );
+    assert_eq!(diagnostic.file, "/path/to/file.ts");
+    assert_eq!(diagnostic.span().start, 10);
+    assert_eq!(diagnostic.span().end, 30);
 }
 
 #[test]
@@ -75,9 +77,9 @@ fn test_resolution_failure_all_variants_to_diagnostic() {
         // All failures should produce TS2307 diagnostic code
         assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
         // All failures should have non-empty file names
-        assert!(!diagnostic.file_name.is_empty());
+        assert!(!diagnostic.file.is_empty());
         // All failures should have valid spans
-        assert!(diagnostic.span.start < diagnostic.span.end);
+        assert!(diagnostic.span().start < diagnostic.span().end);
     }
 }
 
@@ -94,8 +96,8 @@ fn test_resolution_failure_span_preservation() {
         };
 
         let diagnostic = failure.to_diagnostic();
-        assert_eq!(diagnostic.span.start, start);
-        assert_eq!(diagnostic.span.end, end);
+        assert_eq!(diagnostic.span().start, start);
+        assert_eq!(diagnostic.span().end, end);
     }
 }
 
@@ -165,7 +167,7 @@ fn test_resolution_failure_to_diagnostic_ts2307() {
     };
     let diag = failure.to_diagnostic();
     assert_eq!(diag.code, CANNOT_FIND_MODULE);
-    assert!(diag.message.contains("./nonexistent"));
+    assert!(diag.message_text.contains("./nonexistent"));
 }
 
 #[test]

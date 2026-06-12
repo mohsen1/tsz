@@ -4,6 +4,7 @@
 //! shared error-code helpers used across the diagnostic family.
 
 use super::super::*;
+use tsz_common::diagnostics::{Diagnostic, DiagnosticCategory};
 
 #[test]
 fn test_ts2792_error_code_constant() {
@@ -20,15 +21,11 @@ fn test_module_resolution_mode_mismatch_produces_ts2792() {
 
     let diagnostic = failure.to_diagnostic();
     assert_eq!(diagnostic.code, MODULE_RESOLUTION_MODE_MISMATCH);
-    assert_eq!(diagnostic.file_name, "/src/index.ts");
-    assert!(
-        diagnostic
-            .message
-            .contains("Cannot find module 'modern-esm-package'")
+    assert_eq!(diagnostic.file, "/src/index.ts");
+    assert_eq!(
+        diagnostic.message_text,
+        "Cannot find module 'modern-esm-package'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
     );
-    assert!(diagnostic.message.contains("moduleResolution"));
-    assert!(diagnostic.message.contains("nodenext"));
-    assert!(diagnostic.message.contains("paths"));
 }
 
 #[test]
@@ -46,7 +43,7 @@ fn test_module_resolution_mode_mismatch_accessors() {
 
 #[test]
 fn test_new_error_codes_emit_correctly() {
-    let mut diagnostics = DiagnosticBag::new();
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let resolver = ModuleResolver::node_resolver();
 
     // Test TS2835
@@ -67,8 +64,19 @@ fn test_new_error_codes_emit_correctly() {
     resolver.emit_resolution_error(&mut diagnostics, &failure_2792);
 
     assert_eq!(diagnostics.len(), 2);
-
-    let errors: Vec<_> = diagnostics.errors().collect();
-    assert_eq!(errors[0].code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
-    assert_eq!(errors[1].code, MODULE_RESOLUTION_MODE_MISMATCH);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.category == DiagnosticCategory::Error)
+    );
+    assert_eq!(diagnostics[0].code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
+    assert_eq!(
+        diagnostics[0].message_text,
+        "Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean './utils.js'?"
+    );
+    assert_eq!(diagnostics[1].code, MODULE_RESOLUTION_MODE_MISMATCH);
+    assert_eq!(
+        diagnostics[1].message_text,
+        "Cannot find module 'esm-pkg'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
+    );
 }
