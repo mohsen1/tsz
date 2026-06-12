@@ -502,8 +502,8 @@ pub fn query_relation(
     source: TypeId,
     target: TypeId,
     kind: RelationKind,
-    _policy: RelationPolicy,
-    _context: RelationContext<'_>,
+    policy: RelationPolicy,
+    context: RelationContext<'_>,
 ) -> RelationResult {
     let resolver = NoopResolver;
     query_relation_with_resolver(interner, &resolver, source, target, kind, policy, context)
@@ -763,8 +763,8 @@ pub fn check_application_variance<R: TypeResolver>(
     query_db: Option<&dyn QueryDatabase>,
     source: TypeId,
     target: TypeId,
-    policy: RelationPolicy,
-    context: RelationContext<'_>,
+    _policy: RelationPolicy,
+    _context: RelationContext<'_>,
 ) -> Option<bool> {
     use crate::types::TypeData;
     use crate::visitor::lazy_def_id;
