@@ -87,7 +87,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // finds the cached result and skips the diagnostic-emitting path.
         let is_type_ref = node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE;
         if !is_type_ref {
-            if let Some(key) = scope_cache_key {
+            if let Some(key) = scope_cache_key
+                && result != TypeId::ERROR
+            {
                 self.ctx
                     .type_reference_validation_caches
                     .type_node_scope_types
