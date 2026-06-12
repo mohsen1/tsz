@@ -844,11 +844,22 @@ impl<'a> CheckerState<'a> {
                 display_type
             };
 
-        let display = self.format_type_for_assignability_message(display_type);
+        // Non-callable parameter displays widen literal annotations: widen at
+        // the type level and reprint (#13075).
         let display = if query_common::is_callable_type(self.ctx.types, display_type) {
-            display
+            self.format_type_for_assignability_message(display_type)
         } else {
-            Self::widen_member_literals_in_display_text(&display)
+            let widened = self.widen_annotation_literals_for_display(
+                display_type,
+                crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+            );
+            if widened.display_residue {
+                // Literal spellings live only in display provenance; render
+                // the canonical (display-property-free) form.
+                self.format_type_diagnostic_widened(widened.type_id)
+            } else {
+                self.format_type_for_assignability_message(widened.type_id)
+            }
         };
         Some(
             display

@@ -1080,3 +1080,212 @@ fn test_apply_const_assertion_intrinsic_preserved() {
     );
     assert_eq!(apply_const_assertion(&interner, TypeId::ANY), TypeId::ANY);
 }
+
+// --- widen_annotation_literals_for_display (#13075) ---
+
+fn annotation_widen_all(interner: &TypeInterner, type_id: TypeId) -> AnnotationWideningOutcome {
+    widen_annotation_literals_for_display(interner, type_id, AnnotationLiteralWideningPolicy::ALL)
+}
+
+fn property_type<'a>(
+    interner: &TypeInterner,
+    shape: &'a crate::types::ObjectShape,
+    name: &str,
+) -> TypeId {
+    let atom = interner.intern_string(name);
+    shape
+        .properties
+        .iter()
+        .find(|prop| prop.name == atom)
+        .unwrap_or_else(|| panic!("property {name} not found"))
+        .type_id
+}
+
+#[test]
+fn annotation_widen_object_property_literals() {
+    let interner = TypeInterner::new();
+    let props = vec![
+        PropertyInfo::new(interner.intern_string("s"), interner.literal_string("x")),
+        PropertyInfo::new(interner.intern_string("n"), interner.literal_number(1.0)),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::BOOLEAN_TRUE),
+    ];
+    let obj = interner.object(props);
+    let outcome = annotation_widen_all(&interner, obj);
+    assert!(!outcome.display_residue);
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    assert_eq!(property_type(&interner, &shape, "s"), TypeId::STRING);
+    assert_eq!(property_type(&interner, &shape, "n"), TypeId::NUMBER);
+    assert_eq!(property_type(&interner, &shape, "b"), TypeId::BOOLEAN);
+}
+
+#[test]
+fn annotation_widen_preserves_root_literal_and_bare_union_members() {
+    let interner = TypeInterner::new();
+    let lit = interner.literal_number(42.0);
+    assert_eq!(annotation_widen_all(&interner, lit).type_id, lit);
+    let union = interner.union(vec![
+        interner.literal_string("a"),
+        interner.literal_string("b"),
+    ]);
+    assert_eq!(annotation_widen_all(&interner, union).type_id, union);
+}
+
+#[test]
+fn annotation_widen_method_return_but_not_arrow_return() {
+    let interner = TypeInterner::new();
+    let lit_return = interner.literal_number(1.0);
+    let arrow = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: Vec::new(),
+        this_type: None,
+        return_type: lit_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut method_prop = PropertyInfo::new(interner.intern_string("m"), arrow);
+    method_prop.is_method = true;
+    let plain_prop = PropertyInfo::new(interner.intern_string("f"), arrow);
+    let obj = interner.object(vec![method_prop, plain_prop]);
+    let outcome = annotation_widen_all(&interner, obj);
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    let widened_method = match interner.lookup(property_type(&interner, &shape, "m")) {
+        Some(TypeData::Function(id)) => interner.function_shape(id),
+        other => panic!("expected function, got {other:?}"),
+    };
+    assert_eq!(
+        widened_method.return_type,
+        TypeId::NUMBER,
+        "method property return renders `m(): 1` (annotation position) and widens"
+    );
+    assert_eq!(
+        property_type(&interner, &shape, "f"),
+        arrow,
+        "non-method property renders `f: () => 1` (no colon before the return) and stays"
+    );
+}
+
+#[test]
+fn annotation_widen_array_string_element_but_not_number_element() {
+    let interner = TypeInterner::new();
+    let string_arr = interner.array(interner.literal_string("no"));
+    let number_arr = interner.array(interner.literal_number(12.0));
+    let obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("s"), string_arr),
+        PropertyInfo::new(interner.intern_string("n"), number_arr),
+    ]);
+    let outcome = annotation_widen_all(&interner, obj);
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    assert_eq!(
+        property_type(&interner, &shape, "s"),
+        interner.array(TypeId::STRING),
+        "`s: \"no\"[]` widens: quoted text rewrote unconditionally"
+    );
+    assert_eq!(
+        property_type(&interner, &shape, "n"),
+        number_arr,
+        "`n: 12[]` stays: `[` is not a boundary after a number"
+    );
+}
+
+#[test]
+fn annotation_widen_union_first_display_member() {
+    let interner = TypeInterner::new();
+    let prop_type = interner.union(vec![
+        interner.array(interner.literal_string("no")),
+        TypeId::UNDEFINED,
+    ]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        prop_type,
+    )]);
+    let outcome = annotation_widen_all(&interner, obj);
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    let expected = interner.union(vec![interner.array(TypeId::STRING), TypeId::UNDEFINED]);
+    assert_eq!(
+        property_type(&interner, &shape, "x"),
+        expected,
+        "`x: \"no\"[] | undefined` widens its leading member"
+    );
+}
+
+#[test]
+fn annotation_widen_application_args_only_policy() {
+    let interner = TypeInterner::new();
+    let arg_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), interner.literal_string("x")),
+        PropertyInfo::new(interner.intern_string("n"), interner.literal_number(1.0)),
+    ]);
+    let base = interner.literal_string("Base");
+    let app = interner.application(base, vec![arg_obj]);
+    let outer = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("p"), app),
+        PropertyInfo::new(interner.intern_string("q"), interner.literal_string("y")),
+    ]);
+    let outcome = widen_annotation_literals_for_display(
+        &interner,
+        outer,
+        AnnotationLiteralWideningPolicy::STRINGS_AND_BOOLEANS_INSIDE_APPLICATION_ARGS,
+    );
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    let widened_app = match interner.lookup(property_type(&interner, &shape, "p")) {
+        Some(TypeData::Application(id)) => interner.type_application(id),
+        other => panic!("expected application, got {other:?}"),
+    };
+    let widened_arg = match interner.lookup(widened_app.args[0]) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object arg, got {other:?}"),
+    };
+    assert_eq!(
+        property_type(&interner, &widened_arg, "a"),
+        TypeId::STRING,
+        "string annotations inside application args widen"
+    );
+    assert_eq!(
+        property_type(&interner, &widened_arg, "n"),
+        interner.literal_number(1.0),
+        "number annotations are preserved by this policy"
+    );
+    assert_eq!(
+        property_type(&interner, &shape, "q"),
+        interner.literal_string("y"),
+        "annotations outside application args are preserved by this policy"
+    );
+}
+
+#[test]
+fn annotation_widen_reports_display_residue() {
+    let interner = TypeInterner::new();
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    interner.store_display_properties(
+        obj,
+        vec![PropertyInfo::new(
+            interner.intern_string("a"),
+            interner.literal_string("x"),
+        )],
+    );
+    let outcome = annotation_widen_all(&interner, obj);
+    assert_eq!(outcome.type_id, obj, "canonical shape is already widened");
+    assert!(
+        outcome.display_residue,
+        "literal spellings live only in display provenance"
+    );
+}
