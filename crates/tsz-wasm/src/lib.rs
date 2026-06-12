@@ -22,12 +22,12 @@ pub fn wasm_init() {
 // all #[wasm_bindgen] annotated types from the root crate
 pub use tsz::*;
 
-// WASM integration module - parallel type checking exports
-pub mod wasm;
-pub use wasm::{WasmParallelChecker, WasmParallelParser, WasmTypeInterner};
-
 // TypeScript API compatibility layer - exposes TS-compatible APIs via WASM
 pub mod wasm_api;
 pub use wasm_api::{
     TsDiagnostic, TsProgram, TsSignature, TsSourceFile, TsSymbol, TsType, TsTypeChecker,
 };
+
+#[cfg(test)]
+#[path = "wasm_tests.rs"]
+mod tests;
