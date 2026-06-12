@@ -34,12 +34,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             IntrinsicKind::Void => {
                 // In tsc, accessing a property on `void` produces TS2339
                 // ("Property 'X' does not exist on type 'void'"), NOT TS2532.
-                let prop_atom = self.current_prop_atom.borrow();
-                let atom = prop_atom.unwrap_or_else(|| {
-                    let prop_name = self.current_prop_name.borrow();
-                    self.interner()
-                        .intern_string(prop_name.as_deref().unwrap_or(""))
-                });
+                let (_, atom) = self.current_property_context()?;
                 Some(PropertyAccessResult::PropertyNotFound {
                     type_id: TypeId::VOID,
                     property_name: atom,
@@ -58,48 +53,26 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             }
             // Handle primitive intrinsic types by delegating to their boxed interfaces
             IntrinsicKind::String => {
-                let prop_name = self.current_prop_name.borrow();
-                let prop_atom = self.current_prop_atom.borrow();
-                match (prop_name.as_deref(), prop_atom.as_ref()) {
-                    (Some(name), Some(&atom)) => Some(self.resolve_string_property(name, atom)),
-                    _ => None,
-                }
+                let (prop_name, prop_atom) = self.current_property_context()?;
+                Some(self.resolve_string_property(prop_name.as_ref(), prop_atom))
             }
             IntrinsicKind::Number => {
-                let prop_name = self.current_prop_name.borrow();
-                let prop_atom = self.current_prop_atom.borrow();
-                match (prop_name.as_deref(), prop_atom.as_ref()) {
-                    (Some(name), Some(&atom)) => Some(self.resolve_number_property(name, atom)),
-                    _ => None,
-                }
+                let (prop_name, prop_atom) = self.current_property_context()?;
+                Some(self.resolve_number_property(prop_name.as_ref(), prop_atom))
             }
             IntrinsicKind::Boolean => {
-                let prop_name = self.current_prop_name.borrow();
-                let prop_atom = self.current_prop_atom.borrow();
-                match (prop_name.as_deref(), prop_atom.as_ref()) {
-                    (Some(name), Some(&atom)) => Some(self.resolve_boolean_property(name, atom)),
-                    _ => None,
-                }
+                let (prop_name, prop_atom) = self.current_property_context()?;
+                Some(self.resolve_boolean_property(prop_name.as_ref(), prop_atom))
             }
             IntrinsicKind::Bigint => {
-                let prop_name = self.current_prop_name.borrow();
-                let prop_atom = self.current_prop_atom.borrow();
-                match (prop_name.as_deref(), prop_atom.as_ref()) {
-                    (Some(name), Some(&atom)) => Some(self.resolve_bigint_property(name, atom)),
-                    _ => None,
-                }
+                let (prop_name, prop_atom) = self.current_property_context()?;
+                Some(self.resolve_bigint_property(prop_name.as_ref(), prop_atom))
             }
             // Symbol intrinsic is handled separately (has special properties)
             IntrinsicKind::Symbol => {
                 // Get the property name from context
-                let prop_name = self.current_prop_name.borrow();
-                let prop_atom = self.current_prop_atom.borrow();
-                match (prop_name.as_deref(), prop_atom.as_ref()) {
-                    (Some(name), Some(&atom)) => {
-                        Some(self.resolve_symbol_primitive_property(name, atom))
-                    }
-                    _ => None,
-                }
+                let (prop_name, prop_atom) = self.current_property_context()?;
+                Some(self.resolve_symbol_primitive_property(prop_name.as_ref(), prop_atom))
             }
             // Other intrinsics (Object, etc.) fall back to None
             _ => None,
@@ -109,14 +82,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
         use crate::types::LiteralValue;
 
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
-
-        let prop_name = prop_name.as_deref()?;
-        let prop_atom = match prop_atom_opt.as_ref() {
-            Some(&atom) => atom,
-            None => self.interner().intern_string(prop_name),
-        };
+        let (prop_name, prop_atom) = self.current_property_context()?;
+        let prop_name = prop_name.as_ref();
 
         // Handle primitive literals by delegating to their boxed interface types
         match value {
@@ -130,14 +97,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
         use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
-
-        let prop_name = prop_name.as_deref()?;
-        let prop_atom = match prop_atom_opt.as_ref() {
-            Some(&atom) => atom,
-            None => self.interner().intern_string(prop_name),
-        };
+        let (prop_name, prop_atom) = self.current_property_context()?;
+        let prop_name = prop_name.as_ref();
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
         // PERF: Reuse existing interned type for this shape instead of cloning
@@ -211,14 +172,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         use crate::objects::index_signatures::IndexSignatureResolver;
 
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
-
-        let prop_name = prop_name.as_deref()?;
-        let prop_atom = match prop_atom_opt.as_ref() {
-            Some(&atom) => atom,
-            None => self.interner().intern_string(prop_name),
-        };
+        let (prop_name, prop_atom) = self.current_property_context()?;
+        let prop_name = prop_name.as_ref();
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
         let obj_type = self
@@ -286,14 +241,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
-
-        let prop_name = prop_name.as_deref()?;
-        let prop_atom = match prop_atom_opt.as_ref() {
-            Some(&atom) => atom,
-            None => self.interner().intern_string(prop_name),
-        };
+        let (prop_name, prop_atom) = self.current_property_context()?;
+        let prop_name = prop_name.as_ref();
 
         // Reconstruct obj_type for resolve_array_property
         let obj_type = self.interner().array(element_type);
@@ -301,14 +250,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     }
 
     fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
-
-        let prop_name = prop_name.as_deref()?;
-        let prop_atom = match prop_atom_opt.as_ref() {
-            Some(&atom) => atom,
-            None => self.interner().intern_string(prop_name),
-        };
+        let (prop_name, prop_atom) = self.current_property_context()?;
+        let prop_name = prop_name.as_ref();
 
         // Reconstruct obj_type for resolve_array_property
         let obj_type = self
@@ -320,14 +263,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
         // Template literals are string-like for property access
         // They support the same properties as the String interface
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
-
-        let prop_name = prop_name.as_deref()?;
-        let prop_atom = match prop_atom_opt.as_ref() {
-            Some(&atom) => atom,
-            None => self.interner().intern_string(prop_name),
-        };
+        let (prop_name, prop_atom) = self.current_property_context()?;
+        let prop_name = prop_name.as_ref();
 
         Some(self.resolve_string_property(prop_name, prop_atom))
     }
@@ -339,25 +276,16 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     ) -> Self::Output {
         // String intrinsics (Uppercase<T>, Lowercase<T>, Capitalize<T>, etc.)
         // are string-like for property access
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
-
-        let prop_name = prop_name.as_deref()?;
-        let prop_atom = match prop_atom_opt.as_ref() {
-            Some(&atom) => atom,
-            None => self.interner().intern_string(prop_name),
-        };
+        let (prop_name, prop_atom) = self.current_property_context()?;
+        let prop_name = prop_name.as_ref();
 
         Some(self.resolve_string_property(prop_name, prop_atom))
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        let prop_name = self.current_prop_name.borrow();
-        let prop_atom_opt = self.current_prop_atom.borrow();
+        let (prop_name, prop_atom) = self.current_property_context()?;
 
-        let prop_name = prop_name.as_deref()?;
-
-        self.visit_union_impl(list_id, prop_name, prop_atom_opt.as_ref().copied())
+        self.visit_union_impl(list_id, prop_name.as_ref(), Some(prop_atom))
     }
 
     fn default_output() -> Self::Output {
