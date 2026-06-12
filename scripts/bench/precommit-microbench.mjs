@@ -18,6 +18,7 @@ function parseArgs(argv) {
     warmup: 1,
     updateBaseline: false,
     profile: "dev",
+    outputJson: "",
     cases: [],
   };
 
@@ -44,6 +45,9 @@ function parseArgs(argv) {
         break;
       case "--profile":
         out.profile = argv[++i] ?? "dev";
+        break;
+      case "--output-json":
+        out.outputJson = argv[++i] ?? "";
         break;
       case "--case": {
         const raw = argv[++i] ?? "";
@@ -121,6 +125,13 @@ function writeBaseline(filePath, baseline) {
   fs.writeFileSync(filePath, `${JSON.stringify(baseline, null, 2)}\n`, "utf8");
 }
 
+function writeReport(filePath, report) {
+  if (!filePath) return;
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+}
+
 function formatMs(value) {
   return `${value.toFixed(2)}ms`;
 }
@@ -173,14 +184,27 @@ function main() {
       ])
     ),
   };
+  let reportStatus = "passed";
+  let regressions = [];
 
   if (!baseline || baseline.schema_version !== 2 || baseline.profile !== opts.profile) {
     writeBaseline(opts.baseline, nextBaseline);
+    writeReport(opts.outputJson, {
+      schema_version: 1,
+      status: "baseline_initialized",
+      profile: opts.profile,
+      threshold_pct: opts.thresholdPct,
+      runs: opts.runs,
+      warmup: opts.warmup,
+      baseline_file: opts.baseline,
+      generated_at: nextBaseline.updated_at,
+      cases: measurements,
+      regressions: [],
+    });
     console.log(`   Baseline initialized at ${opts.baseline}`);
     return;
   }
 
-  const regressions = [];
   for (const [name, current] of Object.entries(measurements)) {
     const previous = baseline.cases?.[name];
     if (
@@ -214,6 +238,24 @@ function main() {
       });
     }
   }
+
+  if (regressions.length > 0) {
+    reportStatus = "regression";
+  }
+
+  writeReport(opts.outputJson, {
+    schema_version: 1,
+    status: reportStatus,
+    profile: opts.profile,
+    threshold_pct: opts.thresholdPct,
+    runs: opts.runs,
+    warmup: opts.warmup,
+    baseline_file: opts.baseline,
+    baseline_updated_at: baseline.updated_at,
+    generated_at: nextBaseline.updated_at,
+    cases: measurements,
+    regressions,
+  });
 
   if (regressions.length > 0) {
     console.error("");

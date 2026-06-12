@@ -26,6 +26,7 @@
 //! 4. **O(1) node access**: Direct index into typed pool
 
 use super::base::{NodeIndex, NodeList};
+use super::node_pools::for_each_node_pool;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tsz_common::interner::{AstAtom, Interner};
@@ -1001,118 +1002,32 @@ where
 // Arena pool checkpoint
 // =============================================================================
 
-/// Lengths of every typed data pool in a [`NodeArena`] at a point in time.
-///
-/// The speculation machinery in `speculation.rs` captures this snapshot before
-/// a speculative `parse_*` call and restores it on rollback. Without this,
-/// failed speculations leave orphaned entries in every typed pool (identifiers,
-/// `type_refs`, etc.) even though the corresponding node headers are truncated.
-/// The orphaned data inflates peak memory and degrades cache efficiency,
-/// causing super-linear slowdowns on files with many complex recursive types
-/// such as the `utility-types-project` benchmark row.
-///
-/// Every field is a `usize` (the pool's `Vec::len()`). The struct is cheap to
-/// construct (`O(1)` field reads) and cheap to restore (`truncate` on each
-/// pool, which is `O(dropped)` but the drop cost is paid at the moment of
-/// rollback rather than deferred to the arena's `clear()` call).
-///
-/// Every field must also appear in the `impl_pool_checkpoints!` invocation on
-/// [`NodeArena`] — see that macro for the canonical field list.
-#[derive(Default)]
-pub(crate) struct NodeArenaPoolLengths {
-    pub identifiers: usize,
-    pub qualified_names: usize,
-    pub computed_properties: usize,
-    pub literals: usize,
-    pub binary_exprs: usize,
-    pub unary_exprs: usize,
-    pub call_exprs: usize,
-    pub access_exprs: usize,
-    pub conditional_exprs: usize,
-    pub literal_exprs: usize,
-    pub parenthesized: usize,
-    pub unary_exprs_ex: usize,
-    pub type_assertions: usize,
-    pub template_exprs: usize,
-    pub template_spans: usize,
-    pub tagged_templates: usize,
-    pub functions: usize,
-    pub classes: usize,
-    pub interfaces: usize,
-    pub type_aliases: usize,
-    pub enums: usize,
-    pub enum_members: usize,
-    pub modules: usize,
-    pub module_blocks: usize,
-    pub signatures: usize,
-    pub index_signatures: usize,
-    pub property_decls: usize,
-    pub method_decls: usize,
-    pub constructors: usize,
-    pub accessors: usize,
-    pub parameters: usize,
-    pub type_parameters: usize,
-    pub decorators: usize,
-    pub heritage_clauses: usize,
-    pub expr_with_type_args: usize,
-    pub if_statements: usize,
-    pub loops: usize,
-    pub blocks: usize,
-    pub variables: usize,
-    pub return_data: usize,
-    pub expr_statements: usize,
-    pub switch_data: usize,
-    pub case_clauses: usize,
-    pub try_data: usize,
-    pub catch_clauses: usize,
-    pub labeled_data: usize,
-    pub jump_data: usize,
-    pub with_data: usize,
-    pub type_refs: usize,
-    pub composite_types: usize,
-    pub function_types: usize,
-    pub type_queries: usize,
-    pub type_literals: usize,
-    pub array_types: usize,
-    pub tuple_types: usize,
-    pub wrapped_types: usize,
-    pub conditional_types: usize,
-    pub infer_types: usize,
-    pub type_operators: usize,
-    pub indexed_access_types: usize,
-    pub mapped_types: usize,
-    pub literal_types: usize,
-    pub template_literal_types: usize,
-    pub named_tuple_members: usize,
-    pub type_predicates: usize,
-    pub import_decls: usize,
-    pub import_clauses: usize,
-    pub named_imports: usize,
-    pub specifiers: usize,
-    pub export_decls: usize,
-    pub export_assignments: usize,
-    pub import_attributes: usize,
-    pub import_attribute: usize,
-    pub binding_patterns: usize,
-    pub binding_elements: usize,
-    pub property_assignments: usize,
-    pub shorthand_properties: usize,
-    pub spread_data: usize,
-    pub variable_declarations: usize,
-    pub for_in_of: usize,
-    pub jsx_elements: usize,
-    pub jsx_opening: usize,
-    pub jsx_closing: usize,
-    pub jsx_fragments: usize,
-    pub jsx_attributes: usize,
-    pub jsx_attribute: usize,
-    pub jsx_spread_attributes: usize,
-    pub jsx_expressions: usize,
-    pub jsx_text: usize,
-    pub jsx_namespaced_names: usize,
-    pub source_files: usize,
-    pub class_body_var_fn_recoveries: usize,
+/// Generate [`NodeArenaPoolLengths`] from the canonical pool registry in
+/// [`super::node_pools`], so the snapshot struct can never drift from the
+/// [`NodeArenaInner`] pool fields or the checkpoint methods.
+macro_rules! declare_pool_lengths {
+    ($($pool:ident => $elem:ty),+ $(,)?) => {
+        /// Lengths of every typed data pool in a [`NodeArena`] at a point in time.
+        ///
+        /// The speculation machinery in `speculation.rs` captures this snapshot before
+        /// a speculative `parse_*` call and restores it on rollback. Without this,
+        /// failed speculations leave orphaned entries in every typed pool (identifiers,
+        /// `type_refs`, etc.) even though the corresponding node headers are truncated.
+        /// The orphaned data inflates peak memory and degrades cache efficiency,
+        /// causing super-linear slowdowns on files with many complex recursive types
+        /// such as the `utility-types-project` benchmark row.
+        ///
+        /// Every field is a `usize` (the pool's `Vec::len()`). The struct is cheap to
+        /// construct (`O(1)` field reads) and cheap to restore (`truncate` on each
+        /// pool, which is `O(dropped)` but the drop cost is paid at the moment of
+        /// rollback rather than deferred to the arena's `clear()` call).
+        #[derive(Default)]
+        pub(crate) struct NodeArenaPoolLengths {
+            $(pub $pool: usize,)+
+        }
+    };
 }
+for_each_node_pool!(declare_pool_lengths);
 
 // =============================================================================
 // Thin Node Arena
@@ -1139,154 +1054,43 @@ pub struct ClassBodyVarFnRecovery {
     pub name: String,
 }
 
-/// Arena for thin nodes with typed data pools.
-/// Provides O(1) allocation and cache-efficient storage.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct NodeArenaInner {
-    /// The thin node headers (16 bytes each)
-    pub nodes: Vec<Node>,
+/// Generate [`NodeArenaInner`] with one `Vec<ElementType>` field per entry of
+/// the canonical pool registry in [`super::node_pools`].
+///
+/// The typed pool fields exist only through that table, so a new pool cannot
+/// be added without registering it — and every other generated surface
+/// (checkpoints, size accounting, clearing) picks it up automatically.
+macro_rules! declare_node_arena_inner {
+    ($($pool:ident => $elem:ty),+ $(,)?) => {
+        /// Arena for thin nodes with typed data pools.
+        /// Provides O(1) allocation and cache-efficient storage.
+        ///
+        /// The typed data pool fields (everything except `nodes`, `interner`,
+        /// and `extended_info`) are generated from the canonical pool registry
+        /// in [`super::node_pools`], in registry (and thus serde) order.
+        #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+        pub struct NodeArenaInner {
+            /// The thin node headers (16 bytes each)
+            pub nodes: Vec<Node>,
 
-    /// String interner for resolving identifier atoms
-    /// This is populated from the scanner after parsing completes.
-    /// Round-tripped via `Interner`'s custom `Serialize`/`Deserialize`
-    /// (which writes only the `strings` Vec; the lookup map is rebuilt
-    /// on load). This is required for snapshot round-trip to preserve
-    /// identifier text — node `IdentifierData` references atoms by
-    /// index, and stripping the interner would leave them unresolvable.
-    pub interner: Interner,
+            /// String interner for resolving identifier atoms
+            /// This is populated from the scanner after parsing completes.
+            /// Round-tripped via `Interner`'s custom `Serialize`/`Deserialize`
+            /// (which writes only the `strings` Vec; the lookup map is rebuilt
+            /// on load). This is required for snapshot round-trip to preserve
+            /// identifier text — node `IdentifierData` references atoms by
+            /// index, and stripping the interner would leave them unresolvable.
+            pub interner: Interner,
 
-    // ==========================================================================
-    // Typed data pools - organized by category
-    // ==========================================================================
+            // Typed data pools — generated from `node_pools::for_each_node_pool!`.
+            $(#[serde(default)] pub $pool: Vec<$elem>,)+
 
-    // Names and identifiers
-    pub identifiers: Vec<IdentifierData>,
-    pub qualified_names: Vec<QualifiedNameData>,
-    pub computed_properties: Vec<ComputedPropertyData>,
-
-    // Literals
-    pub literals: Vec<LiteralData>,
-
-    // Expressions
-    pub binary_exprs: Vec<BinaryExprData>,
-    pub unary_exprs: Vec<UnaryExprData>,
-    pub call_exprs: Vec<CallExprData>,
-    pub access_exprs: Vec<AccessExprData>,
-    pub conditional_exprs: Vec<ConditionalExprData>,
-    pub literal_exprs: Vec<LiteralExprData>,
-    pub parenthesized: Vec<ParenthesizedData>,
-    pub unary_exprs_ex: Vec<UnaryExprDataEx>,
-    pub type_assertions: Vec<TypeAssertionData>,
-    pub template_exprs: Vec<TemplateExprData>,
-    pub template_spans: Vec<TemplateSpanData>,
-    pub tagged_templates: Vec<TaggedTemplateData>,
-
-    // Functions and classes
-    pub functions: Vec<FunctionData>,
-    pub classes: Vec<ClassData>,
-    pub interfaces: Vec<InterfaceData>,
-    pub type_aliases: Vec<TypeAliasData>,
-    pub enums: Vec<EnumData>,
-    pub enum_members: Vec<EnumMemberData>,
-    pub modules: Vec<ModuleData>,
-    pub module_blocks: Vec<ModuleBlockData>,
-
-    // Signatures and members
-    pub signatures: Vec<SignatureData>,
-    pub index_signatures: Vec<IndexSignatureData>,
-    pub property_decls: Vec<PropertyDeclData>,
-    pub method_decls: Vec<MethodDeclData>,
-    pub constructors: Vec<ConstructorData>,
-    pub accessors: Vec<AccessorData>,
-    pub parameters: Vec<ParameterData>,
-    pub type_parameters: Vec<TypeParameterData>,
-    pub decorators: Vec<DecoratorData>,
-    pub heritage_clauses: Vec<HeritageData>,
-    pub expr_with_type_args: Vec<ExprWithTypeArgsData>,
-
-    // Statements
-    pub if_statements: Vec<IfStatementData>,
-    pub loops: Vec<LoopData>,
-    pub blocks: Vec<BlockData>,
-    pub variables: Vec<VariableData>,
-    pub return_data: Vec<ReturnData>,
-    pub expr_statements: Vec<ExprStatementData>,
-    pub switch_data: Vec<SwitchData>,
-    pub case_clauses: Vec<CaseClauseData>,
-    pub try_data: Vec<TryData>,
-    pub catch_clauses: Vec<CatchClauseData>,
-    pub labeled_data: Vec<LabeledData>,
-    pub jump_data: Vec<JumpData>,
-    pub with_data: Vec<WithData>,
-
-    // Types
-    pub type_refs: Vec<TypeRefData>,
-    pub composite_types: Vec<CompositeTypeData>,
-    pub function_types: Vec<FunctionTypeData>,
-    pub type_queries: Vec<TypeQueryData>,
-    pub type_literals: Vec<TypeLiteralData>,
-    pub array_types: Vec<ArrayTypeData>,
-    pub tuple_types: Vec<TupleTypeData>,
-    pub wrapped_types: Vec<WrappedTypeData>,
-    pub conditional_types: Vec<ConditionalTypeData>,
-    pub infer_types: Vec<InferTypeData>,
-    pub type_operators: Vec<TypeOperatorData>,
-    pub indexed_access_types: Vec<IndexedAccessTypeData>,
-    pub mapped_types: Vec<MappedTypeData>,
-    pub literal_types: Vec<LiteralTypeData>,
-    pub template_literal_types: Vec<TemplateLiteralTypeData>,
-    pub named_tuple_members: Vec<NamedTupleMemberData>,
-    pub type_predicates: Vec<TypePredicateData>,
-
-    // Import/export
-    pub import_decls: Vec<ImportDeclData>,
-    pub import_clauses: Vec<ImportClauseData>,
-    pub named_imports: Vec<NamedImportsData>,
-    pub specifiers: Vec<SpecifierData>,
-    pub export_decls: Vec<ExportDeclData>,
-    pub export_assignments: Vec<ExportAssignmentData>,
-    pub import_attributes: Vec<ImportAttributesData>,
-    pub import_attribute: Vec<ImportAttributeData>,
-
-    // Binding patterns
-    pub binding_patterns: Vec<BindingPatternData>,
-    pub binding_elements: Vec<BindingElementData>,
-
-    // Object literal members
-    pub property_assignments: Vec<PropertyAssignmentData>,
-    pub shorthand_properties: Vec<ShorthandPropertyData>,
-    pub spread_data: Vec<SpreadData>,
-
-    // Variable declarations (individual)
-    pub variable_declarations: Vec<VariableDeclarationData>,
-
-    // For-in/for-of
-    pub for_in_of: Vec<ForInOfData>,
-
-    // JSX
-    pub jsx_elements: Vec<JsxElementData>,
-    pub jsx_opening: Vec<JsxOpeningData>,
-    pub jsx_closing: Vec<JsxClosingData>,
-    pub jsx_fragments: Vec<JsxFragmentData>,
-    pub jsx_attributes: Vec<JsxAttributesData>,
-    pub jsx_attribute: Vec<JsxAttributeData>,
-    pub jsx_spread_attributes: Vec<JsxSpreadAttributeData>,
-    pub jsx_expressions: Vec<JsxExpressionData>,
-    pub jsx_text: Vec<JsxTextData>,
-    pub jsx_namespaced_names: Vec<JsxNamespacedNameData>,
-
-    // Source file
-    pub source_files: Vec<SourceFileData>,
-
-    // Extended node info (for nodes that need parent, id, full flags)
-    pub extended_info: Vec<ExtendedNodeInfo>,
-
-    /// Class-body members dropped by parser error recovery whose shape
-    /// matches tsc's `var <name>() { }` recovery emit. See
-    /// [`ClassBodyVarFnRecovery`].
-    #[serde(default)]
-    pub class_body_var_fn_recoveries: Vec<ClassBodyVarFnRecovery>,
+            /// Extended node info (for nodes that need parent, id, full flags)
+            pub extended_info: Vec<ExtendedNodeInfo>,
+        }
+    };
 }
+for_each_node_pool!(declare_node_arena_inner);
 
 /// Cheap-to-clone wrapper around the parse-immutable node arena.
 ///
@@ -1373,128 +1177,57 @@ delegate_arena_alloc! {
     create_modifier(kind: tsz_scanner::SyntaxKind, pos: u32);
 }
 
-/// Generate `pool_checkpoint` and `restore_pool_checkpoint` on `NodeArena`
-/// from a single canonical field list. Adding a new pool requires updating
-/// the field list here and in `NodeArenaPoolLengths`.
+/// Generate `pool_checkpoint` and `restore_pool_checkpoint` on
+/// [`NodeArenaInner`] from the canonical pool registry in
+/// [`super::node_pools`].
 macro_rules! impl_pool_checkpoints {
-    ($($f:ident),+ $(,)?) => {
-        /// Capture the current length of every typed data pool.
-        ///
-        /// Paired with [`Self::restore_pool_checkpoint`] in the speculation system
-        /// to reclaim orphaned pool entries when a speculative parse is rolled back.
-        #[must_use]
-        pub(crate) const fn pool_checkpoint(&self) -> NodeArenaPoolLengths {
-            NodeArenaPoolLengths { $($f: self.$f.len(),)+ }
-        }
+    ($($pool:ident => $elem:ty),+ $(,)?) => {
+        impl NodeArenaInner {
+            /// Capture the current length of every typed data pool.
+            ///
+            /// Paired with [`Self::restore_pool_checkpoint`] in the speculation system
+            /// to reclaim orphaned pool entries when a speculative parse is rolled back.
+            #[must_use]
+            pub(crate) const fn pool_checkpoint(&self) -> NodeArenaPoolLengths {
+                NodeArenaPoolLengths { $($pool: self.$pool.len(),)+ }
+            }
 
-        /// Truncate every typed data pool back to the lengths captured by
-        /// [`Self::pool_checkpoint`].
-        ///
-        /// This reclaims any pool entries allocated during a failed speculation,
-        /// preventing unbounded memory growth in files with many speculative parses
-        /// (e.g. complex generic types, arrow function lookaheads).
-        pub(crate) fn restore_pool_checkpoint(&mut self, c: &NodeArenaPoolLengths) {
-            $(self.$f.truncate(c.$f);)+
+            /// Truncate every typed data pool back to the lengths captured by
+            /// [`Self::pool_checkpoint`].
+            ///
+            /// This reclaims any pool entries allocated during a failed speculation,
+            /// preventing unbounded memory growth in files with many speculative parses
+            /// (e.g. complex generic types, arrow function lookaheads).
+            pub(crate) fn restore_pool_checkpoint(&mut self, c: &NodeArenaPoolLengths) {
+                $(self.$pool.truncate(c.$pool);)+
+            }
         }
     };
 }
+for_each_node_pool!(impl_pool_checkpoints);
+
+/// Generate the per-pool capacity accounting used by
+/// [`NodeArenaInner::estimated_size_bytes`] from the canonical pool registry
+/// in [`super::node_pools`].
+macro_rules! impl_pool_capacity_bytes {
+    ($($pool:ident => $elem:ty),+ $(,)?) => {
+        impl NodeArenaInner {
+            /// Sum of `capacity * size_of::<Element>()` over every typed data
+            /// pool (fixed-size element storage only; heap allocations inside
+            /// elements are accounted separately by
+            /// [`Self::estimated_size_bytes`]).
+            #[must_use]
+            const fn pool_capacity_bytes(&self) -> usize {
+                let mut size = 0usize;
+                $(size += self.$pool.capacity() * std::mem::size_of::<$elem>();)+
+                size
+            }
+        }
+    };
+}
+for_each_node_pool!(impl_pool_capacity_bytes);
 
 impl NodeArenaInner {
-    impl_pool_checkpoints!(
-        identifiers,
-        qualified_names,
-        computed_properties,
-        literals,
-        binary_exprs,
-        unary_exprs,
-        call_exprs,
-        access_exprs,
-        conditional_exprs,
-        literal_exprs,
-        parenthesized,
-        unary_exprs_ex,
-        type_assertions,
-        template_exprs,
-        template_spans,
-        tagged_templates,
-        functions,
-        classes,
-        interfaces,
-        type_aliases,
-        enums,
-        enum_members,
-        modules,
-        module_blocks,
-        signatures,
-        index_signatures,
-        property_decls,
-        method_decls,
-        constructors,
-        accessors,
-        parameters,
-        type_parameters,
-        decorators,
-        heritage_clauses,
-        expr_with_type_args,
-        if_statements,
-        loops,
-        blocks,
-        variables,
-        return_data,
-        expr_statements,
-        switch_data,
-        case_clauses,
-        try_data,
-        catch_clauses,
-        labeled_data,
-        jump_data,
-        with_data,
-        type_refs,
-        composite_types,
-        function_types,
-        type_queries,
-        type_literals,
-        array_types,
-        tuple_types,
-        wrapped_types,
-        conditional_types,
-        infer_types,
-        type_operators,
-        indexed_access_types,
-        mapped_types,
-        literal_types,
-        template_literal_types,
-        named_tuple_members,
-        type_predicates,
-        import_decls,
-        import_clauses,
-        named_imports,
-        specifiers,
-        export_decls,
-        export_assignments,
-        import_attributes,
-        import_attribute,
-        binding_patterns,
-        binding_elements,
-        property_assignments,
-        shorthand_properties,
-        spread_data,
-        variable_declarations,
-        for_in_of,
-        jsx_elements,
-        jsx_opening,
-        jsx_closing,
-        jsx_fragments,
-        jsx_attributes,
-        jsx_attribute,
-        jsx_spread_attributes,
-        jsx_expressions,
-        jsx_text,
-        jsx_namespaced_names,
-        source_files,
-        class_body_var_fn_recoveries,
-    );
-
     /// Estimate the total heap memory footprint of this arena in bytes.
     ///
     /// Accounts for the struct itself, all typed data pool capacities,
@@ -1520,126 +1253,10 @@ impl NodeArenaInner {
         size += self.nodes.capacity() * size_of::<Node>();
 
         // ---- Typed data pools (fixed-size elements) ----
-        // Helper: for each Vec<T>, add capacity * size_of::<T>().
-
-        // Names and identifiers (IdentifierData has heap strings — handled below)
-        size += self.identifiers.capacity() * size_of::<IdentifierData>();
-        size += self.qualified_names.capacity() * size_of::<QualifiedNameData>();
-        size += self.computed_properties.capacity() * size_of::<ComputedPropertyData>();
-
-        // Literals (LiteralData has heap strings — handled below)
-        size += self.literals.capacity() * size_of::<LiteralData>();
-
-        // Expressions
-        size += self.binary_exprs.capacity() * size_of::<BinaryExprData>();
-        size += self.unary_exprs.capacity() * size_of::<UnaryExprData>();
-        size += self.call_exprs.capacity() * size_of::<CallExprData>();
-        size += self.access_exprs.capacity() * size_of::<AccessExprData>();
-        size += self.conditional_exprs.capacity() * size_of::<ConditionalExprData>();
-        size += self.literal_exprs.capacity() * size_of::<LiteralExprData>();
-        size += self.parenthesized.capacity() * size_of::<ParenthesizedData>();
-        size += self.unary_exprs_ex.capacity() * size_of::<UnaryExprDataEx>();
-        size += self.type_assertions.capacity() * size_of::<TypeAssertionData>();
-        size += self.template_exprs.capacity() * size_of::<TemplateExprData>();
-        size += self.template_spans.capacity() * size_of::<TemplateSpanData>();
-        size += self.tagged_templates.capacity() * size_of::<TaggedTemplateData>();
-
-        // Functions and classes
-        size += self.functions.capacity() * size_of::<FunctionData>();
-        size += self.classes.capacity() * size_of::<ClassData>();
-        size += self.interfaces.capacity() * size_of::<InterfaceData>();
-        size += self.type_aliases.capacity() * size_of::<TypeAliasData>();
-        size += self.enums.capacity() * size_of::<EnumData>();
-        size += self.enum_members.capacity() * size_of::<EnumMemberData>();
-        size += self.modules.capacity() * size_of::<ModuleData>();
-        size += self.module_blocks.capacity() * size_of::<ModuleBlockData>();
-
-        // Signatures and members
-        size += self.signatures.capacity() * size_of::<SignatureData>();
-        size += self.index_signatures.capacity() * size_of::<IndexSignatureData>();
-        size += self.property_decls.capacity() * size_of::<PropertyDeclData>();
-        size += self.method_decls.capacity() * size_of::<MethodDeclData>();
-        size += self.constructors.capacity() * size_of::<ConstructorData>();
-        size += self.accessors.capacity() * size_of::<AccessorData>();
-        size += self.parameters.capacity() * size_of::<ParameterData>();
-        size += self.type_parameters.capacity() * size_of::<TypeParameterData>();
-        size += self.decorators.capacity() * size_of::<DecoratorData>();
-        size += self.heritage_clauses.capacity() * size_of::<HeritageData>();
-        size += self.expr_with_type_args.capacity() * size_of::<ExprWithTypeArgsData>();
-
-        // Statements
-        size += self.if_statements.capacity() * size_of::<IfStatementData>();
-        size += self.loops.capacity() * size_of::<LoopData>();
-        size += self.blocks.capacity() * size_of::<BlockData>();
-        size += self.variables.capacity() * size_of::<VariableData>();
-        size += self.return_data.capacity() * size_of::<ReturnData>();
-        size += self.expr_statements.capacity() * size_of::<ExprStatementData>();
-        size += self.switch_data.capacity() * size_of::<SwitchData>();
-        size += self.case_clauses.capacity() * size_of::<CaseClauseData>();
-        size += self.try_data.capacity() * size_of::<TryData>();
-        size += self.catch_clauses.capacity() * size_of::<CatchClauseData>();
-        size += self.labeled_data.capacity() * size_of::<LabeledData>();
-        size += self.jump_data.capacity() * size_of::<JumpData>();
-        size += self.with_data.capacity() * size_of::<WithData>();
-
-        // Types
-        size += self.type_refs.capacity() * size_of::<TypeRefData>();
-        size += self.composite_types.capacity() * size_of::<CompositeTypeData>();
-        size += self.function_types.capacity() * size_of::<FunctionTypeData>();
-        size += self.type_queries.capacity() * size_of::<TypeQueryData>();
-        size += self.type_literals.capacity() * size_of::<TypeLiteralData>();
-        size += self.array_types.capacity() * size_of::<ArrayTypeData>();
-        size += self.tuple_types.capacity() * size_of::<TupleTypeData>();
-        size += self.wrapped_types.capacity() * size_of::<WrappedTypeData>();
-        size += self.conditional_types.capacity() * size_of::<ConditionalTypeData>();
-        size += self.infer_types.capacity() * size_of::<InferTypeData>();
-        size += self.type_operators.capacity() * size_of::<TypeOperatorData>();
-        size += self.indexed_access_types.capacity() * size_of::<IndexedAccessTypeData>();
-        size += self.mapped_types.capacity() * size_of::<MappedTypeData>();
-        size += self.literal_types.capacity() * size_of::<LiteralTypeData>();
-        size += self.template_literal_types.capacity() * size_of::<TemplateLiteralTypeData>();
-        size += self.named_tuple_members.capacity() * size_of::<NamedTupleMemberData>();
-        size += self.type_predicates.capacity() * size_of::<TypePredicateData>();
-
-        // Import/export
-        size += self.import_decls.capacity() * size_of::<ImportDeclData>();
-        size += self.import_clauses.capacity() * size_of::<ImportClauseData>();
-        size += self.named_imports.capacity() * size_of::<NamedImportsData>();
-        size += self.specifiers.capacity() * size_of::<SpecifierData>();
-        size += self.export_decls.capacity() * size_of::<ExportDeclData>();
-        size += self.export_assignments.capacity() * size_of::<ExportAssignmentData>();
-        size += self.import_attributes.capacity() * size_of::<ImportAttributesData>();
-        size += self.import_attribute.capacity() * size_of::<ImportAttributeData>();
-
-        // Binding patterns
-        size += self.binding_patterns.capacity() * size_of::<BindingPatternData>();
-        size += self.binding_elements.capacity() * size_of::<BindingElementData>();
-
-        // Object literal members
-        size += self.property_assignments.capacity() * size_of::<PropertyAssignmentData>();
-        size += self.shorthand_properties.capacity() * size_of::<ShorthandPropertyData>();
-        size += self.spread_data.capacity() * size_of::<SpreadData>();
-
-        // Variable declarations
-        size += self.variable_declarations.capacity() * size_of::<VariableDeclarationData>();
-
-        // For-in/for-of
-        size += self.for_in_of.capacity() * size_of::<ForInOfData>();
-
-        // JSX
-        size += self.jsx_elements.capacity() * size_of::<JsxElementData>();
-        size += self.jsx_opening.capacity() * size_of::<JsxOpeningData>();
-        size += self.jsx_closing.capacity() * size_of::<JsxClosingData>();
-        size += self.jsx_fragments.capacity() * size_of::<JsxFragmentData>();
-        size += self.jsx_attributes.capacity() * size_of::<JsxAttributesData>();
-        size += self.jsx_attribute.capacity() * size_of::<JsxAttributeData>();
-        size += self.jsx_spread_attributes.capacity() * size_of::<JsxSpreadAttributeData>();
-        size += self.jsx_expressions.capacity() * size_of::<JsxExpressionData>();
-        size += self.jsx_text.capacity() * size_of::<JsxTextData>();
-        size += self.jsx_namespaced_names.capacity() * size_of::<JsxNamespacedNameData>();
-
-        // Source file
-        size += self.source_files.capacity() * size_of::<SourceFileData>();
+        // Generated from the canonical pool registry: for each `Vec<T>`,
+        // adds `capacity * size_of::<T>()`. Heap allocations inside elements
+        // (identifier/literal/JSX/source-file strings) are handled below.
+        size += self.pool_capacity_bytes();
 
         // Extended info
         size += self.extended_info.capacity() * size_of::<ExtendedNodeInfo>();

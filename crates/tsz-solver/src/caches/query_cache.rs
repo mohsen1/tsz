@@ -11,9 +11,9 @@ use crate::caches::db::{
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
 use crate::caches::query_trace;
-use crate::caches::shared_instantiation::{
-    application_eval_entry_references_def, shared_instantiation_family_requested,
-};
+use crate::caches::shared_instantiation::application_eval_entry_references_def;
+use crate::caches::shared_query_cache::ApplicationEvalCacheKey;
+pub use crate::caches::shared_query_cache::SharedQueryCache;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
 use crate::def::DefId;
 use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
@@ -40,12 +40,6 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
-// The trailing two `bool`s are `no_unchecked_indexed_access` and
-// `exact_optional_property_types`. Evaluating a generic application can expand a
-// homomorphic mapped type whose optional-modifier stripping depends on
-// `exactOptionalPropertyTypes`, so both options are part of the cache identity
-// (issue #10970).
-pub(super) type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool, bool);
 // Element access (indexed access) of an optional property includes `undefined`
 // under both `exactOptionalPropertyTypes` settings (matching tsc), so the result
 // does not depend on that option and it is intentionally not part of this key.
@@ -102,110 +96,6 @@ impl CachedPolicyRelation {
     }
 }
 
-/// Thread-safe shared query cache for cross-file type checking.
-///
-/// In multi-file projects (e.g., ts-toolbelt with 242 files), each file checker
-/// gets its own `QueryCache` with `RefCell`-based local caches. Without sharing,
-/// the same type evaluations, subtype checks, and assignability checks are
-/// recomputed independently by every file checker.
-///
-/// `SharedQueryCache` uses `DashMap` for concurrent read/write access across
-/// Rayon worker threads. Each per-file `QueryCache` checks its local cache first
-/// (zero overhead), then falls back to the shared cache on miss. Results are
-/// written to both local and shared caches.
-///
-/// Only the highest-impact caches are shared:
-/// - `eval_cache`: type evaluation (conditional types, mapped types, etc.)
-/// - `subtype_cache`: subtype relation results
-/// - `assignability_cache`: assignability relation results
-///
-/// For the relation caches the sharing covers *both* the top-level
-/// `is_cached_policy_relation` entry and the inner `QueryDatabase` entries
-/// driven by the `SubtypeChecker`'s recursive descent. The latter is the
-/// dominant cache traffic in deep mapped/conditional utility-type code, and
-/// without it sibling per-file checkers re-derive the same subtree relation
-/// in every file. Inner writes are gated by `cache_definitive!` in the
-/// `SubtypeChecker`, so only lazy-resolution-stable results reach the
-/// shared store (#10921).
-///
-/// `application_eval_cache` and `instantiation_cache` are intentionally NOT
-/// shared cross-file: parallel file checking can observe incomplete lib-merge
-/// state during the first evaluation of a generic type alias (e.g. `Promise<T>`,
-/// `Awaited<T>`), producing a stale result that is then returned to sibling
-/// files. Keeping those caches per-file eliminates the ordering-sensitive
-/// correctness risk. See issue #9507. `TSZ_SHARE_INSTANTIATION_CACHES=1`
-/// enables the experimental #13240 witness path.
-pub struct SharedQueryCache {
-    eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
-    subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
-    assignability_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
-    application_eval_cache: DashMap<ApplicationEvalCacheKey, TypeId, FxBuildHasher>,
-    instantiation_cache: DashMap<InstantiationCacheKey, TypeId, FxBuildHasher>,
-    share_instantiation_family: bool,
-}
-
-impl SharedQueryCache {
-    pub fn new() -> Self {
-        SharedQueryCache {
-            eval_cache: DashMap::with_hasher(FxBuildHasher),
-            subtype_cache: DashMap::with_hasher(FxBuildHasher),
-            assignability_cache: DashMap::with_hasher(FxBuildHasher),
-            application_eval_cache: DashMap::with_hasher(FxBuildHasher),
-            instantiation_cache: DashMap::with_hasher(FxBuildHasher),
-            share_instantiation_family: shared_instantiation_family_requested(),
-        }
-    }
-
-    /// Number of entries across all shared caches.
-    pub fn total_entries(&self) -> usize {
-        self.eval_cache.len()
-            + self.subtype_cache.len()
-            + self.assignability_cache.len()
-            + self.application_eval_cache.len()
-            + self.instantiation_cache.len()
-    }
-
-    #[inline]
-    const fn shares_instantiation_family(&self) -> bool {
-        self.share_instantiation_family
-    }
-
-    /// Estimate the resident heap bytes of the shared cache maps.
-    ///
-    /// Entry-count-based estimate (`DashMap` does not expose bucket
-    /// capacity) for residency accounting (#13249 step 1); called once at
-    /// perf-counter snapshot time, never on a checking hot path.
-    #[must_use]
-    pub fn estimated_size_bytes(&self) -> usize {
-        // DashMap per-entry overhead: bucket slot + hash + shard padding.
-        const DASHMAP_ENTRY_OVERHEAD: usize = 64;
-        let mut size = std::mem::size_of::<Self>();
-        size += self.eval_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD
-                + std::mem::size_of::<EvaluationCacheKey>()
-                + std::mem::size_of::<TypeId>());
-        size += (self.subtype_cache.len() + self.assignability_cache.len())
-            * (DASHMAP_ENTRY_OVERHEAD
-                + std::mem::size_of::<RelationCacheKey>()
-                + std::mem::size_of::<bool>());
-        size += self.application_eval_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD
-                + std::mem::size_of::<ApplicationEvalCacheKey>()
-                + std::mem::size_of::<TypeId>());
-        size += self.instantiation_cache.len()
-            * (DASHMAP_ENTRY_OVERHEAD
-                + std::mem::size_of::<InstantiationCacheKey>()
-                + std::mem::size_of::<TypeId>());
-        size
-    }
-}
-
-impl Default for SharedQueryCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationCacheProbe {
     Hit(bool),
@@ -256,6 +146,9 @@ pub struct QueryCache<'a> {
     subtype_reduction_cache: SubtypeReductionCache,
     application_eval_cache_hits: Cell<u64>,
     application_eval_cache_misses: Cell<u64>,
+    application_eval_cache_shared_hits: Cell<u64>,
+    application_eval_cache_shared_misses: Cell<u64>,
+    application_eval_cache_shared_inserts: Cell<u64>,
     subtype_cache_hits: Cell<u64>,
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
@@ -264,6 +157,9 @@ pub struct QueryCache<'a> {
     intersection_merge_cache_misses: Cell<u64>,
     instantiation_cache_hits: Cell<u64>,
     instantiation_cache_misses: Cell<u64>,
+    instantiation_cache_shared_hits: Cell<u64>,
+    instantiation_cache_shared_misses: Cell<u64>,
+    instantiation_cache_shared_inserts: Cell<u64>,
     subtype_reduction_cache_hits: Cell<u64>,
     subtype_reduction_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
@@ -313,6 +209,9 @@ impl<'a> QueryCache<'a> {
             subtype_reduction_cache: SubtypeReductionCache::new(),
             application_eval_cache_hits: Cell::new(0),
             application_eval_cache_misses: Cell::new(0),
+            application_eval_cache_shared_hits: Cell::new(0),
+            application_eval_cache_shared_misses: Cell::new(0),
+            application_eval_cache_shared_inserts: Cell::new(0),
             subtype_cache_hits: Cell::new(0),
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
@@ -321,6 +220,9 @@ impl<'a> QueryCache<'a> {
             intersection_merge_cache_misses: Cell::new(0),
             instantiation_cache_hits: Cell::new(0),
             instantiation_cache_misses: Cell::new(0),
+            instantiation_cache_shared_hits: Cell::new(0),
+            instantiation_cache_shared_misses: Cell::new(0),
+            instantiation_cache_shared_inserts: Cell::new(0),
             subtype_reduction_cache_hits: Cell::new(0),
             subtype_reduction_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
@@ -369,6 +271,9 @@ impl<'a> QueryCache<'a> {
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
             application_eval_cache_hits: self.application_eval_cache_hits.get(),
             application_eval_cache_misses: self.application_eval_cache_misses.get(),
+            application_eval_cache_shared_hits: self.application_eval_cache_shared_hits.get(),
+            application_eval_cache_shared_misses: self.application_eval_cache_shared_misses.get(),
+            application_eval_cache_shared_inserts: self.application_eval_cache_shared_inserts.get(),
             element_access_cache_entries: self.element_access_cache.borrow().len(),
             object_spread_cache_entries: self.object_spread_properties_cache.borrow().len(),
             property_cache_entries: self.property_cache.borrow().len(),
@@ -380,6 +285,9 @@ impl<'a> QueryCache<'a> {
             instantiation_cache_entries: self.instantiation_cache.len(),
             instantiation_cache_hits: self.instantiation_cache_hits.get(),
             instantiation_cache_misses: self.instantiation_cache_misses.get(),
+            instantiation_cache_shared_hits: self.instantiation_cache_shared_hits.get(),
+            instantiation_cache_shared_misses: self.instantiation_cache_shared_misses.get(),
+            instantiation_cache_shared_inserts: self.instantiation_cache_shared_inserts.get(),
             subtype_reduction_cache_entries: self.subtype_reduction_cache.len(),
             subtype_reduction_cache_hits: self.subtype_reduction_cache_hits.get(),
             subtype_reduction_cache_misses: self.subtype_reduction_cache_misses.get(),
@@ -390,6 +298,9 @@ impl<'a> QueryCache<'a> {
     pub fn reset_relation_cache_stats(&self) {
         self.application_eval_cache_hits.set(0);
         self.application_eval_cache_misses.set(0);
+        self.application_eval_cache_shared_hits.set(0);
+        self.application_eval_cache_shared_misses.set(0);
+        self.application_eval_cache_shared_inserts.set(0);
         self.subtype_cache_hits.set(0);
         self.subtype_cache_misses.set(0);
         self.assignability_cache_hits.set(0);
@@ -398,6 +309,9 @@ impl<'a> QueryCache<'a> {
         self.intersection_merge_cache_misses.set(0);
         self.instantiation_cache_hits.set(0);
         self.instantiation_cache_misses.set(0);
+        self.instantiation_cache_shared_hits.set(0);
+        self.instantiation_cache_shared_misses.set(0);
+        self.instantiation_cache_shared_inserts.set(0);
         self.subtype_reduction_cache_hits.set(0);
         self.subtype_reduction_cache_misses.set(0);
     }
@@ -634,12 +548,17 @@ impl<'a> QueryCache<'a> {
         }
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
-            && let Some(result) = shared.application_eval_cache.get(&key).map(|entry| *entry)
         {
-            self.application_eval_cache.borrow_mut().insert(key, result);
-            self.application_eval_cache_hits
-                .set(self.application_eval_cache_hits.get() + 1);
-            return Some(result);
+            if let Some(result) = shared.application_eval_cache.get(&key).map(|entry| *entry) {
+                self.application_eval_cache.borrow_mut().insert(key, result);
+                self.application_eval_cache_hits
+                    .set(self.application_eval_cache_hits.get() + 1);
+                self.application_eval_cache_shared_hits
+                    .set(self.application_eval_cache_shared_hits.get() + 1);
+                return Some(result);
+            }
+            self.application_eval_cache_shared_misses
+                .set(self.application_eval_cache_shared_misses.get() + 1);
         }
         self.application_eval_cache_misses
             .set(self.application_eval_cache_misses.get() + 1);
@@ -651,6 +570,8 @@ impl<'a> QueryCache<'a> {
             && shared.shares_instantiation_family()
         {
             shared.application_eval_cache.insert(key.clone(), result);
+            self.application_eval_cache_shared_inserts
+                .set(self.application_eval_cache_shared_inserts.get() + 1);
         }
         self.application_eval_cache.borrow_mut().insert(key, result);
     }
@@ -1660,12 +1581,17 @@ impl QueryDatabase for QueryCache<'_> {
             None => {
                 if let Some(shared) = self.shared
                     && shared.shares_instantiation_family()
-                    && let Some(result) = shared.instantiation_cache.get(key).map(|entry| *entry)
                 {
-                    self.instantiation_cache.insert(key.clone(), result);
-                    self.instantiation_cache_hits
-                        .set(self.instantiation_cache_hits.get() + 1);
-                    return Some(result);
+                    if let Some(result) = shared.instantiation_cache.get(key).map(|entry| *entry) {
+                        self.instantiation_cache.insert(key.clone(), result);
+                        self.instantiation_cache_hits
+                            .set(self.instantiation_cache_hits.get() + 1);
+                        self.instantiation_cache_shared_hits
+                            .set(self.instantiation_cache_shared_hits.get() + 1);
+                        return Some(result);
+                    }
+                    self.instantiation_cache_shared_misses
+                        .set(self.instantiation_cache_shared_misses.get() + 1);
                 }
                 self.instantiation_cache_misses
                     .set(self.instantiation_cache_misses.get() + 1);
@@ -1680,6 +1606,8 @@ impl QueryDatabase for QueryCache<'_> {
             && shared.shares_instantiation_family()
         {
             shared.instantiation_cache.insert(key.clone(), result);
+            self.instantiation_cache_shared_inserts
+                .set(self.instantiation_cache_shared_inserts.get() + 1);
         }
         self.instantiation_cache.insert(key, result);
     }
@@ -1867,9 +1795,17 @@ impl QueryDatabase for QueryCache<'_> {
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::operations::property::PropertyAccessResult {
-        self.resolve_property_access_with_options(
+        self.resolve_property_access_atom(object_type, self.interner.intern_string(prop_name))
+    }
+
+    fn resolve_property_access_atom(
+        &self,
+        object_type: TypeId,
+        prop_atom: Atom,
+    ) -> crate::operations::property::PropertyAccessResult {
+        self.property_access_atom_with_options(
             object_type,
-            prop_name,
+            prop_atom,
             self.no_unchecked_indexed_access(),
         )
     }
@@ -1880,27 +1816,11 @@ impl QueryDatabase for QueryCache<'_> {
         prop_name: &str,
         no_unchecked_indexed_access: bool,
     ) -> crate::operations::property::PropertyAccessResult {
-        // QueryCache doesn't have full TypeResolver capability, so use PropertyAccessEvaluator
-        // with the current QueryDatabase.
-        let prop_atom = self.interner.intern_string(prop_name);
-        let exact_optional_property_types =
-            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
-        let key = (
+        self.property_access_atom_with_options(
             object_type,
-            prop_atom,
+            self.interner.intern_string(prop_name),
             no_unchecked_indexed_access,
-            exact_optional_property_types,
-        );
-        if let Some(result) = self.check_property_cache(key) {
-            return result;
-        }
-
-        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
-        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
-        evaluator.set_exact_optional_property_types(exact_optional_property_types);
-        let result = evaluator.resolve_property_access_with_atom(object_type, prop_name, prop_atom);
-        self.insert_property_cache(key, result);
-        result
+        )
     }
 
     fn resolve_any_index_access(
@@ -2019,3 +1939,7 @@ mod tests;
 // the 2000-line file-size cap; child modules retain private-field access.
 #[path = "query_cache_size.rs"]
 mod size;
+
+// `Atom`-keyed property access lives in a child module for the same reason.
+#[path = "query_cache_property.rs"]
+mod property;
