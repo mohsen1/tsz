@@ -89,7 +89,12 @@ impl<'a> CheckerContext<'a> {
     /// save/restore mechanism scoped to overload/generic checking;
     /// this reset is for *successful* file completion only.
     pub fn reset_for_next_file(&mut self) {
-        if tsz_common::perf_counters::enabled_fast() {
+        // Reset-cache high-water sampling is opt-in because it observes many
+        // checker caches at a semantic boundary; ordinary perf-counter runs
+        // must remain invisible to conformance/parity behavior.
+        if tsz_common::perf_counters::enabled_fast()
+            && std::env::var_os("TSZ_RECORD_FILE_SESSION_RESET_CACHE_STATS").is_some()
+        {
             let stats = self.cache_statistics();
             tsz_common::perf_counters::record_file_session_reset_cache_statistics(
                 tsz_common::perf_counters::FileSessionResetCacheStatistics {
