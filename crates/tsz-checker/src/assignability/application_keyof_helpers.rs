@@ -171,31 +171,6 @@ impl<'a> CheckerState<'a> {
             == Some(base_sym)
     }
 
-    pub(crate) fn is_unknown_source_application_fallback(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        let Some(((source_base, source_args), (target_base, target_args))) = self
-            .application_info_or_display_alias(source)
-            .zip(query::application_info(self.ctx.types, target))
-        else {
-            return false;
-        };
-
-        source_base == target_base
-            && source_args.len() == target_args.len()
-            && !source_args.is_empty()
-            && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
-            && target_args.contains(&TypeId::NEVER)
-            && target_args.iter().any(|&arg| arg != TypeId::NEVER)
-            && target_args.iter().all(|&arg| {
-                matches!(arg, TypeId::UNKNOWN | TypeId::NEVER)
-                    || query::is_type_parameter_like(self.ctx.types, arg)
-            })
-            && self.is_promise_like_application_pair(source, target)
-    }
-
     pub(crate) fn is_nested_same_wrapper_application_assignment(
         &mut self,
         source: TypeId,

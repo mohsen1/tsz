@@ -685,28 +685,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Inference-fallback fast path for same-base Application types:
-        // when the source is `FooPromise<unknown, ...>` (all args `unknown`)
-        // and the target is the same promise-like generic with at least one
-        // `never` arg and no concrete non-`never` args, treat the source as
-        // assignable.
-        //
-        // This handles the common Thenable / Promise inference pattern where
-        // a constructor call cannot infer type parameters used only in nested
-        // applications (e.g., `new EPromise(Promise.resolve(mkRight(a)))`
-        // where `EPromise<E, A>` takes `PromiseLike<Either<E, A>>`). Without
-        // explicit type args, the result is `EPromise<unknown, unknown>`,
-        // which must still be assignable to a declared return type like
-        // `EPromise<never, A>`.
-        //
-        // The promise-like and target-arg requirements keep this fast path
-        // narrow: it doesn't match user-written `A<unknown>` against
-        // `A<string>`, `A<never>`, or `A<never, string>`, where variance must
-        // be respected.
-        if self.is_unknown_source_application_fallback(source, target) {
-            return true;
-        }
-
         if self.same_type_alias_application_args_reject(source, target) {
             return false;
         }
