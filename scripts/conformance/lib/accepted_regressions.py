@@ -4,8 +4,9 @@
 The accepted-regression ledger
 (`scripts/conformance/conformance-accepted-regressions.txt`) records conformance
 tests that are temporarily allowed to fail in CI without blocking the aggregate
-gate. Its budget is monotonically non-increasing on `main`: a PR may remove
-entries (progress) but must never add new ones (regression debt).
+gate. Its default budget is monotonically non-increasing on `main`: a PR may
+remove entries (progress), and new entries must carry adjacent issue-linked
+evidence plus a removal condition.
 
 This module is the single source of truth for how that ledger is parsed,
 normalized, and validated. It is shared by:
@@ -98,6 +99,58 @@ def check_growth(
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Return ``(added, removed)`` normalized entry sets relative to ``base``."""
     return head_entries - base_entries, base_entries - head_entries
+
+
+def entry_comment_blocks(text: str) -> dict[str, list[str]]:
+    """Return the contiguous comment block immediately preceding each entry.
+
+    The growth gate uses this to distinguish silent ledger growth from an
+    explicitly documented temporary exception. Blank lines reset the block, so
+    only the comments visually attached to an entry authorize that entry.
+    """
+    blocks: dict[str, list[str]] = {}
+    pending_comments: list[str] = []
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            pending_comments = []
+            continue
+        if stripped.startswith("#"):
+            pending_comments.append(stripped[1:].strip())
+            continue
+        blocks[normalize(stripped)] = pending_comments
+        pending_comments = []
+
+    return blocks
+
+
+def documented_temporary_additions(
+    text: str,
+    added_entries: frozenset[str],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Split added entries into documented temporary exceptions and rejects.
+
+    A temporary addition must have an adjacent comment block that names the
+    tracking issue, exact evidence, and the removal condition. This keeps the
+    default no-growth guard intact while permitting explicitly owned queue
+    stabilization debt.
+    """
+    blocks = entry_comment_blocks(text)
+    documented: set[str] = set()
+    rejected: set[str] = set()
+
+    for entry in added_entries:
+        block = "\n".join(blocks.get(entry, [])).lower()
+        has_issue = "tracked by issue #" in block or "tracked by #" in block
+        has_evidence = "exact evidence" in block
+        has_removal = "remove once" in block or "removal condition" in block
+        if has_issue and has_evidence and has_removal:
+            documented.add(entry)
+        else:
+            rejected.add(entry)
+
+    return frozenset(documented), frozenset(rejected)
 
 
 @dataclass(frozen=True)
