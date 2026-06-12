@@ -12,6 +12,9 @@ Usage:
 Options:
   --row NAME        Project row to check (default: ts-toolbelt-project).
                     Supported: ts-toolbelt-project, utility-types-project.
+  --tsconfig PATH   Existing tsconfig to check instead of materializing a row.
+                    Uses custom-tsconfig as the output label unless --row is
+                    also provided as a descriptive label.
   --runs N         Number of sequential and forced runs per worker width (default: 5).
   --workers LIST   Comma-separated Rayon worker widths (default: 4,8,16).
   --out DIR        Output directory (default: .target/forced-parallel-determinism).
@@ -31,6 +34,8 @@ EOF
 }
 
 ROW="ts-toolbelt-project"
+ROW_WAS_SET=0
+TSCONFIG_INPUT=""
 RUNS=5
 WORKERS="4,8,16"
 OUT_ROOT="$ROOT_DIR/.target/forced-parallel-determinism"
@@ -39,6 +44,11 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --row)
       ROW="${2:-}"
+      ROW_WAS_SET=1
+      shift 2
+      ;;
+    --tsconfig)
+      TSCONFIG_INPUT="${2:-}"
       shift 2
       ;;
     --runs)
@@ -86,6 +96,15 @@ tsz_sync_project_row_groups
 mkdir -p "$FIXTURE_ROOT" "$OUT_ROOT"
 
 prepare_row() {
+  if [[ -n "$TSCONFIG_INPUT" ]]; then
+    if [[ ! -f "$TSCONFIG_INPUT" ]]; then
+      echo "error: --tsconfig does not name a file: $TSCONFIG_INPUT" >&2
+      exit 2
+    fi
+    tsz_physical_path_for_maybe_missing "$TSCONFIG_INPUT"
+    return 0
+  fi
+
   case "$ROW" in
     ts-toolbelt-project)
       tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$FIXTURE_ROOT/ts-toolbelt"
@@ -133,6 +152,10 @@ compare_capture() {
     return 1
   fi
 }
+
+if [[ -n "$TSCONFIG_INPUT" && "$ROW_WAS_SET" == "0" ]]; then
+  ROW="custom-tsconfig"
+fi
 
 TSCONFIG="$(prepare_row)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
