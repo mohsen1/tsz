@@ -2,6 +2,7 @@ use super::*;
 use crate::caches::db::QueryDatabase;
 use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
 use crate::instantiation::result::InstantiationResult;
+use crate::types::FunctionShape;
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 

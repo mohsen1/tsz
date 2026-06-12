@@ -56,12 +56,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
     pub(super) fn resolve_mapped_property_lazy(
         &self,
         mapped_id: MappedTypeId,
-        prop_name: &str,
         prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
         use crate::types::MappedModifier;
 
         let mapped = self.interner().mapped_type(mapped_id);
+        let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
+        let prop_name = prop_name_arc.as_ref();
 
         // SPECIAL CASE: Mapped types over array-like sources
         // When a mapped type like Boxified<T> = { [P in keyof T]: Box<T[P]> } is applied
@@ -237,7 +238,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let array_type = self.interner().array(mapped_element);
 
         // Resolve the property on the array type
-        let result = self.resolve_array_property(array_type, prop_name, prop_atom);
+        let result = self.resolve_array_property(array_type, prop_atom);
         // If property not found on array, return None to fall through to normal handling
         if result.is_not_found() {
             return None;
@@ -294,7 +295,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         match key {
             // Single string literal - exact match
             TypeData::Literal(LiteralValue::String(s)) => {
-                self.interner().resolve_atom(s) == prop_name
+                self.interner().resolve_atom_ref(s).as_ref() == prop_name
             }
 
             // Union of literals - check if prop_name is in the union
@@ -361,8 +362,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     && let Some(filter_atom) =
                         crate::visitor::literal_string(self.interner(), app.args[1])
                 {
-                    let filter_str = self.interner().resolve_atom(filter_atom);
-                    if filter_str == prop_name {
+                    let filter_str = self.interner().resolve_atom_ref(filter_atom);
+                    if filter_str.as_ref() == prop_name {
                         // The first arg may itself be an unreduced Application
                         // (e.g. `keyof T` rendered as Lazy/Application). Only
                         // treat as exclusion when we can confirm `prop_name`
@@ -514,7 +515,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     fn constraint_guarantees_named_property(&self, constraint: TypeId, prop_name: &str) -> bool {
         let prop_atom = self.interner().intern_string(prop_name);
         matches!(
-            self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom)),
+            self.resolve_property_access_inner(constraint, prop_atom),
             PropertyAccessResult::Success {
                 from_index_signature: false,
                 ..
@@ -541,7 +542,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             for &member in members.iter() {
                 if let Some(atom) = crate::visitor::literal_string(self.interner(), member) {
                     literal_count += 1;
-                    if self.interner().resolve_atom(atom) == prop_name {
+                    if self.interner().resolve_atom_ref(atom).as_ref() == prop_name {
                         found_prop = true;
                     }
                 } else {
@@ -714,11 +715,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         &self,
         app_type: TypeId,
         app_id: TypeApplicationId,
-        prop_name: &str,
-        prop_atom: Option<Atom>,
+        prop_atom: Atom,
     ) -> PropertyAccessResult {
         let app = self.interner().type_application(app_id);
-        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
 
         // Get the base type (should be a Ref to class/interface/alias)
         let base_key = match self.interner().lookup(app.base) {
@@ -830,11 +829,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if instantiated_base != app.base {
                     let previous_skip_this_binding = self.is_skip_this_binding();
                     self.set_skip_this_binding(true);
-                    let result = self.resolve_property_access_inner(
-                        instantiated_base,
-                        prop_name,
-                        Some(prop_atom),
-                    );
+                    let result = self.resolve_property_access_inner(instantiated_base, prop_atom);
                     self.set_skip_this_binding(previous_skip_this_binding);
                     return result;
                 }
@@ -847,7 +842,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let evaluated = self
                 .db
                 .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
-            return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
+            return self.resolve_property_access_inner(evaluated, prop_atom);
         };
 
         // Resolve the def_id to get the body type and type parameters.
@@ -895,7 +890,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let evaluated = self
                 .db
                 .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
-            return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
+            return self.resolve_property_access_inner(evaluated, prop_atom);
         };
 
         let Some(type_params) = type_params else {
@@ -915,11 +910,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         &app.args,
                     );
                     let return_type = self.instantiate_type_cached(func_shape.return_type, &subst);
-                    return self.resolve_property_access_inner(
-                        return_type,
-                        prop_name,
-                        Some(prop_atom),
-                    );
+                    return self.resolve_property_access_inner(return_type, prop_atom);
                 }
             }
             // No type params - still rebind polymorphic `this` to the concrete application.
@@ -928,7 +919,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             } else {
                 body_type
             };
-            return self.resolve_property_access_inner(resolved_body, prop_name, Some(prop_atom));
+            return self.resolve_property_access_inner(resolved_body, prop_atom);
         };
 
         // The body should be an Object type with properties
@@ -1009,8 +1000,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Check numeric index signature for numeric property names
                 use crate::objects::index_signatures::IndexSignatureResolver;
                 let resolver = IndexSignatureResolver::new(self.interner());
-                if resolver.is_numeric_index_name(prop_name)
-                    && let Some(ref idx) = shape.number_index
+                if let Some(ref idx) = shape.number_index
+                    && resolver
+                        .is_numeric_index_name(self.interner().resolve_atom_ref(prop_atom).as_ref())
                 {
                     let instantiated_value = self.instantiate_application_member_type(
                         idx.value_type,
@@ -1085,9 +1077,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 };
 
                 // Resolve property on the instantiated mapped type
-                if let Some(result) =
-                    self.resolve_mapped_property_lazy(new_mapped_id, prop_name, prop_atom)
-                {
+                if let Some(result) = self.resolve_mapped_property_lazy(new_mapped_id, prop_atom) {
                     result
                 } else {
                     // Lazy resolution failed — fall back to evaluating the mapped type
@@ -1096,7 +1086,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         self.no_unchecked_indexed_access,
                     );
                     if evaluated != new_mapped_type {
-                        self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
+                        self.resolve_property_access_inner(evaluated, prop_atom)
                     } else {
                         PropertyAccessResult::PropertyNotFound {
                             type_id: app_type,
@@ -1110,7 +1100,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let evaluated = self
                     .db
                     .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
-                self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
+                self.resolve_property_access_inner(evaluated, prop_atom)
             }
         }
     }
@@ -1207,10 +1197,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
     }
 
-    pub(crate) fn resolve_object_member(
+    /// Resolve an apparent Object-prototype member by interned name.
+    pub(crate) fn resolve_object_member(&self, prop_atom: Atom) -> Option<PropertyAccessResult> {
+        self.resolve_object_member_named(self.interner().resolve_atom_ref(prop_atom).as_ref())
+    }
+
+    /// Resolve an apparent Object-prototype member when the caller already
+    /// resolved the property name's string form.
+    pub(crate) fn resolve_object_member_named(
         &self,
         prop_name: &str,
-        _prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
         match apparent_object_member_kind(prop_name) {
             Some(ApparentMemberKind::Value(type_id)) => Some(PropertyAccessResult::simple(type_id)),
@@ -1220,44 +1216,23 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     /// Resolve properties on string type.
-    pub(crate) fn resolve_string_property(
-        &self,
-        prop_name: &str,
-        prop_atom: Atom,
-    ) -> PropertyAccessResult {
-        self.resolve_primitive_property(IntrinsicKind::String, TypeId::STRING, prop_name, prop_atom)
+    pub(crate) fn resolve_string_property(&self, prop_atom: Atom) -> PropertyAccessResult {
+        self.resolve_primitive_property(IntrinsicKind::String, TypeId::STRING, prop_atom)
     }
 
     /// Resolve properties on number type.
-    pub(crate) fn resolve_number_property(
-        &self,
-        prop_name: &str,
-        prop_atom: Atom,
-    ) -> PropertyAccessResult {
-        self.resolve_primitive_property(IntrinsicKind::Number, TypeId::NUMBER, prop_name, prop_atom)
+    pub(crate) fn resolve_number_property(&self, prop_atom: Atom) -> PropertyAccessResult {
+        self.resolve_primitive_property(IntrinsicKind::Number, TypeId::NUMBER, prop_atom)
     }
 
     /// Resolve properties on boolean type.
-    pub(crate) fn resolve_boolean_property(
-        &self,
-        prop_name: &str,
-        prop_atom: Atom,
-    ) -> PropertyAccessResult {
-        self.resolve_primitive_property(
-            IntrinsicKind::Boolean,
-            TypeId::BOOLEAN,
-            prop_name,
-            prop_atom,
-        )
+    pub(crate) fn resolve_boolean_property(&self, prop_atom: Atom) -> PropertyAccessResult {
+        self.resolve_primitive_property(IntrinsicKind::Boolean, TypeId::BOOLEAN, prop_atom)
     }
 
     /// Resolve properties on bigint type.
-    pub(crate) fn resolve_bigint_property(
-        &self,
-        prop_name: &str,
-        prop_atom: Atom,
-    ) -> PropertyAccessResult {
-        self.resolve_primitive_property(IntrinsicKind::Bigint, TypeId::BIGINT, prop_name, prop_atom)
+    pub(crate) fn resolve_bigint_property(&self, prop_atom: Atom) -> PropertyAccessResult {
+        self.resolve_primitive_property(IntrinsicKind::Bigint, TypeId::BIGINT, prop_atom)
     }
 
     /// Helper to resolve properties on primitive types.
@@ -1266,7 +1241,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         &self,
         kind: IntrinsicKind,
         type_id: TypeId,
-        prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
         // STEP 1: Try to get the boxed interface type from the resolver (e.g. Number for number)
@@ -1277,7 +1251,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Resolve the property on the boxed interface type
             // This handles inheritance (e.g., String extends Object) automatically
             // and allows user-defined augmentations to lib.d.ts to work
-            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            let result = self.resolve_property_access_inner(boxed_type, prop_atom);
 
             // If the property was found (or we got a definitive answer like IsUnknown), return it.
             if !result.is_not_found() {
@@ -1295,6 +1269,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // fallback must not paper over it. For es5-baseline members the
         // fallback still fires so synthesized shapes that don't navigate to
         // the boxed interface keep resolving them.
+        let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
+        let prop_name = prop_name_arc.as_ref();
         if boxed_loaded && crate::objects::apparent::is_post_es5_primitive_member(kind, prop_name) {
             return PropertyAccessResult::PropertyNotFound {
                 type_id,
@@ -1307,13 +1283,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
     /// Resolve properties on symbol primitive type.
     pub(crate) fn resolve_symbol_primitive_property(
         &self,
-        prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
         let boxed_loaded = if let Some(boxed_type) =
             crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Symbol)
         {
-            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            let result = self.resolve_property_access_inner(boxed_type, prop_atom);
             if !result.is_not_found() {
                 return result;
             }
@@ -1322,6 +1297,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
             false
         };
 
+        let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
+        let prop_name = prop_name_arc.as_ref();
         if boxed_loaded
             && crate::objects::apparent::is_post_es5_primitive_member(
                 IntrinsicKind::Symbol,
@@ -1342,8 +1319,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         &self,
         readonly_type: TypeId,
         inner: TypeId,
-        prop_name: &str,
-        prop_atom: Option<Atom>,
+        prop_atom: Atom,
     ) -> PropertyAccessResult {
         let inner_data = self.interner().lookup(inner);
         let element_type = match inner_data {
@@ -1353,10 +1329,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let Some(elem) = element_type else {
-            return self.resolve_property_access_inner(inner, prop_name, prop_atom);
+            return self.resolve_property_access_inner(inner, prop_atom);
         };
 
-        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+        let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
+        let prop_name = prop_name_arc.as_ref();
 
         if is_array_mutating_method(prop_name) {
             return PropertyAccessResult::PropertyNotFound {
@@ -1397,11 +1374,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         if let Some(readonly_base) = readonly_array_base {
             let app_type = self.interner().application(readonly_base, vec![elem]);
-            let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
+            let result = self.resolve_property_access_inner(app_type, prop_atom);
             if result.is_success() {
                 return result;
             }
-            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            if let Some(result) = self.resolve_object_member_named(prop_name) {
                 return result;
             }
             return PropertyAccessResult::PropertyNotFound {
@@ -1410,7 +1387,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             };
         }
 
-        self.resolve_property_access_inner(inner, prop_name, Some(prop_atom))
+        self.resolve_property_access_inner(inner, prop_atom)
     }
 
     /// Resolve properties on array type.
@@ -1420,9 +1397,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
     pub(crate) fn resolve_array_property(
         &self,
         array_type: TypeId,
-        prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
+        let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
+        let prop_name = prop_name_arc.as_ref();
         // For fixed-length tuples, .length returns literal numeric types
         // instead of the generic `number` from the Array<T> interface. Optional
         // elements contribute a range: `[number?]["length"]` is `0 | 1`.
@@ -1457,7 +1435,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let app_type = self.interner().application(array_base, vec![element_type]);
 
             // Resolve property on the application type
-            let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
+            let result = self.resolve_property_access_inner(app_type, prop_atom);
 
             // If we found the property, simplify Application types back to arrays and return it
             if !result.is_not_found() {
@@ -1474,7 +1452,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Fall back to Object prototype properties (constructor, valueOf, hasOwnProperty, etc.)
-        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+        if let Some(result) = self.resolve_object_member_named(prop_name) {
             return result;
         }
 
@@ -1744,7 +1722,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
     pub(super) fn resolve_function_property(
         &self,
         func_type: TypeId,
-        prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
         // STEP 1: Consult the boxed `Function` interface from lib.d.ts FIRST so
@@ -1758,7 +1735,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let boxed_function_loaded = if let Some(boxed_type) =
             crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Function)
         {
-            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            let result = self.resolve_property_access_inner(boxed_type, prop_atom);
             if !result.is_not_found() {
                 return result;
             }
@@ -1766,6 +1743,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         } else {
             false
         };
+
+        let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
+        let prop_name = prop_name_arc.as_ref();
 
         // STEP 2: Hardcoded well-known Function members (no-lib / bootstrap path).
         // Reached when the boxed `Function` interface is unavailable (no lib loaded)
@@ -1802,7 +1782,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return result;
         }
 
-        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+        if let Some(result) = self.resolve_object_member_named(prop_name) {
             return result;
         }
 

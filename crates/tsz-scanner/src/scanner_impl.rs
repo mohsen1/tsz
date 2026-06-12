@@ -1323,7 +1323,7 @@ pub(crate) fn is_identifier_start(ch: u32) -> bool {
     }
 
     if let Some(c) = char::from_u32(ch) {
-        return unicode_ident::is_xid_start(c);
+        return unicode_ident::is_xid_start(c) || is_es_id_start_not_xid_start(ch);
     }
 
     false
@@ -1335,38 +1335,64 @@ pub(crate) fn is_identifier_part(ch: u32) -> bool {
         return is_identifier_start(ch) || is_digit(ch);
     }
 
-    // Unicode path: ECMAScript ID_Continue includes ID_Start plus marks,
-    // decimal digits, connector punctuation, ZWNJ, and ZWJ. The unicode-ident
-    // table keeps astral-plane identifier characters valid without admitting
-    // `No` digits such as subscript/superscript numerals.
+    // Unicode path: ECMAScript `IdentifierPartChar` is `ID_Continue` plus
+    // ZWNJ/ZWJ. The unicode-ident crate implements `XID_Continue`; every
+    // `ID_Continue` code point that `XID_Continue` excludes is also in
+    // `ID_Start - XID_Start`, so the same patch set restores exact
+    // `ID_Continue` membership (verified by exhaustive sweep against tsc's
+    // `unicodeESNextIdentifierPart` table).
     if let Some(c) = char::from_u32(ch)
-        && unicode_ident::is_xid_continue(c)
+        && (unicode_ident::is_xid_continue(c) || is_es_id_start_not_xid_start(ch))
     {
         return true;
     }
 
-    // ZWNJ and ZWJ
+    // ZWNJ and ZWJ join controls (ES2024 12.7 IdentifierPartChar).
     if ch == 0x200C || ch == 0x200D {
         return true;
     }
 
-    if is_unicode_other_id_continue(ch) {
-        return true;
-    }
-
-    // Unicode combining marks (Mn, Mc categories) - needed for scripts like Devanagari, Arabic, etc.
-    // This covers the most common combining mark ranges used in identifiers:
-    // - Combining Diacritical Marks (U+0300-U+036F)
-    // - Devanagari combining marks (U+0900-U+097F range includes vowel signs and virama)
-    // - Arabic combining marks (U+064B-U+0652)
-    // - Hebrew combining marks (U+0591-U+05C7)
-    // - And other Indic scripts
-    is_unicode_combining_mark(ch)
+    is_unicode_other_id_continue(ch)
 }
 
-/// Unicode `Other_ID_Continue` code points that ECMAScript admits as
-/// identifier continuation characters even though they are not alphabetic,
-/// decimal digits, join controls, or combining marks.
+/// ECMAScript `ID_Start` code points that Unicode `XID_Start` excludes.
+///
+/// ES2024 12.7 defines `UnicodeIDStart` with the Unicode `ID_Start`
+/// property, while the unicode-ident crate implements UAX #31 `XID_Start`,
+/// which removes `ID_Start` code points whose NFKC normalization is not
+/// identifier-shaped (UAX #31 5.1). This is the complete difference set,
+/// verified by an exhaustive code-point sweep against tsc's
+/// `unicodeESNextIdentifierStart` table (`TypeScript/src/compiler/scanner.ts`,
+/// generated from Unicode 15.1 `ID_Start`/`Other_ID_Start`).
+///
+/// Note: U+2118 SCRIPT CAPITAL P and U+212E ESTIMATED SYMBOL are also in
+/// `Other_ID_Start` (UCD `PropList.txt`) but are NFKC-stable, so `XID_Start`
+/// already contains them and they need no patch here.
+const fn is_es_id_start_not_xid_start(ch: u32) -> bool {
+    matches!(
+        ch,
+        0x037A // GREEK YPOGEGRAMMENI (Lm); NFKC: space + U+0345
+            | 0x0E33 // THAI CHARACTER SARA AM (Lo); NFKC: U+0E4D U+0E32
+            | 0x0EB3 // LAO VOWEL SIGN AM (Lo); NFKC: U+0ECD U+0EB2
+            | 0x309B // KATAKANA-HIRAGANA VOICED SOUND MARK (Sk, Other_ID_Start)
+            | 0x309C // KATAKANA-HIRAGANA SEMI-VOICED SOUND MARK (Sk, Other_ID_Start)
+            | 0xFC5E..=0xFC63 // ARABIC LIGATURE ... ISOLATED FORM (Lo); NFKC: space + marks
+            | 0xFDFA..=0xFDFB // ARABIC LIGATURE SALLALLAHOU/JALLAJALALOUHOU (Lo)
+            | 0xFE70 // ARABIC FATHATAN ISOLATED FORM (Lo); NFKC: space + mark
+            | 0xFE72 // ARABIC DAMMATAN ISOLATED FORM (Lo)
+            | 0xFE74 // ARABIC KASRATAN ISOLATED FORM (Lo)
+            | 0xFE76 // ARABIC FATHA ISOLATED FORM (Lo)
+            | 0xFE78 // ARABIC DAMMA ISOLATED FORM (Lo)
+            | 0xFE7A // ARABIC KASRA ISOLATED FORM (Lo)
+            | 0xFE7C // ARABIC SHADDA ISOLATED FORM (Lo)
+            | 0xFE7E // ARABIC SUKUN ISOLATED FORM (Lo)
+            | 0xFF9E..=0xFF9F // HALFWIDTH KATAKANA (SEMI-)VOICED SOUND MARK (Lm); NFKC: U+3099/U+309A
+    )
+}
+
+/// Unicode `Other_ID_Continue` code points (UCD `PropList.txt`) that
+/// ECMAScript admits as identifier continuation characters even though they
+/// are not alphabetic, decimal digits, join controls, or combining marks.
 const fn is_unicode_other_id_continue(ch: u32) -> bool {
     matches!(
         ch,
@@ -1376,61 +1402,6 @@ const fn is_unicode_other_id_continue(ch: u32) -> bool {
             ..=0x1371 // ETHIOPIC DIGIT ONE..THREE
             | 0x19DA // NEW TAI LUE THAM DIGIT ONE
     )
-}
-
-/// Check if a character is a Unicode combining mark (Mn or Mc category).
-/// These are characters that modify the preceding base character.
-fn is_unicode_combining_mark(ch: u32) -> bool {
-    // Combining Diacritical Marks
-    if (0x0300..=0x036F).contains(&ch) {
-        return true;
-    }
-    // Devanagari vowel signs, virama, etc. (U+0900-U+0903, U+093A-U+094F, U+0951-U+0957, U+0962-U+0963)
-    if (0x0900..=0x0903).contains(&ch)
-        || (0x093A..=0x094F).contains(&ch)
-        || (0x0951..=0x0957).contains(&ch)
-        || (0x0962..=0x0963).contains(&ch)
-    {
-        return true;
-    }
-    // Bengali combining marks
-    if (0x0981..=0x0983).contains(&ch) || (0x09BC..=0x09CD).contains(&ch) {
-        return true;
-    }
-    // Arabic combining marks (tashkil/harakat)
-    if (0x064B..=0x0652).contains(&ch) || (0x0670..=0x0670).contains(&ch) {
-        return true;
-    }
-    // Hebrew combining marks
-    if (0x0591..=0x05C7).contains(&ch) {
-        return true;
-    }
-    // Other Indic scripts - Tamil, Telugu, Kannada, Malayalam, etc.
-    if (0x0B01..=0x0B03).contains(&ch)  // Oriya
-        || (0x0B3C..=0x0B4D).contains(&ch)
-        || (0x0B82..=0x0B83).contains(&ch)  // Tamil
-        || (0x0BBE..=0x0BCD).contains(&ch)
-        || (0x0C00..=0x0C04).contains(&ch)  // Telugu
-        || (0x0C3E..=0x0C4D).contains(&ch)
-        || (0x0C81..=0x0C83).contains(&ch)  // Kannada
-        || (0x0CBC..=0x0CCD).contains(&ch)
-        || (0x0D00..=0x0D03).contains(&ch)  // Malayalam
-        || (0x0D3B..=0x0D4D).contains(&ch)
-    {
-        return true;
-    }
-    // Thai and other Southeast Asian
-    if (0x0E31..=0x0E3A).contains(&ch) || (0x0E47..=0x0E4E).contains(&ch) {
-        return true;
-    }
-    // Combining Diacritical Marks Extended, Supplement, for Symbols
-    if (0x1AB0..=0x1AFF).contains(&ch)
-        || (0x1DC0..=0x1DFF).contains(&ch)
-        || (0x20D0..=0x20FF).contains(&ch)
-    {
-        return true;
-    }
-    false
 }
 
 const fn is_line_break(ch: u32) -> bool {
