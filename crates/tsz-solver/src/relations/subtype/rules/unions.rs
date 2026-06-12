@@ -91,7 +91,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // e.g., MyMap<U> where type MyMap<T> = { [P in keyof T]: T[keyof T] }
         // The Application expands to a Mapped type which we can then check.
         if let Some(app_id) = application_id(self.interner, target)
-            && let Some(expanded) = self.try_expand_application(app_id)
+            && let Some(expanded) = self.try_expand_application_type(target, app_id)
             && let Some(mapped_id) = mapped_type_id(self.interner, expanded)
             && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id)
         {

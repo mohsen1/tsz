@@ -146,7 +146,7 @@ fn test_try_expand_application_instantiates_type_params() {
     let app_id = application_id(&interner, app_type).expect("expected app id");
 
     let expanded = checker
-        .try_expand_application(app_id)
+        .try_expand_application_type(app_type, app_id)
         .expect("expected expanded application");
 
     let Some(TypeData::Object(shape_id)) = interner.lookup(expanded) else {
@@ -172,7 +172,11 @@ fn test_try_expand_application_non_ref_base_returns_none() {
     let app_type = interner.application(base, vec![TypeId::STRING]);
     let app_id = application_id(&interner, app_type).expect("expected app id");
 
-    assert!(checker.try_expand_application(app_id).is_none());
+    assert!(
+        checker
+            .try_expand_application_type(app_type, app_id)
+            .is_none()
+    );
 }
 
 #[test]
@@ -197,7 +201,11 @@ fn test_try_expand_application_self_reference_returns_none() {
     );
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
-    assert!(checker.try_expand_application(app_id).is_none());
+    assert!(
+        checker
+            .try_expand_application_type(app_type, app_id)
+            .is_none()
+    );
 }
 
 #[test]
@@ -362,7 +370,7 @@ fn test_non_interface_invariant_application_structural_fallback_accepts_equivale
     // since T is unused in the body. Structural comparison correctly returns True.
     assert!(
         checker
-            .check_application_to_application_subtype(source_app, target_app)
+            .check_application_to_application_subtype(source, target, source_app, target_app)
             .is_true()
     );
 }
@@ -460,7 +468,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
     // used as the object of an indexed-access T[K] here), we trust the structural result.
     assert!(
         checker
-            .check_application_to_application_subtype(source_app, target_app)
+            .check_application_to_application_subtype(source, target, source_app, target_app)
             .is_true()
     );
 }
@@ -568,7 +576,7 @@ fn test_indexed_access_object_variance_rejects_concrete_unrelated_args() {
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
     assert!(
         checker
-            .check_application_to_application_subtype(source_app, target_app)
+            .check_application_to_application_subtype(source, target, source_app, target_app)
             .is_false(),
         "T<A> must not be assignable to T<B> when A and B are unrelated"
     );
@@ -605,7 +613,7 @@ fn test_indexed_access_object_variance_rejects_concrete_unrelated_args_renamed_p
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
     assert!(
         checker
-            .check_application_to_application_subtype(source_app, target_app)
+            .check_application_to_application_subtype(source, target, source_app, target_app)
             .is_false(),
         "rejection must not depend on type parameter name"
     );
@@ -653,7 +661,8 @@ fn test_indexed_access_object_variance_with_type_param_args_falls_through() {
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
     // Must not panic; result depends on structural expansion for type-param args
-    let _ = checker.check_application_to_application_subtype(source_app, target_app);
+    let _ =
+        checker.check_application_to_application_subtype(source, target, source_app, target_app);
 }
 
 #[test]
@@ -723,7 +732,12 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
     assert!(variance.needs_structural_fallback());
     assert!(
         checker
-            .check_application_to_application_subtype(source_app, target_app)
+            .check_application_to_application_subtype(
+                mapped_source,
+                mapped_target,
+                source_app,
+                target_app,
+            )
             .is_true()
     );
 }

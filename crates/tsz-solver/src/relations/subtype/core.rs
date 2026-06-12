@@ -849,7 +849,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Try application that resolves to a mapped type (e.g., Readonly<T>, Partial<T>)
         if let Some(app_id) = application_id(self.interner, source)
-            && let Some(expanded) = self.try_expand_application(app_id)
+            && let Some(expanded) = self.try_expand_application_type(source, app_id)
             && let Some(mapped_id) = mapped_type_id(self.interner, expanded)
         {
             return self.check_homomorphic_mapped_to_target(mapped_id, target);

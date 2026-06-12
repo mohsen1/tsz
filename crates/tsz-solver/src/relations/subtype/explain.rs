@@ -124,7 +124,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn apparent_type_for_keys(&mut self, type_id: TypeId) -> TypeId {
         let mut resolved = self.resolve_lazy_type(type_id);
         if let Some(app_id) = application_id(self.interner, resolved)
-            && let Some(expanded) = self.try_expand_application(app_id)
+            && let Some(expanded) = self.try_expand_application_type(resolved, app_id)
         {
             resolved = self.resolve_lazy_type(expanded);
         }
@@ -332,12 +332,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Expand applications (like Array<number>, MyGeneric<string>) to structural forms
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_source)
-            && let Some(expanded) = self.try_expand_application(app_id)
+            && let Some(expanded) = self.try_expand_application_type(resolved_source, app_id)
         {
             resolved_source = self.resolve_lazy_type(expanded);
         }
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_target)
-            && let Some(expanded) = self.try_expand_application(app_id)
+            && let Some(expanded) = self.try_expand_application_type(resolved_target, app_id)
         {
             resolved_target = self.resolve_lazy_type(expanded);
         }

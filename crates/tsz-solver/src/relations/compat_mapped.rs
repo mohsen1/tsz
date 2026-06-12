@@ -91,7 +91,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return Some(mapped_id);
         }
         let app_id = application_id(self.interner, type_id)?;
-        let expanded = self.subtype.try_expand_application(app_id)?;
+        let expanded = self.subtype.try_expand_application_type(type_id, app_id)?;
         mapped_type_id(self.interner, expanded)
     }
 
@@ -150,7 +150,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         if let Some(app_id) = application_id(self.interner, source)
-            && let Some(expanded) = self.subtype.try_expand_application(app_id)
+            && let Some(expanded) = self.subtype.try_expand_application_type(source, app_id)
             && self.mapped_template_structurally_assignable(expanded, target)
         {
             return true;

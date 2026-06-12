@@ -903,7 +903,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 } else if let Some(s_app_id) = s_app_id {
                     // Source is Application, target might be Union containing an Application.
                     // This handles optional properties where target is App<X> | undefined.
-                    self.try_variance_against_union_target(s_app_id, target)
+                    self.try_variance_against_union_target(source, s_app_id, target)
                 } else {
                     None
                 };
