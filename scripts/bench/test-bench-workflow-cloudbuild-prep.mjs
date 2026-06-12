@@ -219,6 +219,24 @@ assert.match(
 
 assert.match(
   workflow,
+  /- id: merge[\s\S]+expected_shards=8[\s\S]+echo "complete=false" >> "\$GITHUB_OUTPUT"[\s\S]+node scripts\/bench\/merge-results\.mjs/,
+  "bench publish should merge partial shard sets into a diagnostic artifact instead of discarding completed shard JSON",
+);
+
+assert.match(
+  workflow,
+  /- id: readiness[\s\S]+continue-on-error: true[\s\S]+check-artifact-readiness\.mjs[\s\S]+- name: Upload merged benchmark artifact/,
+  "bench publish should keep the merged artifact upload path reachable when public readiness fails",
+);
+
+assert.match(
+  workflow,
+  /Fail non-published partial benchmark artifact[\s\S]+steps\.merge\.outputs\.complete != 'true' \|\| steps\.readiness\.outcome != 'success'[\s\S]+refusing to publish it as latest[\s\S]+exit 1[\s\S]+- name: Publish results[\s\S]+steps\.merge\.outputs\.complete == 'true' && steps\.readiness\.outcome == 'success'/,
+  "partial or readiness-failing benchmark artifacts should upload for diagnosis but still fail before latest publication",
+);
+
+assert.match(
+  workflow,
   /target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+main_sha="\$\(gh api "repos\/\$\{GITHUB_REPOSITORY\}\/git\/ref\/heads\/main" --jq '\.object\.sha'[\s\S]+if \[\[ "\$\{target_sha\}" == "\$\{main_sha\}" \]\]; then[\s\S]+skipping catch-up dispatch/,
   "benchmark catch-up should only dispatch when main moved beyond the non-publishing target",
 );

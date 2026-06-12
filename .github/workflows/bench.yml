@@ -1349,22 +1349,28 @@ jobs:
           TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 \
           scripts/ci/project-compile-guard.sh
 
-      - name: Merge benchmark results
+      - id: merge
+        name: Merge benchmark results
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
+          expected_shards=8
+          echo "json_count=${#json_files[@]}" >> "$GITHUB_OUTPUT"
+          echo "expected_json_count=${expected_shards}" >> "$GITHUB_OUTPUT"
           if [[ "${#json_files[@]}" -eq 0 ]]; then
             echo "No benchmark result JSON files found."
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          if [[ "${#json_files[@]}" -ne 8 ]]; then
-            echo "Expected 8 benchmark shard JSON files, found ${#json_files[@]}."
+          if [[ "${#json_files[@]}" -ne "${expected_shards}" ]]; then
+            echo "::warning::Expected ${expected_shards} benchmark shard JSON files, found ${#json_files[@]}; merging partial artifact for diagnosis, but public publish will fail."
             printf 'Found JSON files:\n'
             printf '  %s\n' "${json_files[@]}"
             find bench-artifacts -maxdepth 2 -type f -print || true
-            exit 1
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=true" >> "$GITHUB_OUTPUT"
           fi
           node scripts/bench/merge-results.mjs \
             "$GITHUB_WORKSPACE/bench-results.json" \
@@ -1422,7 +1428,9 @@ jobs:
           fi
           exit "$status"
 
-      - name: Check public benchmark project timings
+      - id: readiness
+        name: Check public benchmark project timings
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -1449,7 +1457,21 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
+      - name: Fail non-published partial benchmark artifact
+        if: steps.merge.outputs.complete != 'true' || steps.readiness.outcome != 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.merge.outputs.complete }}" != "true" ]]; then
+            echo "Merged ${{ steps.merge.outputs.json_count }}/${{ steps.merge.outputs.expected_json_count }} benchmark shard JSON files into bench-results-merged for diagnosis, but refusing to publish it as latest."
+          fi
+          if [[ "${{ steps.readiness.outcome }}" != "success" ]]; then
+            echo "Benchmark artifact readiness check did not pass; refusing to publish it as latest."
+          fi
+          exit 1
+
       - name: Publish results
+        if: steps.merge.outputs.complete == 'true' && steps.readiness.outcome == 'success'
         id: publish
         run: |
           set -euo pipefail
