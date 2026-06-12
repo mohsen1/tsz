@@ -318,6 +318,7 @@ mod misc_inference_features;
 mod probes_issues;
 mod probes_systematic;
 mod probes_tsc_comparison;
+mod shared_views;
 mod simple_declarations;
 mod type_formatting;
 mod type_info;
