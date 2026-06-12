@@ -1,3 +1,4 @@
+use super::flow_dp::{ChainReachabilityMemo, resolve_chain_reachability};
 use crate::query_boundaries::common::QueryDatabase;
 use crate::query_boundaries::common::{NarrowingCache, NarrowingContext, TypeEnvironment};
 use crate::query_boundaries::flow as flow_boundary;
@@ -371,6 +372,8 @@ impl<'a> FlowGraph<'a> {
 
 type AliasBaseAssignmentKey = (u32, u32);
 type AliasBaseAssignmentCache = RefCell<FxHashMap<AliasBaseAssignmentKey, bool>>;
+type AliasPathAssignmentKey = (u32, u32, u32);
+type AliasPathAssignmentCache = RefCell<FxHashMap<AliasPathAssignmentKey, bool>>;
 
 /// Flow analyzer for control flow-based type narrowing.
 ///
@@ -410,6 +413,11 @@ pub struct FlowAnalyzer<'a> {
     /// containing-function assignment after the alias declaration targets the
     /// reference or its base.
     pub(crate) shared_alias_base_assignment_cache: Option<&'a AliasBaseAssignmentCache>,
+    /// Optional shared alias path-assignment cache.
+    /// Key: (`alias_symbol`, `target_reference_node`, `antecedent_flow`) ->
+    /// whether the backward path from the antecedent to the alias declaration
+    /// contains an assignment to the target reference or its base.
+    pub(crate) shared_alias_path_assignment_cache: Option<&'a AliasPathAssignmentCache>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
@@ -654,6 +662,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             shared_alias_base_assignment_cache: None,
+            shared_alias_path_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
@@ -694,6 +703,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             shared_alias_base_assignment_cache: None,
+            shared_alias_path_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
@@ -744,6 +754,15 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &'a RefCell<FxHashMap<(u32, u32), bool>>,
     ) -> Self {
         self.shared_alias_base_assignment_cache = Some(cache);
+        self
+    }
+
+    /// Set a shared alias path-assignment cache.
+    pub const fn with_alias_path_assignment_cache(
+        mut self,
+        cache: &'a RefCell<FxHashMap<(u32, u32, u32), bool>>,
+    ) -> Self {
+        self.shared_alias_path_assignment_cache = Some(cache);
         self
     }
 
@@ -899,31 +918,44 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
     }
 
-    fn flow_chain_contains_switch_clause(&self, flow_id: FlowNodeId) -> bool {
-        let mut worklist = VecDeque::from([flow_id]);
-        let mut visited = FxHashSet::default();
-        let mut steps = 0usize;
-
-        while let Some(current) = worklist.pop_front() {
-            if current.is_none() || !visited.insert(current) {
-                continue;
-            }
-            steps += 1;
-            if steps > 32 {
-                return false;
-            }
-            let Some(flow) = self.binder.flow_nodes.get(current) else {
-                continue;
-            };
-            if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
-                return true;
-            }
-            for &ant in &flow.antecedent {
-                worklist.push_back(ant);
-            }
-        }
-
-        false
+    /// Returns `true` when `flow_id`'s antecedent chain (including itself)
+    /// contains a `SWITCH_CLAUSE` flow node.
+    ///
+    /// Used by the `check_flow` worklist to skip flow-cache reads/writes for
+    /// `unknown`-typed references whose chain passes through switch clauses.
+    /// Memoized in the per-`check_flow` [`ChainReachabilityMemo`] scratch so
+    /// the worklist no longer allocates a fresh `VecDeque` + `FxHashSet` per
+    /// iteration (#13083). The verdict is a pure property of the flow graph,
+    /// which is immutable for the duration of one `check_flow` traversal, so
+    /// memoized answers stay valid for the scratch lifetime. The previous
+    /// one-shot BFS gave up after 32 nodes and reported `false`; the memoized
+    /// form is exact, so very deep switch chains now conservatively skip the
+    /// flow cache (recompute) instead of consulting it.
+    fn flow_chain_contains_switch_clause_with_memo(
+        &self,
+        flow_id: FlowNodeId,
+        memo: &mut ChainReachabilityMemo,
+    ) -> bool {
+        resolve_chain_reachability(
+            flow_id,
+            memo,
+            |node| {
+                let Some(flow) = self.binder.flow_nodes.get(node) else {
+                    return smallvec::SmallVec::new();
+                };
+                flow.antecedent
+                    .iter()
+                    .copied()
+                    .filter(|antecedent| !antecedent.is_none())
+                    .collect()
+            },
+            |node| {
+                self.binder
+                    .flow_nodes
+                    .get(node)
+                    .is_some_and(|flow| flow.has_any_flags(flow_flags::SWITCH_CLAUSE))
+            },
+        )
     }
 
     #[inline]
