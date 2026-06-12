@@ -725,11 +725,7 @@ impl Drop for DepthCounter {
 /// It sits well *below* the frame count that overflows the solver's 128 MB
 /// worker stack ([`tsz_common::limits::THREAD_STACK_SIZE_BYTES`]), leaving a
 /// comfortable margin even when individual frames carry large stack locals.
-pub const MAX_SOLVER_STACK_FRAMES: u32 = 2_000;
-
-thread_local! {
-    static SOLVER_STACK_FRAMES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
+pub const MAX_SOLVER_STACK_FRAMES: u32 = crate::limits::MAX_SOLVER_STACK_FRAMES;
 
 /// RAII guard representing one active solver recursion frame.
 ///
@@ -747,7 +743,7 @@ pub struct SolverStackFrame {
 impl Drop for SolverStackFrame {
     #[inline]
     fn drop(&mut self) {
-        SOLVER_STACK_FRAMES.with(|c| c.set(c.get().saturating_sub(1)));
+        crate::limits::solver_stack_frame_leave();
     }
 }
 
@@ -765,15 +761,7 @@ impl Drop for SolverStackFrame {
 /// budget check with the shared `stacker::maybe_grow` segment sizing.
 #[inline]
 pub fn try_enter_solver_frame() -> Option<SolverStackFrame> {
-    SOLVER_STACK_FRAMES.with(|c| {
-        let depth = c.get();
-        if depth >= MAX_SOLVER_STACK_FRAMES {
-            None
-        } else {
-            c.set(depth + 1);
-            Some(SolverStackFrame { _private: () })
-        }
-    })
+    crate::limits::solver_stack_frame_try_enter().then_some(SolverStackFrame { _private: () })
 }
 
 /// `stacker::maybe_grow` red-zone size shared by every guarded solver recursion
@@ -813,7 +801,7 @@ pub fn with_solver_frame<T>(body: impl FnOnce() -> T) -> Option<T> {
 /// [`try_enter_solver_frame`].
 #[inline]
 pub fn solver_stack_frame_depth() -> u32 {
-    SOLVER_STACK_FRAMES.with(std::cell::Cell::get)
+    crate::limits::solver_stack_frame_depth()
 }
 
 /// Reset the thread-local solver frame counter to zero.
@@ -825,7 +813,7 @@ pub fn solver_stack_frame_depth() -> u32 {
 /// stack-overflow breakers.
 #[inline]
 pub fn reset_solver_stack_frames() {
-    SOLVER_STACK_FRAMES.with(|c| c.set(0));
+    crate::limits::reset_solver_stack_frames();
 }
 
 // ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ pub mod evaluation;
 mod inference;
 mod instantiation;
 mod intern;
+mod limits;
 pub mod narrowing;
 pub mod objects;
 pub mod operations;

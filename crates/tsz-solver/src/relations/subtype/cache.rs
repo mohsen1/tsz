@@ -9,10 +9,10 @@
 //! - Pre-evaluation intrinsic checks (Object/Function interfaces)
 //! - Meta-type evaluation bridging
 
-use crate::caches::limit_policy::limit_result_cache_enabled;
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
+use crate::limits::limit_result_cache_enabled;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
 use crate::types::{
     IntrinsicKind, RelationCacheKey, RelationCacheValue, TypeApplicationId, TypeData, TypeId,
@@ -22,119 +22,15 @@ use crate::visitor::{
     lazy_def_id, literal_value, type_param_info, union_list_id,
 };
 
-// Global thread-local fuel counter for cross-instance subtype check termination.
-//
-// Unlike depth counters (which unwind), fuel is monotonically consumed and never
-// restored until the outermost check_subtype call completes. This prevents the
-// "infinite hang" scenario where each property comparison in an implements check
-// triggers a deep evaluation chain — the total work across ALL properties is bounded.
-//
-// The depth counter tracks nesting level (incremented on enter, decremented on leave)
-// to detect when we're back at the outermost call and can reset the fuel.
-//
-// PERF: Depth and fuel are packed into a single u64 to halve the TLS access count
-// (2 per check_subtype call instead of 4). Layout: high 32 bits = fuel, low 32 bits = depth.
-thread_local! {
-    static GLOBAL_SUBTYPE_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    // Monotonic counter bumped whenever a `Lazy(DefId)` could not be resolved
-    // (its body is not yet registered — typically a re-entrant lib-resolution
-    // window). A subtype result computed while this counter changed depended on
-    // an undetermined type and must NOT be cached as definitive, or it poisons
-    // every later structural check that shares the same member type.
-    static LAZY_RESOLVE_FAILURES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    // Monotonic counter bumped whenever a structural comparison hits the
-    // weak-type (TS2559) trigger: a non-empty, non-weak source compared against
-    // a weak-type target with no common property names. Such a pair yields
-    // DIFFERENT results depending on whether weak-type enforcement is active
-    // (`SubtypeChecker::enforce_weak_types` plus the `in_property_check` /
-    // `in_intersection_member_check` gating context). That enforcement state is
-    // operation-local and is NOT encoded in the flag-agnostic
-    // `RelationCacheKey`, so a result computed while this counter changed must
-    // NOT be memoized in the shared relation cache or it poisons a sibling
-    // check that runs under a different enforcement state. Mirrors the
-    // unresolved-`Lazy` snapshot mechanism above.
-    static WEAK_TYPE_SENSITIVITY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Record that a `Lazy(DefId)` failed to resolve during a relation check.
-#[inline]
-pub(crate) fn note_lazy_resolve_failure() {
-    LAZY_RESOLVE_FAILURES.with(|c| c.set(c.get().wrapping_add(1)));
-}
-
-/// Current value of the unresolved-`Lazy` counter; compare a snapshot taken
-/// before computing a result with the value after to detect whether the
-/// computation depended on an unresolved `Lazy`.
-///
-/// Public so checker-side proof caches shared across file checkers can apply
-/// the same "don't publish results that depended on an unresolved `Lazy`"
-/// suppression the solver's shared relation cache uses.
-#[inline]
-pub fn lazy_resolve_failure_count() -> u64 {
-    LAZY_RESOLVE_FAILURES.with(std::cell::Cell::get)
-}
-
-/// Record that a structural comparison reached the weak-type (TS2559) trigger,
-/// making the in-flight result sensitive to the active weak-type enforcement
-/// state. See [`WEAK_TYPE_SENSITIVITY`].
-#[inline]
-pub(crate) fn note_weak_type_sensitivity() {
-    WEAK_TYPE_SENSITIVITY.with(|c| c.set(c.get().wrapping_add(1)));
-}
-
-/// Current value of the weak-type-sensitivity counter; compare a snapshot taken
-/// before computing a result with the value after to detect whether the
-/// computation depended on weak-type enforcement state (which the relation
-/// cache key does not encode).
-#[inline]
-pub(crate) fn weak_type_sensitivity_count() -> u64 {
-    WEAK_TYPE_SENSITIVITY.with(std::cell::Cell::get)
-}
-
-/// Pack depth (low 32) and fuel (high 32) into a single u64.
-#[inline(always)]
-const fn pack_depth_fuel(depth: u32, fuel: u32) -> u64 {
-    (fuel as u64) << 32 | depth as u64
-}
-
-/// Extract depth from packed state.
-#[inline(always)]
-const fn unpack_depth(state: u64) -> u32 {
-    state as u32
-}
-
-/// Extract fuel from packed state.
-#[inline(always)]
-const fn unpack_fuel(state: u64) -> u32 {
-    (state >> 32) as u32
-}
-
-/// Reset subtype depth, fuel, and unresolved-`Lazy`-failure counters.
-/// Called between compilation sessions to prevent stale state from a previous
-/// compilation (e.g., if it panicked and left counters dirty).
-pub fn reset_subtype_thread_local_state() {
-    GLOBAL_SUBTYPE_STATE.with(|s| s.set(0));
-    LAZY_RESOLVE_FAILURES.with(|c| c.set(0));
-    WEAK_TYPE_SENSITIVITY.with(|c| c.set(0));
-}
-
-// Maximum number of non-trivial subtype checks per top-level call chain.
-// Generous enough for complex real-world types (react, fp-ts) but restrictive
-// enough to prevent runaway recursion from hanging.
-pub(crate) const MAX_GLOBAL_SUBTYPE_FUEL: u32 = 10_000;
-
-/// Remaining global subtype fuel budget for the current thread's in-flight
-/// relation chain. `MAX_GLOBAL_SUBTYPE_FUEL` when no chain is in flight.
-///
-/// Used to decide whether a budget-conditional
-/// [`RelationCacheValue::LimitTrue`] entry is honest for the current query:
-/// the recorded verdict only holds for queries whose remaining budget is at
-/// most the entry's `fuel_band` (a larger budget could complete the
-/// comparison honestly and must recompute).
-#[inline]
-pub(crate) fn remaining_global_subtype_fuel() -> u32 {
-    GLOBAL_SUBTYPE_STATE.with(|s| MAX_GLOBAL_SUBTYPE_FUEL.saturating_sub(unpack_fuel(s.get())))
-}
+// The global subtype chain fuel/depth state, the cache-poisoning sentinel
+// counters, and all limit thresholds live in the consolidated `crate::limits`
+// module (issue #13091). The re-exports below keep this module the stable
+// import path for relation-side callers.
+pub(crate) use crate::limits::{
+    MAX_GLOBAL_SUBTYPE_FUEL, note_lazy_resolve_failure, note_weak_type_sensitivity,
+    remaining_global_subtype_fuel,
+};
+pub use crate::limits::{lazy_resolve_failure_count, reset_subtype_thread_local_state};
 
 /// One recorded `Ternary.Maybe`-style relation outcome awaiting validation by
 /// the outermost frame of its checker instance (tsc `maybeKeys` parity).
@@ -466,26 +362,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
         // Track nesting depth and consume fuel for every non-trivial check.
         // Fuel is monotonically consumed; depth tracks when we're back at root.
-        // PERF: Single TLS access reads both depth and fuel; single access writes both.
-        let (global_depth, fuel) = GLOBAL_SUBTYPE_STATE.with(|s| {
-            let prev = s.get();
-            let depth = unpack_depth(prev);
-            let fuel = unpack_fuel(prev);
-            s.set(pack_depth_fuel(depth + 1, fuel + 1));
-            (depth, fuel)
-        });
-
-        // Snapshot the unresolved-`Lazy` counter. If it changes while computing
-        // this pair's result, the result depended on a `Lazy` whose body was not
-        // yet registered, so a `False` is undetermined and must not be cached.
-        let lazy_failures_at_entry = lazy_resolve_failure_count();
-
-        // Snapshot the weak-type-sensitivity counter. If it changes while
-        // computing this pair's result, the result depended on weak-type
-        // enforcement state (TS2559), which the flag-agnostic `RelationCacheKey`
-        // does not encode. Caching it would let a result computed under one
-        // enforcement state be served to a sibling check under another.
-        let weak_sensitivity_at_entry = weak_type_sensitivity_count();
+        // PERF: A single consolidated TLS access (`crate::limits`) reads and
+        // updates the packed depth/fuel state AND snapshots the two
+        // cache-poisoning sentinel counters and the shared solver-frame depth:
+        //
+        // - The unresolved-`Lazy` snapshot: if it changes while computing this
+        //   pair's result, the result depended on a `Lazy` whose body was not
+        //   yet registered, so a `False` is undetermined and must not be cached.
+        // - The weak-type-sensitivity snapshot: if it changes, the result
+        //   depended on weak-type enforcement state (TS2559), which the
+        //   flag-agnostic `RelationCacheKey` does not encode. Caching it would
+        //   let a result computed under one enforcement state be served to a
+        //   sibling check under another.
+        let frame_entry = crate::limits::enter_subtype_frame();
+        let global_depth = frame_entry.global_depth;
+        let fuel = frame_entry.fuel;
+        let lazy_failures_at_entry = frame_entry.lazy_failures;
+        let weak_sensitivity_at_entry = frame_entry.weak_sensitivity;
 
         // ── Limit-hit maybe-stack (tsc `maybeKeys` parity, issue #13241) ────
         // Frame-entry snapshot of the maybe stack. Every completion path of
@@ -513,11 +406,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // an equal-or-smaller budget in every dimension, so reusing the
         // assumed-related verdict is monotonically safe — a smaller budget
         // can only bail earlier with the same answer (fuel-band honesty).
-        // The `global_depth == 0` short-circuit keeps the two extra reads off
-        // the hot nested-frame path.
+        // The solver-frame depth was read under the same TLS resolution as the
+        // fuel state in `enter_subtype_frame`, keeping it off the hot path.
         let pristine_budget_chain = global_depth == 0
             && self.guard.iterations() == 0
-            && crate::recursion::solver_stack_frame_depth() == 0;
+            && frame_entry.solver_stack_frames == 0;
 
         let frame_snapshot = RelationFrameSnapshot {
             maybe_start,
@@ -536,19 +429,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
         }
 
-        // Helper macro to decrement global depth and optionally reset fuel on early returns.
+        // Helper macro to decrement global depth and optionally reset fuel on
+        // early returns (fuel resets when the outermost chain frame exits).
         macro_rules! leave_global {
             () => {
-                GLOBAL_SUBTYPE_STATE.with(|s| {
-                    let prev = s.get();
-                    let depth = unpack_depth(prev).saturating_sub(1);
-                    if global_depth == 0 {
-                        // Outermost call completed — reset fuel
-                        s.set(pack_depth_fuel(depth, 0));
-                    } else {
-                        s.set(pack_depth_fuel(depth, unpack_fuel(prev)));
-                    }
-                });
+                crate::limits::leave_subtype_frame(global_depth == 0);
             };
         }
 
@@ -579,8 +464,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         macro_rules! cache_definitive {
             ($db:expr, $key:expr, $result:expr) => {
                 if !self.bypass_evaluation
-                    && lazy_resolve_failure_count() == lazy_failures_at_entry
-                    && weak_type_sensitivity_count() == weak_sensitivity_at_entry
+                    && crate::limits::poison_sentinel_counts()
+                        == (lazy_failures_at_entry, weak_sensitivity_at_entry)
                 {
                     match $result {
                         SubtypeResult::True => $db.insert_subtype_cache($key, true),
@@ -1208,15 +1093,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Decrement global depth; reset fuel when outermost call completes.
         // PERF: Single TLS access for both depth and fuel.
-        GLOBAL_SUBTYPE_STATE.with(|s| {
-            let prev = s.get();
-            let depth = unpack_depth(prev).saturating_sub(1);
-            if global_depth == 0 {
-                s.set(pack_depth_fuel(depth, 0));
-            } else {
-                s.set(pack_depth_fuel(depth, unpack_fuel(prev)));
-            }
-        });
+        crate::limits::leave_subtype_frame(global_depth == 0);
 
         result
     }
@@ -1284,8 +1161,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.guard.depth() == 0 && !self.maybe_keys.is_empty() {
             let entries = std::mem::take(&mut self.maybe_keys);
             if result.is_true()
-                && lazy_resolve_failure_count() == frame.lazy_failures_at_entry
-                && weak_type_sensitivity_count() == frame.weak_sensitivity_at_entry
+                && crate::limits::poison_sentinel_counts()
+                    == (
+                        frame.lazy_failures_at_entry,
+                        frame.weak_sensitivity_at_entry,
+                    )
                 && let Some(db) = self.query_db
             {
                 for entry in entries {

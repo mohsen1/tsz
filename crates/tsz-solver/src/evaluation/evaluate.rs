@@ -279,18 +279,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Maximum recursive expansion depth for a single `DefId`.
     /// Matches TypeScript's instantiation depth limit that triggers TS2589.
-    const MAX_DEF_DEPTH: u32 = 100;
+    /// Canonical definition in [`crate::limits`].
+    const MAX_DEF_DEPTH: u32 = crate::limits::MAX_DEF_DEPTH;
 
     /// When the structural per-`TypeId` recursion guard hits its depth limit,
-    /// surface it as TS2589 only if some DefId has been recursively expanded at
-    /// least this many times — otherwise treat the bailout as the stack-protection
-    /// cost of legitimate finite recursion and leave the type opaque.
-    ///
-    /// Calibration: empirically, `Permutation<U>` with `|U| ≤ 3` peaks around
-    /// `def_depth ≈ 33` when it hits the structural limit, while unbounded
-    /// patterns like `type Foo<T,B> = { "true": Foo<T, Foo<T,B>> }[T]` saturate
-    /// near `def_depth ≈ 50`.
-    const REAL_INSTANTIATION_BAILOUT_THRESHOLD: u32 = 40;
+    /// surface it as TS2589 only if some `DefId` has been recursively expanded
+    /// at least this many times — otherwise treat the bailout as the
+    /// stack-protection cost of legitimate finite recursion and leave the type
+    /// opaque. Calibration notes at the canonical definition in
+    /// [`crate::limits`].
+    const REAL_INSTANTIATION_BAILOUT_THRESHOLD: u32 =
+        crate::limits::REAL_INSTANTIATION_BAILOUT_THRESHOLD;
 
     fn increment_def_depth(&mut self, def_id: DefId) -> bool {
         let depth = self.def_depth.entry(def_id).or_insert(0);
@@ -617,8 +616,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// in an overload return) produce 100+ nested evaluate frames that overflow
     /// the 8MB default stack. This counter tracks cumulative `evaluate` frames
     /// across every `TypeEvaluator` on the call stack and bails with ERROR once
-    /// it exceeds `MAX_GLOBAL_EVAL_DEPTH`.
-    const MAX_GLOBAL_EVAL_DEPTH: u32 = 200;
+    /// it exceeds `MAX_GLOBAL_EVAL_DEPTH`. Canonical definition in
+    /// [`crate::limits`].
+    const MAX_GLOBAL_EVAL_DEPTH: u32 = crate::limits::MAX_GLOBAL_EVAL_DEPTH;
 
     /// Evaluate a type, resolving any meta-types if possible.
     /// Returns the evaluated type (may be the same if no evaluation needed).
@@ -660,20 +660,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         // Cross-evaluator stack overflow prevention.
-        // Only check thread-local global depth when the local guard depth
-        // is already significant (>= 10). This avoids expensive TLS access
-        // on the vast majority of shallow evaluations.
+        // Only check the thread-local global depth (consolidated in
+        // `crate::limits`) when the local guard depth is already significant
+        // (>= 10). This avoids expensive TLS access on the vast majority of
+        // shallow evaluations.
         if self.guard.depth() >= 10 {
-            thread_local! {
-                static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-            }
-            let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
-                let v = d.get();
-                d.set(v + 1);
-                v
-            });
+            let global_depth = crate::limits::global_eval_depth_enter();
             if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
-                GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                crate::limits::global_eval_depth_leave();
                 // Cross-evaluator stack protection: leave `type_id` opaque
                 // rather than propagating ERROR. The outer evaluator can
                 // proceed at a shallower depth without inheriting a sticky
@@ -682,7 +676,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return type_id;
             }
             let result = self.evaluate_guarded(type_id);
-            GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            crate::limits::global_eval_depth_leave();
             return result;
         }
 
@@ -721,8 +715,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// We amortize the atomic load by only checking the global fuel counter
     /// every N iterations of the per-evaluator guard. This keeps the hot path
-    /// fast while still catching runaway expansion within a few hundred iterations.
-    const FUEL_CHECK_INTERVAL: u32 = 128;
+    /// fast while still catching runaway expansion within a few hundred
+    /// iterations. Canonical definition in [`crate::limits`].
+    const FUEL_CHECK_INTERVAL: u32 = crate::limits::EVAL_FUEL_CHECK_INTERVAL;
 
     /// Memoize `result` for `type_id`, stamping the entry as a stack-context
     /// artifact when a limit event fired within this node's evaluation window
