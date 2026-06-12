@@ -81,6 +81,9 @@ pub struct IRPrinter<'a> {
     /// CommonJS `tslib` binding used to prefix runtime helper calls for importHelpers.
     tslib_prefix: bool,
     tslib_import_binding: String,
+    /// Per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`)
+    /// applied when ESM importHelpers renamed a helper at the import site.
+    helper_import_aliases: rustc_hash::FxHashMap<String, String>,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     system_import_meta: bool,
     pub(crate) base_printer_options: Option<PrinterOptions>,
@@ -262,6 +265,7 @@ impl<'a> IRPrinter<'a> {
             remove_comments: false,
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
+            helper_import_aliases: rustc_hash::FxHashMap::default(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             system_import_meta: false,
             base_printer_options: None,
@@ -295,6 +299,7 @@ impl<'a> IRPrinter<'a> {
             remove_comments: false,
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
+            helper_import_aliases: rustc_hash::FxHashMap::default(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             system_import_meta: false,
             base_printer_options: None,
@@ -328,6 +333,7 @@ impl<'a> IRPrinter<'a> {
             remove_comments: false,
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
+            helper_import_aliases: rustc_hash::FxHashMap::default(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             system_import_meta: false,
             base_printer_options: None,
@@ -371,6 +377,12 @@ impl<'a> IRPrinter<'a> {
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
         self.tslib_import_binding = binding;
+    }
+
+    /// Set per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`)
+    /// so helper references printed from IR match the import-site aliases.
+    pub fn set_helper_import_aliases(&mut self, aliases: rustc_hash::FxHashMap<String, String>) {
+        self.helper_import_aliases = aliases;
     }
 
     pub fn set_commonjs_import_substitutions(
@@ -444,11 +456,20 @@ impl<'a> IRPrinter<'a> {
         printer
     }
 
-    /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
+    /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is
+    /// active, or substituting the import-site alias (e.g. `__awaiter_1`) when ESM
+    /// importHelpers renamed the helper. Mirrors `Printer::write_helper`.
     fn write_helper(&mut self, name: &str) {
         if self.tslib_prefix {
             self.output.push_str(&self.tslib_import_binding);
             self.output.push('.');
+            self.output.push_str(name);
+            return;
+        }
+        if let Some(alias) = self.helper_import_aliases.get(name) {
+            let alias_owned = alias.clone();
+            self.output.push_str(&alias_owned);
+            return;
         }
         self.output.push_str(name);
     }

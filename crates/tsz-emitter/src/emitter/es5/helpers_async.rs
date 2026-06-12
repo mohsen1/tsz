@@ -247,6 +247,50 @@ impl<'a> Printer<'a> {
             let body_has_await = async_emitter.body_contains_await(body);
             let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
             let hoisted_function_decls = self.async_body_function_declarations(body);
+
+            // Single construction path: when the body hoists no function
+            // declarations, the whole `__awaiter(...)` wrapper (inline or
+            // multi-line callback, directives, hoisted `var` groups, lexical
+            // `this` capture, generator state naming) is built as
+            // `IRNode::AwaiterCall` + `IRNode::GeneratorBody` and printed by
+            // the IR printer. Hoisted function declarations stay on the
+            // hand-written path below because they are emitted through the
+            // Printer's AST emitter, which consumes the file-level comment
+            // stream and contributes source-map mappings — neither of which
+            // has a channel through the IR printer.
+            if hoisted_function_decls.is_empty() {
+                // The awaiter call starts at the current statement indent
+                // (unlike the bare generator body, which nests one level
+                // deeper inside the hand-written callback).
+                async_emitter.set_indent_level(self.writer.indent_level());
+                async_emitter.set_helper_import_aliases(self.helper_import_aliases.clone());
+                // tsc keeps the multi-line callback format whenever the
+                // source body spans multiple lines, even if nothing is
+                // hoisted; the IR printer owns the remaining multi-line
+                // triggers (hoists, directives, lexical-this capture).
+                let rendered = async_emitter.emit_awaiter_call(
+                    body,
+                    body_has_await,
+                    this_expr,
+                    promise_ctor,
+                    !body_is_single_line,
+                );
+                self.next_disposable_env_id = async_emitter.disposable_env_counter();
+                self.next_dynamic_import_promise_id =
+                    async_emitter.dynamic_import_promise_counter();
+                self.next_catch_binding_ordinals = async_emitter.take_catch_binding_ordinals();
+                for generated_name in async_emitter.take_generated_disposable_env_names() {
+                    self.generated_temp_names.insert(generated_name);
+                }
+                self.write(&rendered);
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+                self.pop_temp_scope();
+                self.skip_comments_for_async_lowered_body(body);
+                return;
+            }
+
             let hoist_function_decls_only =
                 !body_has_await && self.block_has_only_function_decls(body);
             if hoist_function_decls_only {
@@ -323,35 +367,15 @@ impl<'a> Printer<'a> {
                 self.generated_temp_names.insert(generated_name);
             }
 
-            // Write with surrounding __awaiter wrapper
+            // Write with surrounding __awaiter wrapper. The inline
+            // single-line wrapper format never applies here: this path only
+            // handles bodies with hoisted function declarations, which force
+            // the multi-line callback (function-decl-free bodies are printed
+            // from `IRNode::AwaiterCall` above).
             self.write("return ");
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            let can_inline_wrapper = hoisted_var_groups.is_empty()
-                && body_is_single_line
-                && hoisted_function_decls.is_empty()
-                && directive_prologue.is_empty()
-                && !needs_lexical_this_capture
-                && generator_mappings.is_empty();
-            if can_inline_wrapper {
-                self.write(", void 0, ");
-                self.write_awaiter_promise_arg(&promise_ctor);
-                self.write(", function () { ");
-                self.write(&Self::inline_async_generator_body(&generator_body));
-                self.write(" });");
-                self.write_line();
-                self.decrease_indent();
-                self.write("}");
-                self.skip_comments_for_async_lowered_body(body);
-                // emit_function_parameters_es5() pushed a temp scope; the
-                // other early-return paths in this function (and the
-                // multi-line/normal exit below) all call pop_temp_scope.
-                // Forgetting it here would leak temp-name state across
-                // functions and corrupt subsequent emissions.
-                self.pop_temp_scope();
-                return;
-            }
 
             // Multi-line format (matches tsc):
             // return __awaiter(this, void 0, void 0, function () {

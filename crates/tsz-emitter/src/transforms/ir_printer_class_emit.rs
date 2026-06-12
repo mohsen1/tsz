@@ -452,7 +452,9 @@ impl<'a> IRPrinter<'a> {
             );
             Self::generator_state_name_for_hoisted(&combined)
         };
-        self.write("return __awaiter(");
+        self.write("return ");
+        self.write_helper("__awaiter");
+        self.write("(");
         self.emit_node(this_arg);
         if let Some(ctor) = promise_constructor {
             self.write(", void 0, ");
