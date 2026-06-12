@@ -11,9 +11,7 @@ use crate::caches::db::{
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
 use crate::caches::query_trace;
-use crate::caches::shared_instantiation::{
-    application_eval_entry_references_def, shared_instantiation_family_requested,
-};
+use crate::caches::shared_instantiation::application_eval_entry_references_def;
 use crate::caches::shared_query_cache::ApplicationEvalCacheKey;
 pub use crate::caches::shared_query_cache::SharedQueryCache;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
