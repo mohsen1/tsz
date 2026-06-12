@@ -1523,6 +1523,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
+                let return_has_inferred_type_param =
+                    self.type_contains_any_type_param(target_return_type, type_param_names);
+                if return_has_inferred_type_param
+                    && self.callback_return_expression_is_contextually_sensitive(prop.initializer)
+                {
+                    continue;
+                }
+
                 // The contextual param types are concrete, so we can safely type this
                 // lambda with those contextual types and extract its return type.
                 // When the contextual return still contains callee type parameters,
@@ -1531,12 +1539,11 @@ impl<'a> CheckerState<'a> {
                 // placeholder back into Round 1.
                 // Suppress diagnostics from this speculative evaluation
                 // (the params WILL get contextual types in the final pass).
-                let request =
-                    if self.type_contains_any_type_param(target_return_type, type_param_names) {
-                        TypingRequest::for_assertion(contextual_fn_type)
-                    } else {
-                        TypingRequest::with_contextual_type(contextual_fn_type)
-                    };
+                let request = if return_has_inferred_type_param {
+                    TypingRequest::for_assertion(contextual_fn_type)
+                } else {
+                    TypingRequest::with_contextual_type(contextual_fn_type)
+                };
                 let value_type = self.speculative_type_of_node(prop.initializer, &request);
 
                 // If the speculative result still contains any of the type parameters
@@ -1589,12 +1596,22 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let request =
-                    if self.type_contains_any_type_param(target_return_type, type_param_names) {
-                        TypingRequest::for_assertion(contextual_fn_type)
-                    } else {
-                        TypingRequest::with_contextual_type(contextual_fn_type)
-                    };
+                let return_has_inferred_type_param =
+                    self.type_contains_any_type_param(target_return_type, type_param_names);
+                if return_has_inferred_type_param
+                    && self.function_body_return_expression_is_contextually_sensitive(
+                        method.body,
+                        method.type_annotation.is_some(),
+                    )
+                {
+                    continue;
+                }
+
+                let request = if return_has_inferred_type_param {
+                    TypingRequest::for_assertion(contextual_fn_type)
+                } else {
+                    TypingRequest::with_contextual_type(contextual_fn_type)
+                };
                 let value_type = self.speculative_type_of_function(elem_idx, &request);
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
@@ -1644,6 +1661,64 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn callback_return_expression_is_contextually_sensitive(
+        &self,
+        callback_idx: NodeIndex,
+    ) -> bool {
+        let Some(callback_node) = self
+            .callback_function_index(callback_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))
+        else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(callback_node) else {
+            return false;
+        };
+        self.function_body_return_expression_is_contextually_sensitive(
+            func.body,
+            func.type_annotation.is_some(),
+        )
+    }
+
+    fn function_body_return_expression_is_contextually_sensitive(
+        &self,
+        body_idx: NodeIndex,
+        has_return_annotation: bool,
+    ) -> bool {
+        use super::complex::is_contextually_sensitive;
+
+        if has_return_annotation {
+            return false;
+        }
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return is_contextually_sensitive(self, body_idx);
+        }
+
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        block.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return false;
+            }
+            self.ctx
+                .arena
+                .get_return_statement(stmt_node)
+                .is_some_and(|ret| {
+                    ret.expression.is_some() && is_contextually_sensitive(self, ret.expression)
+                })
+        })
     }
 
     /// Extract inference from an object literal whose target type is a mapped type.
