@@ -1,6 +1,7 @@
 //! Declaration-arena helpers for lib symbols and global augmentations.
 
 use std::sync::Arc;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 
 /// Resolve fallback arena for a lib symbol from merged binders/lib contexts.
@@ -76,7 +77,32 @@ pub(crate) fn collect_lib_decls_with_arenas_in_contexts<'a>(
                 let lib_decl_arenas =
                     collect_decl_arenas_from_lib_contexts(binder, sym_id, decl_idx, lib_contexts);
                 if lib_decl_arenas.is_empty() {
-                    vec![(decl_idx, fallback_arena)]
+                    // Blind fallback: `decl_idx` was never proven to belong to
+                    // `fallback_arena`. `NodeIndex`es are arena-local, so for a
+                    // cross-file program symbol the same index addresses an
+                    // unrelated node in this arena; lowering that node
+                    // manufactures a wrong type (empty interface bodies,
+                    // mis-typed members) that then leaks into the shared
+                    // `DefinitionStore` and poisons sibling checkers under
+                    // parallel fresh checking (issue #13255). Keep the pair
+                    // only when ownership is provable: either the binder
+                    // registered `fallback_arena` as this symbol's home arena,
+                    // or the node is a named declaration that declares this
+                    // symbol's name.
+                    if fallback_arena_pair_is_trusted(binder, sym_id, decl_idx, fallback_arena) {
+                        vec![(decl_idx, fallback_arena)]
+                    } else {
+                        tracing::debug!(
+                            sym_id = ?sym_id,
+                            symbol = %binder
+                                .get_symbol(sym_id)
+                                .map(|s| s.escaped_name.as_str())
+                                .unwrap_or("<unknown>"),
+                            decl_idx = ?decl_idx,
+                            "rejecting foreign-arena lib-decl fallback pair"
+                        );
+                        Vec::new()
+                    }
                 } else {
                     lib_decl_arenas
                         .into_iter()
@@ -86,6 +112,84 @@ pub(crate) fn collect_lib_decls_with_arenas_in_contexts<'a>(
             }
         })
         .collect()
+}
+
+/// Whether a `(decl_idx, fallback_arena)` pair produced by the last-resort
+/// fallback in [`collect_lib_decls_with_arenas_in_contexts`] provably belongs
+/// together.
+///
+/// Two independent proofs are accepted:
+/// - the binder registered `fallback_arena` as the symbol's home arena in
+///   `symbol_arenas` (covers declarations without a plain identifier name:
+///   binding patterns, default exports, `export =`); or
+/// - the node at `decl_idx` is a named declaration whose declared name equals
+///   the symbol's escaped name.
+///
+/// Pairs that satisfy neither are foreign-arena `NodeIndex` collisions, not
+/// declarations of this symbol, and lowering them manufactures wrong types
+/// (issue #13255).
+fn fallback_arena_pair_is_trusted(
+    binder: &tsz_binder::BinderState,
+    sym_id: tsz_binder::SymbolId,
+    decl_idx: NodeIndex,
+    arena: &NodeArena,
+) -> bool {
+    if arena.get(decl_idx).is_none() {
+        return false;
+    }
+    if binder
+        .symbol_arenas
+        .get(&sym_id)
+        .is_some_and(|home| std::ptr::eq(home.as_ref(), arena))
+    {
+        return true;
+    }
+    fallback_arena_node_declares_symbol(binder, sym_id, decl_idx, arena)
+}
+
+/// Whether the node at `decl_idx` in `arena` is a named declaration whose
+/// declared name equals the symbol's escaped name.
+///
+/// Used to validate the blind arena fallback in
+/// [`collect_lib_decls_with_arenas_in_contexts`]: a pair is only usable for
+/// name-driven lib lowering when the node provably declares the looked-up
+/// name. Unrecognized node kinds and name mismatches are rejected — they are
+/// foreign-arena index collisions, not declarations of this symbol.
+fn fallback_arena_node_declares_symbol(
+    binder: &tsz_binder::BinderState,
+    sym_id: tsz_binder::SymbolId,
+    decl_idx: NodeIndex,
+    arena: &NodeArena,
+) -> bool {
+    let Some(symbol) = binder.get_symbol(sym_id) else {
+        return false;
+    };
+    let Some(node) = arena.get(decl_idx) else {
+        return false;
+    };
+    let name_idx = if let Some(interface) = arena.get_interface(node) {
+        interface.name
+    } else if let Some(alias) = arena.get_type_alias(node) {
+        alias.name
+    } else if let Some(class) = arena.get_class(node) {
+        class.name
+    } else if let Some(function) = arena.get_function(node) {
+        function.name
+    } else if let Some(enum_decl) = arena.get_enum(node) {
+        enum_decl.name
+    } else if let Some(module) = arena.get_module(node) {
+        module.name
+    } else if let Some(variable) = arena.get_variable_declaration(node) {
+        variable.name
+    } else {
+        return false;
+    };
+    // Plain identifier names first; string-literal names (e.g. ambient
+    // `declare module "name"`) resolve through literal text.
+    arena
+        .get_identifier_text(name_idx)
+        .or_else(|| arena.get_literal_text(name_idx))
+        .is_some_and(|name| name == symbol.escaped_name)
 }
 
 fn collect_decl_arenas_from_lib_contexts<'a>(
@@ -148,4 +252,148 @@ pub(crate) fn dedup_decl_arenas<'a>(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    fn parse_and_bind(file_name: &str, source: &str) -> (Arc<NodeArena>, BinderState) {
+        let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        (Arc::new(parser.get_arena().clone()), binder)
+    }
+
+    fn interface_decl(
+        binder: &BinderState,
+        name: &str,
+    ) -> (tsz_binder::SymbolId, NodeIndex, usize) {
+        let sym_id = binder
+            .file_locals
+            .get(name)
+            .unwrap_or_else(|| panic!("binder should expose {name}"));
+        let symbol = binder.get_symbol(sym_id).expect("symbol should resolve");
+        let decl_idx = *symbol
+            .declarations
+            .first()
+            .expect("symbol should have a declaration");
+        (sym_id, decl_idx, symbol.declarations.len())
+    }
+
+    /// A `(decl_idx, fallback_arena)` pair where the index addresses an
+    /// unrelated node in a foreign arena must be dropped, not lowered.
+    /// This was the issue #13255 poison: cross-file program symbols fell
+    /// back to an arena that never declared them, and the colliding node
+    /// produced a wrong type in the shared definition store.
+    #[test]
+    fn foreign_arena_collision_pair_is_rejected() {
+        let (_, owner_binder) = parse_and_bind(
+            "telemetry.ts",
+            "export interface TelemetryFrame { gimbalAxis: string; }\n",
+        );
+        let (sym_id, decl_idx, decl_count) = interface_decl(&owner_binder, "TelemetryFrame");
+        assert_eq!(decl_count, 1);
+
+        // A foreign arena large enough that `decl_idx` addresses *some*
+        // node — just never a declaration of `TelemetryFrame`.
+        let (foreign_arena, _) = parse_and_bind(
+            "unrelated.ts",
+            "const pad0 = 0;\nconst pad1 = 1;\nconst pad2 = 2;\nconst pad3 = 3;\n\
+             const pad4 = 4;\nconst pad5 = 5;\nconst pad6 = 6;\nconst pad7 = 7;\n",
+        );
+        assert!(
+            foreign_arena.get(decl_idx).is_some(),
+            "collision setup requires the index to resolve in the foreign arena"
+        );
+
+        let pairs = collect_lib_decls_with_arenas(
+            &owner_binder,
+            sym_id,
+            &[decl_idx],
+            foreign_arena.as_ref(),
+            None,
+        );
+        assert!(
+            pairs.is_empty(),
+            "foreign-arena collision pair must be rejected, got {} pair(s)",
+            pairs.len()
+        );
+    }
+
+    /// The fallback stays usable when the arena really declares the symbol:
+    /// the node at `decl_idx` is a named declaration with the symbol's name.
+    #[test]
+    fn owning_arena_fallback_pair_is_kept() {
+        let (owner_arena, owner_binder) = parse_and_bind(
+            "telemetry.ts",
+            "export interface ApogeeWindow { ascentRate: number; }\n",
+        );
+        let (sym_id, decl_idx, _) = interface_decl(&owner_binder, "ApogeeWindow");
+
+        let pairs = collect_lib_decls_with_arenas(
+            &owner_binder,
+            sym_id,
+            &[decl_idx],
+            owner_arena.as_ref(),
+            None,
+        );
+        assert_eq!(
+            pairs.len(),
+            1,
+            "fallback pair in the declaring arena must be kept"
+        );
+        assert_eq!(pairs[0].0, decl_idx);
+        assert!(std::ptr::eq(pairs[0].1, owner_arena.as_ref()));
+    }
+
+    /// Declarations without a plain identifier name (destructuring binding
+    /// patterns here) cannot pass the name check, but the binder-registered
+    /// home arena proves ownership, so the pair must survive.
+    #[test]
+    fn registered_home_arena_pair_is_trusted_without_name_match() {
+        let (owner_arena, mut owner_binder) = parse_and_bind(
+            "boom.ts",
+            "export const { boomArmSpan } = { boomArmSpan: 4 };\n",
+        );
+        let sym_id = owner_binder
+            .file_locals
+            .get("boomArmSpan")
+            .expect("binder should expose boomArmSpan");
+        let symbol = owner_binder
+            .get_symbol(sym_id)
+            .expect("symbol should resolve");
+        let decl_idx = *symbol
+            .declarations
+            .first()
+            .expect("symbol should have a declaration");
+        assert!(
+            !fallback_arena_node_declares_symbol(
+                &owner_binder,
+                sym_id,
+                decl_idx,
+                owner_arena.as_ref()
+            ),
+            "test setup requires a declaration the name check cannot prove"
+        );
+
+        let symbol_arenas = Arc::make_mut(&mut owner_binder.symbol_arenas);
+        symbol_arenas.insert(sym_id, Arc::clone(&owner_arena));
+
+        let pairs = collect_lib_decls_with_arenas(
+            &owner_binder,
+            sym_id,
+            &[decl_idx],
+            owner_arena.as_ref(),
+            None,
+        );
+        assert_eq!(
+            pairs.len(),
+            1,
+            "registered home-arena pair must be trusted even without a provable name"
+        );
+    }
 }

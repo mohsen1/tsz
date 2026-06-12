@@ -104,7 +104,12 @@ pub fn init_tracing() {
             Registry::default().with(filter).with(tree_layer).init();
         }
         LogFormat::Json => {
-            let json_layer = fmt::layer().json().with_writer(std::io::stderr);
+            // Thread ids let parallel-check traces attribute events to the
+            // worker that produced them (schedule-sensitivity debugging).
+            let json_layer = fmt::layer()
+                .json()
+                .with_thread_ids(true)
+                .with_writer(std::io::stderr);
 
             Registry::default().with(filter).with(json_layer).init();
         }

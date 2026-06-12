@@ -12,6 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+tracing = { workspace = true }
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }

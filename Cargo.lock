@@ -1469,6 +1469,7 @@ version = "0.1.23"
 dependencies = [
  "indexmap",
  "rustc-hash",
+ "tracing",
  "tsz-binder",
  "tsz-common",
  "tsz-parser",
