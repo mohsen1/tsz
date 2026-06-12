@@ -767,7 +767,6 @@ pub fn check_application_variance<R: TypeResolver>(
     context: RelationContext<'_>,
 ) -> Option<bool> {
     use crate::types::TypeData;
-    use crate::visitor::lazy_def_id;
 
     if source.is_intrinsic() || target.is_intrinsic() {
         return None;
@@ -777,166 +776,14 @@ pub fn check_application_variance<R: TypeResolver>(
         _ => return None,
     };
 
-    let s_app = db.type_application(s_app_id);
-    let t_app = db.type_application(t_app_id);
-
-    // Only for same-base applications with matching arg counts
-    if s_app.base != t_app.base || s_app.args.len() != t_app.args.len() {
-        return None;
-    }
-
-    let def_id = lazy_def_id(db, s_app.base)?;
-
-    // Conditional type aliases with concrete (non-type-parameter) arguments
-    // must expand structurally so that tsc's `getRecursionIdentity` depth cap
-    // can apply. A direct variance check would short-circuit the recursive
-    // evaluation path and produce false TS2322 errors for deeply-recursive
-    // conditional aliases like `PathRecord<"a.b.c.d", V>` where tsc returns
-    // `Ternary.Maybe` (assumed compatible) after hitting the recursion limit.
-    //
-    // When the source arguments contain free type parameters (e.g.
-    // `__Awaited<T>` vs `__Awaited<U>` where T and U are different unconstrained
-    // type params), variance is reliable: the recursion-identity depth cap does
-    // not fire for type parameters (they have no concrete string value to split),
-    // and T is genuinely not assignable to U.
-    if let Some(body) = resolver.get_def_raw_body(def_id, db)
-        && matches!(db.lookup(body), Some(TypeData::Conditional(_)))
-        && !s_app
-            .args
-            .iter()
-            .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
-    {
-        return None;
-    }
-
-    let variances = resolver.get_type_param_variance(def_id).or_else(|| {
-        crate::relations::variance::compute_type_param_variances_with_resolver_cached(
-            db, resolver, query_db, def_id,
-        )
-    });
-
-    let variances = variances?;
-    if variances.len() != s_app.args.len() {
-        return None;
-    }
-
-    // If all parameters are independent (no variance info), we can't make any
-    // conclusion from variance alone — fall through to structural checking,
-    // EXCEPT when at least one target arg is `any`. `any` is the universal
-    // sink in any-propagation mode, so even with unknown variance, source
-    // -> target is trivially satisfied at that position. Returning True
-    // here prevents structural expansion of recursive aliases like
-    // `FlatArray<Arr, any>` from spuriously rejecting valid assignments.
-    if variances.iter().all(|v| v.is_empty()) {
-        if !policy.strict_any_propagation
-            && t_app.args.iter().any(|a| a.is_any())
-            && s_app
-                .args
-                .iter()
-                .zip(t_app.args.iter())
-                .all(|(s_arg, t_arg)| t_arg.is_any() || *s_arg == *t_arg)
-        {
-            return Some(true);
-        }
-        return None;
-    }
-
-    // Set up a compat checker for the argument checks
-    let mut checker = configured_compat_checker(db, resolver, policy, context);
-    if let Some(qdb) = query_db {
-        checker.set_query_db(qdb);
-    }
-
-    // When variance is empty/unknown for some parameters, we still need to check
-    // type argument assignability to catch cases where different type parameters
-    // (like T vs U) are not assignable to each other.
-    let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
-    let mut all_ok = true;
-    let mut any_checked = false;
-    for (i, variance) in variances.iter().enumerate() {
-        let s_arg = s_app.args[i];
-        let t_arg = t_app.args[i];
-
-        if variance.is_invariant() {
-            any_checked = true;
-            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
-                all_ok = false;
-                break;
-            }
-        } else if variance.is_covariant() {
-            any_checked = true;
-            if !checker.is_assignable(s_arg, t_arg) {
-                all_ok = false;
-                break;
-            }
-        } else if variance.is_contravariant() {
-            any_checked = true;
-            if !checker.is_assignable(t_arg, s_arg) {
-                all_ok = false;
-                break;
-            }
-        }
-        // Independent: no check needed
-    }
-
-    // If we didn't actually check any parameter (all independent), fall through
-    if !any_checked {
-        return None;
-    }
-
-    if all_ok {
-        // When any type parameter's variance is marked as needing structural fallback
-        // (due to mapped type modifiers like -?/+?), don't trust the variance shortcut.
-        // Fall through to structural comparison. This handles cases like
-        // Required<{a?}> vs Required<{b?}> where args are mutually assignable
-        // but the mapped type results are structurally incompatible.
-        if needs_structural_fallback {
-            return None;
-        }
-        return Some(true);
-    }
-
-    // When variance check fails AND rejection is unreliable (indexed access
-    // types can normalize away differences between type arguments), don't
-    // conclusively reject. Fall through to structural comparison.
-    if variances.iter().any(|v| v.rejection_unreliable()) {
-        return None;
-    }
-
-    // When structural fallback is needed (mapped types with modifiers like
-    // +?/-?/+readonly/-readonly), variance failures are NOT definitive —
-    // UNLESS the type parameter also has direct usage in non-mapped-type
-    // positions (function params, properties). Direct usage provides a
-    // reliable variance signal, so the rejection can be trusted. This matches
-    // tsc's probe-based variance where interfaces with both call signatures
-    // and mapped-type members get plain Invariant (no Unmeasurable flag).
-    if needs_structural_fallback {
-        let has_reliable_rejection = variances.iter().any(|v| v.has_direct_usage());
-        if !has_reliable_rejection {
-            return None;
-        }
-    }
-    if alias_body_application_uses_type_parameters(db, resolver, def_id) {
-        return None;
-    }
-    Some(false)
-}
-
-fn alias_body_application_uses_type_parameters<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
-    def_id: crate::def::DefId,
-) -> bool {
-    let Some(body) = resolver.resolve_lazy(def_id, db) else {
-        return false;
+    let context = RelationContext {
+        query_db: context.query_db.or(query_db),
+        ..context
     };
-    let Some(app_id) = crate::visitor::application_id(db, body) else {
-        return false;
-    };
-    let app = db.type_application(app_id);
-    app.args
-        .iter()
-        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+    let mut checker = configured_subtype_checker(db, resolver, policy, context);
+    checker
+        .try_variance_fast_path(s_app_id, t_app_id)
+        .map(|result| result.is_true())
 }
 
 /// Check if two type parameters are assignable to each other.
