@@ -1347,7 +1347,13 @@ impl<'a> CheckerState<'a> {
                     // large-union issue doesn't apply here since the constraint is not
                     // itself a computed keyof union.
                     let keyof_current = self.ctx.types.factory().keyof(current_object);
-                    if self.is_assignable_to(index_constraint, keyof_current) {
+                    if self
+                        .indexed_access_foreign_keyof_constraint_relation_outcome(
+                            index_constraint,
+                            keyof_current,
+                        )
+                        .related
+                    {
                         return false;
                     }
                 }

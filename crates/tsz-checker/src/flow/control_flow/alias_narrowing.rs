@@ -319,11 +319,20 @@ impl<'a> FlowAnalyzer<'a> {
     fn has_base_assignment_after_pos(&self, target: NodeIndex, after_pos: u32) -> bool {
         use tsz_binder::flow_flags;
 
+        let cache_key = (target.0, after_pos);
+        if let Some(cache) = self.shared_alias_base_assignment_cache {
+            let cached = cache.borrow().get(&cache_key).copied();
+            if let Some(result) = cached {
+                return result;
+            }
+        }
+
         // Find the containing function's position bounds to scope the search.
         // This prevents matching `this.x = 10` in class C11 when checking
         // an alias in class C10.
         let (fn_start, fn_end) = self.containing_function_bounds(target);
 
+        let mut result = false;
         let flow_count = self.binder.flow_nodes.len();
         for i in 0..flow_count {
             let flow_id = tsz_binder::FlowNodeId(i as u32);
@@ -353,10 +362,14 @@ impl<'a> FlowAnalyzer<'a> {
             if self.assignment_targets_reference_node(flow.node, target)
                 || self.assignment_targets_base_of_reference(flow.node, target)
             {
-                return true;
+                result = true;
+                break;
             }
         }
-        false
+        if let Some(cache) = self.shared_alias_base_assignment_cache {
+            cache.borrow_mut().insert(cache_key, result);
+        }
+        result
     }
 
     /// Get the position bounds (start, end) of the containing function-like

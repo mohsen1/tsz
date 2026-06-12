@@ -384,17 +384,10 @@ impl ParserState {
             }
 
             fn is_identifier_part_for_regex_flags(ch: char) -> bool {
-                if ch.is_ascii() {
-                    matches!(
-                        ch,
-                        '_' | '$' | 'a'..='z' | 'A'..='Z' | '0'..='9'
-                    )
-                } else {
-                    ch.is_alphabetic()
-                        || ch.is_ascii_digit()
-                        || ch == '\u{200c}'
-                        || ch == '\u{200d}'
-                }
+                // tsc terminates regex-flag scanning with `isIdentifierPart`
+                // (`scanner.ts`); route through the scanner predicate so flag
+                // termination matches identifier scanning exactly.
+                tsz_scanner::is_ecmascript_identifier_part(ch)
             }
 
             const fn is_regex_flag(ch: char) -> bool {

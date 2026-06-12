@@ -369,6 +369,9 @@ impl<'a> FlowGraph<'a> {
 // FlowAnalyzer
 // =============================================================================
 
+type AliasBaseAssignmentKey = (u32, u32);
+type AliasBaseAssignmentCache = RefCell<FxHashMap<AliasBaseAssignmentKey, bool>>;
+
 /// Flow analyzer for control flow-based type narrowing.
 ///
 /// Walks the control flow graph backwards from a reference point to determine
@@ -402,6 +405,11 @@ pub struct FlowAnalyzer<'a> {
     /// When provided, this lets multiple `FlowAnalyzer` instances reuse reference
     /// equivalence results within the same file check.
     pub(crate) shared_reference_match_cache: Option<&'a ReferenceMatchCache>,
+    /// Optional shared alias-base-assignment cache.
+    /// Key: (`target_reference_node`, `alias_decl_pos`) -> whether any
+    /// containing-function assignment after the alias declaration targets the
+    /// reference or its base.
+    pub(crate) shared_alias_base_assignment_cache: Option<&'a AliasBaseAssignmentCache>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
@@ -645,6 +653,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_match_cache: RefCell::new(FxHashMap::default()),
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
+            shared_alias_base_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
@@ -684,6 +693,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_match_cache: RefCell::new(FxHashMap::default()),
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
+            shared_alias_base_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
@@ -713,6 +723,7 @@ impl<'a> FlowAnalyzer<'a> {
             .with_switch_reference_cache(&ctx.flow_switch_reference_cache)
             .with_numeric_atom_cache(&ctx.flow_numeric_atom_cache)
             .with_reference_match_cache(&ctx.flow_reference_match_cache)
+            .with_alias_base_assignment_cache(&ctx.symbol_flow_memo.alias_base_assignment)
             .with_type_environment(&ctx.type_environment)
             .with_checker_context(ctx)
             .with_narrowing_cache(&ctx.narrowing_cache)
@@ -760,6 +771,15 @@ impl<'a> FlowAnalyzer<'a> {
     /// Set a shared reference-match cache used by `is_matching_reference`.
     pub const fn with_reference_match_cache(mut self, cache: &'a ReferenceMatchCache) -> Self {
         self.shared_reference_match_cache = Some(cache);
+        self
+    }
+
+    /// Set a shared alias-base-assignment cache.
+    pub const fn with_alias_base_assignment_cache(
+        mut self,
+        cache: &'a RefCell<FxHashMap<(u32, u32), bool>>,
+    ) -> Self {
+        self.shared_alias_base_assignment_cache = Some(cache);
         self
     }
 

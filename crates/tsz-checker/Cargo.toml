@@ -1768,3 +1768,6 @@ path = "tests/overload_argument_flow_narrowing_visibility_tests.rs"
 [[test]]
 name = "imported_ctor_alias_predicate_narrowing_tests"
 path = "tests/imported_ctor_alias_predicate_narrowing_tests.rs"
+[[test]]
+name = "arch_source_scans"
+path = "tests/arch_source_scans.rs"
