@@ -421,6 +421,113 @@ class ArchGuardRootSolverComputationImportCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardModulePathSolverComputationImportCountTests(unittest.TestCase):
+    """Cover the #8204 ratchet for module-path solver computation imports."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_module_path_computation_references(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-emitter/src/declaration.rs": (
+                    "let widened = tsz_solver::operations::widening::widen_type(interner, ty);\n"
+                    "use tsz_solver::objects::apparent_primitive_members;\n"
+                ),
+                "crates/tsz-cli/src/driver.rs": (
+                    "tsz_solver::relations::subtype::reset_subtype_thread_local_state();\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_module_path_solver_computation_import_count(
+            [root], (), 0
+        )
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("driver.rs:1", hits[0])
+        self.assertIn("declaration.rs:1", hits[1])
+        self.assertIn("declaration.rs:2", hits[2])
+        self.assertIn(
+            "total module-path solver computation references", hits[3]
+        )
+
+    def test_ignores_non_computation_modules_tests_and_comment_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-lsp/src/handles.rs": (
+                    "use tsz_solver::type_handles::TypeId;\n"
+                    "let q = tsz_solver::query::TypeQueries::new(db);\n"
+                ),
+                "crates/tsz-lsp/src/foo_tests.rs": (
+                    "let w = tsz_solver::operations::widening::widen_type(interner, ty);\n"
+                ),
+                "crates/tsz-emitter/tests/declaration.rs": (
+                    "use tsz_solver::operations::widening::widen_type;\n"
+                ),
+                "crates/tsz-cli/src/commented.rs": (
+                    "// let w = tsz_solver::operations::widening::widen_type(interner, ty);\n"
+                ),
+                "crates/tsz-checker/src/query_boundaries/common.rs": (
+                    "let w = tsz_solver::operations::widening::widen_type(interner, ty);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_module_path_solver_computation_import_count(
+            [root], ("crates/tsz-checker/src/query_boundaries/",), 0
+        )
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-emitter/src/declaration.rs": (
+                    "let widened = tsz_solver::operations::widening::widen_type(interner, ty);\n"
+                ),
+                "crates/tsz-lsp/src/completions.rs": (
+                    "use tsz_solver::objects::apparent_primitive_members;\n"
+                ),
+            }
+        )
+        scan = self.arch_guard.scan_module_path_solver_computation_import_count
+        self.assertEqual(scan([root], (), 2), [])
+        self.assertEqual(scan([root], (), 3), [])
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.MODULE_PATH_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#8204" in name for name in names))
+
+    def test_real_count_passes_at_pinned_cap(self):
+        """The pinned cap must match the live count (no slack)."""
+        for entry in self.arch_guard.MODULE_PATH_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
+            name, search_roots, exclude_path_prefixes, max_references = entry
+            hits = self.arch_guard.scan_module_path_solver_computation_import_count(
+                search_roots, exclude_path_prefixes, max_references
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+            self.assertNotEqual(
+                self.arch_guard.scan_module_path_solver_computation_import_count(
+                    search_roots, exclude_path_prefixes, max_references - 1
+                ),
+                [],
+                f"{name}: cap has slack and should be ratcheted to the live count.",
+            )
+
+
 class ArchGuardQueryBoundaryCommonReferenceTests(unittest.TestCase):
     """Cover the #8225 ratchet for broad query-boundary common callers."""
 
