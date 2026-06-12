@@ -182,6 +182,11 @@ impl<'a> CheckerState<'a> {
         if source_base != target_base || source_args.len() != target_args.len() {
             return false;
         }
+        if self.application_base_is_conditional_infer_alias(source_base)
+            || self.application_base_is_conditional_infer_alias(target_base)
+        {
+            return false;
+        }
 
         let def_id = query::lazy_def_id(self.ctx.types, source_base);
         let variances = def_id.and_then(|d| {
@@ -227,6 +232,14 @@ impl<'a> CheckerState<'a> {
                                 })
                     })
             })
+    }
+
+    fn application_base_is_conditional_infer_alias(&self, base: TypeId) -> bool {
+        crate::query_boundaries::conditional_infer_alias::application_base_uses_conditional_infer(
+            self.ctx.types.as_type_database(),
+            &self.ctx,
+            base,
+        )
     }
 
     pub(crate) fn keyof_interface_augmentation_literals_cover_source(

@@ -3,7 +3,7 @@ use super::args_contain_type_parameters;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::types::{TypeApplicationId, TypeData, TypeId, Variance};
-use crate::visitor::application_id;
+use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
@@ -22,6 +22,138 @@ use std::sync::Arc;
 pub(crate) const ONE_SIDED_APP_EXPANSION_MAX_DEPTH: u32 = 5;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Same-base all-`any`-target-args lawyer shortcut.
+    pub(crate) fn try_same_base_all_any_target_args(
+        &mut self,
+        source: TypeId,
+        s_app_id: Option<TypeApplicationId>,
+        t_app_id: TypeApplicationId,
+    ) -> Option<SubtypeResult> {
+        let t_app = self.interner.type_application(t_app_id);
+        if t_app.args.is_empty() || !t_app.args.iter().all(|arg| arg.is_any()) {
+            return None;
+        }
+        let allow_any = self
+            .any_propagation
+            .allows_any_source_at_depth(self.guard.depth())
+            && self
+                .any_propagation
+                .allows_any_target_at_depth(self.guard.depth());
+        if !allow_any {
+            return None;
+        }
+        let same_definition = if let Some(s_app_id) = s_app_id {
+            let s_app = self.interner.type_application(s_app_id);
+            s_app.base == t_app.base
+                || matches!(
+                    (
+                        crate::visitor::lazy_def_id(self.interner, s_app.base),
+                        crate::visitor::lazy_def_id(self.interner, t_app.base),
+                    ),
+                    (Some(s_def), Some(t_def)) if self.resolver.defs_are_equivalent(s_def, t_def)
+                )
+        } else {
+            let s_shape_id = object_shape_id(self.interner, source)
+                .or_else(|| object_with_index_shape_id(self.interner, source));
+            let s_symbol =
+                s_shape_id.and_then(|shape_id| self.interner.object_shape(shape_id).symbol);
+            let t_symbol = crate::visitor::lazy_def_id(self.interner, t_app.base)
+                .and_then(|t_def| self.resolver.def_to_symbol_id(t_def));
+            matches!((s_symbol, t_symbol), (Some(s_sym), Some(t_sym)) if s_sym == t_sym)
+        };
+        same_definition.then_some(SubtypeResult::True)
+    }
+
+    pub(super) fn check_expanded_application_subtype(
+        &mut self,
+        source_struct: TypeId,
+        target_struct: TypeId,
+        source_receiver: TypeId,
+        target_receiver: TypeId,
+    ) -> SubtypeResult {
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, source_struct),
+            object_shape_id(self.interner, target_struct),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_subtype(
+                &s_shape,
+                Some(s_shape_id),
+                Some(source_receiver),
+                &t_shape,
+                Some(target_receiver),
+            );
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source_struct),
+            object_with_index_shape_id(self.interner, target_struct),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_with_index_subtype(
+                &s_shape,
+                Some(s_shape_id),
+                Some(source_receiver),
+                &t_shape,
+                Some(target_receiver),
+            );
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source_struct),
+            object_shape_id(self.interner, target_struct),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_with_index_to_object(
+                &s_shape,
+                s_shape_id,
+                Some(source_receiver),
+                &t_shape.properties,
+                Some(target_receiver),
+            );
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, source_struct),
+            object_with_index_shape_id(self.interner, target_struct),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_to_indexed(
+                &s_shape.properties,
+                Some(s_shape_id),
+                Some(source_receiver),
+                &t_shape,
+                Some(target_receiver),
+            );
+        }
+
+        self.check_subtype(source_struct, target_struct)
+    }
+
+    pub(super) fn expanded_application_pair_has_method_property(
+        &mut self,
+        source_type: TypeId,
+        s_app_id: TypeApplicationId,
+        target_type: TypeId,
+        t_app_id: TypeApplicationId,
+    ) -> bool {
+        let source_struct = self.try_expand_application_type(source_type, s_app_id);
+        let target_struct = self.try_expand_application_type(target_type, t_app_id);
+        source_struct.is_some_and(|type_id| self.type_has_method_property(type_id))
+            || target_struct.is_some_and(|type_id| self.type_has_method_property(type_id))
+    }
+
+    fn type_has_method_property(&self, type_id: TypeId) -> bool {
+        object_shape_id(self.interner, type_id)
+            .or_else(|| object_with_index_shape_id(self.interner, type_id))
+            .map(|shape_id| self.interner.object_shape(shape_id))
+            .is_some_and(|shape| shape.properties.iter().any(|prop| prop.is_method))
+    }
+
     /// Enter a one-sided application expansion for `def_id`.
     ///
     /// Returns `true` if expansion may proceed and `false` when the same
@@ -230,6 +362,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.type_reaches_def(body, def_id, &mut visited)
     }
 
+    pub(super) fn conditional_infer_alias_base(&self, base: TypeId) -> bool {
+        let Some(def_id) = self.application_base_def_id(base) else {
+            return false;
+        };
+        let Some(body) = self
+            .resolver
+            .get_def_raw_body(def_id, self.interner)
+            .or_else(|| self.resolver.resolve_lazy(def_id, self.interner))
+        else {
+            return false;
+        };
+        matches!(
+            crate::type_queries::classify_body_for_arg_preservation(self.interner, body),
+            crate::type_queries::BodyArgPreservation::ConditionalInfer
+                | crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+        ) || crate::type_queries::contains_infer_types_db(self.interner, body)
+    }
+
     fn type_reaches_def(
         &self,
         type_id: TypeId,
@@ -334,14 +484,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             return None;
         }
-        // Type-parameter arguments are inconclusive only when no direct
-        // non-mapped occurrence pins the variance. Homomorphic mapped and
-        // conditional-forwarding cases keep falling through structurally via
-        // the fallback/unreliable markers above; direct property/callback/
-        // return occurrences should explain the same definitive rejection the
-        // relation fast path uses.
-        if args_contain_type_parameters(self.interner, &s_app.args)
-            && !variances.iter().any(|v| v.has_direct_usage())
+        let source_args_contain_type_parameters =
+            args_contain_type_parameters(self.interner, &s_app.args);
+        let method_receiver_fallback = source_args_contain_type_parameters
+            && self.expanded_application_pair_has_method_property(
+                resolved_source,
+                s_app_id,
+                resolved_target,
+                t_app_id,
+            );
+        let conditional_infer_alias = self.conditional_infer_alias_base(s_app.base)
+            || self.conditional_infer_alias_base(t_app.base);
+        if source_args_contain_type_parameters
+            && (!variances.iter().any(|v| v.has_direct_usage())
+                || conditional_infer_alias
+                || method_receiver_fallback)
         {
             return None;
         }

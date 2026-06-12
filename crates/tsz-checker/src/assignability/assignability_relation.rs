@@ -12,7 +12,7 @@ use crate::query_boundaries::common::{
     is_empty_object_type, is_type_parameter_like, object_shape_id, object_with_index_shape_id,
     type_param_info, union_members,
 };
-use crate::query_boundaries::state::type_resolution::{get_application_info, get_lazy_def_id};
+use crate::query_boundaries::state::type_resolution::get_lazy_def_id;
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -728,7 +728,11 @@ impl<'a> CheckerState<'a> {
                 sound_mode: self.ctx.sound_mode(),
             };
             if let Some(result) = check_application_variance_assignability(&inputs) {
-                return result;
+                if result
+                    || !self.same_type_alias_application_uses_conditional_infer(source, target)
+                {
+                    return result;
+                }
             }
         }
 
@@ -902,6 +906,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if !result
+            && self
+                .conditional_infer_alias_covariant_source_constraint_accepts(raw_source, raw_target)
+        {
+            return true;
+        }
         if result
             && self
                 .checker_only_assignability_failure_reason(source, target)
@@ -1060,7 +1070,12 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        let Some(def_id) = get_lazy_def_id(self.ctx.types, source_base) else {
+        let def_id = crate::query_boundaries::conditional_infer_alias::application_base_def_id(
+            self.ctx.types.as_type_database(),
+            &self.ctx,
+            source_base,
+        );
+        let Some(def_id) = def_id else {
             return false;
         };
         let Some(def) = self.ctx.definition_store.get(def_id) else {
@@ -1070,6 +1085,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let alias_body = def.body;
+        if crate::query_boundaries::conditional_infer_alias::application_base_is_raw_conditional_alias(
+            self.ctx.types.as_type_database(),
+            &self.ctx,
+            source_base,
+        ) {
+            return false;
+        }
         let alias_body_is_generic_mapped = alias_body.is_some_and(|body| {
             crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, body)
         });
@@ -1134,26 +1156,6 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn application_info_for_alias_argument_rejection(
-        &self,
-        type_id: TypeId,
-    ) -> Option<(TypeId, Vec<TypeId>)> {
-        self.application_display_info(type_id)
-            .or_else(|| self.non_generic_alias_body_application_info(type_id))
-    }
-
-    fn non_generic_alias_body_application_info(
-        &self,
-        type_id: TypeId,
-    ) -> Option<(TypeId, Vec<TypeId>)> {
-        let def_id = get_lazy_def_id(self.ctx.types, type_id)?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
-            return None;
-        }
-        get_application_info(self.ctx.types, def.body?)
-    }
-
     fn type_alias_args_are_unwitnessed(
         &self,
         def_id: tsz_solver::def::DefId,
@@ -1169,10 +1171,6 @@ impl<'a> CheckerState<'a> {
         .is_some_and(|variances| {
             variances.len() == arg_len && variances.iter().all(|v| v.is_independent())
         })
-    }
-
-    fn application_display_info(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
-        self.application_info_or_display_alias(type_id)
     }
 
     fn homomorphic_mapped_display_source_assignable_to_target(

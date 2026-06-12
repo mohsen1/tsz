@@ -780,11 +780,14 @@ pub fn check_application_variance<R: TypeResolver>(
     let t_app = db.type_application(t_app_id);
 
     let same_base_same_arity = s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+    let base_def_id = |base| {
+        crate::type_queries::conditional_infer_alias::application_base_def_id(db, resolver, base)
+    };
     let is_conditional_alias_base = |base| {
         if query_db.is_some_and(|query_db| query_db.is_conditional_alias_base(base)) {
             return true;
         }
-        let Some(def_id) = lazy_def_id(db, base) else {
+        let Some(def_id) = base_def_id(base) else {
             return false;
         };
         let Some(body) = resolver.get_def_raw_body(def_id, db) else {
@@ -792,7 +795,6 @@ pub fn check_application_variance<R: TypeResolver>(
         };
         matches!(db.lookup(body), Some(TypeData::Conditional(_)))
     };
-
     // Conditional type aliases must expand structurally at this public query
     // boundary. Their relation outcome can depend on constraint-sensitive
     // conditional evaluation and recursion identity, so a same-base variance
@@ -867,8 +869,28 @@ pub fn check_application_variance<R: TypeResolver>(
         .args
         .iter()
         .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg));
-    let has_direct_usage = variances.iter().any(|v| v.has_direct_usage());
-    if any_checked && !all_ok && (has_direct_usage || !source_args_contain_type_parameters) {
+    let type_has_method_property = |type_id| {
+        crate::visitor::object_shape_id(db, type_id)
+            .or_else(|| crate::visitor::object_with_index_shape_id(db, type_id))
+            .map(|shape_id| db.object_shape(shape_id))
+            .is_some_and(|shape| shape.properties.iter().any(|prop| prop.is_method))
+    };
+    let base_has_method_property = |base| {
+        let Some(def_id) = base_def_id(base) else {
+            return false;
+        };
+        resolver
+            .get_def_raw_body(def_id, db)
+            .or_else(|| resolver.resolve_lazy(def_id, db))
+            .is_some_and(type_has_method_property)
+    };
+    if any_checked
+        && !all_ok
+        && (!source_args_contain_type_parameters
+            || (variances.iter().any(|v| v.has_direct_usage())
+                && !base_has_method_property(s_app.base)
+                && !base_has_method_property(t_app.base)))
+    {
         return Some(false);
     }
 

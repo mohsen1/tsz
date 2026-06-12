@@ -40,6 +40,89 @@ fn check_es2015_promise_source(source: &str) -> Vec<Diagnostic> {
     )
 }
 
+fn check_esnext_weakref_source(source: &str) -> Vec<Diagnostic> {
+    let libs = load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2016.array.include.d.ts",
+        "lib.es2016.intl.d.ts",
+        "lib.es2017.arraybuffer.d.ts",
+        "lib.es2017.date.d.ts",
+        "lib.es2017.intl.d.ts",
+        "lib.es2017.object.d.ts",
+        "lib.es2017.sharedmemory.d.ts",
+        "lib.es2017.string.d.ts",
+        "lib.es2017.typedarrays.d.ts",
+        "lib.es2018.asyncgenerator.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.es2018.intl.d.ts",
+        "lib.es2018.promise.d.ts",
+        "lib.es2018.regexp.d.ts",
+        "lib.es2019.array.d.ts",
+        "lib.es2019.intl.d.ts",
+        "lib.es2019.object.d.ts",
+        "lib.es2019.string.d.ts",
+        "lib.es2019.symbol.d.ts",
+        "lib.es2020.bigint.d.ts",
+        "lib.es2020.date.d.ts",
+        "lib.es2020.intl.d.ts",
+        "lib.es2020.number.d.ts",
+        "lib.es2020.promise.d.ts",
+        "lib.es2020.sharedmemory.d.ts",
+        "lib.es2020.string.d.ts",
+        "lib.es2020.symbol.wellknown.d.ts",
+        "lib.es2021.intl.d.ts",
+        "lib.es2021.promise.d.ts",
+        "lib.es2021.string.d.ts",
+        "lib.es2021.weakref.d.ts",
+        "lib.es2022.array.d.ts",
+        "lib.es2022.error.d.ts",
+        "lib.es2022.intl.d.ts",
+        "lib.es2022.object.d.ts",
+        "lib.es2022.regexp.d.ts",
+        "lib.es2022.string.d.ts",
+        "lib.es2023.array.d.ts",
+        "lib.es2023.collection.d.ts",
+        "lib.es2023.intl.d.ts",
+        "lib.es2024.arraybuffer.d.ts",
+        "lib.es2024.collection.d.ts",
+        "lib.es2024.object.d.ts",
+        "lib.es2024.promise.d.ts",
+        "lib.es2024.regexp.d.ts",
+        "lib.es2024.sharedmemory.d.ts",
+        "lib.es2024.string.d.ts",
+        "lib.es2025.collection.d.ts",
+        "lib.esnext.array.d.ts",
+        "lib.esnext.collection.d.ts",
+        "lib.esnext.decorators.d.ts",
+        "lib.esnext.disposable.d.ts",
+        "lib.esnext.error.d.ts",
+        "lib.esnext.intl.d.ts",
+        "lib.esnext.iterator.d.ts",
+        "lib.esnext.promise.d.ts",
+        "lib.esnext.sharedmemory.d.ts",
+        "lib.esnext.temporal.d.ts",
+        "lib.esnext.typedarrays.d.ts",
+    ]);
+    check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
+}
+
 #[test]
 fn contravariant_application_to_constrained_param_target_passes() {
     // The conformance source pattern. With B extends A, contravariance lets
@@ -239,4 +322,97 @@ b2 = a2; // was error
         &DiagnosticShape::code(2322)
             .with_message_fragment("Type 'Promise<Foo>' is not assignable to type 'Promise<Bar>'."),
     );
+}
+
+#[test]
+fn recursive_conditional_alias_reports_target_alias_not_reduced_param() {
+    // Reduced from `recursiveConditionalTypes.ts`: assigning
+    // `AwaitedLike<Base>` to `AwaitedLike<Derived>` is invalid, but the
+    // reported target remains the alias application. Same-generic variance
+    // rejection with type-parameter arguments must not skip the conditional
+    // alias structural path and explain the target as the raw parameter.
+    let source = r#"
+type AwaitedLike<T> =
+    T extends null | undefined ? T :
+    T extends PromiseLike<infer Value> ? AwaitedLike<Value> :
+    T;
+
+interface PromiseLike<T> {
+    then<U>(f: ((value: T) => U | PromiseLike<U>) | null | undefined): PromiseLike<U>;
+}
+
+function assign<Base, Derived extends Base>(
+    baseAwaited: AwaitedLike<Base>,
+    derivedAwaited: AwaitedLike<Derived>,
+) {
+    baseAwaited = derivedAwaited;
+    derivedAwaited = baseAwaited;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[DiagnosticShape::code(2322)
+            .at(16, 5)
+            .with_message_fragment("is not assignable to type 'AwaitedLike<Derived>'")],
+    );
+}
+
+#[test]
+fn set_callback_parameter_from_instantiated_receiver_keeps_method_bivariance() {
+    let source = r#"
+const cleanup = ({ ref, set }: {
+    readonly ref: WeakRef<object>;
+    readonly set: Set<WeakRef<object>>;
+}) => {
+    set.delete(ref);
+};
+
+class Box<K extends object> {
+    declare readonly [Symbol.toStringTag]: "Box";
+
+    #weakMap = new WeakMap<K, { readonly ref: WeakRef<K>; value: number }>();
+    #refSet = new Set<WeakRef<K>>();
+    #registry = new FinalizationRegistry(cleanup);
+
+    set(key: K, value: number): this {
+        const entry = this.#weakMap.get(key);
+        if (entry !== undefined) {
+            entry.value = value;
+        } else {
+            const ref = new WeakRef(key);
+            this.#weakMap.set(key, { ref, value });
+            this.#refSet.add(ref);
+            this.#registry.register(key, {
+                set: this.#refSet,
+                ref,
+            }, ref);
+        }
+        return this;
+    }
+
+    has(key: K): boolean {
+        return this.#weakMap.has(key);
+    }
+
+    get(key: K): number | undefined {
+        return this.#weakMap.get(key)?.value;
+    }
+
+    delete(key: K): boolean {
+        const entry = this.#weakMap.get(key);
+        if (entry === undefined) {
+            return false;
+        }
+        const { ref } = entry;
+        this.#weakMap.delete(key);
+        this.#refSet.delete(ref);
+        this.#registry.unregister(ref);
+        return true;
+    }
+}
+"#;
+    let diags = check_esnext_weakref_source(source);
+    assert_diagnostic_shapes_exactly(source, &diags, &[]);
 }

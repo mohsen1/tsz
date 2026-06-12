@@ -591,6 +591,12 @@ impl<'a> CheckerState<'a> {
                 ),
                 Some(false)
             ) {
+                if self.same_type_alias_application_uses_conditional_infer(source, target) {
+                    let outcome = self.assignability_reason_relation_outcome(source, target);
+                    if outcome.related {
+                        return true;
+                    }
+                }
                 self.error_type_not_assignable_at_with_raw_display_types(source, target, diag_idx);
                 return false;
             }
