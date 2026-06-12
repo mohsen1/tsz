@@ -3,46 +3,16 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 #[wasm_bindgen]
 impl ScannerState {
-    /// Scan a template literal (simplified).
+    /// Scan a template literal starting at the opening backtick.
+    ///
+    /// Delegates to `scan_template_and_set_token_value` — the same single
+    /// implementation `tsc` uses (`scanTemplateAndSetTokenValue`) for both the
+    /// live first scan and re-scans — so cooked values get the ECMAScript TV
+    /// `<CR>`/`<CR><LF>` to `<LF>` normalization on every path. `tsc` never
+    /// sets `PrecedingLineBreak` for line breaks *inside* a template (the flag
+    /// is trivia-only), so this path does not either.
     pub(crate) fn scan_template_literal(&mut self) {
-        self.pos += 1; // Skip backtick
-        let mut result = String::new();
-
-        while self.pos < self.end {
-            let ch = self.char_code_unchecked(self.pos);
-            if ch == CharacterCodes::BACKTICK {
-                self.pos += 1;
-                self.token_value = result;
-                self.token = SyntaxKind::NoSubstitutionTemplateLiteral;
-                return;
-            }
-            if ch == CharacterCodes::DOLLAR
-                && self.char_code_at(self.pos + 1) == Some(CharacterCodes::OPEN_BRACE)
-            {
-                self.pos += 2;
-                self.token_value = result;
-                self.token = SyntaxKind::TemplateHead;
-                return;
-            }
-            if ch == CharacterCodes::BACKSLASH {
-                // Scan escaped character after the backslash.
-                self.pos += 1;
-                let escaped = self.scan_template_escape_sequence();
-                result.push_str(&escaped);
-            } else {
-                if ch == CharacterCodes::LINE_FEED || ch == CharacterCodes::CARRIAGE_RETURN {
-                    self.token_flags |= TokenFlags::PrecedingLineBreak as u32;
-                }
-                if let Some(c) = char::from_u32(ch) {
-                    result.push(c);
-                }
-                self.pos += self.char_len_at(self.pos); // Advance by character byte length
-            }
-        }
-
-        self.token_flags |= TokenFlags::Unterminated as u32;
-        self.token_value = result;
-        self.token = SyntaxKind::NoSubstitutionTemplateLiteral;
+        self.token = self.scan_template_and_set_token_value(true);
     }
 
     /// Re-scan the current `}` token as the continuation of a template literal.
