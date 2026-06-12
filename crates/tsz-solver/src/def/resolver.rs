@@ -915,11 +915,6 @@ impl TypeEnvironment {
         self.definition_store
             .as_ref()
             .and_then(|s| s.get_type_params(def_id))
-            // An empty shared-store list can be an in-flight placeholder:
-            // the owning checker may have minted the DefId before publishing
-            // the generic params. Treat it as unpublished so parallel sibling
-            // checkers do not instantiate a generic def as arity zero.
-            .filter(|params| !params.is_empty())
     }
 
     /// Check if the environment contains a `DefId`.
