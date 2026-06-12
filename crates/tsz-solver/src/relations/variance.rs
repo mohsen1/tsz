@@ -812,17 +812,17 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 self.visit_with_polarity(this_ty, current_polarity);
             }
         } else {
-            // Nested non-method function: T occurrences inside its
-            // parameters, return type, and `this` are NOT method-bivariant,
-            // even if this function value is itself a parameter of a
-            // surrounding method. Reset `method_bivariant_depth` for ALL
-            // child visits so leaf occurrences record their actual variance
-            // polarity (e.g. `Promise<T>.then(cb: (x: T) => T)` records the
-            // return-position T as COVARIANT, not bivariant).
-            self.method_bivariant_depth = 0;
+            // Nested non-method function parameters that are themselves
+            // under a method parameter still participate in tsc's method
+            // bivariance fallback. Do not let those parameter occurrences
+            // become definitive variance rejections before structural
+            // expansion can apply method bivariance.
             for param in &shape.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
             }
+            // Return and `this` positions of the nested function are ordinary
+            // strict positions, not method-bivariant parameter positions.
+            self.method_bivariant_depth = 0;
             self.visit_with_polarity(shape.return_type, current_polarity);
             if let Some(this_ty) = shape.this_type {
                 self.visit_with_polarity(this_ty, !current_polarity);
@@ -854,13 +854,13 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                     self.visit_with_polarity(this_ty, current_polarity);
                 }
             } else {
-                // Non-method call signature: reset method bivariance for the
-                // entire signature — parameters, return type, and `this` —
-                // matching `visit_function` for non-method shapes.
-                self.method_bivariant_depth = 0;
+                // Non-method call signature follows `visit_function`: keep
+                // inherited method-bivariant context for callback parameters,
+                // but make return and `this` positions strict.
                 for param in &sig.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
+                self.method_bivariant_depth = 0;
                 self.visit_with_polarity(sig.return_type, current_polarity);
                 if let Some(this_ty) = sig.this_type {
                     self.visit_with_polarity(this_ty, !current_polarity);
