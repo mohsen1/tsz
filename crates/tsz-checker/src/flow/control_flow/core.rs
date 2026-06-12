@@ -371,6 +371,8 @@ impl<'a> FlowGraph<'a> {
 
 type AliasBaseAssignmentKey = (u32, u32);
 type AliasBaseAssignmentCache = RefCell<FxHashMap<AliasBaseAssignmentKey, bool>>;
+type AliasPathAssignmentKey = (u32, u32, u32);
+type AliasPathAssignmentCache = RefCell<FxHashMap<AliasPathAssignmentKey, bool>>;
 
 /// Flow analyzer for control flow-based type narrowing.
 ///
@@ -410,6 +412,11 @@ pub struct FlowAnalyzer<'a> {
     /// containing-function assignment after the alias declaration targets the
     /// reference or its base.
     pub(crate) shared_alias_base_assignment_cache: Option<&'a AliasBaseAssignmentCache>,
+    /// Optional shared alias path-assignment cache.
+    /// Key: (`alias_symbol`, `target_reference_node`, `antecedent_flow`) ->
+    /// whether the backward path from the antecedent to the alias declaration
+    /// contains an assignment to the target reference or its base.
+    pub(crate) shared_alias_path_assignment_cache: Option<&'a AliasPathAssignmentCache>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
@@ -654,6 +661,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             shared_alias_base_assignment_cache: None,
+            shared_alias_path_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
@@ -694,6 +702,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             shared_alias_base_assignment_cache: None,
+            shared_alias_path_assignment_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
@@ -744,6 +753,15 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &'a RefCell<FxHashMap<(u32, u32), bool>>,
     ) -> Self {
         self.shared_alias_base_assignment_cache = Some(cache);
+        self
+    }
+
+    /// Set a shared alias path-assignment cache.
+    pub const fn with_alias_path_assignment_cache(
+        mut self,
+        cache: &'a RefCell<FxHashMap<(u32, u32, u32), bool>>,
+    ) -> Self {
+        self.shared_alias_path_assignment_cache = Some(cache);
         self
     }
 

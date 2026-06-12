@@ -1383,6 +1383,7 @@ impl<'a> CheckerState<'a> {
         .with_flow_reference_keys(&self.ctx.flow_reference_keys)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_alias_base_assignment_cache(&self.ctx.symbol_flow_memo.alias_base_assignment)
+        .with_alias_path_assignment_cache(&self.ctx.symbol_flow_memo.alias_path_assignment)
         .with_type_environment(&self.ctx.type_environment)
         .with_checker_context(&self.ctx)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
