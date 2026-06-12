@@ -705,8 +705,8 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
         "tiny batches stay sequential for deterministic cross-file behavior"
     );
     assert!(
-        should_use_sequential_fresh_checking(large_project, true, false),
-        "large wildcard barrels stay on the deterministic sequential fallback"
+        !should_use_sequential_fresh_checking(large_project, true, false),
+        "large wildcard barrels stay parallel-eligible after the #13244 gate lift"
     );
     assert!(
         should_use_sequential_fresh_checking(large_project, false, true),

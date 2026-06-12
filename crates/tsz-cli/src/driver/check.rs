@@ -334,11 +334,16 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// Decide whether fresh per-file checkers run sequentially instead of on the
 /// rayon pool.
 ///
-/// Tiny batches stay sequential to avoid pool overhead. Large wildcard
-/// barrels (PR #5881) and DOM/webworker-lib projects (PR #7312) stay
+/// Tiny batches stay sequential to avoid pool overhead. DOM/webworker-lib
+/// projects (PR #7312) stay
 /// sequential because correctness and termination on type-heavy projects
 /// currently depend on checking files in deterministic order with a
 /// progressively warmed `SharedQueryCache`.
+///
+/// Large wildcard barrels are still detected and tested separately, but they
+/// no longer force the entire project onto one core: the mutation-isolation
+/// and cold-start cache work that landed before #13244 made the whole-project
+/// fallback too blunt for large-ts-repo-sized projects.
 ///
 /// Investigated 2026-06 while attempting to lift the DOM gate for the
 /// ts-toolbelt row: the blocker is not (only) racing shared state. Checking
@@ -381,11 +386,10 @@ fn parallel_file_session_reuse_requested() -> bool {
 /// mutation-isolation campaign makes shared def state schedule-independent.
 const fn should_use_sequential_fresh_checking(
     work_item_count: usize,
-    has_large_wildcard_barrel: bool,
+    _has_large_wildcard_barrel: bool,
     has_parallel_order_sensitive_global_lib: bool,
 ) -> bool {
     work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
-        || has_large_wildcard_barrel
         || has_parallel_order_sensitive_global_lib
 }
 
