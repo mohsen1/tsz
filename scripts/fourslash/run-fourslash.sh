@@ -100,7 +100,7 @@ OPTIONS:
 
     Output:
     --verbose           Show detailed output for each test
-    --json-out[=PATH]   Write machine-readable results JSON (default: fourslash-detail.json)
+    --json-out[=PATH]   Write machine-readable results JSON (default: fourslash-snapshot.json)
 
     Other:
     -h, --help          Show this help message

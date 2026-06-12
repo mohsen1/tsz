@@ -125,7 +125,7 @@ function parseArgs() {
         } else if (arg.startsWith("--json-out=")) {
             opts.jsonOut = arg.substring("--json-out=".length);
         } else if (arg === "--json-out") {
-            opts.jsonOut = path.join(__dirname, "fourslash-detail.json");
+            opts.jsonOut = path.join(__dirname, "fourslash-snapshot.json");
         }
     }
 
@@ -193,6 +193,51 @@ function snapshotWeightFile() {
     return path.join(__dirname, "fourslash-snapshot.json");
 }
 
+function resultRowsForWeights(parsed) {
+    if (Array.isArray(parsed.results)) {
+        return parsed.results;
+    }
+    if (Array.isArray(parsed.summary?.slowest)) {
+        return parsed.summary.slowest;
+    }
+    if (Array.isArray(parsed.fail)) {
+        return parsed.fail;
+    }
+    return [];
+}
+
+function indentJson(value, spaces) {
+    const prefix = " ".repeat(spaces);
+    return JSON.stringify(value, null, 2)
+        .split("\n")
+        .map(line => `${prefix}${line}`)
+        .join("\n");
+}
+
+function stringifyCompactSnapshot(snapshot) {
+    const lines = [
+        "{",
+        `  "timestamp": ${JSON.stringify(snapshot.timestamp)},`,
+        `  "summary": ${indentJson(snapshot.summary, 2).trimStart()},`,
+        '  "pass": [',
+    ];
+
+    const passEntries = snapshot.pass.map(file => JSON.stringify(file));
+    for (let i = 0; i < passEntries.length; i += 8) {
+        const chunk = passEntries.slice(i, i + 8).join(", ");
+        const comma = i + 8 < passEntries.length ? "," : "";
+        lines.push(`    ${chunk}${comma}`);
+    }
+
+    lines.push(
+        "  ],",
+        `  "fail": ${indentJson(snapshot.fail, 2).trimStart()}`,
+        "}",
+        "",
+    );
+    return lines.join("\n");
+}
+
 // When a test timed out at its CI cap (TSZ_CI_FOURSLASH_TIMEOUT_MS,
 // typically 60s), the recorded `elapsed` is truncated to the cap.
 // The real cost is at least the cap and probably more — without this
@@ -208,7 +253,7 @@ function loadHistoricalWeights() {
     try {
         const parsed = JSON.parse(fs.readFileSync(weightFile, "utf8"));
         const weights = new Map();
-        for (const result of parsed.results || []) {
+        for (const result of resultRowsForWeights(parsed)) {
             if (!result || typeof result.file !== "string") continue;
             const elapsed = Number(result.elapsed || 0);
             if (!Number.isFinite(elapsed) || elapsed <= 0) continue;
@@ -938,8 +983,35 @@ async function main() {
         };
 
         const outPath = path.resolve(opts.jsonOut);
+        const snapshotOutPath = path.resolve(snapshotWeightFile());
+        const output = outPath === snapshotOutPath
+            ? {
+                timestamp: detail.timestamp,
+                summary: detail.summary,
+                pass: jsonResults
+                    .filter(r => r.status === "pass" && !r.timedOut)
+                    .map(r => r.file),
+                fail: jsonResults
+                    .filter(r => r.status !== "pass" || r.timedOut)
+                    .map(r => {
+                        const record = {
+                            file: r.file,
+                            name: r.name,
+                            status: r.status,
+                            timedOut: r.timedOut || false,
+                            output: r.firstFailure || "",
+                        };
+                        if (r.bucket) record.bucket = r.bucket;
+                        if (r.elapsed !== undefined) record.elapsed = r.elapsed;
+                        return record;
+                    }),
+            }
+            : detail;
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, JSON.stringify(detail, null, 2));
+        const jsonText = outPath === snapshotOutPath
+            ? stringifyCompactSnapshot(output)
+            : `${JSON.stringify(output, null, 2)}\n`;
+        fs.writeFileSync(outPath, jsonText);
         console.log(`\nJSON results written to ${outPath}`);
     }
 
