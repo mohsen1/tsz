@@ -192,7 +192,8 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// gate (a cached read must not swallow the diagnostic re-derivation).
     union_complex_at_construction: bool,
     /// When true, nested `evaluate` nodes consult the persistent eval memo
-    /// (`QueryDatabase::lookup_eval_memo`) after a local-cache miss, so this
+    /// (`TypeApplicationEvalCache::lookup_eval_memo`) after a local-cache
+    /// miss, so this
     /// evaluator reuses subtrees an earlier evaluator in the same file scope
     /// already evaluated instead of re-walking them (issue #13097).
     ///
@@ -386,8 +387,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Opt this evaluator in to reading the persistent eval memo at nested
-    /// nodes (see `persistent_memo_reads`). Only the plain query-backed
-    /// construction (`QueryCache::query_backed_evaluator`) should call this.
+    /// nodes (see `persistent_memo_reads`). Set by the plain `new`
+    /// constructor and revoked by the mode builders; resolver-backed
+    /// constructions never opt in.
     pub(crate) const fn with_persistent_eval_memo_reads(mut self) -> Self {
         self.persistent_memo_reads = true;
         self
