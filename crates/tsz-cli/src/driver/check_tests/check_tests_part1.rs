@@ -697,20 +697,32 @@ fn large_reuse_off_batches_keep_fresh_parallel_eligible() {
     let large_project = FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1;
 
     assert!(
-        !should_use_sequential_fresh_checking(large_project, false, false),
+        !should_use_sequential_fresh_checking(large_project, false, false, false),
         "large fresh-checker batches should stay parallel-eligible even when session reuse is off"
     );
     assert!(
-        should_use_sequential_fresh_checking(10, false, false),
+        should_use_sequential_fresh_checking(10, false, false, false),
         "tiny batches stay sequential for deterministic cross-file behavior"
     );
     assert!(
-        !should_use_sequential_fresh_checking(large_project, true, false),
+        should_use_sequential_fresh_checking(10, false, true, true),
+        "the force-parallel experiment must not bypass tiny-batch policy"
+    );
+    assert!(
+        !should_use_sequential_fresh_checking(large_project, true, false, false),
         "large wildcard barrels stay parallel-eligible after the #13244 gate lift"
     );
     assert!(
-        should_use_sequential_fresh_checking(large_project, false, true),
+        !should_use_sequential_fresh_checking(large_project, true, true, true),
+        "large wildcard-barrel detection is not a scheduling veto, even in forced DOM probes"
+    );
+    assert!(
+        should_use_sequential_fresh_checking(large_project, false, true, false),
         "order-sensitive global libraries stay on the deterministic sequential fallback"
+    );
+    assert!(
+        !should_use_sequential_fresh_checking(large_project, false, true, true),
+        "the force-parallel experiment should bypass only the order-sensitive global-lib gate"
     );
 }
 
