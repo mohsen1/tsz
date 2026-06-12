@@ -266,9 +266,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return None;
                     }
                     let module = symbol.import_module.as_deref()?;
+                    let source_file_idx = self
+                        .ctx
+                        .resolve_symbol_file_index(current_sym)
+                        .or_else(|| {
+                            (symbol.decl_file_idx != u32::MAX)
+                                .then_some(symbol.decl_file_idx as usize)
+                        })
+                        .unwrap_or(self.ctx.current_file_idx);
                     let target_idx = self
                         .ctx
-                        .resolve_import_target_from_file(self.ctx.current_file_idx, module)?;
+                        .resolve_import_target_from_file(source_file_idx, module)?;
                     let target_binder = self.ctx.get_binder_for_file(target_idx)?;
                     let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                     let file_name = target_arena
@@ -278,6 +286,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     file_name
                         .and_then(|fn_| target_binder.resolve_import_with_reexports(fn_, segment))
                         .or_else(|| target_binder.resolve_import_with_reexports(module, segment))
+                        .or_else(|| target_binder.file_locals.get(segment))
+                        .inspect(|sym_id| self.ctx.register_symbol_file_target(*sym_id, target_idx))
                 })?;
         }
 
