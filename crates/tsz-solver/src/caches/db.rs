@@ -1383,6 +1383,14 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         prop_name: &str,
     ) -> crate::operations::property::PropertyAccessResult;
 
+    /// Resolve property access with an already-interned property name,
+    /// avoiding the re-hash that the `&str` entry pays at the boundary.
+    fn resolve_property_access_atom(
+        &self,
+        object_type: TypeId,
+        prop_atom: Atom,
+    ) -> crate::operations::property::PropertyAccessResult;
+
     fn resolve_property_access_with_options(
         &self,
         object_type: TypeId,
@@ -1841,6 +1849,17 @@ impl QueryDatabase for TypeInterner {
         evaluator
             .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
         evaluator.resolve_property_access(object_type, prop_name)
+    }
+
+    fn resolve_property_access_atom(
+        &self,
+        object_type: TypeId,
+        prop_atom: Atom,
+    ) -> crate::operations::property::PropertyAccessResult {
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator
+            .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
+        evaluator.resolve_property_access_atom(object_type, prop_atom)
     }
 
     fn resolve_property_access_with_options(

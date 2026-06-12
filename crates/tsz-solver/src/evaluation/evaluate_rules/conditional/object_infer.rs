@@ -330,8 +330,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if let Some(query_db) = self.query_db() {
-            let prop_name_str = self.interner().resolve_atom_ref(prop_name);
-            return match query_db.resolve_property_access(source, &prop_name_str) {
+            return match query_db.resolve_property_access_atom(source, prop_name) {
                 PropertyAccessResult::Success { type_id, .. } => {
                     InferPropertyResolution::Candidate(type_id)
                 }

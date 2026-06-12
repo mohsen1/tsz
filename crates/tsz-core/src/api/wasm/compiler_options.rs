@@ -3,68 +3,74 @@ use wasm_bindgen::prelude::JsValue;
 
 /// Compiler options passed from JavaScript/WASM.
 /// Maps to TypeScript compiler options.
+///
+/// This is the single owner of WASM option -> `CheckerOptions` resolution:
+/// every WASM program surface (the website `WasmProgram` here and the npm
+/// wrapper's `TsProgram` in `tsz-wasm`) derives `CheckerOptions` through
+/// [`CompilerOptions::to_checker_options`], so strict-family implication
+/// semantics cannot drift per surface (#13117).
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct CompilerOptions {
+pub struct CompilerOptions {
     /// Enable all strict type checking options.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict: Option<bool>,
+    pub strict: Option<bool>,
 
     /// Raise error on expressions and declarations with an implied 'any' type.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_implicit_any: Option<bool>,
+    pub no_implicit_any: Option<bool>,
 
     /// Enable strict null checks.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_null_checks: Option<bool>,
+    pub strict_null_checks: Option<bool>,
 
     /// Enable strict checking of function types.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_function_types: Option<bool>,
+    pub strict_function_types: Option<bool>,
 
     /// Enable strict checking of `bind`, `call`, and `apply` methods.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_bind_call_apply: Option<bool>,
+    pub strict_bind_call_apply: Option<bool>,
 
     /// Enable strict property initialization checks in classes.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_property_initialization: Option<bool>,
+    pub strict_property_initialization: Option<bool>,
 
     /// Report error when not all code paths in function return a value.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_implicit_returns: Option<bool>,
+    pub no_implicit_returns: Option<bool>,
 
     /// Raise error on 'this' expressions with an implied 'any' type.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_implicit_this: Option<bool>,
+    pub no_implicit_this: Option<bool>,
 
     /// Default catch clause variables as `unknown` instead of `any`.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    use_unknown_in_catch_variables: Option<bool>,
+    pub use_unknown_in_catch_variables: Option<bool>,
 
     /// Enable strict built-in iterator return types.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_builtin_iterator_return: Option<bool>,
+    pub strict_builtin_iterator_return: Option<bool>,
 
     /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
     #[serde(default, deserialize_with = "deserialize_target")]
-    target: Option<u32>,
+    pub target: Option<u32>,
 
     /// Specify module code generation mode (accepts string like `ESNext` or numeric).
     #[serde(default, deserialize_with = "deserialize_module")]
-    module: Option<u32>,
+    pub module: Option<u32>,
 
     /// Enable full iterator support when targeting ES5/ES3.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    downlevel_iteration: Option<bool>,
+    pub downlevel_iteration: Option<bool>,
 
     /// Interpret optional property types as written, rather than adding 'undefined'.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    exact_optional_property_types: Option<bool>,
+    pub exact_optional_property_types: Option<bool>,
 
     /// When true, do not include any library files.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_lib: Option<bool>,
+    pub no_lib: Option<bool>,
 
     /// Add 'undefined' to a type when accessed using an index.
     #[serde(
@@ -72,11 +78,11 @@ pub(crate) struct CompilerOptions {
         alias = "noUncheckedIndexedAccess",
         deserialize_with = "deserialize_bool_option"
     )]
-    no_unchecked_indexed_access: Option<bool>,
+    pub no_unchecked_indexed_access: Option<bool>,
 
     /// Enable Sound Mode for stricter type checking beyond TypeScript's defaults.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    sound_mode: Option<bool>,
+    pub sound_mode: Option<bool>,
 }
 
 /// Deserialize an optional boolean option.
@@ -218,7 +224,13 @@ impl CompilerOptions {
     }
 
     /// Convert to `CheckerOptions` for type checking.
-    pub(crate) fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
+    ///
+    /// Resolution starts from the shared `CheckerOptions::default()`,
+    /// applies the `strict` family implication (when `strict` is set), and
+    /// finally applies individual flag overrides. Options left `None` keep
+    /// the shared defaults.
+    #[must_use]
+    pub fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
         let mut options = crate::checker::context::CheckerOptions::default();
 
         if let Some(strict) = self.strict {
