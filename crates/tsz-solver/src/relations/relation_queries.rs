@@ -767,6 +767,7 @@ pub fn check_application_variance<R: TypeResolver>(
     context: RelationContext<'_>,
 ) -> Option<bool> {
     use crate::types::TypeData;
+    use crate::visitor::lazy_def_id;
 
     if source.is_intrinsic() || target.is_intrinsic() {
         return None;
@@ -775,15 +776,68 @@ pub fn check_application_variance<R: TypeResolver>(
         (Some(TypeData::Application(s)), Some(TypeData::Application(t))) => (s, t),
         _ => return None,
     };
+    let s_app = db.type_application(s_app_id);
+    let t_app = db.type_application(t_app_id);
+
+    let same_base_same_arity = s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+    let def_id = if same_base_same_arity {
+        lazy_def_id(db, s_app.base)
+    } else {
+        None
+    };
+
+    // Conditional type aliases with concrete (non-type-parameter) arguments
+    // must expand structurally so tsc's recursion-identity depth cap can apply.
+    // The solver's internal fast path is allowed to conclude more cases for
+    // subtype recursion, but this public query boundary historically fell
+    // through for concrete conditional aliases.
+    if let Some(def_id) = def_id
+        && let Some(body) = resolver.get_def_raw_body(def_id, db)
+        && matches!(db.lookup(body), Some(TypeData::Conditional(_)))
+        && !s_app
+            .args
+            .iter()
+            .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+    {
+        return None;
+    }
 
     let context = RelationContext {
         query_db: context.query_db.or(query_db),
         ..context
     };
     let mut checker = configured_subtype_checker(db, resolver, policy, context);
-    checker
-        .try_variance_fast_path(s_app_id, t_app_id)
-        .map(|result| result.is_true())
+    let result = checker.try_variance_fast_path(s_app_id, t_app_id)?;
+
+    // Rejections for aliases whose body forwards through an application with
+    // type parameters are not definitive at this query boundary. Let structural
+    // expansion decide, matching the pre-refactor `check_application_variance`
+    // fallback while still keeping acceptance-only fast paths.
+    if !result.is_true()
+        && let Some(def_id) = def_id
+        && alias_body_application_uses_type_parameters(db, resolver, def_id)
+    {
+        return None;
+    }
+
+    Some(result.is_true())
+}
+
+fn alias_body_application_uses_type_parameters<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    def_id: crate::def::DefId,
+) -> bool {
+    let Some(body) = resolver.resolve_lazy(def_id, db) else {
+        return false;
+    };
+    let Some(app_id) = crate::visitor::application_id(db, body) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    app.args
+        .iter()
+        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
 }
 
 /// Check if two type parameters are assignable to each other.
