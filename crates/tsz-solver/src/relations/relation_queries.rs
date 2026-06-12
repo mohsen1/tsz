@@ -502,8 +502,8 @@ pub fn query_relation(
     source: TypeId,
     target: TypeId,
     kind: RelationKind,
-    policy: RelationPolicy,
-    context: RelationContext<'_>,
+    _policy: RelationPolicy,
+    _context: RelationContext<'_>,
 ) -> RelationResult {
     let resolver = NoopResolver;
     query_relation_with_resolver(interner, &resolver, source, target, kind, policy, context)
@@ -803,96 +803,17 @@ pub fn check_application_variance<R: TypeResolver>(
         return None;
     }
 
-    let def_id = if same_base_same_arity {
-        lazy_def_id(db, s_app.base)?
-    } else {
-        return None;
-    };
-    let variances = resolver.get_type_param_variance(def_id).or_else(|| {
-        crate::relations::variance::compute_type_param_variances_with_resolver_cached(
-            db, resolver, query_db, def_id,
-        )
-    })?;
-    if variances.len() != s_app.args.len() {
+    if !same_base_same_arity {
         return None;
     }
 
-    // This public pre-evaluation boundary must be conservative. The solver
-    // engine still owns positive App/App variance decisions after the ordinary
-    // relation reaches `SubtypeChecker::try_variance_fast_path`; accepting here
-    // can skip structural expansion before conditional, recursive, mapped, and
-    // declared-variance bodies have been observed. Reliable rejections are
-    // different: if the same-base variance mask has direct non-mapped usage and
-    // carries no structural-fallback/unreliable marker, structural expansion can
-    // erase the raw type-argument mismatch that `tsc` reports.
-    let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
-    let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
-    if needs_structural_fallback || rejection_unreliable {
-        return None;
-    }
-
-    let mut checker = configured_compat_checker(db, resolver, policy, context);
-    if let Some(qdb) = query_db {
-        checker.set_query_db(qdb);
-    }
-
-    let mut any_checked = false;
-    let mut all_ok = true;
-    for (i, variance) in variances.iter().enumerate() {
-        let s_arg = s_app.args[i];
-        let t_arg = t_app.args[i];
-
-        if variance.is_invariant() {
-            any_checked = true;
-            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
-                all_ok = false;
-                break;
-            }
-        } else if variance.is_covariant() {
-            any_checked = true;
-            if !checker.is_assignable(s_arg, t_arg) {
-                all_ok = false;
-                break;
-            }
-        } else if variance.is_contravariant() {
-            any_checked = true;
-            if !checker.is_assignable(t_arg, s_arg) {
-                all_ok = false;
-                break;
-            }
-        }
-    }
-
-    let application_args_are_concrete = s_app.args.iter().chain(t_app.args.iter()).all(|&arg| {
-        !crate::visitors::visitor_predicates::contains_type_parameters(db, arg)
-            && !crate::contains_this_type(db, arg)
-    });
-    if alias_body_application_uses_type_parameters(db, resolver, def_id) {
-        return None;
-    }
-    if any_checked && !all_ok && application_args_are_concrete {
-        return Some(false);
-    }
-
-    // Positive outcomes still fall through structurally at this boundary.
+    // Both positive and negative outcomes still fall through structurally at
+    // this boundary. Even concrete-looking application arguments can normalize
+    // through recursive conditionals, global aliases, mapped/indexed access, or
+    // declared-variance bodies before `tsc` decides assignability. The ordinary
+    // solver relation path owns definitive App/App variance decisions after
+    // those structural hooks have been observed.
     None
-}
-
-fn alias_body_application_uses_type_parameters<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
-    def_id: crate::def::DefId,
-) -> bool {
-    let Some(body) = resolver.resolve_lazy(def_id, db) else {
-        return false;
-    };
-    let Some(app_id) = crate::visitor::application_id(db, body) else {
-        return false;
-    };
-    let app = db.type_application(app_id);
-    app.args
-        .iter()
-        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
 }
 
 /// Check if two type parameters are assignable to each other.
