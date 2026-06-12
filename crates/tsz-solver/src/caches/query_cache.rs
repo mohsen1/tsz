@@ -131,8 +131,7 @@ impl CachedPolicyRelation {
 /// `Awaited<T>`), producing a stale result that is then returned to sibling
 /// files. Keeping those caches per-file eliminates the ordering-sensitive
 /// correctness risk. See issue #9507. `TSZ_SHARE_INSTANTIATION_CACHES=1`
-/// enables an experimental witness path for issue #13240; it is deliberately
-/// opt-in until the ordering/staleness matrix proves it safe.
+/// enables the experimental #13240 witness path.
 pub struct SharedQueryCache {
     eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
     subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
@@ -206,6 +205,20 @@ impl Default for SharedQueryCache {
 
 fn shared_instantiation_family_requested() -> bool {
     std::env::var_os("TSZ_SHARE_INSTANTIATION_CACHES").is_some_and(|value| value != "0")
+}
+
+fn application_eval_entry_references_def(
+    interner: &dyn crate::construction::TypeDatabase,
+    key: &ApplicationEvalCacheKey,
+    result: TypeId,
+    def_id: DefId,
+) -> bool {
+    let (key_def, key_args, _, _) = key;
+    *key_def == def_id
+        || key_args
+            .iter()
+            .any(|&arg| crate::visitors::visitor::contains_lazy_def_id(interner, arg, def_id))
+        || crate::visitors::visitor::contains_lazy_def_id(interner, result, def_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1015,40 +1028,16 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
 
     fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
         let mut cache = self.application_eval_cache.borrow_mut();
-        if !cache.is_empty() {
-            cache.retain(|(key_def, key_args, _, _), &mut result| {
-                *key_def != def_id
-                    && !key_args.iter().any(|&arg| {
-                        crate::visitors::visitor::contains_lazy_def_id(self.interner, arg, def_id)
-                    })
-                    && !crate::visitors::visitor::contains_lazy_def_id(
-                        self.interner,
-                        result,
-                        def_id,
-                    )
-            });
-        }
+        cache.retain(|key, &mut result| {
+            !application_eval_entry_references_def(self.interner, key, result, def_id)
+        });
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
             && !shared.application_eval_cache.is_empty()
         {
-            shared
-                .application_eval_cache
-                .retain(|(key_def, key_args, _, _), result| {
-                    *key_def != def_id
-                        && !key_args.iter().any(|&arg| {
-                            crate::visitors::visitor::contains_lazy_def_id(
-                                self.interner,
-                                arg,
-                                def_id,
-                            )
-                        })
-                        && !crate::visitors::visitor::contains_lazy_def_id(
-                            self.interner,
-                            *result,
-                            def_id,
-                        )
-                });
+            shared.application_eval_cache.retain(|key, result| {
+                !application_eval_entry_references_def(self.interner, key, *result, def_id)
+            });
         }
     }
 
