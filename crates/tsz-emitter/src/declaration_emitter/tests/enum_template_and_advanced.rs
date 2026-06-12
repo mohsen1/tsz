@@ -1286,10 +1286,12 @@ fn check_symbol_portability_prefers_symlinked_nested_package_over_public_root_ex
     let nested_source = nested_source.to_string_lossy().into_owned();
     let top_level_source = top_level_source.to_string_lossy().into_owned();
     let current_path = current_path.to_string_lossy().into_owned();
-    emitter.arena_to_path.insert(
+    let mut arena_to_path = rustc_hash::FxHashMap::default();
+    arena_to_path.insert(
         std::sync::Arc::as_ptr(&source_arena) as usize,
         nested_source,
     );
+    emitter.set_arena_to_path(arena_to_path);
 
     let mut binder = tsz_binder::BinderState::new();
     let sym_id = binder.symbols.alloc(

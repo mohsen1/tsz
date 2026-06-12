@@ -166,32 +166,41 @@ pub(crate) fn emit_outputs(
     };
     let mut seen_duplicate_global_var_types: FxHashMap<String, String> = FxHashMap::default();
 
-    // Build mapping from arena address to file path for module resolution
-    let arena_to_path: rustc_hash::FxHashMap<usize, String> = context
-        .program
-        .files
-        .iter()
-        .map(|file| {
-            let arena_addr = std::sync::Arc::as_ptr(&file.arena) as usize;
-            (arena_addr, file.file_name.clone())
-        })
-        .collect();
+    // Build mapping from arena address to file path for module resolution.
+    // Built once per emit and shared by `Arc` with every per-file emitter;
+    // the map is read-only during emit.
+    let arena_to_path: std::sync::Arc<rustc_hash::FxHashMap<usize, String>> = std::sync::Arc::new(
+        context
+            .program
+            .files
+            .iter()
+            .map(|file| {
+                let arena_addr = std::sync::Arc::as_ptr(&file.arena) as usize;
+                (arena_addr, file.file_name.clone())
+            })
+            .collect(),
+    );
 
     // Build mapping from file index to file path for decl_file_idx-based
-    // symbol source resolution (fallback when symbol_arenas is incomplete)
-    let file_idx_to_path: rustc_hash::FxHashMap<u32, String> = context
-        .program
-        .files
-        .iter()
-        .enumerate()
-        .map(|(idx, file)| (idx as u32, file.file_name.clone()))
-        .collect();
-    let root_file_paths: FxHashSet<String> = context
-        .root_file_paths
-        .iter()
-        .map(|path| canonicalize_or_owned(path.as_path()))
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .collect();
+    // symbol source resolution (fallback when symbol_arenas is incomplete).
+    // Shared by `Arc` with every per-file emitter.
+    let file_idx_to_path: std::sync::Arc<rustc_hash::FxHashMap<u32, String>> = std::sync::Arc::new(
+        context
+            .program
+            .files
+            .iter()
+            .enumerate()
+            .map(|(idx, file)| (idx as u32, file.file_name.clone()))
+            .collect(),
+    );
+    let root_file_paths: std::sync::Arc<FxHashSet<String>> = std::sync::Arc::new(
+        context
+            .root_file_paths
+            .iter()
+            .map(|path| canonicalize_or_owned(path.as_path()))
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect(),
+    );
     let file_lookup = build_program_file_lookup(context.program);
 
     // Use the MergedProgram's global symbol-to-arena mapping.
@@ -203,14 +212,17 @@ pub(crate) fn emit_outputs(
     // Collect file paths that contain module augmentations.
     // The declaration emitter uses this to preserve side-effect imports for
     // files whose named bindings were all elided but whose augmentations must
-    // still take effect.
-    let files_with_augmentations: rustc_hash::FxHashSet<String> = context
-        .program
-        .files
-        .iter()
-        .filter(|file| !file.module_augmentations.is_empty())
-        .map(|file| file.file_name.clone())
-        .collect();
+    // still take effect. Shared by `Arc` with every per-file emitter.
+    let files_with_augmentations: std::sync::Arc<rustc_hash::FxHashSet<String>> =
+        std::sync::Arc::new(
+            context
+                .program
+                .files
+                .iter()
+                .filter(|file| !file.module_augmentations.is_empty())
+                .map(|file| file.file_name.clone())
+                .collect(),
+        );
     let declaration_const_enum_exports = build_declaration_const_enum_exports(context.program);
     let ambient_global_type_only_names = build_ambient_global_type_only_names(
         context.program,
@@ -579,9 +591,16 @@ pub(crate) fn emit_outputs(
             if let Some(dts_path) =
                 declaration_output_path(context.base_dir, context.root_dir, decl_base, &input_path)
             {
-                // Get type cache for this file if available
+                // Get type cache for this file if available. Build the
+                // emitter view once per file and share it by `Arc`: the
+                // per-file emitter, its scratch emitters, and the usage
+                // analyzer below all read the same immutable view, so no
+                // checker cache or view map is deep-cloned.
                 let file_path = PathBuf::from(&file.file_name);
-                let type_cache = context.type_caches.get(&file_path).cloned();
+                let cache_view = context
+                    .type_caches
+                    .get(&file_path)
+                    .map(|cache| std::sync::Arc::new(type_cache_view(cache)));
 
                 // Per-file BinderState (shared with the JS import-elision
                 // facts when both emits run) to enable usage analysis.
@@ -590,11 +609,10 @@ pub(crate) fn emit_outputs(
                 });
 
                 // Create emitter with type information and binder
-                let mut emitter = if let Some(ref cache) = type_cache {
-                    let cache_view = type_cache_view(cache);
-                    let mut emitter = DeclarationEmitter::with_type_info(
+                let mut emitter = if let Some(cache_view) = &cache_view {
+                    let mut emitter = DeclarationEmitter::with_shared_type_info(
                         &file.arena,
-                        cache_view,
+                        std::sync::Arc::clone(cache_view),
                         &context.program.type_interner,
                         binder,
                     );
@@ -604,9 +622,9 @@ pub(crate) fn emit_outputs(
                         file.file_name.clone(),
                     );
                     // Set arena to path mapping for module resolution
-                    emitter.set_arena_to_path(arena_to_path.clone());
-                    emitter.set_file_idx_to_path(file_idx_to_path.clone());
-                    emitter.set_root_file_paths(root_file_paths.clone());
+                    emitter.set_shared_arena_to_path(std::sync::Arc::clone(&arena_to_path));
+                    emitter.set_shared_file_idx_to_path(std::sync::Arc::clone(&file_idx_to_path));
+                    emitter.set_shared_root_file_paths(std::sync::Arc::clone(&root_file_paths));
                     emitter.set_shared_global_symbol_arenas(std::sync::Arc::clone(
                         &global_symbol_arenas,
                     ));
@@ -615,7 +633,9 @@ pub(crate) fn emit_outputs(
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
                     emitter
                         .set_isolated_declarations(context.options.checker.isolated_declarations);
-                    emitter.set_files_with_augmentations(files_with_augmentations.clone());
+                    emitter.set_shared_files_with_augmentations(std::sync::Arc::clone(
+                        &files_with_augmentations,
+                    ));
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
@@ -626,9 +646,9 @@ pub(crate) fn emit_outputs(
                         std::sync::Arc::clone(&file.arena),
                         file.file_name.clone(),
                     );
-                    emitter.set_arena_to_path(arena_to_path.clone());
-                    emitter.set_file_idx_to_path(file_idx_to_path.clone());
-                    emitter.set_root_file_paths(root_file_paths.clone());
+                    emitter.set_shared_arena_to_path(std::sync::Arc::clone(&arena_to_path));
+                    emitter.set_shared_file_idx_to_path(std::sync::Arc::clone(&file_idx_to_path));
+                    emitter.set_shared_root_file_paths(std::sync::Arc::clone(&root_file_paths));
                     emitter.set_shared_global_symbol_arenas(std::sync::Arc::clone(
                         &global_symbol_arenas,
                     ));
@@ -637,7 +657,9 @@ pub(crate) fn emit_outputs(
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
                     emitter
                         .set_isolated_declarations(context.options.checker.isolated_declarations);
-                    emitter.set_files_with_augmentations(files_with_augmentations.clone());
+                    emitter.set_shared_files_with_augmentations(std::sync::Arc::clone(
+                        &files_with_augmentations,
+                    ));
                     emitter
                 };
 
@@ -686,7 +708,7 @@ pub(crate) fn emit_outputs(
                 }
 
                 // Run usage analysis and calculate required imports if we have type cache
-                if let Some(ref cache) = type_cache {
+                if let Some(ref cache_view) = cache_view {
                     use rustc_hash::FxHashMap;
                     use tsz::declaration_emitter::usage_analyzer::{
                         UsageAnalyzer, UsageAnalyzerSourceFlags,
@@ -694,12 +716,11 @@ pub(crate) fn emit_outputs(
 
                     // Empty import_name_map for this usage (not needed for auto-import calculation)
                     let import_name_map = FxHashMap::default();
-                    let cache_view = type_cache_view(cache);
 
                     let mut analyzer = UsageAnalyzer::new(
                         &file.arena,
                         binder,
-                        &cache_view,
+                        cache_view,
                         &context.program.type_interner,
                         std::sync::Arc::clone(&file.arena),
                         Some(file.file_name.clone()),

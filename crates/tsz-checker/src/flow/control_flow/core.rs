@@ -1,3 +1,4 @@
+use super::flow_dp::{ChainReachabilityMemo, resolve_chain_reachability};
 use crate::query_boundaries::common::QueryDatabase;
 use crate::query_boundaries::common::{NarrowingCache, NarrowingContext, TypeEnvironment};
 use crate::query_boundaries::flow as flow_boundary;
@@ -917,31 +918,44 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
     }
 
-    fn flow_chain_contains_switch_clause(&self, flow_id: FlowNodeId) -> bool {
-        let mut worklist = VecDeque::from([flow_id]);
-        let mut visited = FxHashSet::default();
-        let mut steps = 0usize;
-
-        while let Some(current) = worklist.pop_front() {
-            if current.is_none() || !visited.insert(current) {
-                continue;
-            }
-            steps += 1;
-            if steps > 32 {
-                return false;
-            }
-            let Some(flow) = self.binder.flow_nodes.get(current) else {
-                continue;
-            };
-            if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
-                return true;
-            }
-            for &ant in &flow.antecedent {
-                worklist.push_back(ant);
-            }
-        }
-
-        false
+    /// Returns `true` when `flow_id`'s antecedent chain (including itself)
+    /// contains a `SWITCH_CLAUSE` flow node.
+    ///
+    /// Used by the `check_flow` worklist to skip flow-cache reads/writes for
+    /// `unknown`-typed references whose chain passes through switch clauses.
+    /// Memoized in the per-`check_flow` [`ChainReachabilityMemo`] scratch so
+    /// the worklist no longer allocates a fresh `VecDeque` + `FxHashSet` per
+    /// iteration (#13083). The verdict is a pure property of the flow graph,
+    /// which is immutable for the duration of one `check_flow` traversal, so
+    /// memoized answers stay valid for the scratch lifetime. The previous
+    /// one-shot BFS gave up after 32 nodes and reported `false`; the memoized
+    /// form is exact, so very deep switch chains now conservatively skip the
+    /// flow cache (recompute) instead of consulting it.
+    fn flow_chain_contains_switch_clause_with_memo(
+        &self,
+        flow_id: FlowNodeId,
+        memo: &mut ChainReachabilityMemo,
+    ) -> bool {
+        resolve_chain_reachability(
+            flow_id,
+            memo,
+            |node| {
+                let Some(flow) = self.binder.flow_nodes.get(node) else {
+                    return smallvec::SmallVec::new();
+                };
+                flow.antecedent
+                    .iter()
+                    .copied()
+                    .filter(|antecedent| !antecedent.is_none())
+                    .collect()
+            },
+            |node| {
+                self.binder
+                    .flow_nodes
+                    .get(node)
+                    .is_some_and(|flow| flow.has_any_flags(flow_flags::SWITCH_CLAUSE))
+            },
+        )
     }
 
     #[inline]
