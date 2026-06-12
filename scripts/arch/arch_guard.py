@@ -226,6 +226,19 @@ def main() -> int:
 
     for (
         name,
+        search_roots,
+        exclude_path_prefixes,
+        max_references,
+    ) in MODULE_PATH_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
+        hits = scan_module_path_solver_computation_import_count(
+            search_roots, exclude_path_prefixes, max_references
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
         file_path,
         root_module_prefixes,
         max_reexports,
