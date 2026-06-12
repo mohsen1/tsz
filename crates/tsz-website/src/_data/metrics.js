@@ -238,8 +238,8 @@ function extractMetrics() {
     setSuiteFromSnapshotSummary(
       metrics,
       "fourslash",
-      fourslashSnapshot?.summary?.passed ?? fourslashSnapshot?.passed,
-      fourslashSnapshot?.summary?.total ?? fourslashSnapshot?.total,
+      fourslashSnapshot?.summary?.passed ?? fourslashSnapshot?.passed ?? fourslashSnapshot?.pass?.length,
+      fourslashSnapshot?.summary?.total ?? fourslashSnapshot?.total ?? ((fourslashSnapshot?.pass?.length ?? 0) + (fourslashSnapshot?.fail?.length ?? 0)),
     );
   }
 

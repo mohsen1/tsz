@@ -186,15 +186,15 @@ def fourslash_summary(metrics_dir: Path, logs_dir: Path, lines: list[str]) -> No
         lines.append(f"- Passed `{passed}` of `{total}` tests across `{len(shard_metrics)}` shards.")
         lines.append("")
 
-    detail_files = sorted(metrics_dir.glob("fourslash-detail-*.json"))
+    detail_files = sorted(metrics_dir.glob("fourslash-shard-*.json"))
     details = [load_json(path) or {} for path in detail_files]
     if not details:
-        details = [load_json(Path("scripts/fourslash/fourslash-detail.json")) or {}]
+        details = [load_json(Path("scripts/fourslash/fourslash-snapshot.json")) or {}]
 
     failures = [
         result
         for detail in details
-        for result in detail.get("results", [])
+        for result in (detail.get("results") or detail.get("fail") or [])
         if result.get("status") != "pass" or result.get("timedOut")
     ]
     if failures:
@@ -203,8 +203,9 @@ def fourslash_summary(metrics_dir: Path, logs_dir: Path, lines: list[str]) -> No
         for result in failures[:30]:
             status = "timeout" if result.get("timedOut") else result.get("status")
             detail = f"{result.get('file', '')}; status={status}"
-            if result.get("firstFailure"):
-                detail += f"; {clip(result.get('firstFailure'), 160)}"
+            failure = result.get("firstFailure") or result.get("output")
+            if failure:
+                detail += f"; {clip(failure, 160)}"
             lines.append(f"- {code(result.get('name', '<unknown>'))} ({md_escape(detail)})")
         if len(failures) > 30:
             lines.append(f"- ... {len(failures) - 30} more")

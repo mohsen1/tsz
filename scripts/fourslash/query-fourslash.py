@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Query fourslash test results offline without re-running tests.
 
-Reads from scripts/fourslash/fourslash-detail.json (produced by the runner with --json-out).
+Reads from scripts/fourslash/fourslash-snapshot.json (produced by the runner with --json-out).
 
 Usage:
   # Show overview
@@ -38,15 +38,73 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
 
-DETAIL_FILE = Path(__file__).parent / "fourslash-detail.json"
+SNAPSHOT_FILE = Path(__file__).parent / "fourslash-snapshot.json"
 
 
 def load_detail():
-    return load_snapshot(DETAIL_FILE, "Run fourslash tests with --json-out to generate it.")
+    return load_snapshot(SNAPSHOT_FILE, "Run fourslash tests with --json-out to generate it.")
+
+
+def test_name_from_file(file_name):
+    return Path(file_name).stem if file_name else "<unknown>"
+
+
+def normalized_results(data):
+    if isinstance(data.get("results"), list):
+        return data["results"]
+
+    results = []
+    for file_name in data.get("pass", []):
+        if isinstance(file_name, str):
+            results.append({
+                "file": file_name,
+                "name": test_name_from_file(file_name),
+                "status": "pass",
+                "timedOut": False,
+            })
+        elif isinstance(file_name, dict):
+            record = dict(file_name)
+            record.setdefault("file", record.get("name", ""))
+            record.setdefault("name", test_name_from_file(record.get("file", "")))
+            record.setdefault("status", "pass")
+            record.setdefault("timedOut", False)
+            results.append(record)
+
+    for failure in data.get("fail", []):
+        if isinstance(failure, str):
+            failure = {"file": failure}
+        record = dict(failure)
+        record.setdefault("file", record.get("name", ""))
+        record.setdefault("name", test_name_from_file(record.get("file", "")))
+        record.setdefault("timedOut", False)
+        record.setdefault("status", "timeout" if record["timedOut"] else "fail")
+        if "firstFailure" not in record and "output" in record:
+            record["firstFailure"] = record["output"]
+        results.append(record)
+
+    results.sort(key=lambda r: r.get("file", ""))
+    return results
+
+
+def normalized_summary(data, results):
+    summary = data.get("summary") or {}
+    total = summary.get("total", len(results))
+    passed = summary.get("passed", sum(1 for r in results if r.get("status") == "pass"))
+    failed = summary.get("failed", sum(1 for r in results if r.get("status") not in ("pass", "timeout")))
+    timed_out = summary.get("timedOut", sum(1 for r in results if r.get("timedOut")))
+    pass_rate = summary.get("passRate", round((passed / total) * 100, 1) if total else 0)
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "timedOut": timed_out,
+        "passRate": pass_rate,
+    }
 
 
 def show_overview(data):
-    s = data["summary"]
+    results = normalized_results(data)
+    s = normalized_summary(data, results)
     print(f"Fourslash Test Results")
     print(f"  Total: {s['total']}")
     print(f"  Passed: {s['passed']} ({s['passRate']}%)")
@@ -55,7 +113,6 @@ def show_overview(data):
         print(f"  Timed out: {s['timedOut']}")
     print()
 
-    results = data["results"]
     fails = [r for r in results if r["status"] == "fail"]
 
     # Bucket breakdown
@@ -88,7 +145,7 @@ def show_overview(data):
 
 
 def show_buckets(data):
-    results = data["results"]
+    results = normalized_results(data)
     bucket_pass = Counter()
     bucket_fail = Counter()
     bucket_timeout = Counter()
@@ -114,7 +171,7 @@ def show_buckets(data):
 
 
 def show_top_errors(data, top=20):
-    results = data["results"]
+    results = normalized_results(data)
     fails = [r for r in results if r["status"] in ("fail", "timeout")]
 
     print(f"Top failure messages ({len(fails)} failures):")
@@ -126,7 +183,7 @@ def show_top_errors(data, top=20):
 
 
 def show_failures(data, top=40, paths_only=False):
-    results = data["results"]
+    results = normalized_results(data)
     fails = [r for r in results if r["status"] in ("fail", "timeout")]
     fails.sort(key=lambda r: r["file"])
 
@@ -145,7 +202,7 @@ def show_failures(data, top=40, paths_only=False):
 
 
 def show_bucket(data, bucket, top=40, paths_only=False):
-    results = data["results"]
+    results = normalized_results(data)
     matches = [r for r in results if r.get("bucket") == bucket]
 
     if paths_only:
@@ -171,7 +228,7 @@ def show_bucket(data, bucket, top=40, paths_only=False):
 
 
 def show_timeouts(data, top=40):
-    results = data["results"]
+    results = normalized_results(data)
     timeouts = [r for r in results if r.get("timedOut")]
     print(f"Timeouts: {len(timeouts)}")
     for r in timeouts[:top]:
@@ -181,7 +238,7 @@ def show_timeouts(data, top=40):
 
 
 def show_filter(data, pattern, top=40, paths_only=False):
-    results = data["results"]
+    results = normalized_results(data)
     lower = pattern.lower()
     matches = [r for r in results if lower in r["name"].lower() or lower in r["file"].lower()]
 
