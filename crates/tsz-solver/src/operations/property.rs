@@ -268,6 +268,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.db.as_type_database()
     }
 
+    pub(crate) fn current_property_context(&self) -> Option<(std::sync::Arc<str>, Atom)> {
+        let atom = (*self.current_prop_atom.borrow())?;
+        Some((self.interner().resolve_atom_ref(atom), atom))
+    }
+
     fn resolver(&self) -> &dyn TypeResolver {
         self.resolver.unwrap_or_else(|| self.db.as_type_resolver())
     }
