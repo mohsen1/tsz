@@ -218,6 +218,15 @@ withTempDir((dir) => {
     rows_meeting_target: 1,
     rows_below_target: 3,
     project_rows_below_target: 2,
+    project_rows_aggregate: {
+      eligible_green_rows: 2,
+      measured_rows: 2,
+      tsz_ms_total: 873.92 + 165.15,
+      tsgo_ms_total: 106.15 + 54.51,
+      tsz_speedup_vs_tsgo: (106.15 + 54.51) / (873.92 + 165.15),
+      target_speedup: 2,
+      target_met: false,
+    },
     rows_with_attribution: 1,
     missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
     rows_with_attribution_command: 2,
@@ -804,6 +813,8 @@ withTempDir((dir) => {
       ["target-short", 15 / 10],
     ],
   );
+  assert.equal(report.target_gaps.find((row) => row.name === "target-short").startup_floor_win, true);
+  assert.equal(report.target_gaps.find((row) => row.name === "tsgo-win").startup_floor_win, false);
 });
 
 withTempDir((dir) => {
