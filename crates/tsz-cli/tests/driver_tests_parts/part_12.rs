@@ -1162,6 +1162,334 @@ function init(hooks: Hooks): void {
     );
 }
 
+/// A class declared in a node_modules `.d.ts` module must keep its
+/// instance/constructor split when several root files share it: the value
+/// side (`new C()`, static access) resolves to the constructor and the type
+/// side (annotations) resolves to the instance, regardless of which root is
+/// checked first (#13185). Before the fix, the co-included root's value-side
+/// resolution populated the shared SYMBOL bucket with the constructor and the
+/// second root's field annotation `Relay<M>` flipped to `typeof Relay`
+/// (false TS2739 + TS2339 on instance members).
+#[test]
+fn cross_file_dts_class_keeps_instance_constructor_split_across_roots() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/wire-kit/package.json"),
+        r#"{ "name": "wire-kit", "main": "index.js", "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &base.join("node_modules/wire-kit/index.d.ts"),
+        r#"declare type TopicMap = {
+    [topic: string]: Array<unknown>;
+};
+declare class Relay<Topics extends TopicMap> {
+    private slots;
+    static highWaterMark: number;
+    static slotCount<Topics extends TopicMap>(relay: Relay<TopicMap>, topic: keyof Topics): number;
+    constructor();
+    attach<Name extends keyof Topics>(topic: Name, sink: (...data: Topics[Name]) => void): this;
+    push<Name extends keyof Topics>(topic: Name, ...data: Topics[Name]): boolean;
+}
+export { Relay, TopicMap };
+"#,
+    );
+    write_file(
+        &base.join("first-root.ts"),
+        r#"import { Relay } from 'wire-kit'
+
+export const direct = new Relay<{ ping: [number] }>()
+export function waterMark(): number {
+  return Relay.highWaterMark
+}
+"#,
+    );
+    write_file(
+        &base.join("second-root.ts"),
+        r#"import { Relay } from 'wire-kit'
+
+type FeedMap = {
+  update: [payload: string]
+}
+
+class Feed {
+  #relay: Relay<FeedMap>
+
+  constructor() {
+    this.#relay = new Relay<FeedMap>()
+  }
+
+  listen(): void {
+    this.#relay.attach('update', (payload) => {
+      payload.slice(0)
+    })
+  }
+}
+
+export { Feed }
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
+  },
+  "files": ["first-root.ts", "second-root.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "tsc reports zero diagnostics for this project; instance/constructor \
+         identity must not flip with co-included roots, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// Same project with the root order reversed: the type-position root checked
+/// first must not poison the value-position root's static access with the
+/// instance type (the reverse direction of the #13185 flip).
+#[test]
+fn cross_file_dts_class_keeps_split_with_reversed_root_order() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/wire-kit/package.json"),
+        r#"{ "name": "wire-kit", "main": "index.js", "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &base.join("node_modules/wire-kit/index.d.ts"),
+        r#"declare type TopicMap = {
+    [topic: string]: Array<unknown>;
+};
+declare class Relay<Topics extends TopicMap> {
+    private slots;
+    static highWaterMark: number;
+    constructor();
+    attach<Name extends keyof Topics>(topic: Name, sink: (...data: Topics[Name]) => void): this;
+}
+export { Relay, TopicMap };
+"#,
+    );
+    write_file(
+        &base.join("typed-root.ts"),
+        r#"import { Relay } from 'wire-kit'
+
+export declare const feed: Relay<{ update: [string] }>
+export function poke(r: Relay<{ update: [string] }>): void {
+  r.attach('update', (payload) => payload.slice(0))
+}
+"#,
+    );
+    write_file(
+        &base.join("value-root.ts"),
+        r#"import { Relay } from 'wire-kit'
+
+export const direct = new Relay<{ ping: [number] }>()
+export function waterMark(): number {
+  return Relay.highWaterMark
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
+  },
+  "files": ["typed-root.ts", "value-root.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "static access on the class value must keep resolving to the \
+         constructor when another root used the class in type position, \
+         got: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// A second package exporting a SAME-NAMED class, imported type-only by a
+/// co-included root, must not overwrite the first import's value-side type
+/// through name-keyed lib resolution (the `file_locals[name]` overwrite in
+/// `resolve_lib_type_by_name`, #13185).
+#[test]
+fn same_named_dts_classes_in_sibling_packages_do_not_cross_poison() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/pkg-one/package.json"),
+        r#"{ "name": "pkg-one", "main": "index.js", "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg-one/index.d.ts"),
+        r#"declare class Mailbox<Letters> {
+    static capacity: number;
+    deliver(letter: Letters): void;
+}
+export { Mailbox };
+"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg-two/package.json"),
+        r#"{ "name": "pkg-two", "main": "index.js", "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg-two/index.d.ts"),
+        r#"declare class Mailbox<Payload> {
+    static brand: string;
+    push(value: Payload): void;
+}
+declare namespace Mailbox {
+    type Of<T extends Mailbox<unknown>> = T extends Mailbox<infer P> ? P : never;
+}
+export { Mailbox };
+"#,
+    );
+    write_file(
+        &base.join("uses-one.ts"),
+        r#"import { Mailbox } from 'pkg-one'
+import type { Mailbox as TwoBox } from 'pkg-two'
+
+export declare const other: TwoBox<number>
+export const box = new Mailbox<string>()
+export function capacity(): number {
+  return Mailbox.capacity
+}
+"#,
+    );
+    write_file(
+        &base.join("uses-one-typed.ts"),
+        r#"import { Mailbox } from 'pkg-one'
+
+class Office {
+  #box: Mailbox<string>
+
+  constructor() {
+    this.#box = new Mailbox<string>()
+  }
+
+  send(): void {
+    this.#box.deliver('hi')
+  }
+}
+
+export { Office }
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
+  },
+  "files": ["uses-one.ts", "uses-one-typed.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "same-named classes from sibling packages must keep independent \
+         value/type identities, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// Negative control: genuine misuse of the instance/static split must still
+/// be reported when roots are co-included — the fix must not blanket-silence
+/// class member errors.
+#[test]
+fn cross_file_dts_class_genuine_static_instance_misuse_still_reported() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/wire-kit/package.json"),
+        r#"{ "name": "wire-kit", "main": "index.js", "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &base.join("node_modules/wire-kit/index.d.ts"),
+        r#"declare class Relay<Topics> {
+    static highWaterMark: number;
+    attach(topic: keyof Topics): void;
+}
+export { Relay };
+"#,
+    );
+    write_file(
+        &base.join("value-root.ts"),
+        r#"import { Relay } from 'wire-kit'
+export const direct = new Relay<{ ping: [number] }>()
+"#,
+    );
+    write_file(
+        &base.join("misuse-root.ts"),
+        r#"import { Relay } from 'wire-kit'
+
+declare const instance: Relay<{ update: [string] }>
+// Static member accessed through the instance: must stay an error.
+export const wrong = instance.highWaterMark
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
+  },
+  "files": ["value-root.ts", "misuse-root.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2339),
+        "static member accessed through an instance must still report \
+         TS2339; got: {codes:?}"
+    );
+}
+
 // =========================================================================
 // TS5097/TS2846 for re-export and import-equals module specifiers
 //
@@ -1375,5 +1703,111 @@ fn import_control_ts_extension_still_reports_ts5097() {
         codes,
         vec![5097],
         "plain import of a .ts specifier remains the working control, got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_export_from_ts_extension_reports_ts5097() {
+    // tsc emits TS5097 for re-export module specifiers ending in `.ts` when
+    // `allowImportingTsExtensions` is off, exactly like the import forms
+    // (#13212 F2: tsz previously checked ImportDeclaration only).
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "files": ["star.ts", "named.ts", "ns.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export const x = 1;\nexport type T = number;");
+    write_file(&base.join("star.ts"), "export * from './a.ts';\n");
+    write_file(&base.join("named.ts"), "export { x } from './a.ts';\n");
+    write_file(&base.join("ns.ts"), "export * as ns from './a.ts';\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should complete");
+    let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS;
+            3
+        ],
+        "expected TS5097 for each export-from form (star, named, namespace), got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_type_only_export_from_ts_extension_matrix() {
+    // Statement-level type-only re-exports suppress TS5097; a specifier-level
+    // `type` does NOT (matches tsc).
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "files": ["stmt.ts", "spec.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export const x = 1;\nexport type T = number;");
+    write_file(&base.join("stmt.ts"), "export type { T } from './a.ts';\n");
+    write_file(&base.join("spec.ts"), "export { type T } from './a.ts';\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should complete");
+    let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS
+        ],
+        "statement-level type-only export must suppress TS5097 while \
+         specifier-level `type` must not, got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_export_from_ts_extension_allowed_when_option_enabled() {
+    // Control: allowImportingTsExtensions=true silences the diagnostic for
+    // export-from exactly as for imports.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "allowImportingTsExtensions": true,
+            "noEmit": true
+          },
+          "files": ["star.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export const x = 1;");
+    write_file(&base.join("star.ts"), "export * from './a.ts';\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should complete");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "allowImportingTsExtensions must silence export-from TS5097, got: {:?}",
+        result.diagnostics
     );
 }

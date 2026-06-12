@@ -31,8 +31,7 @@ use crate::TypeId;
 use crate::construction::TypeDatabase;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 use crate::types::{
-    CallableShapeId, IndexInfo, IndexSignature, MappedTypeId, ObjectShapeId, TypeApplicationId,
-    TypeData,
+    CallableShapeId, IndexInfo, IndexSignature, MappedTypeId, ObjectShapeId, TypeData,
 };
 use crate::utils;
 use crate::visitor::TypeVisitor;
@@ -110,9 +109,7 @@ impl<R: TypeResolver> TypeVisitor for StringIndexResolver<'_, R> {
         self.visit_type(self.db, inner_type)
     }
 
-    fn visit_application(&mut self, app_id: u32) -> Self::Output {
-        let app = self.db.type_application(TypeApplicationId(app_id));
-        let type_id = self.db.application(app.base, app.args.clone());
+    fn visit_application_type(&mut self, type_id: TypeId, _app_id: u32) -> Self::Output {
         let evaluated = crate::evaluation::evaluate::evaluate_type_with_resolver(
             self.db,
             self.resolver,
@@ -121,6 +118,14 @@ impl<R: TypeResolver> TypeVisitor for StringIndexResolver<'_, R> {
         (evaluated != type_id)
             .then(|| self.visit_type(self.db, evaluated))
             .flatten()
+    }
+
+    fn visit_type(&mut self, types: &dyn TypeDatabase, type_id: TypeId) -> Self::Output {
+        match types.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => self.visit_application_type(type_id, app_id.0),
+            Some(ref type_key) => self.visit_type_key(types, type_key),
+            None => Self::default_output(),
+        }
     }
 
     fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
@@ -185,9 +190,7 @@ impl<R: TypeResolver> TypeVisitor for NumberIndexResolver<'_, R> {
         self.visit_type(self.db, inner_type)
     }
 
-    fn visit_application(&mut self, app_id: u32) -> Self::Output {
-        let app = self.db.type_application(TypeApplicationId(app_id));
-        let type_id = self.db.application(app.base, app.args.clone());
+    fn visit_application_type(&mut self, type_id: TypeId, _app_id: u32) -> Self::Output {
         let evaluated = crate::evaluation::evaluate::evaluate_type_with_resolver(
             self.db,
             self.resolver,
@@ -196,6 +199,14 @@ impl<R: TypeResolver> TypeVisitor for NumberIndexResolver<'_, R> {
         (evaluated != type_id)
             .then(|| self.visit_type(self.db, evaluated))
             .flatten()
+    }
+
+    fn visit_type(&mut self, types: &dyn TypeDatabase, type_id: TypeId) -> Self::Output {
+        match types.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => self.visit_application_type(type_id, app_id.0),
+            Some(ref type_key) => self.visit_type_key(types, type_key),
+            None => Self::default_output(),
+        }
     }
 
     fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {

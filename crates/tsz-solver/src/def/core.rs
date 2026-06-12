@@ -13,9 +13,9 @@
 //! |------|----------|----------|
 //! | CLI  | Sequential allocation | Fresh start each compilation |
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
-
 mod content_addressed;
 mod definition_info;
+mod symbol_registration;
 
 pub use content_addressed::ContentAddressedDefIds;
 

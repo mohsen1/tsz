@@ -356,6 +356,71 @@ impl<'a> CheckerContext<'a> {
         self.cache_symbol_type_entry(sym_id, file_idx, 0, 0, type_id, type_params);
     }
 
+    /// Cache a class INSTANCE type in the canonical
+    /// `CrossFileQueryKind::ClassInstance` bucket, next to the class's
+    /// SYMBOL (value-side/constructor) entry.
+    ///
+    /// No-op when the share-owner gate is off or `type_id` is a sentinel
+    /// (`ERROR`/`UNKNOWN`/`ANY`). First-writer-wins, matching the SYMBOL
+    /// bucket. A SYMBOL entry without its `ClassInstance` counterpart cannot
+    /// satisfy class reads (see [`class_instance_recoverable`]).
+    ///
+    /// [`class_instance_recoverable`]: Self::class_instance_recoverable
+    pub fn cache_cross_file_class_instance_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        if !self.share_owner_symbol_type_results {
+            return;
+        }
+        if type_id.is_any_unknown_or_error() {
+            return;
+        }
+        self.definition_store.cache_resolved_cross_file_query(
+            CrossFileQueryKind::ClassInstance.as_storage_kind(),
+            file_idx,
+            sym_id.0,
+            0,
+            0,
+            type_id,
+            type_params,
+        );
+    }
+
+    /// Whether a class symbol's INSTANCE type is recoverable in this checker:
+    /// already registered in `symbol_instance_types`, or available in the
+    /// cross-file `ClassInstance` bucket (in which case it is registered now).
+    ///
+    /// The SYMBOL bucket stores only a class's value-side (constructor) type.
+    /// Serving that entry while no instance side is recoverable leaves every
+    /// later type-position resolution of the class falling back to the
+    /// constructor — flipping instance/constructor identity with
+    /// co-included-root check order (#13185). Class symbols therefore gate
+    /// SYMBOL-bucket shortcuts on this check and fall through to the full
+    /// computation (which registers both sides) when it fails.
+    pub fn class_instance_recoverable(&mut self, sym_id: SymbolId, file_idx: u32) -> bool {
+        if self
+            .symbol_instance_types
+            .get(&sym_id)
+            .copied()
+            .is_some_and(|t| !t.is_any_unknown_or_error())
+        {
+            return true;
+        }
+        let Some(inst) = self
+            .cached_cross_file_class_instance_type(sym_id, file_idx)
+            .map(|(inst, _)| inst)
+            .filter(|&inst| !inst.is_any_unknown_or_error())
+        else {
+            return false;
+        };
+        self.symbol_instance_types.insert(sym_id, inst);
+        true
+    }
+
     /// Cache a source-file symbol-arena delegation result under requester and
     /// program scoped key slots. See [`cached_source_file_symbol_arena_type`].
     pub fn cache_source_file_symbol_arena_type(
