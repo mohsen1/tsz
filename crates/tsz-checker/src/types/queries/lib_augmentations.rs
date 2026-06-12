@@ -175,6 +175,24 @@ impl<'a> CheckerState<'a> {
     ///      unconditionally clears type evaluation caches for the def,
     ///      which is wasted work on repeated lookups.
     pub(crate) fn register_finalized_lib_body(&mut self, name: &str, ty: TypeId) {
+        self.register_finalized_lib_body_with_completeness(name, ty, true);
+    }
+
+    /// [`Self::register_finalized_lib_body`] with an explicit
+    /// heritage-completeness marker.
+    ///
+    /// `complete = false` is the #12299 path: a heritage base was dropped
+    /// while mid-resolution, so `ty` is missing inherited members. The body
+    /// still publishes (the in-checker recovery drain overwrites it with the
+    /// flattened form), but it must not enroll the def in the store's
+    /// monotone-completion gate — that slot is reserved for forms sibling
+    /// checkers can safely consume under parallel fresh checking.
+    pub(crate) fn register_finalized_lib_body_with_completeness(
+        &mut self,
+        name: &str,
+        ty: TypeId,
+        complete: bool,
+    ) {
         let name_atom = self.ctx.types.intern_string(name);
         let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) else {
             return;
@@ -198,6 +216,7 @@ impl<'a> CheckerState<'a> {
             def_id,
             ty,
             (!type_params.is_empty()).then(|| type_params.clone()),
+            complete,
         );
         self.ctx
             .register_def_auto_params_in_envs(def_id, ty, type_params);

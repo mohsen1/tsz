@@ -355,23 +355,27 @@ impl<'a> CheckerContext<'a> {
             is_declare: false,
         };
 
-        let def_id = self.definition_store.register(info);
-        trace!(
-            symbol_name = %symbol.escaped_name,
-            symbol_id = %sym_id.0,
-            def_id = %def_id.0,
-            kind = ?kind,
-            "DefId fallback: created new DefId on demand (not pre-populated)"
-        );
+        // Atomic mint: under parallel fresh checking, a sibling checker can
+        // race this same `(symbol, file)` identity between the lookup above
+        // and this registration; the entry-guarded form converges both
+        // checkers on one `DefId` (issue #13255 identity splits).
+        let (def_id, minted) = self
+            .definition_store
+            .register_for_symbol(sym_id.0, file_idx, info);
+        if minted {
+            trace!(
+                symbol_name = %symbol.escaped_name,
+                symbol_id = %sym_id.0,
+                def_id = %def_id.0,
+                kind = ?kind,
+                "DefId fallback: created new DefId on demand (not pre-populated)"
+            );
 
-        // Track fallback firings for observability. If this counter grows
-        // unexpectedly, it indicates binder semantic_defs coverage gaps.
-        self.def_fallback_count
-            .set(self.def_fallback_count.get() + 1);
-
-        // Register in the authoritative index (shared across contexts).
-        self.definition_store
-            .register_symbol_mapping(sym_id.0, file_idx, def_id);
+            // Track fallback firings for observability. If this counter grows
+            // unexpectedly, it indicates binder semantic_defs coverage gaps.
+            self.def_fallback_count
+                .set(self.def_fallback_count.get() + 1);
+        }
 
         // Populate local caches.
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
@@ -452,6 +456,15 @@ impl<'a> CheckerContext<'a> {
         let Some(symbol) = matching_symbol else {
             return self.get_or_create_def_id(sym_id);
         };
+        // Lib provenance must include current-binder *clones*:
+        // `merge_lib_contexts_into_binder` remaps standard-lib symbols into
+        // each per-file binder's `file_locals`, so the narrow arena-pointer
+        // check (`symbol_is_from_actual_lib`) misses them. Treating a cloned
+        // lib symbol as a current-file local mints a file-attributed `DefId`
+        // for a lib type in *every* per-file checker — those defs never
+        // receive the heritage-merged finalized body, and under parallel
+        // fresh checking sibling checkers resolve them to pre-heritage
+        // intermediate forms (issue #13255 witness 3 false TS2741).
         let is_current_file_local_symbol = self.binder.file_locals.get(expected_name)
             == Some(sym_id)
             && self
@@ -459,7 +472,7 @@ impl<'a> CheckerContext<'a> {
                 .symbols
                 .get(sym_id)
                 .is_some_and(|symbol| symbol.escaped_name == expected_name)
-            && !self.symbol_is_from_actual_lib(sym_id);
+            && !self.symbol_is_from_actual_or_cloned_lib(sym_id);
         let symbol_index_matches_name = self
             .definition_store
             .find_def_by_symbol(sym_id.0)
@@ -553,9 +566,12 @@ impl<'a> CheckerContext<'a> {
             is_declare: false,
         };
 
-        let def_id = self.definition_store.register(info);
-        self.definition_store
-            .register_symbol_mapping(sym_id.0, file_idx, def_id);
+        // Atomic mint — see `get_or_create_def_id`: concurrent checkers
+        // stabilizing the same `(symbol, file)` identity converge on one
+        // `DefId` instead of each minting its own.
+        let (def_id, _minted) = self
+            .definition_store
+            .register_for_symbol(sym_id.0, file_idx, info);
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
         self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
         self.register_def_kind_in_envs(def_id, kind);

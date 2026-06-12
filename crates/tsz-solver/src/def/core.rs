@@ -396,6 +396,22 @@ pub struct DefinitionStore {
     /// store only ever observes `first form -> finalized form`.
     deferred_publish_defs: DefDashSet<DefId>,
 
+    /// Defs whose shared-store body has received at least one **complete**
+    /// finalized publication ([`Self::set_body_finalized`]: heritage-merged,
+    /// augmentation-applied form registered at clean lib-resolution
+    /// completion). Once a def is in this set, later *non-finalize*
+    /// different-body writes are dropped store-side: a sibling per-file
+    /// checker re-deriving the def mid-flight publishes pre-heritage
+    /// intermediate forms (e.g. an iterator interface reduced to its own
+    /// members), and under parallel fresh checking another checker reading
+    /// the shared body in that window resolves the def to the incomplete
+    /// shape (false TS2741/TS2339 — issue #13255 witness 3). The writer's
+    /// own `TypeEnvironment` still records its intermediate forms locally,
+    /// so in-checker refinement reads are unaffected. Finalized writes keep
+    /// last-writer-wins semantics (unlike the opt-in `publish_once_defs`
+    /// freeze), so augmentation-merged re-finalizations still land.
+    complete_published_defs: DefDashSet<DefId>,
+
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
     /// Populated during `register()` when the `DefinitionInfo` has a `file_id`.
@@ -658,6 +674,7 @@ impl DefinitionStore {
             depth_poisoned_defs: DefDashSet::default(),
             publish_once_defs: DefDashSet::default(),
             deferred_publish_defs: DefDashSet::default(),
+            complete_published_defs: DefDashSet::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
@@ -769,6 +786,46 @@ impl DefinitionStore {
         self.definitions.insert(id, info);
         self.bump_generation();
         id
+    }
+
+    /// Atomically resolve-or-register the `DefId` for a `(SymbolId, file_idx)`
+    /// identity.
+    ///
+    /// Per-file checkers stabilize binder symbols into `DefId`s lazily. The
+    /// previous `lookup_by_symbol` → `register` → `register_symbol_mapping`
+    /// sequence had a race window under parallel fresh checking: two checkers
+    /// could both miss the lookup and each mint a distinct `DefId` for the
+    /// same symbol identity. The composite index kept the last writer, but
+    /// each checker cached its own `DefId` locally, splitting type identity
+    /// program-wide ("Two different types with this name exist", divergent
+    /// relation results — issue #13255). This entry-guarded form makes the
+    /// mint atomic: the first registrar wins and every concurrent caller
+    /// converges on the winning `DefId`.
+    ///
+    /// `info` is only consumed when this call wins the registration; both
+    /// checkers derive identical `DefinitionInfo` skeletons from the same
+    /// binder symbol, so dropping the loser's copy is lossless.
+    pub fn register_for_symbol(
+        &self,
+        symbol_id: u32,
+        file_idx: u32,
+        info: DefinitionInfo,
+    ) -> (DefId, bool) {
+        use dashmap::mapref::entry::Entry;
+        match self.symbol_def_index.entry((symbol_id, file_idx)) {
+            Entry::Occupied(existing) => (*existing.get(), false),
+            Entry::Vacant(vacant) => {
+                // `register` touches only other maps (`definitions`,
+                // `name_to_defs`, `symbol_only_index`, `file_to_defs`), never
+                // `symbol_def_index`, so allocating under this entry guard
+                // cannot deadlock.
+                let def_id = self.register(info);
+                vacant.insert(def_id);
+                self.insert_symbol_only_mapping(symbol_id, def_id);
+                self.bump_generation();
+                (def_id, true)
+            }
+        }
     }
 
     /// Register a `(SymbolId, file_idx)` → `DefId` mapping in the authoritative index.
@@ -947,9 +1004,26 @@ impl DefinitionStore {
     /// Frozen defs (`publish_once_defs`) still win — once a def's finalized
     /// body is frozen, later checkers' re-finalizations (checker-relative
     /// `TypeId`s for the byte-identical semantic form) are dropped.
+    ///
+    /// `complete` records whether this finalized body is heritage-complete
+    /// (no in-progress base was dropped during resolution). Complete
+    /// finalizations enroll the def in the monotone-completion gate: later
+    /// non-finalize different-body writes (sibling checkers' in-flight
+    /// pre-heritage intermediates) no longer overwrite the shared body.
+    /// Heritage-incomplete finalizations still publish (the #12299 recovery
+    /// path overwrites them) but do not enroll the def.
     #[track_caller]
-    pub fn set_body_finalized(&self, id: DefId, body: TypeId, params: Option<Vec<TypeParamInfo>>) {
+    pub fn set_body_finalized(
+        &self,
+        id: DefId,
+        body: TypeId,
+        params: Option<Vec<TypeParamInfo>>,
+        complete: bool,
+    ) {
         self.set_body_with_params_impl(id, body, params, true);
+        if complete {
+            self.complete_published_defs.insert(id);
+        }
     }
 
     #[track_caller]
@@ -973,11 +1047,24 @@ impl DefinitionStore {
         // Deferred-publication experiment: pre-finalize different-body
         // overwrites of marked defs are dropped; only the finalize entry
         // point may replace the first published form.
+        //
+        // Monotone-completion gate (default-on): once a def has received a
+        // complete finalized body, a *non-finalize* different-body write is a
+        // sibling checker's in-flight intermediate form (pre-heritage-merge
+        // lowering residue). Overwriting the complete shared body with it
+        // would re-open the schedule-dependent observation window that
+        // produces false member-missing diagnostics under parallel fresh
+        // checking (issue #13255). The writing checker keeps its
+        // intermediate in its own `TypeEnvironment`; only the shared slot
+        // stays at the complete form. Finalized writes still overwrite
+        // (last-finalize-wins).
         let deferred = !suppressed
             && !finalize
             && is_different_overwrite
-            && !self.deferred_publish_defs.is_empty()
-            && self.deferred_publish_defs.contains(&id);
+            && ((!self.deferred_publish_defs.is_empty()
+                && self.deferred_publish_defs.contains(&id))
+                || (!self.complete_published_defs.is_empty()
+                    && self.complete_published_defs.contains(&id)));
         // Mutation-isolation campaign census (env-gated, see
         // `publication_census`): classify this publication against the
         // pre-write entry state with caller attribution.
@@ -1012,6 +1099,16 @@ impl DefinitionStore {
         }
         if suppressed || deferred {
             return;
+        }
+        if is_different_overwrite {
+            tracing::debug!(
+                target: "tsz::defstore_write",
+                def_id = id.0,
+                prev_body = prev_body.map(|b| b.0),
+                new_body = body.0,
+                finalize,
+                "store body overwrite with different form"
+            );
         }
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             // Identical republication is a no-op: nothing a reader can
