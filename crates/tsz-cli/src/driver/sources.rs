@@ -267,6 +267,7 @@ pub(super) struct SourceReadResult {
     pub(super) outfile_bundle_paths: FxHashSet<PathBuf>,
     pub(super) outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     pub(super) module_resolutions: FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
+    pub(super) module_resolution_misses: FxHashSet<SourceModuleResolutionKey>,
     /// Tuples of (`file_path`, `type_name`, `byte_offset_of_types_attr`, `span_length`).
     pub(super) type_reference_errors: Vec<(PathBuf, String, usize, usize)>,
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
@@ -647,6 +648,7 @@ pub(super) fn read_source_files(
         FxHashMap::default();
     let mut module_resolutions: FxHashMap<SourceModuleResolutionKey, SourceModuleResolution> =
         FxHashMap::default();
+    let mut module_resolution_misses: FxHashSet<SourceModuleResolutionKey> = FxHashSet::default();
     let mut seen = FxHashSet::default();
     let mut discovery_order: FxHashMap<PathBuf, usize> = FxHashMap::default();
     let mut next_discovery_order = 0usize;
@@ -900,6 +902,13 @@ pub(super) fn read_source_files(
                             next_discovery_order += 1;
                             pending.push_back(canonical);
                         }
+                    } else {
+                        module_resolution_misses.insert(SourceModuleResolutionKey {
+                            containing_file: path.clone(),
+                            specifier: specifier.clone(),
+                            import_kind,
+                            resolution_mode_override,
+                        });
                     }
                 }
             }
@@ -1099,6 +1108,7 @@ pub(super) fn read_source_files(
         outfile_bundle_paths,
         outfile_bundle_dependencies,
         module_resolutions,
+        module_resolution_misses,
         type_reference_errors,
         resolution_mode_errors,
     })
@@ -1387,6 +1397,23 @@ mod tests {
         assert!(
             result.module_resolutions.is_empty(),
             "failed resolution must fall back to diagnostic lookup"
+        );
+        let containing_file = result
+            .sources
+            .iter()
+            .find(|source| source.path.ends_with("main.ts"))
+            .expect("main.ts loaded")
+            .path
+            .clone();
+        assert!(
+            result
+                .module_resolution_misses
+                .contains(&SourceModuleResolutionKey {
+                    containing_file,
+                    specifier: "./missing".to_string(),
+                    import_kind: ImportKind::EsmImport,
+                    resolution_mode_override: None,
+                })
         );
     }
 

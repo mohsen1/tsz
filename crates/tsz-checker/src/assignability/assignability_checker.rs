@@ -1456,11 +1456,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Session-state stamp for the [`crate::context::AssignabilityEvalMemo`].
+    /// Session-state stamp for the [`crate::context::AssignabilityEvalMemo`]
+    /// and the [`crate::context::AssignabilityFailureMemo`].
     ///
     /// `None` when either type environment is currently mutably borrowed; the
-    /// memo is skipped entirely for such re-entrant calls.
-    fn assignability_eval_memo_stamp(&self) -> Option<crate::context::AssignabilityEvalStamp> {
+    /// memos are skipped entirely for such re-entrant calls.
+    pub(crate) fn assignability_eval_memo_stamp(
+        &self,
+    ) -> Option<crate::context::AssignabilityEvalStamp> {
         let env_generation = self.ctx.type_env.try_borrow().ok()?.generation();
         let environment_generation = self.ctx.type_environment.try_borrow().ok()?.generation();
         Some((
@@ -1933,14 +1936,11 @@ impl<'a> CheckerState<'a> {
         if type_id.is_intrinsic() {
             return type_id;
         }
-
         let needs_substitution =
             crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id);
-
         if !needs_substitution {
             return type_id;
         }
-
         let Some(class_info) = &self.ctx.enclosing_class else {
             return type_id;
         };

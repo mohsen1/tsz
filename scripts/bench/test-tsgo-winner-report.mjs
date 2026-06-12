@@ -1032,8 +1032,18 @@ assert.match(
 );
 assert.match(
   benchWorkflow,
-  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json\s*\n\s+bench-results-missing-attribution\.md/,
-  "merged benchmark artifact should upload the green tsgo winner report and attribution plan",
+  /node scripts\/bench\/run-attribution-plan\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-attribution-manifest\.json"/,
+  "bench workflow should collect attribution artifacts from the generated missing-attribution plan",
+);
+assert.match(
+  benchWorkflow,
+  /run-attribution-plan\.mjs[\s\S]+node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-missing-attribution\.md"/,
+  "bench workflow should refresh the winner report after attribution sidecars are collected",
+);
+assert.match(
+  benchWorkflow,
+  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json\s*\n\s+bench-results-missing-attribution\.md\s*\n\s+bench-results-attribution-manifest\.json\s*\n\s+bench-results\*\.perf\.json/,
+  "merged benchmark artifact should upload the green tsgo winner report, attribution plan, manifest, and perf sidecars",
 );
 assert.match(
   benchWorkflow,

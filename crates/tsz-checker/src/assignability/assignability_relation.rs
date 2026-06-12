@@ -151,9 +151,16 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // Reason-collecting requests share one captured solver analysis per
+        // `(source, target, flags, sound_mode)` key with
+        // `analyze_assignability_failure`, so a failing relation walks the
+        // relation engine once per session stamp (issue #13243).
+        let memo_key = request.failure_memo_key(flags, self.ctx.sound_mode());
+        let precomputed = memo_key.and_then(|key| self.failure_memo_lookup(key));
+
         let overrides = CheckerOverrideProvider::new(self, None);
 
-        let mut outcome = execute_relation(
+        let (mut outcome, capture) = execute_relation(
             request,
             self.ctx.types,
             &self.ctx,
@@ -161,7 +168,12 @@ impl<'a> CheckerState<'a> {
             &self.ctx.inheritance_graph,
             &overrides,
             self.ctx.sound_mode(),
+            precomputed.as_ref(),
         );
+
+        if let (Some(key), Some(capture)) = (memo_key, capture) {
+            self.failure_memo_store(key, capture);
+        }
 
         self.propagate_overflow_flags(outcome.depth_exceeded, outcome.iteration_exceeded);
         self.apply_checker_side_downgrade(&mut outcome, request.source, request.target);
@@ -339,15 +351,22 @@ impl<'a> CheckerState<'a> {
             let flags = self.ctx.pack_relation_flags();
             let overrides = CheckerOverrideProvider::new(self, Some(&*env));
             let request = build_request(source, target);
-            crate::query_boundaries::assignability::execute_relation(
-                &request,
-                self.ctx.types,
-                &*env,
-                flags,
-                &self.ctx.inheritance_graph,
-                &overrides,
-                self.ctx.sound_mode(),
-            )
+            // Env-resolver runs keep their no-cache semantics: the borrowed
+            // `TypeEnvironment` resolver answers lazily differently from the
+            // canonical `CheckerContext` resolver, so these outcomes neither
+            // consult nor populate the failure-analysis memo.
+            let (relation_outcome, _capture) =
+                crate::query_boundaries::assignability::execute_relation(
+                    &request,
+                    self.ctx.types,
+                    &*env,
+                    flags,
+                    &self.ctx.inheritance_graph,
+                    &overrides,
+                    self.ctx.sound_mode(),
+                    None,
+                );
+            relation_outcome
         };
 
         self.propagate_overflow_flags(
