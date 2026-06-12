@@ -42,6 +42,7 @@ use crate::diagnostics::Diagnostic;
 
 use super::{
     CheckerContext, CowCache, PendingImplicitAnyKind, PendingImplicitAnyVar, RequestCacheKey,
+    TypeParameterScopeCacheKey,
 };
 
 // ---------------------------------------------------------------------------
@@ -118,6 +119,7 @@ pub(crate) struct FullSnapshot {
     pub pending_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyVar>>,
     pub reported_implicit_any_vars: CowCache<FxHashMap<SymbolId, PendingImplicitAnyKind>>,
     pub implicit_any_checked_closures: CowCache<FxHashSet<NodeIndex>>,
+    pub type_node_scope_types: CowCache<FxHashMap<(u32, TypeParameterScopeCacheKey), TypeId>>,
     pub request_node_types: CowCache<FxHashMap<(u32, RequestCacheKey), TypeId>>,
 }
 
@@ -129,6 +131,8 @@ pub(crate) struct FullSnapshot {
 pub(crate) struct CacheSnapshot {
     /// Clone of the flat `node_types` cache before speculation.
     pub node_types: super::NodeTypeCache,
+    /// O(1) `CowCache` snapshot of generic-scope type-node results.
+    pub type_node_scope_types: CowCache<FxHashMap<(u32, TypeParameterScopeCacheKey), TypeId>>,
     /// O(1) `CowCache` snapshot of the flow analysis cache.
     pub flow_analysis_cache:
         CowCache<rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>,
@@ -222,6 +226,7 @@ impl<'a> CheckerContext<'a> {
             pending_implicit_any_vars: self.pending_implicit_any_vars.clone(),
             reported_implicit_any_vars: self.reported_implicit_any_vars.clone(),
             implicit_any_checked_closures: self.implicit_any_checked_closures.clone(),
+            type_node_scope_types: self.type_node_scope_types.clone(),
             request_node_types: self.request_node_types.clone(),
         }
     }
@@ -235,6 +240,7 @@ impl<'a> CheckerContext<'a> {
             full: self.snapshot_full(),
             cache: CacheSnapshot {
                 node_types: self.node_types.clone(),
+                type_node_scope_types: self.type_node_scope_types.clone(),
                 flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
                 flow_narrowed_nodes: self.flow_narrowed_nodes.clone(),
                 daa_error_nodes: self.daa_error_nodes.clone(),
@@ -315,6 +321,8 @@ impl<'a> CheckerContext<'a> {
             .clone_from(&snap.reported_implicit_any_vars);
         self.implicit_any_checked_closures
             .clone_from(&snap.implicit_any_checked_closures);
+        self.type_node_scope_types
+            .clone_from(&snap.type_node_scope_types);
         self.request_node_types.clone_from(&snap.request_node_types);
     }
 
@@ -328,6 +336,8 @@ impl<'a> CheckerContext<'a> {
         );
         self.rollback_full(&snap.full);
         self.node_types.clone_from(&snap.cache.node_types);
+        self.type_node_scope_types
+            .clone_from(&snap.cache.type_node_scope_types);
         self.flow_analysis_cache
             .borrow_mut()
             .clone_from(&snap.cache.flow_analysis_cache);

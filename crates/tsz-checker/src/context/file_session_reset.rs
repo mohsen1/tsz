@@ -116,6 +116,7 @@ impl<'a> CheckerContext<'a> {
         self.node_types.clear();
 
         // Node-keyed caches (FxHashMap shape).
+        self.type_node_scope_types.clear();
         self.request_node_types.clear();
         self.class_instance_type_cache.clear();
         self.class_constructor_type_cache.clear();

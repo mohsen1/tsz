@@ -91,6 +91,7 @@ impl<'a> CheckerContext<'a> {
             skip_lib_type_resolution: false,
             lib_heritage_in_progress: crate::context::CowCache::default(),
             node_types: crate::context::NodeTypeCache::with_capacity(arena.nodes.len()),
+            type_node_scope_types: crate::context::CowCache::default(),
             request_node_types: crate::context::CowCache::default(),
             object_literal_tracking: crate::context::ObjectLiteralTracking::default(),
             request_cache_counters: crate::context::RequestCacheCounters::default(),
