@@ -162,6 +162,12 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit a generic type application while preserving the already-interned
+    /// `TypeId` that carried the application.
+    fn visit_application_type(&mut self, _type_id: TypeId, app_id: u32) -> Self::Output {
+        self.visit_application(app_id)
+    }
+
     /// Visit a conditional type T extends U ? X : Y.
     fn visit_conditional(&mut self, _cond_id: u32) -> Self::Output {
         Self::default_output()

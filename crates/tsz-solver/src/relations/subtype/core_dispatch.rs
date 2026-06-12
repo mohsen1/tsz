@@ -1168,7 +1168,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             application_id(self.interner, source),
             application_id(self.interner, target),
         ) {
-            return self.check_application_to_application_subtype(s_app_id, t_app_id);
+            return self
+                .check_application_to_application_subtype(source, target, s_app_id, t_app_id);
         }
 
         // When both source and target are applications, try mapped-to-mapped
@@ -1208,7 +1209,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // default type parameters for a precise comparison.
                 let t_type_id = self.interner.application(s_app.base, vec![]);
                 if let Some(t_app_id) = application_id(self.interner, t_type_id) {
-                    let result = self.check_application_to_application_subtype(s_app_id, t_app_id);
+                    let result = self.check_application_to_application_subtype(
+                        source, t_type_id, s_app_id, t_app_id,
+                    );
                     if result.is_true() {
                         return result;
                     }
