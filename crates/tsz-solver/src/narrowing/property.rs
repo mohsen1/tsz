@@ -475,10 +475,9 @@ impl<'a> NarrowingContext<'a> {
             return None;
         }
 
-        let name = self.db.resolve_atom_ref(property_name);
         match self
             .db
-            .resolve_property_access(resolved_type, name.as_ref())
+            .resolve_property_access_atom(resolved_type, property_name)
         {
             PropertyAccessResult::Success {
                 from_index_signature,
