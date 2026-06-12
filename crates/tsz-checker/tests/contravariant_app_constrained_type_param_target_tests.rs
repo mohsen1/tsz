@@ -184,6 +184,31 @@ function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<
 }
 
 #[test]
+fn recursive_tuple_conditional_with_target_type_param_falls_through() {
+    // A failed public pre-evaluation variance check is not definitive when
+    // either side still carries type parameters. Here the source application
+    // has a concrete tuple-length argument, but the target argument is a type
+    // parameter constrained to that concrete length; structural conditional
+    // expansion must get the same chance `tsc` gives it.
+    let source = r#"
+type TupleOf<T, N extends number> = N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f<N extends 1>(one: TupleOf<number, 1>, tn: TupleOf<number, N>) {
+    one = tn;
+    tn = one;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes = codes(&diags);
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2345),
+        "expected recursive tuple conditionals with target params to stay clean. Codes: {codes:?}"
+    );
+}
+
+#[test]
 fn covariant_application_to_constrained_param_target_rejects_wider_to_narrower() {
     // Anti-regression: COVARIANT containers still reject the wider-to-narrower
     // direction. `Covariant<A>` -> `Covariant<B>` fails when B extends A,

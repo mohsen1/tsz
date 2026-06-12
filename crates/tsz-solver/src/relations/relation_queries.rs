@@ -863,11 +863,11 @@ pub fn check_application_variance<R: TypeResolver>(
         }
     }
 
-    let source_args_contain_type_parameters = s_app
-        .args
-        .iter()
-        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg));
-    if any_checked && !all_ok && !source_args_contain_type_parameters {
+    let application_args_are_concrete = s_app.args.iter().chain(t_app.args.iter()).all(|&arg| {
+        !crate::visitors::visitor_predicates::contains_type_parameters(db, arg)
+            && !crate::contains_this_type(db, arg)
+    });
+    if any_checked && !all_ok && application_args_are_concrete {
         return Some(false);
     }
 
