@@ -1250,6 +1250,13 @@ impl<'a> TypeInstantiator<'a> {
                         // constraint and produces `<member>[keyof <member>]`
                         // where the source said `<member>[K]`.
                         let iter_var_shadow = [mapped.type_param.name];
+                        // Reuse one substitution map across distributed
+                        // members. The only per-member semantic change is the
+                        // homomorphic source parameter (`tp_info.name`), so a
+                        // single mutable map preserves the same bindings as
+                        // clone+insert while avoiding O(members * subst_len)
+                        // entry copies for large union sources.
+                        let mut member_subst = self.substitution.clone();
                         for &member in &members {
                             if crate::visitors::visitor_predicates::is_primitive_type(
                                 self.interner,
@@ -1258,7 +1265,6 @@ impl<'a> TypeInstantiator<'a> {
                                 results.push(member);
                                 continue;
                             }
-                            let mut member_subst = self.substitution.clone();
                             member_subst.insert(tp_info.name, member);
                             let inst = |t| {
                                 instantiate_type_with_shadowed(
