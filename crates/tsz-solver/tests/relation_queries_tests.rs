@@ -473,3 +473,90 @@ fn redeclaration_identity_same_union_is_identical() {
         "C | D should be identical to C | D for redeclaration"
     );
 }
+
+/// Compile-time tripwire for the relation cache-key contract (#8207).
+///
+/// `RelationPolicy` is the single canonical cache-key input for relation
+/// queries: every behavior-affecting field must be projected into
+/// `RelationCacheConfig` by `RelationPolicy::cache_config`.
+///
+/// The destructuring below is intentionally exhaustive (no `..` rest
+/// pattern), so adding a field to `RelationPolicy` fails compilation here.
+/// When that happens, the new field must:
+///
+/// (a) be mapped into `RelationCacheConfig` / the relation cache key, or be
+///     explicitly documented as cache-neutral (diagnostic-only) on the
+///     struct doc comment; and
+/// (b) get a cache-partition test (see `relation_cache_config_tests` and the
+///     per-field assertions below) before this pattern is extended with the
+///     new field.
+///
+/// This test lives next to `RelationPolicy` (instead of in
+/// `relation_cache_config_tests`) because the exhaustive pattern needs
+/// visibility of the private `flags` field.
+#[test]
+fn relation_policy_fields_are_exhaustively_partitioned_in_cache_keys() {
+    use crate::relation_cache_config_tests::{
+        assert_assignability_partitions, assert_subtype_partitions,
+    };
+
+    let policy = RelationPolicy::default();
+    let RelationPolicy {
+        flags,
+        strict_subtype_checking,
+        strict_any_propagation,
+        any_propagation_mode,
+        assume_related_on_cycle,
+        skip_weak_type_checks,
+        erase_generics,
+    } = policy;
+
+    // `flags`: toggle a representative typed bit relative to the current
+    // default; the full per-bit matrix lives in
+    // `relation_cache_config_tests::each_relation_flag_bit_produces_a_distinct_key`.
+    assert_subtype_partitions(
+        "flags",
+        RelationPolicy::from_relation_flags(flags),
+        RelationPolicy::from_relation_flags(
+            flags.symmetric_difference(RelationFlags::STRICT_NULL_CHECKS),
+        ),
+    );
+    assert_assignability_partitions(
+        "strict_subtype_checking",
+        policy.with_strict_subtype_checking(!strict_subtype_checking),
+        policy,
+    );
+    assert_assignability_partitions(
+        "strict_any_propagation",
+        policy.with_strict_any_propagation(!strict_any_propagation),
+        policy,
+    );
+    // Exhaustive over `AnyPropagationMode` as well: a new variant must pick a
+    // distinct `CachedAnyMode` projection in `RelationPolicy::cache_config`.
+    let other_any_mode = match any_propagation_mode {
+        AnyPropagationMode::All => AnyPropagationMode::TopLevelOnly,
+        AnyPropagationMode::TopLevelOnly | AnyPropagationMode::AnySourceNotRelated => {
+            AnyPropagationMode::All
+        }
+    };
+    assert_subtype_partitions(
+        "any_propagation_mode",
+        policy.with_any_propagation_mode(other_any_mode),
+        policy,
+    );
+    assert_subtype_partitions(
+        "assume_related_on_cycle",
+        policy.with_assume_related_on_cycle(!assume_related_on_cycle),
+        policy,
+    );
+    assert_assignability_partitions(
+        "skip_weak_type_checks",
+        policy.with_skip_weak_type_checks(!skip_weak_type_checks),
+        policy,
+    );
+    assert_subtype_partitions(
+        "erase_generics",
+        policy.with_erase_generics(!erase_generics),
+        policy,
+    );
+}

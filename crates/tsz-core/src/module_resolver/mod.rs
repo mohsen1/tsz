@@ -34,13 +34,13 @@ pub use diagnostics::*;
 pub use request_types::*;
 
 use crate::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
-use crate::diagnostics::DiagnosticBag;
 use crate::emitter::ModuleKind;
 use crate::module_resolver_helpers::PackageJson;
 use crate::span::Span;
 use rustc_hash::FxHashMap;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use tsz_common::diagnostics::Diagnostic;
 
 type ResolutionCacheKey = (PathBuf, String, ImportingModuleKind, ImportKind);
 const HASH_BUCKET_OVERHEAD_BYTES: usize = 16;
@@ -969,7 +969,7 @@ impl ModuleResolver {
                         && !specifier.contains(':');
                     if is_bare {
                         diag.code = MODULE_RESOLUTION_MODE_MISMATCH;
-                        diag.message = format!(
+                        diag.message_text = format!(
                             "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
                         );
                     }
@@ -978,10 +978,10 @@ impl ModuleResolver {
                 // If the primary resolution found the file but JSX wasn't set,
                 // mark as resolved to suppress TS2307 but record the JSX error.
                 if jsx_resolved.is_some() {
-                    return ModuleLookupResult::resolved_with_error(diag.code, diag.message);
+                    return ModuleLookupResult::resolved_with_error(diag.code, diag.message_text);
                 }
 
-                ModuleLookupResult::failed(diag.code, diag.message)
+                ModuleLookupResult::failed(diag.code, diag.message_text)
             }
         }
     }
@@ -1140,7 +1140,7 @@ impl ModuleResolver {
         self.resolution_kind
     }
 
-    /// Emit TS2307 error for a resolution failure into a diagnostic bag
+    /// Emit TS2307 error for a resolution failure into a diagnostics list
     ///
     /// All module resolution failures emit TS2307 "Cannot find module" error.
     /// This includes:
@@ -1151,11 +1151,10 @@ impl ModuleResolver {
     /// - `PathMappingFailed`: Path mapping from tsconfig did not resolve
     pub fn emit_resolution_error(
         &self,
-        diagnostics: &mut DiagnosticBag,
+        diagnostics: &mut Vec<Diagnostic>,
         failure: &ResolutionFailure,
     ) {
-        let diagnostic = failure.to_diagnostic();
-        diagnostics.add(diagnostic);
+        diagnostics.push(failure.to_diagnostic());
     }
 }
 
