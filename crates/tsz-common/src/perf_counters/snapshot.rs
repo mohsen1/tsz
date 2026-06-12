@@ -495,6 +495,16 @@ pub struct EvaluatorMemoCounters {
     pub lost_memo_recomputes: u64,
     /// Same-key clean computes whose result differed across evaluators.
     pub lost_memo_mismatches: u64,
+    /// Subset of `lost_memo_recomputes` with identity results.
+    pub lost_memo_recomputes_identity: u64,
+    /// Nested `lookup_eval_memo` hits inside evaluators.
+    pub memo_nested_hits: u64,
+    /// Lost recomputes by plain memo-reading evaluators.
+    pub lost_memo_recomputes_plain: u64,
+    /// Lost recomputes by the authoritative checker evaluator.
+    pub lost_memo_recomputes_authoritative: u64,
+    /// Lost recomputes by other evaluator contexts.
+    pub lost_memo_recomputes_other: u64,
     /// Memo entries discarded undrained at evaluator drop.
     pub dropped_memo_entries: u64,
     /// Auxiliary memo entries (conditional-subtype / contains-infer)
@@ -656,6 +666,11 @@ impl PerfCounters {
                 compute_nodes: load(&c.eval_compute_nodes),
                 lost_memo_recomputes: load(&c.eval_lost_memo_recomputes),
                 lost_memo_mismatches: load(&c.eval_lost_memo_mismatches),
+                lost_memo_recomputes_identity: load(&c.eval_lost_memo_recomputes_identity),
+                memo_nested_hits: load(&c.eval_memo_nested_hits),
+                lost_memo_recomputes_plain: load(&c.eval_lost_memo_recomputes_plain),
+                lost_memo_recomputes_authoritative: load(&c.eval_lost_memo_recomputes_authoritative),
+                lost_memo_recomputes_other: load(&c.eval_lost_memo_recomputes_other),
                 dropped_memo_entries: load(&c.eval_dropped_memo_entries),
                 dropped_aux_entries: load(&c.eval_dropped_aux_entries),
             },

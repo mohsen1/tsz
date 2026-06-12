@@ -161,6 +161,20 @@ pub struct PerfCounters {
     /// evaluator contexts would change behavior (resolver/registration
     /// dependence); these must stay per-run.
     pub eval_lost_memo_mismatches: AtomicU64,
+    /// `lookup_eval_memo` hits served at nested evaluate nodes.
+    pub eval_memo_nested_hits: AtomicU64,
+    /// Lost recomputes performed by a plain memo-reading evaluator.
+    pub eval_lost_memo_recomputes_plain: AtomicU64,
+    /// Lost recomputes performed by the checker's authoritative
+    /// (closed-eval-writing, resolver-backed) evaluator.
+    pub eval_lost_memo_recomputes_authoritative: AtomicU64,
+    /// Lost recomputes performed by other contexts (resolver-backed
+    /// non-authoritative, or mode-flagged plain evaluators).
+    pub eval_lost_memo_recomputes_other: AtomicU64,
+    /// Subset of `eval_lost_memo_recomputes` whose result equals its input
+    /// (`eval(T) == T`): identity walks the per-file drain deliberately
+    /// skips, so they are re-walked by every evaluator that meets them.
+    pub eval_lost_memo_recomputes_identity: AtomicU64,
     /// Per-run memo entries still resident when an evaluator was dropped
     /// (i.e. not drained into a longer-lived cache).
     pub eval_dropped_memo_entries: AtomicU64,
@@ -303,6 +317,11 @@ impl PerfCounters {
             eval_compute_nodes: AtomicU64::new(0),
             eval_lost_memo_recomputes: AtomicU64::new(0),
             eval_lost_memo_mismatches: AtomicU64::new(0),
+            eval_lost_memo_recomputes_identity: AtomicU64::new(0),
+            eval_memo_nested_hits: AtomicU64::new(0),
+            eval_lost_memo_recomputes_plain: AtomicU64::new(0),
+            eval_lost_memo_recomputes_authoritative: AtomicU64::new(0),
+            eval_lost_memo_recomputes_other: AtomicU64::new(0),
             eval_dropped_memo_entries: AtomicU64::new(0),
             eval_dropped_aux_entries: AtomicU64::new(0),
             interner_intern_calls: AtomicU64::new(0),
@@ -1321,6 +1340,44 @@ pub fn record_eval_lost_memo_recompute() {
     }
     counters()
         .eval_lost_memo_recomputes
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a nested `lookup_eval_memo` hit inside an evaluator.
+#[inline]
+pub fn record_eval_memo_nested_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_memo_nested_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a lost-memo recompute attributed to an evaluator context class:
+/// 0 = plain memo-reading, 1 = authoritative checker pass, 2 = other.
+#[inline]
+pub fn record_eval_lost_memo_recompute_ctx(ctx: u8) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    let field = match ctx {
+        0 => &c.eval_lost_memo_recomputes_plain,
+        1 => &c.eval_lost_memo_recomputes_authoritative,
+        _ => &c.eval_lost_memo_recomputes_other,
+    };
+    field.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a lost-memo recompute whose result was the input itself.
+#[inline]
+pub fn record_eval_lost_memo_recompute_identity() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_lost_memo_recomputes_identity
         .fetch_add(1, Ordering::Relaxed);
 }
 

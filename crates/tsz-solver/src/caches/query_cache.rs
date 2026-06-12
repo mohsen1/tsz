@@ -582,6 +582,23 @@ impl<'a> QueryCache<'a> {
         self.element_access_cache.borrow_mut().insert(key, result);
     }
 
+    /// Layered eval-memo lookup: local per-file cache first, then the shared
+    /// cross-file cache (promoting shared hits into the local map). Single
+    /// source of truth for both the top-level `evaluate_type_with_options`
+    /// boundary and nested `lookup_eval_memo` reads (issue #13097).
+    fn lookup_eval_cache_layers(&self, key: EvaluationCacheKey) -> Option<TypeId> {
+        if let Some(result) = self.eval_cache.borrow().get(&key).copied() {
+            return Some(result);
+        }
+        if let Some(shared) = self.shared
+            && let Some(result) = shared.eval_cache.get(&key).map(|r| *r)
+        {
+            self.eval_cache.borrow_mut().insert(key, result);
+            return Some(result);
+        }
+        None
+    }
+
     fn check_application_eval_cache(&self, key: ApplicationEvalCacheKey) -> Option<TypeId> {
         if let Some(result) = self.application_eval_cache.borrow().get(&key).copied() {
             self.application_eval_cache_hits
@@ -986,6 +1003,34 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
                 })
                 && !crate::visitors::visitor::contains_lazy_def_id(self.interner, result, def_id)
         });
+    }
+
+    /// Nested eval-memo read for plain evaluators (issue #13097).
+    /// Same layered lookup the top-level boundary uses.
+    fn lookup_eval_memo(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        self.lookup_eval_cache_layers(EvaluationCacheKey::new(
+            type_id,
+            no_unchecked_indexed_access,
+            self.exact_optional_property_types(),
+        ))
+    }
+
+    /// Write-through eval-memo store for plain evaluators (issue #13097).
+    /// First write wins, matching the top-level boundary drain.
+    fn insert_eval_memo(&self, type_id: TypeId, no_unchecked_indexed_access: bool, result: TypeId) {
+        let key = EvaluationCacheKey::new(
+            type_id,
+            no_unchecked_indexed_access,
+            self.exact_optional_property_types(),
+        );
+        self.eval_cache.borrow_mut().entry(key).or_insert(result);
+        if let Some(shared) = self.shared {
+            shared.eval_cache.entry(key).or_insert(result);
+        }
     }
 
     fn lookup_closed_eval_cache(
@@ -1425,17 +1470,7 @@ impl QueryDatabase for QueryCache<'_> {
             .with_no_unchecked_indexed_access(no_unchecked_indexed_access)
             .with_exact_optional_property_types(self.exact_optional_property_types());
         let key = request.cache_key();
-        let cached = self.eval_cache.borrow().get(&key).copied();
-
-        if let Some(result) = cached {
-            return result;
-        }
-
-        // L2: Check shared cross-file cache before doing expensive evaluation.
-        if let Some(shared) = self.shared
-            && let Some(result) = shared.eval_cache.get(&key).map(|r| *r)
-        {
-            self.eval_cache.borrow_mut().insert(key, result);
+        if let Some(result) = self.lookup_eval_cache_layers(key) {
             return result;
         }
 

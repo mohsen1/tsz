@@ -70,6 +70,7 @@ pub(crate) fn record_clean_compute(
     no_unchecked_indexed_access: bool,
     result: TypeId,
     evaluator_id: u64,
+    context_tag: u8,
 ) {
     if !perf_counters::enabled_fast() {
         return;
@@ -82,6 +83,10 @@ pub(crate) fn record_clean_compute(
                 if prev_evaluator != evaluator_id {
                     if prev_result == result {
                         perf_counters::record_eval_lost_memo_recompute();
+                        perf_counters::record_eval_lost_memo_recompute_ctx(context_tag);
+                        if result == type_id {
+                            perf_counters::record_eval_lost_memo_recompute_identity();
+                        }
                     } else {
                         perf_counters::record_eval_lost_memo_mismatch();
                     }

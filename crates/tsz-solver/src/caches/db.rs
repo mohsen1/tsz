@@ -359,6 +359,43 @@ pub trait TypeApplicationEvalCache {
     /// default is a no-op so raw `TypeInterner` backends and tests opt out.
     fn invalidate_application_eval_cache_for_def(&self, _def_id: DefId) {}
 
+    /// Look up a persisted evaluation memo entry for `type_id`.
+    ///
+    /// Backed by the same per-file (plus shared cross-file) eval cache that
+    /// `evaluate_type_with_options` consults at its top-level boundary; this
+    /// hook lets a *plain* evaluator (`NoopResolver`, default mode flags)
+    /// read those entries at nested nodes too, instead of re-walking
+    /// subtrees an earlier evaluator in the same file scope already
+    /// evaluated (issue #13097). Every stored entry is a clean
+    /// (limit-untainted) result keyed by
+    /// `(TypeId, no_unchecked_indexed_access, exact_optional_property_types)`
+    /// and written only from plain evaluators, so serving it at a nested
+    /// node is the same semantic operation the top-level boundary already
+    /// performs. Default returns `None` so raw `TypeInterner` backends and
+    /// tests opt out.
+    fn lookup_eval_memo(
+        &self,
+        _type_id: TypeId,
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store a clean evaluation result in the persistent eval memo.
+    ///
+    /// Write-through counterpart of [`Self::lookup_eval_memo`], called from
+    /// a plain evaluator's memo insert when the entry's evaluation window
+    /// saw no limit event (the per-entry taint discrimination of issue
+    /// #13241) and no union-complexity overflow. First write wins, matching
+    /// the boundary drain's `or_insert`. Default is a no-op.
+    fn insert_eval_memo(
+        &self,
+        _type_id: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+
     /// Look up a cached evaluation result for a *closed* type (one with no free
     /// type parameters, `this`, `infer`, or type-query operands).
     ///
