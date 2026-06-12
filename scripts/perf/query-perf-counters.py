@@ -73,6 +73,7 @@ def print_summary(snap: dict) -> None:
     checker = snap["checker"]
     overlay = snap["overlay"]
     interner = snap["interner"]
+    materialization = snap.get("solver_materialization", {})
     resolver = snap["resolver"]
     print(f"schema_version = {snap['schema_version']}")
     print(f"mode           = {snap['mode']}")
@@ -196,6 +197,24 @@ def print_summary(snap: dict) -> None:
         tail_pct = 100.0 * tail / tot if tot else 0.0
         print(f"  lock_wait_histogram (total={fmt_int(tot)}  >=1ms={fmt_int(tail)}  tail%={tail_pct:.3f})")
         print(f"    {bar}")
+    if materialization:
+        print()
+        print("solver materialization:")
+        print(
+            f"  union_reductions={fmt_int(materialization['union_subtype_reduction_calls'])}  "
+            f"members_total={fmt_int(materialization['union_subtype_reduction_members_total'])}  "
+            f"members_max={fmt_int(materialization['union_subtype_reduction_members_max'])}"
+        )
+        print(
+            f"  pairwise_budget={fmt_int(materialization['union_subtype_reduction_pairwise_budget_total'])}  "
+            f"shallow_checks={fmt_int(materialization['union_subtype_reduction_shallow_checks'])}"
+        )
+        print(
+            f"  property_walks={fmt_int(materialization['property_instantiation_walks'])}  "
+            f"properties_total={fmt_int(materialization['property_instantiation_properties_total'])}  "
+            f"properties_max={fmt_int(materialization['property_instantiation_properties_max'])}  "
+            f"changed={fmt_int(materialization['property_instantiation_changed'])}"
+        )
 
 
 def print_by_reason(snap: dict, optional=False) -> None:
@@ -315,6 +334,23 @@ def print_diff(post: dict, base: dict) -> None:
                 f"phase={a.get('phase')} {a.get('name')} {a['file']}"
             )
     print()
+    if post.get("solver_materialization") or base.get("solver_materialization"):
+        print("solver materialization:")
+        post_mat = post.get("solver_materialization", {})
+        base_mat = base.get("solver_materialization", {})
+        for k in (
+            "union_subtype_reduction_calls",
+            "union_subtype_reduction_members_total",
+            "union_subtype_reduction_members_max",
+            "union_subtype_reduction_pairwise_budget_total",
+            "union_subtype_reduction_shallow_checks",
+            "property_instantiation_walks",
+            "property_instantiation_properties_total",
+            "property_instantiation_properties_max",
+            "property_instantiation_changed",
+        ):
+            print(f"  {delta(post_mat, base_mat, k)}")
+        print()
     post_rows = {r["reason"]: r for r in by_reason_rows(post, optional=True)}
     base_rows = {r["reason"]: r for r in by_reason_rows(base, optional=True)}
     if not post_rows or not base_rows:

@@ -42,6 +42,10 @@ impl<'a> TypeInstantiator<'a> {
                 instantiated = Some(changed);
             }
         }
+        tsz_common::perf_counters::record_property_instantiation_walk(
+            properties.len() as u64,
+            instantiated.is_some(),
+        );
         instantiated
     }
 
