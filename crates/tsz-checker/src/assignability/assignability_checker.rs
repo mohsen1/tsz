@@ -1936,14 +1936,11 @@ impl<'a> CheckerState<'a> {
         if type_id.is_intrinsic() {
             return type_id;
         }
-
         let needs_substitution =
             crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id);
-
         if !needs_substitution {
             return type_id;
         }
-
         let Some(class_info) = &self.ctx.enclosing_class else {
             return type_id;
         };
