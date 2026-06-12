@@ -256,6 +256,9 @@ pub struct QueryCache<'a> {
     subtype_reduction_cache: SubtypeReductionCache,
     application_eval_cache_hits: Cell<u64>,
     application_eval_cache_misses: Cell<u64>,
+    application_eval_cache_shared_hits: Cell<u64>,
+    application_eval_cache_shared_misses: Cell<u64>,
+    application_eval_cache_shared_inserts: Cell<u64>,
     subtype_cache_hits: Cell<u64>,
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
@@ -264,6 +267,9 @@ pub struct QueryCache<'a> {
     intersection_merge_cache_misses: Cell<u64>,
     instantiation_cache_hits: Cell<u64>,
     instantiation_cache_misses: Cell<u64>,
+    instantiation_cache_shared_hits: Cell<u64>,
+    instantiation_cache_shared_misses: Cell<u64>,
+    instantiation_cache_shared_inserts: Cell<u64>,
     subtype_reduction_cache_hits: Cell<u64>,
     subtype_reduction_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
@@ -313,6 +319,9 @@ impl<'a> QueryCache<'a> {
             subtype_reduction_cache: SubtypeReductionCache::new(),
             application_eval_cache_hits: Cell::new(0),
             application_eval_cache_misses: Cell::new(0),
+            application_eval_cache_shared_hits: Cell::new(0),
+            application_eval_cache_shared_misses: Cell::new(0),
+            application_eval_cache_shared_inserts: Cell::new(0),
             subtype_cache_hits: Cell::new(0),
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
@@ -321,6 +330,9 @@ impl<'a> QueryCache<'a> {
             intersection_merge_cache_misses: Cell::new(0),
             instantiation_cache_hits: Cell::new(0),
             instantiation_cache_misses: Cell::new(0),
+            instantiation_cache_shared_hits: Cell::new(0),
+            instantiation_cache_shared_misses: Cell::new(0),
+            instantiation_cache_shared_inserts: Cell::new(0),
             subtype_reduction_cache_hits: Cell::new(0),
             subtype_reduction_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
@@ -369,6 +381,9 @@ impl<'a> QueryCache<'a> {
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
             application_eval_cache_hits: self.application_eval_cache_hits.get(),
             application_eval_cache_misses: self.application_eval_cache_misses.get(),
+            application_eval_cache_shared_hits: self.application_eval_cache_shared_hits.get(),
+            application_eval_cache_shared_misses: self.application_eval_cache_shared_misses.get(),
+            application_eval_cache_shared_inserts: self.application_eval_cache_shared_inserts.get(),
             element_access_cache_entries: self.element_access_cache.borrow().len(),
             object_spread_cache_entries: self.object_spread_properties_cache.borrow().len(),
             property_cache_entries: self.property_cache.borrow().len(),
@@ -380,6 +395,9 @@ impl<'a> QueryCache<'a> {
             instantiation_cache_entries: self.instantiation_cache.len(),
             instantiation_cache_hits: self.instantiation_cache_hits.get(),
             instantiation_cache_misses: self.instantiation_cache_misses.get(),
+            instantiation_cache_shared_hits: self.instantiation_cache_shared_hits.get(),
+            instantiation_cache_shared_misses: self.instantiation_cache_shared_misses.get(),
+            instantiation_cache_shared_inserts: self.instantiation_cache_shared_inserts.get(),
             subtype_reduction_cache_entries: self.subtype_reduction_cache.len(),
             subtype_reduction_cache_hits: self.subtype_reduction_cache_hits.get(),
             subtype_reduction_cache_misses: self.subtype_reduction_cache_misses.get(),
@@ -390,6 +408,9 @@ impl<'a> QueryCache<'a> {
     pub fn reset_relation_cache_stats(&self) {
         self.application_eval_cache_hits.set(0);
         self.application_eval_cache_misses.set(0);
+        self.application_eval_cache_shared_hits.set(0);
+        self.application_eval_cache_shared_misses.set(0);
+        self.application_eval_cache_shared_inserts.set(0);
         self.subtype_cache_hits.set(0);
         self.subtype_cache_misses.set(0);
         self.assignability_cache_hits.set(0);
@@ -398,6 +419,9 @@ impl<'a> QueryCache<'a> {
         self.intersection_merge_cache_misses.set(0);
         self.instantiation_cache_hits.set(0);
         self.instantiation_cache_misses.set(0);
+        self.instantiation_cache_shared_hits.set(0);
+        self.instantiation_cache_shared_misses.set(0);
+        self.instantiation_cache_shared_inserts.set(0);
         self.subtype_reduction_cache_hits.set(0);
         self.subtype_reduction_cache_misses.set(0);
     }
@@ -634,12 +658,17 @@ impl<'a> QueryCache<'a> {
         }
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
-            && let Some(result) = shared.application_eval_cache.get(&key).map(|entry| *entry)
         {
-            self.application_eval_cache.borrow_mut().insert(key, result);
-            self.application_eval_cache_hits
-                .set(self.application_eval_cache_hits.get() + 1);
-            return Some(result);
+            if let Some(result) = shared.application_eval_cache.get(&key).map(|entry| *entry) {
+                self.application_eval_cache.borrow_mut().insert(key, result);
+                self.application_eval_cache_hits
+                    .set(self.application_eval_cache_hits.get() + 1);
+                self.application_eval_cache_shared_hits
+                    .set(self.application_eval_cache_shared_hits.get() + 1);
+                return Some(result);
+            }
+            self.application_eval_cache_shared_misses
+                .set(self.application_eval_cache_shared_misses.get() + 1);
         }
         self.application_eval_cache_misses
             .set(self.application_eval_cache_misses.get() + 1);
@@ -651,6 +680,8 @@ impl<'a> QueryCache<'a> {
             && shared.shares_instantiation_family()
         {
             shared.application_eval_cache.insert(key.clone(), result);
+            self.application_eval_cache_shared_inserts
+                .set(self.application_eval_cache_shared_inserts.get() + 1);
         }
         self.application_eval_cache.borrow_mut().insert(key, result);
     }
@@ -1660,12 +1691,17 @@ impl QueryDatabase for QueryCache<'_> {
             None => {
                 if let Some(shared) = self.shared
                     && shared.shares_instantiation_family()
-                    && let Some(result) = shared.instantiation_cache.get(key).map(|entry| *entry)
                 {
-                    self.instantiation_cache.insert(key.clone(), result);
-                    self.instantiation_cache_hits
-                        .set(self.instantiation_cache_hits.get() + 1);
-                    return Some(result);
+                    if let Some(result) = shared.instantiation_cache.get(key).map(|entry| *entry) {
+                        self.instantiation_cache.insert(key.clone(), result);
+                        self.instantiation_cache_hits
+                            .set(self.instantiation_cache_hits.get() + 1);
+                        self.instantiation_cache_shared_hits
+                            .set(self.instantiation_cache_shared_hits.get() + 1);
+                        return Some(result);
+                    }
+                    self.instantiation_cache_shared_misses
+                        .set(self.instantiation_cache_shared_misses.get() + 1);
                 }
                 self.instantiation_cache_misses
                     .set(self.instantiation_cache_misses.get() + 1);
@@ -1680,6 +1716,8 @@ impl QueryDatabase for QueryCache<'_> {
             && shared.shares_instantiation_family()
         {
             shared.instantiation_cache.insert(key.clone(), result);
+            self.instantiation_cache_shared_inserts
+                .set(self.instantiation_cache_shared_inserts.get() + 1);
         }
         self.instantiation_cache.insert(key, result);
     }
