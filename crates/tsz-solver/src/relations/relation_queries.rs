@@ -803,16 +803,16 @@ pub fn check_application_variance<R: TypeResolver>(
         return None;
     }
 
-    let variances = if same_base_same_arity {
-        let def_id = lazy_def_id(db, s_app.base)?;
-        resolver.get_type_param_variance(def_id).or_else(|| {
-            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
-                db, resolver, query_db, def_id,
-            )
-        })?
+    let def_id = if same_base_same_arity {
+        lazy_def_id(db, s_app.base)?
     } else {
         return None;
     };
+    let variances = resolver.get_type_param_variance(def_id).or_else(|| {
+        crate::relations::variance::compute_type_param_variances_with_resolver_cached(
+            db, resolver, query_db, def_id,
+        )
+    })?;
     if variances.len() != s_app.args.len() {
         return None;
     }
@@ -867,12 +867,32 @@ pub fn check_application_variance<R: TypeResolver>(
         !crate::visitors::visitor_predicates::contains_type_parameters(db, arg)
             && !crate::contains_this_type(db, arg)
     });
+    if alias_body_application_uses_type_parameters(db, resolver, def_id) {
+        return None;
+    }
     if any_checked && !all_ok && application_args_are_concrete {
         return Some(false);
     }
 
     // Positive outcomes still fall through structurally at this boundary.
     None
+}
+
+fn alias_body_application_uses_type_parameters<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    def_id: crate::def::DefId,
+) -> bool {
+    let Some(body) = resolver.resolve_lazy(def_id, db) else {
+        return false;
+    };
+    let Some(app_id) = crate::visitor::application_id(db, body) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    app.args
+        .iter()
+        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
 }
 
 /// Check if two type parameters are assignable to each other.
