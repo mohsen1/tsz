@@ -228,32 +228,14 @@ pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
-/// Check if a type is structurally the Function interface from lib.d.ts.
+/// Check if a type is the Function interface from lib.d.ts.
 ///
-/// The Function interface may be lowered as an `Object` (without call signatures)
-/// due to cross-arena declaration splitting. This detects it by checking for the
-/// characteristic properties: `apply`, `call`, and `bind`.
+/// Delegates to the canonical query in [`super::global_interfaces`]:
+/// boxed-registry identity first, then the shared structural fallback
+/// (the Function interface may be lowered as an `Object` without call
+/// signatures due to cross-arena declaration splitting).
 pub fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    use crate::visitor::{object_shape_id, object_with_index_shape_id};
-    let shape_id = object_shape_id(db, type_id).or_else(|| object_with_index_shape_id(db, type_id));
-    let Some(shape_id) = shape_id else {
-        return false;
-    };
-    let shape = db.object_shape(shape_id);
-    // Function interface has ~8 own properties + ~7 inherited Object properties = ~15.
-    // Cap at 20 to avoid false positives on large interfaces.
-    if shape.properties.len() > 20 {
-        return false;
-    }
-    let apply = db.intern_string("apply");
-    let call = db.intern_string("call");
-    let bind = db.intern_string("bind");
-    shape.properties.iter().any(|p| p.name == apply)
-        && shape.properties.iter().any(|p| p.name == call)
-        && shape.properties.iter().any(|p| p.name == bind)
+    super::global_interfaces::is_global_function_interface(db, type_id)
 }
 
 pub fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

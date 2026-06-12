@@ -240,14 +240,11 @@ pub(crate) fn is_global_object_interface_for_diagnostic(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    if db
-        .get_boxed_type(tsz_solver::IntrinsicKind::Object)
-        .is_some_and(|object_type| object_type == type_id)
-    {
-        return true;
-    }
-    lazy_def_id(db, type_id)
-        .is_some_and(|def_id| db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Object))
+    tsz_solver::type_queries::is_global_interface_by_identity(
+        db,
+        type_id,
+        tsz_solver::IntrinsicKind::Object,
+    )
 }
 
 pub(crate) fn simple_intersection_head_for_this_assignment_display(

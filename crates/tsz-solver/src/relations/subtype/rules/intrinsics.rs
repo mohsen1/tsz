@@ -331,27 +331,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Structurally detect whether a type is the global `Function` interface.
     ///
     /// After pre-evaluation, `Function` from lib.d.ts becomes an `ObjectShape` and
-    /// loses its identity. This detects it by checking for the characteristic
-    /// properties: `apply`, `call`, and `bind`, with a property count cap to
-    /// avoid false matches on unrelated interfaces.
+    /// loses its identity. Delegates to the canonical shared structural fallback
+    /// in `type_queries::global_interfaces` (issue #13090). Deliberately
+    /// structural-only: callers like `core_dispatch` treat structural matches
+    /// differently from boxed-registry identity matches.
     pub(crate) fn is_function_interface_structural(&self, target: TypeId) -> bool {
-        let shape_id = object_shape_id(self.interner, target)
-            .or_else(|| object_with_index_shape_id(self.interner, target));
-        let Some(shape_id) = shape_id else {
-            return false;
-        };
-        let shape = self.interner.object_shape(shape_id);
-        // Function interface has ~8 own properties + ~7 inherited Object properties = ~15.
-        // Cap at 20 to avoid false positives on large interfaces.
-        if shape.properties.len() > 20 {
-            return false;
-        }
-        let apply = self.interner.intern_string("apply");
-        let call = self.interner.intern_string("call");
-        let bind = self.interner.intern_string("bind");
-        shape.properties.iter().any(|p| p.name == apply)
-            && shape.properties.iter().any(|p| p.name == call)
-            && shape.properties.iter().any(|p| p.name == bind)
+        crate::type_queries::matches_global_function_interface_shape(self.interner, target)
     }
 
     /// Get the apparent primitive shape for a type.
