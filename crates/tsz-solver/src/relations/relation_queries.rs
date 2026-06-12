@@ -798,17 +798,12 @@ pub fn check_application_variance<R: TypeResolver>(
         matches!(db.lookup(body), Some(TypeData::Conditional(_)))
     };
 
-    // Conditional type aliases with concrete (non-type-parameter) arguments
-    // must expand structurally so tsc's recursion-identity depth cap can apply.
-    // The solver's internal fast path is allowed to conclude more cases for
-    // subtype recursion, but this public query boundary historically fell
-    // through for concrete conditional aliases.
+    // Conditional type aliases must expand structurally at this public query
+    // boundary. Their relation outcome can depend on constraint-sensitive
+    // conditional evaluation and recursion identity, so a same-base variance
+    // shortcut is not definitive even when both applications share arity.
     if same_base_same_arity
         && (is_conditional_alias_base(s_app.base) || is_conditional_alias_base(t_app.base))
-        && !s_app
-            .args
-            .iter()
-            .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
     {
         return None;
     }
