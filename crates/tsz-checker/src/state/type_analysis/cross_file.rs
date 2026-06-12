@@ -910,7 +910,7 @@ impl<'a> CheckerState<'a> {
             // Without this, child contexts that resolve lib types (Array, Promise, etc.)
             // lose those cached results, forcing the parent to re-resolve them.
             let child_lib_type_cache: Vec<(String, Option<TypeId>)> =
-                std::mem::take(&mut checker.ctx.lib_type_resolution_cache)
+                std::mem::take(&mut checker.ctx.lib_type_resolution_caches.types)
                     .into_iter()
                     .collect();
 

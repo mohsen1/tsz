@@ -156,7 +156,8 @@ impl<'a> CheckerContext<'a> {
         let cross_file_type_params_cache_estimated_size_bytes =
             cross_file_type_params_cache_stats.map_or(0, |stats| stats.estimated_size_bytes());
 
-        let lazy_lib_member_resolution_cache = self.lazy_lib_member_resolution_cache.borrow();
+        let lazy_lib_member_resolution_cache =
+            self.lib_type_resolution_caches.lazy_members.borrow();
         let symbol_name_candidates_cache = self.symbol_name_candidates_cache.borrow();
         let namespace_member_resolution_cache = self.namespace_member_resolution_cache.borrow();
         let export_equals_named_cache = self.export_equals_named_cache.borrow();
@@ -206,9 +207,11 @@ impl<'a> CheckerContext<'a> {
             type_param_node_cache_estimated_size_bytes: type_param_node_cache_estimated_size_bytes(
                 &self.type_param_node_cache,
             ),
-            lib_type_resolution_cache_entries: self.lib_type_resolution_cache.len(),
+            lib_type_resolution_cache_entries: self.lib_type_resolution_caches.types.len(),
             lib_type_resolution_cache_estimated_size_bytes:
-                string_option_type_cache_estimated_size_bytes(&self.lib_type_resolution_cache),
+                string_option_type_cache_estimated_size_bytes(
+                    &self.lib_type_resolution_caches.types,
+                ),
             lazy_lib_member_resolution_cache_entries: lazy_lib_member_resolution_cache.len(),
             lazy_lib_member_resolution_cache_estimated_size_bytes:
                 string_atom_option_type_cache_estimated_size_bytes(

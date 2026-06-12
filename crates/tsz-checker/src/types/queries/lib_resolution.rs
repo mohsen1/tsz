@@ -730,7 +730,7 @@ impl<'a> CheckerState<'a> {
             return Some(ty);
         }
 
-        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name)
+        if let Some(cached) = self.ctx.lib_type_resolution_caches.types.get(name)
             && self.cached_lib_type_is_usable(name, *cached)
         {
             return *cached;
@@ -1238,7 +1238,7 @@ impl<'a> CheckerState<'a> {
             // overwritten by that recompute (`register_finalized_lib_body`
             // rewires the body and clears eval caches). See #12299.
             set_lib_resolution_mark(name, LibResolutionMark::Incomplete);
-            self.ctx.lib_type_resolution_cache.remove(name);
+            self.ctx.lib_type_resolution_caches.types.remove(name);
             return lib_type_id;
         }
 

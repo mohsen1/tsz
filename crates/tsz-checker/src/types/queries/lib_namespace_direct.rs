@@ -48,7 +48,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(cache_name)
+        if let Some(cached) = self.ctx.lib_type_resolution_caches.types.get(cache_name)
             && self.cached_lib_type_is_usable(cache_name, *cached)
         {
             return *cached;

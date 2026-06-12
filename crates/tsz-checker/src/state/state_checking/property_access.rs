@@ -572,7 +572,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let cache_name = format!("{namespace}.{export_name}");
-        self.ctx.lib_type_resolution_cache.remove(&cache_name);
+        self.ctx
+            .lib_type_resolution_caches
+            .types
+            .remove(&cache_name);
         let merged_type = self.resolve_lib_interface_type_by_symbol(&cache_name, export_sym_id)?;
         if merged_type == object_type {
             return None;
