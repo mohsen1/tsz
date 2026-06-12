@@ -800,7 +800,7 @@ jobs:
   premerge-microbench:
     name: premerge-microbench
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 10
     continue-on-error: true
