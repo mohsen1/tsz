@@ -164,7 +164,7 @@ impl SharedQueryCache {
     }
 
     #[inline]
-    fn shares_instantiation_family(&self) -> bool {
+    const fn shares_instantiation_family(&self) -> bool {
         self.share_instantiation_family
     }
 
