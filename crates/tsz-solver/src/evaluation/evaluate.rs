@@ -837,10 +837,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // with this evaluator. Gates mirror the boundary drain: the
             // `TS2590` union-complexity snapshot, and the limit-result-cache
             // kill switch for entries computed after a limit event this run.
+            // The last clause skips the write only when the `TS2590` flag is
+            // newly set relative to the construction snapshot.
             if self.persistent_memo_reads
                 && !type_id.is_intrinsic()
                 && (self.limit_epoch == 0 || crate::limits::limit_result_cache_enabled())
-                && !(self.interner.is_union_too_complex() && !self.union_complex_at_construction)
+                && (self.union_complex_at_construction || !self.interner.is_union_too_complex())
             {
                 self.interner
                     .insert_eval_memo(type_id, self.no_unchecked_indexed_access, result);
