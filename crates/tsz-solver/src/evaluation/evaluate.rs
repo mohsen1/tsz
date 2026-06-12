@@ -182,6 +182,28 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// `eval_cache` keep the *clean* intermediates of a run whose unrelated
     /// subtree hit a limit, instead of dropping the whole run's results.
     tainted: FxHashSet<TypeId>,
+    /// Measurement-only id for the cross-evaluator memo-loss audit
+    /// (issue #13097; see `evaluation::memo_audit`). 0 when perf counters
+    /// are disabled.
+    audit_evaluator_id: u64,
+    /// `is_union_too_complex` snapshot taken at construction. A memo
+    /// write-through is suppressed while the flag is newly set relative to
+    /// this snapshot, mirroring the top-level boundary drain's `TS2590`
+    /// gate (a cached read must not swallow the diagnostic re-derivation).
+    union_complex_at_construction: bool,
+    /// When true, nested `evaluate` nodes consult the persistent eval memo
+    /// (`TypeApplicationEvalCache::lookup_eval_memo`) after a local-cache
+    /// miss, so this
+    /// evaluator reuses subtrees an earlier evaluator in the same file scope
+    /// already evaluated instead of re-walking them (issue #13097).
+    ///
+    /// Only the plain query-backed (`NoopResolver`, no display/`this`/TS2589
+    /// mode flags) evaluator construction opts in — the same context that
+    /// produces every entry in that memo — so a hit is exactly the result
+    /// this evaluator would have computed. Resolver-backed or mode-flagged
+    /// evaluators must NOT opt in: their results can differ from the stored
+    /// plain-context entries.
+    persistent_memo_reads: bool,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -212,14 +234,20 @@ const DEFAULT_MAX_MAPPED_KEYS: usize = 500;
 
 impl<'a> TypeEvaluator<'a, NoopResolver> {
     /// Create a new evaluator without a resolver.
+    ///
+    /// Plain (`NoopResolver`, default mode flags) evaluators read the
+    /// persistent eval memo at nested nodes (issue #13097); the mode
+    /// builders below revoke that opt-in because their results are not the
+    /// plain-context function of `(TypeId, options)` the memo stores.
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         static NOOP: NoopResolver = NoopResolver;
-        Self::with_resolver_and_defaults(interner, &NOOP)
+        Self::with_resolver_and_defaults(interner, &NOOP).with_persistent_eval_memo_reads()
     }
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn with_resolver_and_defaults(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        tsz_common::perf_counters::record_eval_evaluator_construction();
         TypeEvaluator {
             interner,
             query_db: None,
@@ -249,6 +277,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             unresolved_def_seen: false,
             closed_eval_writes_allowed: false,
             tainted: FxHashSet::default(),
+            audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
+            union_complex_at_construction: interner.is_union_too_complex(),
+            persistent_memo_reads: false,
         }
     }
 
@@ -355,6 +386,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
+    /// Opt this evaluator in to reading the persistent eval memo at nested
+    /// nodes (see `persistent_memo_reads`). Set by the plain `new`
+    /// constructor and revoked by the mode builders; resolver-backed
+    /// constructions never opt in.
+    pub(crate) const fn with_persistent_eval_memo_reads(mut self) -> Self {
+        self.persistent_memo_reads = true;
+        self
+    }
+
     /// Suppress `this` type substitution during Lazy type evaluation.
     /// When set, `ThisType` references inside resolved Lazy types are preserved
     /// rather than being bound to the Lazy type's own identity. This is used
@@ -362,6 +402,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// bound to the final derived interface type.
     pub const fn with_suppress_this_binding(mut self) -> Self {
         self.suppress_this_binding = true;
+        self.persistent_memo_reads = false;
         self
     }
 
@@ -372,6 +413,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// preventing the normal per-DefId depth counter from triggering.
     pub const fn with_flag_depth_on_app_cycle(mut self) -> Self {
         self.flag_depth_on_app_cycle = true;
+        // TS2589 detection must re-walk the expansion; a memo hit would
+        // short-circuit the depth it is trying to observe.
+        self.persistent_memo_reads = false;
         self
     }
 
@@ -388,6 +432,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// chains in complex conditional cases.
     pub const fn with_expanded_application_display_alias_args(mut self) -> Self {
         self.expand_application_display_alias_args = true;
+        // Declaration-emit display aliasing is a side effect of the walk;
+        // a memo hit would skip recording it.
+        self.persistent_memo_reads = false;
         self
     }
 
@@ -432,6 +479,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     pub const fn set_max_mapped_keys(&mut self, max_mapped_keys: usize) {
         self.max_mapped_keys = max_mapped_keys;
+        // A non-default expansion cap changes where evaluation bails; memo
+        // entries computed under the default cap must not be served here.
+        self.persistent_memo_reads = false;
     }
 
     /// Reset per-evaluation state so this evaluator can be reused.
@@ -668,6 +718,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Most evaluate() calls are for already-evaluated types (cache hits),
         // so checking the cache first avoids unnecessary guard operations.
         if let Some(&cached) = self.cache.get(&type_id) {
+            tsz_common::perf_counters::record_eval_local_memo_hit();
             // Reading a limit-truncated artifact makes every in-flight
             // ancestor's result artifact-dependent: record a limit event so
             // the epoch-based stamping (and the application-eval epoch gate)
@@ -681,6 +732,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Substitution-independent persistent cache. See `closed_eval` module.
         if let Some(cached) = self.try_closed_eval_read(type_id) {
+            self.cache.insert(type_id, cached);
+            return cached;
+        }
+
+        // Persistent eval memo (issue #13097): reuse clean results an earlier
+        // plain query-backed evaluator in this file scope already computed,
+        // instead of re-walking the subtree. Opt-in is restricted to the same
+        // plain context that wrote every stored entry (see
+        // `persistent_memo_reads`), and stored entries are taint-filtered at
+        // the write boundary, so a hit is exactly what this evaluator would
+        // recompute. Mirrors the local-cache hit above: no guard, budget, or
+        // epoch interaction.
+        if self.persistent_memo_reads
+            && let Some(cached) = self
+                .interner
+                .lookup_eval_memo(type_id, self.no_unchecked_indexed_access)
+        {
+            tsz_common::perf_counters::record_eval_memo_nested_hit();
             self.cache.insert(type_id, cached);
             return cached;
         }
@@ -762,6 +831,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn memo_insert(&mut self, epoch_at_entry: u32, type_id: TypeId, result: TypeId) {
         if self.limit_epoch != epoch_at_entry {
             self.tainted.insert(type_id);
+        } else {
+            // Persistent write-through (issue #13097): a clean-window entry is
+            // a stable function of `(TypeId, options)` (the same per-entry
+            // taint discrimination the boundary drain uses, issue #13241), so
+            // plain evaluators publish it immediately instead of dropping it
+            // with this evaluator. Gates mirror the boundary drain: the
+            // `TS2590` union-complexity snapshot, and the limit-result-cache
+            // kill switch for entries computed after a limit event this run.
+            // The last clause skips the write only when the `TS2590` flag is
+            // newly set relative to the construction snapshot.
+            if self.persistent_memo_reads
+                && !type_id.is_intrinsic()
+                && (self.limit_epoch == 0 || crate::limits::limit_result_cache_enabled())
+                && (self.union_complex_at_construction || !self.interner.is_union_too_complex())
+            {
+                self.interner
+                    .insert_eval_memo(type_id, self.no_unchecked_indexed_access, result);
+            }
+            // Measurement-only (issue #13097): record clean computes so the
+            // memo audit can count cross-evaluator recomputation.
+            crate::evaluation::memo_audit::record_clean_compute(
+                type_id,
+                self.no_unchecked_indexed_access,
+                result,
+                self.audit_evaluator_id,
+                if self.persistent_memo_reads {
+                    0
+                } else if self.closed_eval_writes_allowed {
+                    1
+                } else {
+                    2
+                },
+            );
         }
         self.cache.insert(type_id, result);
     }
@@ -769,6 +871,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Actual evaluate logic -- separated so `stacker::maybe_grow` can wrap it.
     fn evaluate_guarded_inner(&mut self, type_id: TypeId) -> TypeId {
         use crate::recursion::RecursionResult;
+
+        tsz_common::perf_counters::record_eval_compute_node();
 
         let _span =
             tracing::trace_span!("evaluate_type", ty = type_id.0, depth = self.guard.depth(),)
@@ -884,6 +988,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     // Additional evaluator support methods live in the nested support module.
+}
+
+impl<R: TypeResolver> Drop for TypeEvaluator<'_, R> {
+    fn drop(&mut self) {
+        // Measurement-only (issue #13097): account for memo entries this
+        // evaluator computed but discarded. Entries persisted through
+        // `drain_cache` were removed before drop and are not counted.
+        // Single branch when `TSZ_PERF_COUNTERS` is unset.
+        if !tsz_common::perf_counters::enabled_fast() {
+            return;
+        }
+        tsz_common::perf_counters::record_eval_dropped_memo_entries(self.cache.len() as u64);
+        tsz_common::perf_counters::record_eval_dropped_aux_entries(
+            (self.conditional_subtype_cache.len() + self.contains_infer_cache.len()) as u64,
+        );
+    }
 }
 
 // Re-enabled evaluate tests - verifying API compatibility

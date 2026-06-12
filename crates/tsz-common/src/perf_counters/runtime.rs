@@ -143,6 +143,45 @@ pub struct PerfCounters {
     /// band-conditional `LimitTrue` entries.
     pub relation_maybe_promotions: AtomicU64,
 
+    // ─── solver evaluator memo lifecycle (issue #13097) ──────────────────
+    /// `TypeEvaluator` constructions (each is a fresh per-run memo set).
+    pub eval_evaluator_constructions: AtomicU64,
+    /// Hits on an evaluator's own per-run `TypeId -> TypeId` memo.
+    pub eval_local_memo_hits: AtomicU64,
+    /// Nodes actually computed (`evaluate_guarded_inner` entries past every
+    /// memo/cache layer).
+    pub eval_compute_nodes: AtomicU64,
+    /// Clean (untainted) computes whose `(TypeId, options)` key was already
+    /// computed clean — with the same result — by an *earlier* evaluator in
+    /// the same file scope. Each one is work a per-file shared memo would
+    /// have skipped; the fresh-evaluator pattern discarded it instead.
+    pub eval_lost_memo_recomputes: AtomicU64,
+    /// Same-key clean computes whose result *differed* from the earlier
+    /// evaluator's. Evidence that naive within-file result sharing across
+    /// evaluator contexts would change behavior (resolver/registration
+    /// dependence); these must stay per-run.
+    pub eval_lost_memo_mismatches: AtomicU64,
+    /// `lookup_eval_memo` hits served at nested evaluate nodes.
+    pub eval_memo_nested_hits: AtomicU64,
+    /// Lost recomputes performed by a plain memo-reading evaluator.
+    pub eval_lost_memo_recomputes_plain: AtomicU64,
+    /// Lost recomputes performed by the checker's authoritative
+    /// (closed-eval-writing, resolver-backed) evaluator.
+    pub eval_lost_memo_recomputes_authoritative: AtomicU64,
+    /// Lost recomputes performed by other contexts (resolver-backed
+    /// non-authoritative, or mode-flagged plain evaluators).
+    pub eval_lost_memo_recomputes_other: AtomicU64,
+    /// Subset of `eval_lost_memo_recomputes` whose result equals its input
+    /// (`eval(T) == T`): identity walks the per-file drain deliberately
+    /// skips, so they are re-walked by every evaluator that meets them.
+    pub eval_lost_memo_recomputes_identity: AtomicU64,
+    /// Per-run memo entries still resident when an evaluator was dropped
+    /// (i.e. not drained into a longer-lived cache).
+    pub eval_dropped_memo_entries: AtomicU64,
+    /// Auxiliary memo entries (conditional-subtype + contains-infer) dropped
+    /// with their evaluator; these tables are never drained anywhere.
+    pub eval_dropped_aux_entries: AtomicU64,
+
     // ─── interner ────────────────────────────────────────────────────────
     pub interner_intern_calls: AtomicU64,
     pub interner_intern_hits: AtomicU64,
@@ -273,6 +312,18 @@ impl PerfCounters {
                 CHECKER_CREATION_REASON_COUNT],
             relation_limit_cache_hits: AtomicU64::new(0),
             relation_maybe_promotions: AtomicU64::new(0),
+            eval_evaluator_constructions: AtomicU64::new(0),
+            eval_local_memo_hits: AtomicU64::new(0),
+            eval_compute_nodes: AtomicU64::new(0),
+            eval_lost_memo_recomputes: AtomicU64::new(0),
+            eval_lost_memo_mismatches: AtomicU64::new(0),
+            eval_lost_memo_recomputes_identity: AtomicU64::new(0),
+            eval_memo_nested_hits: AtomicU64::new(0),
+            eval_lost_memo_recomputes_plain: AtomicU64::new(0),
+            eval_lost_memo_recomputes_authoritative: AtomicU64::new(0),
+            eval_lost_memo_recomputes_other: AtomicU64::new(0),
+            eval_dropped_memo_entries: AtomicU64::new(0),
+            eval_dropped_aux_entries: AtomicU64::new(0),
             interner_intern_calls: AtomicU64::new(0),
             interner_intern_hits: AtomicU64::new(0),
             interner_intern_misses: AtomicU64::new(0),
@@ -1245,6 +1296,123 @@ pub fn record_relation_maybe_promotion() {
     counters()
         .relation_maybe_promotions
         .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a `TypeEvaluator` construction (issue #13097 memo-lifecycle audit).
+#[inline]
+pub fn record_eval_evaluator_construction() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_evaluator_constructions
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a hit on an evaluator's own per-run memo.
+#[inline]
+pub fn record_eval_local_memo_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_local_memo_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a node compute that passed every memo/cache layer.
+#[inline]
+pub fn record_eval_compute_node() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_compute_nodes
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a clean compute that an earlier same-file evaluator already
+/// produced (same key, same result) but discarded with its memo.
+#[inline]
+pub fn record_eval_lost_memo_recompute() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_lost_memo_recomputes
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a nested `lookup_eval_memo` hit inside an evaluator.
+#[inline]
+pub fn record_eval_memo_nested_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_memo_nested_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a lost-memo recompute attributed to an evaluator context class:
+/// 0 = plain memo-reading, 1 = authoritative checker pass, 2 = other.
+#[inline]
+pub fn record_eval_lost_memo_recompute_ctx(ctx: u8) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    let field = match ctx {
+        0 => &c.eval_lost_memo_recomputes_plain,
+        1 => &c.eval_lost_memo_recomputes_authoritative,
+        _ => &c.eval_lost_memo_recomputes_other,
+    };
+    field.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a lost-memo recompute whose result was the input itself.
+#[inline]
+pub fn record_eval_lost_memo_recompute_identity() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_lost_memo_recomputes_identity
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a same-key clean compute whose result differed across evaluators.
+#[inline]
+pub fn record_eval_lost_memo_mismatch() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_lost_memo_mismatches
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record memo entries discarded (not drained) when an evaluator dropped.
+#[inline]
+pub fn record_eval_dropped_memo_entries(count: u64) {
+    if count == 0 || !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_dropped_memo_entries
+        .fetch_add(count, Ordering::Relaxed);
+}
+
+/// Record auxiliary memo entries (conditional-subtype / contains-infer)
+/// discarded when an evaluator dropped.
+#[inline]
+pub fn record_eval_dropped_aux_entries(count: u64) {
+    if count == 0 || !enabled_fast() {
+        return;
+    }
+    counters()
+        .eval_dropped_aux_entries
+        .fetch_add(count, Ordering::Relaxed);
 }
 
 /// Record a `TypeInterner::intern_type_list` call (covers both the
