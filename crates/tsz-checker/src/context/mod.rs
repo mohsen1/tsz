@@ -467,6 +467,7 @@ pub struct SymbolFlowMemoCaches {
     pub has_non_initializer_assignment: RefCell<FxHashMap<SymbolId, bool>>,
     pub first_identifier_ref: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
     pub alias_base_assignment: RefCell<FxHashMap<(u32, u32), bool>>,
+    pub alias_path_assignment: RefCell<FxHashMap<(u32, u32, u32), bool>>,
 }
 
 impl SymbolFlowMemoCaches {
@@ -476,6 +477,7 @@ impl SymbolFlowMemoCaches {
         self.has_non_initializer_assignment.borrow_mut().clear();
         self.first_identifier_ref.borrow_mut().clear();
         self.alias_base_assignment.borrow_mut().clear();
+        self.alias_path_assignment.borrow_mut().clear();
     }
 }
 
