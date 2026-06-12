@@ -116,7 +116,6 @@ impl<'a> CheckerContext<'a> {
             flow_visited: RefCell::new(FxHashSet::default()),
             flow_results: RefCell::new(FxHashMap::with_capacity_and_hasher(64, Default::default())),
             flow_reference_match_cache: RefCell::new(FxHashMap::default()),
-            flow_alias_base_assignment_cache: RefCell::new(FxHashMap::default()),
             symbol_flow_memo: crate::context::SymbolFlowMemoCaches::default(),
             symbol_flow_confirmed: RefCell::new(crate::context::CowCache::default()),
             narrowing_cache: tsz_solver::narrowing::NarrowingCache::new(),

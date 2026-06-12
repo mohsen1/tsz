@@ -440,6 +440,7 @@ pub struct SymbolFlowMemoCaches {
     pub nested_closure_assignment: RefCell<FxHashMap<SymbolId, bool>>,
     pub has_non_initializer_assignment: RefCell<FxHashMap<SymbolId, bool>>,
     pub first_identifier_ref: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
+    pub alias_base_assignment: RefCell<FxHashMap<(u32, u32), bool>>,
 }
 
 impl SymbolFlowMemoCaches {
@@ -448,6 +449,7 @@ impl SymbolFlowMemoCaches {
         self.nested_closure_assignment.borrow_mut().clear();
         self.has_non_initializer_assignment.borrow_mut().clear();
         self.first_identifier_ref.borrow_mut().clear();
+        self.alias_base_assignment.borrow_mut().clear();
     }
 }
 
@@ -705,13 +707,6 @@ pub struct CheckerContext<'a> {
     /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
-
-    /// Shared alias-base-assignment cache used by flow narrowing.
-    /// Key: (`target_reference_node`, `alias_decl_pos`) -> whether a
-    /// containing-function assignment after the alias declaration targets the
-    /// reference or its base.
-    /// Reused across `FlowAnalyzer` instances within a single file check.
-    pub flow_alias_base_assignment_cache: RefCell<FxHashMap<(u32, u32), bool>>,
 
     /// Symbol-stable flow memo tables reused across `FlowAnalyzer` instances
     /// within a single file check.
