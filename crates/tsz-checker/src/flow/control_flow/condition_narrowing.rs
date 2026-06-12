@@ -13,6 +13,12 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+pub(crate) struct BinaryFlowNarrowingContext<'m> {
+    antecedent_id: FlowNodeId,
+    allow_untyped_comparison_fallback: bool,
+    dp_memos: Option<&'m mut FlowConditionDpMemos>,
+}
+
 impl<'a> FlowAnalyzer<'a> {
     fn narrow_to_falsy_via_flow_boundary(&self, type_id: TypeId) -> TypeId {
         let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
@@ -100,8 +106,11 @@ impl<'a> FlowAnalyzer<'a> {
             target,
             true,
             narrowing,
-            FlowNodeId::NONE,
-            true,
+            BinaryFlowNarrowingContext {
+                antecedent_id: FlowNodeId::NONE,
+                allow_untyped_comparison_fallback: true,
+                dp_memos: None,
+            },
         )
     }
 
@@ -339,8 +348,11 @@ impl<'a> FlowAnalyzer<'a> {
                 target,
                 false,
                 narrowing,
-                FlowNodeId::NONE,
-                true,
+                BinaryFlowNarrowingContext {
+                    antecedent_id: FlowNodeId::NONE,
+                    allow_untyped_comparison_fallback: true,
+                    dp_memos: None,
+                },
             );
         }
 
@@ -538,8 +550,11 @@ impl<'a> FlowAnalyzer<'a> {
                 target,
                 false,
                 narrowing,
-                FlowNodeId::NONE,
-                true,
+                BinaryFlowNarrowingContext {
+                    antecedent_id: FlowNodeId::NONE,
+                    allow_untyped_comparison_fallback: true,
+                    dp_memos: None,
+                },
             );
         }
 
@@ -792,8 +807,11 @@ impl<'a> FlowAnalyzer<'a> {
                                     target,
                                     is_true_branch,
                                     &narrowing,
-                                    antecedent_id,
-                                    false,
+                                    BinaryFlowNarrowingContext {
+                                        antecedent_id,
+                                        allow_untyped_comparison_fallback: false,
+                                        dp_memos: dp_memos.as_deref_mut(),
+                                    },
                                 );
                             }
                         }
@@ -808,8 +826,11 @@ impl<'a> FlowAnalyzer<'a> {
                         target,
                         is_true_branch,
                         &narrowing,
-                        antecedent_id,
-                        false,
+                        BinaryFlowNarrowingContext {
+                            antecedent_id,
+                            allow_untyped_comparison_fallback: false,
+                            dp_memos,
+                        },
                     );
                     return narrowed;
                 }
@@ -1169,6 +1190,12 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
+    ///
+    /// `dp_memos` carries the per-`check_flow` flow-condition DP scratch when
+    /// this call is reachable from the top-level traversal worklist; callers
+    /// outside that path pass `None` and the null-exclusion check below falls
+    /// back to a one-shot memo, exactly like the threaded sites in
+    /// `narrow_type_by_condition_inner`.
     pub(crate) fn narrow_by_binary_expr(
         &self,
         type_id: TypeId,
@@ -1176,8 +1203,7 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
         narrowing: &NarrowingContext,
-        antecedent_id: FlowNodeId,
-        allow_untyped_comparison_fallback: bool,
+        mut flow_context: BinaryFlowNarrowingContext<'_>,
     ) -> TypeId {
         let operator = bin.operator_token;
 
@@ -1192,9 +1218,9 @@ impl<'a> FlowAnalyzer<'a> {
                     bin.right,
                     target,
                     is_true_branch,
-                    antecedent_id,
+                    flow_context.antecedent_id,
                     &mut visited,
-                    None,
+                    flow_context.dp_memos,
                 );
             }
             return type_id;
@@ -1256,7 +1282,18 @@ impl<'a> FlowAnalyzer<'a> {
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
-                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
+                    && if let Some(memos) = flow_context.dp_memos.as_deref_mut() {
+                        self.antecedent_chain_excludes_null_for_target_with_memo(
+                            flow_context.antecedent_id,
+                            target,
+                            &mut memos.null_exclusions,
+                        )
+                    } else {
+                        self.antecedent_chain_excludes_null_for_target(
+                            flow_context.antecedent_id,
+                            target,
+                        )
+                    }
                 {
                     return flow_query::narrow_excluding_type_in_context(
                         narrowing,
@@ -1473,11 +1510,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // We need the type of the RIGHT side (y)
                 if let Some(right_type) = self.flow_comparison_type(
                     bin.right,
-                    antecedent_id,
-                    allow_untyped_comparison_fallback,
+                    flow_context.antecedent_id,
+                    flow_context.allow_untyped_comparison_fallback,
                 ) {
                     if effective_truth {
-                        if allow_untyped_comparison_fallback
+                        if flow_context.allow_untyped_comparison_fallback
                             && matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
                         {
                             return right_type;
@@ -1504,11 +1541,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // We need the type of the LEFT side (y)
                 if let Some(left_type) = self.flow_comparison_type(
                     bin.left,
-                    antecedent_id,
-                    allow_untyped_comparison_fallback,
+                    flow_context.antecedent_id,
+                    flow_context.allow_untyped_comparison_fallback,
                 ) {
                     if effective_truth {
-                        if allow_untyped_comparison_fallback
+                        if flow_context.allow_untyped_comparison_fallback
                             && matches!(type_id, TypeId::UNKNOWN | TypeId::ANY)
                         {
                             return left_type;

@@ -27,6 +27,18 @@ def sample_snapshot(*, type_environment_core: int = 7, import_type: int = 3):
             "state_constructed": 20,
             "with_parent_cache_constructed": type_environment_core + import_type,
             "file_session_resets": 2,
+            "file_session_reset_cache_entries_max": 52,
+            "file_session_reset_cache_bytes_max": 4096,
+            "file_session_reset_namespace_member_entries_max": 4,
+            "file_session_reset_namespace_member_bytes_max": 512,
+            "file_session_reset_export_equals_entries_max": 7,
+            "file_session_reset_export_equals_bytes_max": 1536,
+            "file_session_reset_nested_namespace_entries_max": 3,
+            "file_session_reset_nested_namespace_bytes_max": 256,
+            "file_session_reset_lowering_entity_name_entries_max": 2,
+            "file_session_reset_lowering_entity_name_bytes_max": 128,
+            "file_session_reset_env_eval_entries_max": 36,
+            "file_session_reset_env_eval_bytes_max": 1664,
             "compute_type_of_symbol_calls": 30,
             "compute_type_of_symbol_cache_hits": 10,
         },
@@ -113,6 +125,8 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("kind= 244", result.stdout)
         self.assertIn("slowest type alias check phases:", result.stdout)
         self.assertIn("phase=body", result.stdout)
+        self.assertIn("file-session reset cache high-water:", result.stdout)
+        self.assertIn("dominant=env_eval", result.stdout)
         self.assertIn("Dominant: TypeEnvironmentCore = 7", result.stdout)
         self.assertIn("Top non-baseline T2.2 target: ImportType = 3", result.stdout)
 
@@ -148,6 +162,8 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("improved", result.stdout)
         self.assertIn("ImportType", result.stdout)
         self.assertIn("regressed", result.stdout)
+        self.assertIn("reset-cache high-water by family:", result.stdout)
+        self.assertIn("env_eval", result.stdout)
 
     def test_by_reason_requires_by_reason_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
