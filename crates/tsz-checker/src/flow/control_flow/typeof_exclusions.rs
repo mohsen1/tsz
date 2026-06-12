@@ -46,7 +46,7 @@ impl<'a> FlowAnalyzer<'a> {
         // matching the previous recursive `DpState::InProgress` arm.
         resolve_backward_dp(
             flow_id,
-            &mut memo,
+            memo,
             0,
             |node| self.typeof_exclusion_antecedents(node),
             |node, antecedent_masks| {

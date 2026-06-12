@@ -780,7 +780,6 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         antecedent_id,
                         visited_aliases,
-                        None,
                     ) {
                         return narrowed;
                     }
@@ -798,7 +797,6 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         antecedent_id,
                         visited_aliases,
-                        None,
                     ) {
                         return narrowed;
                     }
@@ -1376,15 +1374,7 @@ impl<'a> FlowAnalyzer<'a> {
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
-                    && if let Some(memos) = dp_memos.as_deref_mut() {
-                        self.antecedent_chain_excludes_null_for_target_with_memo(
-                            antecedent_id,
-                            target,
-                            &mut memos.null_exclusions,
-                        )
-                    } else {
-                        self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
-                    }
+                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
                 {
                     return flow_query::narrow_excluding_type_in_context(
                         narrowing,

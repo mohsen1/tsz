@@ -35,7 +35,7 @@ impl<'a> FlowAnalyzer<'a> {
         // the native stack.
         resolve_backward_dp(
             flow_id,
-            &mut memo,
+            memo,
             false,
             |node| self.null_exclusion_antecedents(node),
             |node, antecedent_values| self.excludes_null_fold(node, target, antecedent_values),
