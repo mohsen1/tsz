@@ -102,6 +102,7 @@ impl<'a> FlowAnalyzer<'a> {
             narrowing,
             FlowNodeId::NONE,
             true,
+            None,
         )
     }
 
@@ -341,6 +342,7 @@ impl<'a> FlowAnalyzer<'a> {
                 narrowing,
                 FlowNodeId::NONE,
                 true,
+                None,
             );
         }
 
@@ -540,6 +542,7 @@ impl<'a> FlowAnalyzer<'a> {
                 narrowing,
                 FlowNodeId::NONE,
                 true,
+                None,
             );
         }
 
@@ -794,6 +797,7 @@ impl<'a> FlowAnalyzer<'a> {
                                     &narrowing,
                                     antecedent_id,
                                     false,
+                                    dp_memos.as_deref_mut(),
                                 );
                             }
                         }
@@ -810,6 +814,7 @@ impl<'a> FlowAnalyzer<'a> {
                         &narrowing,
                         antecedent_id,
                         false,
+                        dp_memos,
                     );
                     return narrowed;
                 }
@@ -1169,6 +1174,13 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
+    ///
+    /// `dp_memos` carries the per-`check_flow` flow-condition DP scratch when
+    /// this call is reachable from the top-level traversal worklist; callers
+    /// outside that path pass `None` and the null-exclusion check below falls
+    /// back to a one-shot memo, exactly like the threaded sites in
+    /// `narrow_type_by_condition_inner`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn narrow_by_binary_expr(
         &self,
         type_id: TypeId,
@@ -1178,6 +1190,7 @@ impl<'a> FlowAnalyzer<'a> {
         narrowing: &NarrowingContext,
         antecedent_id: FlowNodeId,
         allow_untyped_comparison_fallback: bool,
+        mut dp_memos: Option<&mut FlowConditionDpMemos>,
     ) -> TypeId {
         let operator = bin.operator_token;
 
@@ -1194,7 +1207,7 @@ impl<'a> FlowAnalyzer<'a> {
                     is_true_branch,
                     antecedent_id,
                     &mut visited,
-                    None,
+                    dp_memos,
                 );
             }
             return type_id;
@@ -1256,7 +1269,15 @@ impl<'a> FlowAnalyzer<'a> {
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
-                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
+                    && if let Some(memos) = dp_memos.as_mut() {
+                        self.antecedent_chain_excludes_null_for_target_with_memo(
+                            antecedent_id,
+                            target,
+                            &mut memos.null_exclusions,
+                        )
+                    } else {
+                        self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
+                    }
                 {
                     return flow_query::narrow_excluding_type_in_context(
                         narrowing,
