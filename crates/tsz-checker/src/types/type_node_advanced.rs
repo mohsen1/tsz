@@ -623,6 +623,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .with_alias_base_assignment_cache(
                         &self.ctx.symbol_flow_memo.alias_base_assignment,
                     )
+                    .with_alias_path_assignment_cache(
+                        &self.ctx.symbol_flow_memo.alias_path_assignment,
+                    )
                     .with_type_environment(&self.ctx.type_environment)
                     .with_checker_context(self.ctx)
                     .with_narrowing_cache(&self.ctx.narrowing_cache)
