@@ -2,6 +2,13 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 mod api;
 
+/// Shared WASM compiler-options DTO and its option -> `CheckerOptions`
+/// resolution. Every WASM program surface (website `WasmProgram`, npm
+/// wrapper `TsProgram` in `tsz-wasm`) must derive `CheckerOptions` through
+/// this single owner so strict-family implication semantics cannot drift
+/// per surface (#13117).
+pub use api::wasm::compiler_options::CompilerOptions as WasmCompilerOptions;
+
 // Shared test fixtures for reduced allocation overhead
 #[cfg(test)]
 #[path = "../tests/test_fixtures.rs"]

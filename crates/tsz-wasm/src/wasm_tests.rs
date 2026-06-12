@@ -816,6 +816,115 @@ fn test_ts_compiler_options_threads_allow_js_and_declaration() {
 }
 
 #[test]
+fn test_strict_true_implies_full_strict_family() {
+    // Issue #13117: the hand-built CheckerOptions literal hardcoded
+    // strict_bind_call_apply: false even under strict: true, diverging from
+    // tsc (strict implies strictBindCallApply) and from the shared tsz-core
+    // resolution. The mapping now delegates to that single owner.
+    let opts: TsCompilerOptions = serde_json::from_str(r#"{"strict":true}"#).unwrap();
+    let checker = opts.to_checker_options();
+
+    assert!(checker.strict);
+    assert!(checker.no_implicit_any, "strict must imply noImplicitAny");
+    assert!(
+        checker.strict_null_checks,
+        "strict must imply strictNullChecks"
+    );
+    assert!(
+        checker.strict_function_types,
+        "strict must imply strictFunctionTypes"
+    );
+    assert!(
+        checker.strict_bind_call_apply,
+        "strict must imply strictBindCallApply (tsc parity, issue #13117)"
+    );
+    assert!(
+        checker.strict_property_initialization,
+        "strict must imply strictPropertyInitialization"
+    );
+    assert!(checker.no_implicit_this, "strict must imply noImplicitThis");
+    assert!(
+        checker.use_unknown_in_catch_variables,
+        "strict must imply useUnknownInCatchVariables"
+    );
+    assert!(checker.always_strict, "strict must imply alwaysStrict");
+    assert!(
+        checker.strict_builtin_iterator_return,
+        "strict must imply strictBuiltinIteratorReturn"
+    );
+}
+
+#[test]
+fn test_strict_false_or_omitted_disables_strict_family() {
+    // `strict: false` and omitted strict behave identically on this surface
+    // (the npm wrapper keeps tsc's non-strict CLI default).
+    for json in [r#"{"strict":false}"#, "{}"] {
+        let opts: TsCompilerOptions = serde_json::from_str(json).unwrap();
+        let checker = opts.to_checker_options();
+
+        assert!(!checker.strict, "{json}");
+        assert!(!checker.no_implicit_any, "{json}");
+        assert!(!checker.strict_null_checks, "{json}");
+        assert!(!checker.strict_function_types, "{json}");
+        assert!(!checker.strict_bind_call_apply, "{json}");
+        assert!(!checker.strict_property_initialization, "{json}");
+        assert!(!checker.no_implicit_this, "{json}");
+        assert!(!checker.use_unknown_in_catch_variables, "{json}");
+        assert!(!checker.strict_builtin_iterator_return, "{json}");
+        // alwaysStrict keeps the shared TS6 default (true unless explicitly
+        // disabled); it is not forced to mirror `strict`.
+        assert!(checker.always_strict, "{json}");
+    }
+}
+
+#[test]
+fn test_individual_strict_flags_override_strict() {
+    let opts: TsCompilerOptions = serde_json::from_str(
+        r#"{
+            "strict": true,
+            "noImplicitAny": false,
+            "strictBindCallApply": false,
+            "useUnknownInCatchVariables": false,
+            "strictBuiltinIteratorReturn": false
+        }"#,
+    )
+    .unwrap();
+    let checker = opts.to_checker_options();
+
+    assert!(checker.strict);
+    assert!(!checker.no_implicit_any);
+    assert!(!checker.strict_bind_call_apply);
+    assert!(!checker.use_unknown_in_catch_variables);
+    assert!(!checker.strict_builtin_iterator_return);
+    assert!(
+        checker.strict_null_checks,
+        "unrelated family members keep the strict implication"
+    );
+
+    let opts_on: TsCompilerOptions =
+        serde_json::from_str(r#"{"strict":false,"strictBindCallApply":true}"#).unwrap();
+    assert!(
+        opts_on.to_checker_options().strict_bind_call_apply,
+        "individual strict-family flags must also enable under strict:false"
+    );
+}
+
+#[test]
+fn test_use_unknown_in_catch_variables_not_coupled_to_strict_null_checks() {
+    // The old hand-built mapping derived use_unknown_in_catch_variables from
+    // strictNullChecks; tsc keys its default off `strict` only.
+    let opts: TsCompilerOptions =
+        serde_json::from_str(r#"{"strict":true,"strictNullChecks":false}"#).unwrap();
+    let checker = opts.to_checker_options();
+
+    assert!(!checker.strict_null_checks);
+    assert!(
+        checker.use_unknown_in_catch_variables,
+        "useUnknownInCatchVariables must follow strict, not strictNullChecks"
+    );
+}
+
+#[test]
 fn test_ts_program_emit_json_threads_declaration_and_source_map_flags() {
     // Issue #4748 / #4738: emit_json hardcoded per-file metadata to
     // declaration:false / sourceMap:false; verify the configured values
