@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 8;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 9;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -32,6 +32,8 @@ pub struct PerfCounterSnapshot {
     pub interner: InternerCounters,
     /// Solver relation limit-result cache (issue #13241).
     pub relation_limit_cache: RelationLimitCacheCounters,
+    /// Solver concrete-form materialization counters (issue #13242).
+    pub solver_materialization: SolverMaterializationCounters,
     /// Per-`CheckerCreationReason` breakdown. Always
     /// `CHECKER_CREATION_REASON_COUNT` long; rows for inactive reasons
     /// carry all-zero counts (matching the text dump's filter behavior
@@ -295,6 +297,7 @@ pub struct WiredCounters {
     pub interner_intern_calls: bool,
     pub interner_per_kind: bool,
     pub interner_lock_wait: bool,
+    pub solver_materialization: bool,
     pub resolver_lookup: bool,
     pub resolver_fs_probes: bool,
     pub compute_type_of_symbol: bool,
@@ -477,6 +480,19 @@ pub struct RelationLimitCacheCounters {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct SolverMaterializationCounters {
+    pub union_subtype_reduction_calls: u64,
+    pub union_subtype_reduction_members_total: u64,
+    pub union_subtype_reduction_members_max: u64,
+    pub union_subtype_reduction_pairwise_budget_total: u64,
+    pub union_subtype_reduction_shallow_checks: u64,
+    pub property_instantiation_walks: u64,
+    pub property_instantiation_properties_total: u64,
+    pub property_instantiation_properties_max: u64,
+    pub property_instantiation_changed: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct InternerCounters {
     /// Total `intern` calls across kinds. `None` until the solver intern
     /// site is updated to fan into a single counter.
@@ -517,6 +533,7 @@ impl PerfCounters {
                 interner_intern_calls: true,
                 interner_per_kind: true,
                 interner_lock_wait: lock_wait_histogram_wired(),
+                solver_materialization: true,
                 resolver_lookup: true,
                 resolver_fs_probes: true,
                 compute_type_of_symbol: true,
@@ -623,6 +640,25 @@ impl PerfCounters {
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
                 maybe_promotions: load(&c.relation_maybe_promotions),
+            },
+            solver_materialization: SolverMaterializationCounters {
+                union_subtype_reduction_calls: load(&c.union_subtype_reduction_calls),
+                union_subtype_reduction_members_total: load(
+                    &c.union_subtype_reduction_members_total,
+                ),
+                union_subtype_reduction_members_max: load(&c.union_subtype_reduction_members_max),
+                union_subtype_reduction_pairwise_budget_total: load(
+                    &c.union_subtype_reduction_pairwise_budget_total,
+                ),
+                union_subtype_reduction_shallow_checks: load(
+                    &c.union_subtype_reduction_shallow_checks,
+                ),
+                property_instantiation_walks: load(&c.property_instantiation_walks),
+                property_instantiation_properties_total: load(
+                    &c.property_instantiation_properties_total,
+                ),
+                property_instantiation_properties_max: load(&c.property_instantiation_properties_max),
+                property_instantiation_changed: load(&c.property_instantiation_changed),
             },
             by_reason: (0..CHECKER_CREATION_REASON_COUNT)
                 .map(|i| ByReasonRow {

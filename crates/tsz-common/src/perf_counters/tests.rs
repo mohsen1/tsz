@@ -2,11 +2,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_eight() {
+    fn schema_version_is_nine() {
         // Bumping schema_version is a breaking change for the bench harness;
-        // make the intent explicit. v8 added the `residency` breakdown
-        // (issue #13249 step 1).
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 8);
+        // make the intent explicit. v9 added #13242 materialization counters.
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 9);
     }
 
     #[test]
@@ -26,6 +25,7 @@ mod json_tests {
             "resolver",
             "interner",
             "relation_limit_cache",
+            "solver_materialization",
             "by_reason",
             "delegate_miss_classification",
             "delegate_declaration_file_miss_residues",
@@ -60,7 +60,7 @@ mod json_tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 8);
+        assert_eq!(json["schema_version"], 9);
     }
 
     #[test]
@@ -323,6 +323,7 @@ mod json_tests {
             "interner_intern_calls",
             "interner_per_kind",
             "interner_lock_wait",
+            "solver_materialization",
             "resolver_lookup",
             "resolver_fs_probes",
             "compute_type_of_symbol",
