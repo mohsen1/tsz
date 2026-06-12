@@ -716,25 +716,24 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.set_no_unchecked_indexed_access(policy.no_unchecked_indexed_access());
     checker.set_allow_bivariant_rest(policy.allow_bivariant_rest());
 
-    checker.subtype.strict_null_checks = policy.strict_null_checks();
-    checker.subtype.strict_function_types = policy.strict_function_types();
-    checker.subtype.exact_optional_property_types = policy.exact_optional_property_types();
-    checker.subtype.no_unchecked_indexed_access = policy.no_unchecked_indexed_access();
     checker.set_disable_method_bivariance(policy.disable_method_bivariance());
-    checker.subtype.disable_method_bivariance = policy.disable_method_bivariance();
-    checker.subtype.allow_void_return = policy.allow_void_return();
-    checker.subtype.allow_bivariant_rest = policy.allow_bivariant_rest();
-    checker.subtype.allow_bivariant_param_count = policy.allow_bivariant_param_count();
-    checker.subtype.allow_erased_generic_signature_retry =
-        policy.allow_erased_generic_signature_retry();
-    checker.subtype.in_callback_param_check = policy.in_callback_param_check();
-    checker.subtype.strict_readonly_identity = policy.strict_readonly_identity();
+
+    apply_policy_bits_to_subtype_checker(&mut checker.subtype, policy);
 }
 
 const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
     mut checker: SubtypeChecker<'a, R>,
     policy: RelationPolicy,
 ) -> SubtypeChecker<'a, R> {
+    apply_policy_bits_to_subtype_checker(&mut checker, policy);
+    checker.erase_generics = policy.erase_generics;
+    checker
+}
+
+const fn apply_policy_bits_to_subtype_checker<R: TypeResolver>(
+    checker: &mut SubtypeChecker<'_, R>,
+    policy: RelationPolicy,
+) {
     checker.strict_null_checks = policy.strict_null_checks();
     checker.strict_function_types = policy.strict_function_types();
     checker.exact_optional_property_types = policy.exact_optional_property_types();
@@ -744,10 +743,8 @@ const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
     checker.allow_bivariant_rest = policy.allow_bivariant_rest();
     checker.allow_bivariant_param_count = policy.allow_bivariant_param_count();
     checker.strict_readonly_identity = policy.strict_readonly_identity();
-    checker.erase_generics = policy.erase_generics;
     checker.allow_erased_generic_signature_retry = policy.allow_erased_generic_signature_retry();
     checker.in_callback_param_check = policy.in_callback_param_check();
-    checker
 }
 
 /// Variance-aware Application-to-Application assignability check.

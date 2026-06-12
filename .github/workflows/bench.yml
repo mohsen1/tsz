@@ -1029,6 +1029,13 @@ jobs:
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
+      # Cap concurrent Cloud Build submissions: 8 simultaneous CreateBuild
+      # calls exceed the project's concurrent-build headroom when PR CI is
+      # busy, and gcloud retries the throttled call silently until the job
+      # timeout (#13306: three shards sat 120 minutes with the tarball
+      # uploaded and no build ever created). Four at a time keeps every
+      # submit under quota; queued shards start with a fresh per-job timeout.
+      max-parallel: 4
       matrix:
         include:
           - label: compiler-files
@@ -1084,7 +1091,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          submit_output="$(gcloud builds submit \
+          # Even with --async, a quota-throttled CreateBuild is retried by
+          # gcloud silently (#13306: tarball uploaded, no build created, two
+          # hours of silence until the job timeout). Bound the submit so a
+          # starved shard fails fast with an attributable message instead of
+          # burning the whole job budget.
+          submit_rc=0
+          submit_output="$(timeout 600 gcloud builds submit \
             --async \
             --project=tsz-ci \
             --region=us-central1 \
@@ -1092,7 +1105,15 @@ jobs:
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}",_BENCH_SHARD_LABEL="${{ matrix.label }}",_BENCH_SHARD_FILTER="${{ matrix.filter }}" \
             --format='value(id)' \
-            .)"
+            .)" || submit_rc=$?
+          if [[ "$submit_rc" -eq 124 ]]; then
+            echo "::error::Cloud Build submit for ${{ matrix.label }} produced no build within 10 minutes — concurrent-build quota starvation (#13306), not a benchmark result. Re-run when the pool drains." >&2
+            exit 1
+          elif [[ "$submit_rc" -ne 0 ]]; then
+            printf '%s\n' "$submit_output"
+            echo "Cloud Build shard submit failed with exit ${submit_rc}." >&2
+            exit "$submit_rc"
+          fi
           build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
           if [[ -z "$build_id" ]]; then
             printf '%s\n' "$submit_output"

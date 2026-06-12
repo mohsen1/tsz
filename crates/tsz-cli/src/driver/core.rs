@@ -473,12 +473,18 @@ impl CompilationCache {
     }
 }
 
-/// Convert `CompilationCache` to `BuildInfo` for persistence
+/// Convert `CompilationCache` to `BuildInfo` for persistence.
+///
+/// `latest_changed_dts_file` is the most recently changed declaration output
+/// for this build, carried forward from the previously loaded `BuildInfo`
+/// when the build wrote no declaration file (tsc preserves
+/// `latestChangedDtsFile` across no-emit incremental saves).
 fn compilation_cache_to_build_info(
     cache: &CompilationCache,
     root_files: &[PathBuf],
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
+    latest_changed_dts_file: Option<String>,
 ) -> BuildInfo {
     use crate::incremental::{
         BuildInfoOptions, CachedDiagnostic, CachedRelatedInformation, EmitSignature,
@@ -616,7 +622,7 @@ fn compilation_cache_to_build_info(
         dependencies,
         semantic_diagnostics_per_file,
         emit_signatures,
-        latest_changed_dts_file: None, // TODO: Track most recently changed .d.ts file
+        latest_changed_dts_file,
         options: build_options,
         build_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
