@@ -1,5 +1,6 @@
 use super::*;
 use crate::types::{PropertyInfo, TypeId};
+use rustc_hash::FxHashMap;
 
 impl<'a> TypeInstantiator<'a> {
     /// Propagate display properties from intersection members to the result.
@@ -23,10 +24,15 @@ impl<'a> TypeInstantiator<'a> {
         &mut self,
         properties: &[PropertyInfo],
     ) -> Option<Vec<PropertyInfo>> {
+        let mut local_results = (properties.len() >= 8).then(FxHashMap::default);
         let mut instantiated: Option<Vec<PropertyInfo>> = None;
         for (index, property) in properties.iter().enumerate() {
-            let type_id = self.instantiate(property.type_id);
-            let write_type = self.instantiate(property.write_type);
+            let type_id = self.instantiate_property_slot(property.type_id, &mut local_results);
+            let write_type = if property.write_type == property.type_id {
+                type_id
+            } else {
+                self.instantiate_property_slot(property.write_type, &mut local_results)
+            };
             if let Some(instantiated) = &mut instantiated {
                 let mut property = property.clone();
                 property.type_id = type_id;
@@ -47,6 +53,23 @@ impl<'a> TypeInstantiator<'a> {
             instantiated.is_some(),
         );
         instantiated
+    }
+
+    fn instantiate_property_slot(
+        &mut self,
+        type_id: TypeId,
+        local_results: &mut Option<FxHashMap<TypeId, TypeId>>,
+    ) -> TypeId {
+        if let Some(local_results) = local_results {
+            if let Some(cached) = local_results.get(&type_id) {
+                return *cached;
+            }
+            let instantiated = self.instantiate(type_id);
+            local_results.insert(type_id, instantiated);
+            instantiated
+        } else {
+            self.instantiate(type_id)
+        }
     }
 
     pub(super) fn propagate_instantiated_display_properties(

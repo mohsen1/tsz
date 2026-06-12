@@ -111,4 +111,63 @@ mod dump_tests {
             );
         }
     }
+
+    #[test]
+    fn dump_string_surfaces_scalar_snapshot_counter_sections() {
+        // Keep scalar snapshot sections from repeating the original #13130
+        // drift pattern: a counter can be wired into storage and JSON while
+        // remaining invisible to humans reading the text dump.
+        force_enable_perf_counters_for_tests();
+
+        let c = counters();
+        c.relation_limit_cache_hits
+            .fetch_add(17, Ordering::Relaxed);
+        c.relation_maybe_promotions
+            .fetch_add(19, Ordering::Relaxed);
+        c.eval_evaluator_constructions
+            .fetch_add(23, Ordering::Relaxed);
+        c.eval_local_memo_hits.fetch_add(29, Ordering::Relaxed);
+        c.eval_compute_nodes.fetch_add(31, Ordering::Relaxed);
+        c.eval_lost_memo_recomputes
+            .fetch_add(37, Ordering::Relaxed);
+        c.eval_lost_memo_mismatches
+            .fetch_add(41, Ordering::Relaxed);
+        c.eval_lost_memo_recomputes_identity
+            .fetch_add(43, Ordering::Relaxed);
+        c.eval_memo_nested_hits.fetch_add(47, Ordering::Relaxed);
+        c.eval_lost_memo_recomputes_plain
+            .fetch_add(53, Ordering::Relaxed);
+        c.eval_lost_memo_recomputes_authoritative
+            .fetch_add(59, Ordering::Relaxed);
+        c.eval_lost_memo_recomputes_other
+            .fetch_add(61, Ordering::Relaxed);
+        c.eval_dropped_memo_entries
+            .fetch_add(67, Ordering::Relaxed);
+        c.eval_dropped_aux_entries.fetch_add(71, Ordering::Relaxed);
+
+        let dump = PerfCounters::dump_string();
+        for needle in [
+            "Relation limit-result cache",
+            "limit cache hits",
+            "maybe promotions",
+            "Evaluator memo lifecycle",
+            "constructions",
+            "local memo hits",
+            "compute nodes",
+            "lost recomputes",
+            "lost mismatches",
+            "identity recomputes",
+            "nested memo hits",
+            "plain recomputes",
+            "authoritative recomputes",
+            "other recomputes",
+            "dropped memo entries",
+            "dropped aux entries",
+        ] {
+            assert!(
+                dump.contains(needle),
+                "perf counter text dump omitted scalar counter `{needle}`:\n{dump}"
+            );
+        }
+    }
 }

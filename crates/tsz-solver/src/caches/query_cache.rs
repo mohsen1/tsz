@@ -11,6 +11,9 @@ use crate::caches::db::{
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
 use crate::caches::query_trace;
+use crate::caches::shared_instantiation::{
+    application_eval_entry_references_def, shared_instantiation_family_requested,
+};
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
 use crate::def::DefId;
 use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
@@ -42,7 +45,7 @@ use tsz_common::interner::Atom;
 // homomorphic mapped type whose optional-modifier stripping depends on
 // `exactOptionalPropertyTypes`, so both options are part of the cache identity
 // (issue #10970).
-type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool, bool);
+pub(super) type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool, bool);
 // Element access (indexed access) of an optional property includes `undefined`
 // under both `exactOptionalPropertyTypes` settings (matching tsc), so the result
 // does not depend on that option and it is intentionally not part of this key.
@@ -130,11 +133,15 @@ impl CachedPolicyRelation {
 /// state during the first evaluation of a generic type alias (e.g. `Promise<T>`,
 /// `Awaited<T>`), producing a stale result that is then returned to sibling
 /// files. Keeping those caches per-file eliminates the ordering-sensitive
-/// correctness risk. See issue #9507.
+/// correctness risk. See issue #9507. `TSZ_SHARE_INSTANTIATION_CACHES=1`
+/// enables the experimental #13240 witness path.
 pub struct SharedQueryCache {
     eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
     subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
     assignability_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
+    application_eval_cache: DashMap<ApplicationEvalCacheKey, TypeId, FxBuildHasher>,
+    instantiation_cache: DashMap<InstantiationCacheKey, TypeId, FxBuildHasher>,
+    share_instantiation_family: bool,
 }
 
 impl SharedQueryCache {
@@ -143,12 +150,24 @@ impl SharedQueryCache {
             eval_cache: DashMap::with_hasher(FxBuildHasher),
             subtype_cache: DashMap::with_hasher(FxBuildHasher),
             assignability_cache: DashMap::with_hasher(FxBuildHasher),
+            application_eval_cache: DashMap::with_hasher(FxBuildHasher),
+            instantiation_cache: DashMap::with_hasher(FxBuildHasher),
+            share_instantiation_family: shared_instantiation_family_requested(),
         }
     }
 
     /// Number of entries across all shared caches.
     pub fn total_entries(&self) -> usize {
-        self.eval_cache.len() + self.subtype_cache.len() + self.assignability_cache.len()
+        self.eval_cache.len()
+            + self.subtype_cache.len()
+            + self.assignability_cache.len()
+            + self.application_eval_cache.len()
+            + self.instantiation_cache.len()
+    }
+
+    #[inline]
+    const fn shares_instantiation_family(&self) -> bool {
+        self.share_instantiation_family
     }
 
     /// Estimate the resident heap bytes of the shared cache maps.
@@ -169,6 +188,14 @@ impl SharedQueryCache {
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<RelationCacheKey>()
                 + std::mem::size_of::<bool>());
+        size += self.application_eval_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<ApplicationEvalCacheKey>()
+                + std::mem::size_of::<TypeId>());
+        size += self.instantiation_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<InstantiationCacheKey>()
+                + std::mem::size_of::<TypeId>());
         size
     }
 }
@@ -605,12 +632,26 @@ impl<'a> QueryCache<'a> {
                 .set(self.application_eval_cache_hits.get() + 1);
             return Some(result);
         }
+        if let Some(shared) = self.shared
+            && shared.shares_instantiation_family()
+            && let Some(result) = shared.application_eval_cache.get(&key).map(|entry| *entry)
+        {
+            self.application_eval_cache.borrow_mut().insert(key, result);
+            self.application_eval_cache_hits
+                .set(self.application_eval_cache_hits.get() + 1);
+            return Some(result);
+        }
         self.application_eval_cache_misses
             .set(self.application_eval_cache_misses.get() + 1);
         None
     }
 
     fn insert_application_eval_cache(&self, key: ApplicationEvalCacheKey, result: TypeId) {
+        if let Some(shared) = self.shared
+            && shared.shares_instantiation_family()
+        {
+            shared.application_eval_cache.insert(key.clone(), result);
+        }
         self.application_eval_cache.borrow_mut().insert(key, result);
     }
 
@@ -993,16 +1034,17 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
 
     fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
         let mut cache = self.application_eval_cache.borrow_mut();
-        if cache.is_empty() {
-            return;
-        }
-        cache.retain(|(key_def, key_args, _, _), &mut result| {
-            *key_def != def_id
-                && !key_args.iter().any(|&arg| {
-                    crate::visitors::visitor::contains_lazy_def_id(self.interner, arg, def_id)
-                })
-                && !crate::visitors::visitor::contains_lazy_def_id(self.interner, result, def_id)
+        cache.retain(|key, &mut result| {
+            !application_eval_entry_references_def(self.interner, key, result, def_id)
         });
+        if let Some(shared) = self.shared
+            && shared.shares_instantiation_family()
+            && !shared.application_eval_cache.is_empty()
+        {
+            shared.application_eval_cache.retain(|key, result| {
+                !application_eval_entry_references_def(self.interner, key, *result, def_id)
+            });
+        }
     }
 
     /// Nested eval-memo read for plain evaluators (issue #13097).
@@ -1616,6 +1658,15 @@ impl QueryDatabase for QueryCache<'_> {
                 Some(result)
             }
             None => {
+                if let Some(shared) = self.shared
+                    && shared.shares_instantiation_family()
+                    && let Some(result) = shared.instantiation_cache.get(key).map(|entry| *entry)
+                {
+                    self.instantiation_cache.insert(key.clone(), result);
+                    self.instantiation_cache_hits
+                        .set(self.instantiation_cache_hits.get() + 1);
+                    return Some(result);
+                }
                 self.instantiation_cache_misses
                     .set(self.instantiation_cache_misses.get() + 1);
                 None
@@ -1625,6 +1676,11 @@ impl QueryDatabase for QueryCache<'_> {
 
     /// Store an `instantiate_type` result in the cross-call cache.
     fn insert_instantiation_cache(&self, key: InstantiationCacheKey, result: TypeId) {
+        if let Some(shared) = self.shared
+            && shared.shares_instantiation_family()
+        {
+            shared.instantiation_cache.insert(key.clone(), result);
+        }
         self.instantiation_cache.insert(key, result);
     }
 

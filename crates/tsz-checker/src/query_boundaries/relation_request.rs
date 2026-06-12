@@ -726,6 +726,30 @@ impl RelationRequest {
         }
     }
 
+    /// Memo key for the stamp-guarded assignability failure-analysis memo
+    /// (issue #13243), or `None` when this request is not memo-eligible.
+    ///
+    /// Eligible requests run the canonical reason-collecting assignable
+    /// policy: not decision-only (decision-only callers stay reason-free,
+    /// #13213), not the overload subtype pass (its `any`-propagation mode
+    /// changes the relation outside the packed flags), and resolving to the
+    /// plain `Assignable` solver kind. The erased-generic-retry bit is part
+    /// of the solver flags and therefore of the key.
+    pub(crate) fn failure_memo_key(
+        &self,
+        base_flags: u16,
+        sound_mode: bool,
+    ) -> Option<crate::context::AssignabilityFailureKey> {
+        if self.decision_only || self.overload_subtype_pass {
+            return None;
+        }
+        let (kind, flags) = self.solver_relation_policy(base_flags);
+        if kind != tsz_solver::relations::relation_queries::RelationKind::Assignable {
+            return None;
+        }
+        Some((self.source, self.target, flags, sound_mode))
+    }
+
     /// Allow a failed generic-signature inference to retry with erased signatures.
     pub(crate) const fn with_erased_generic_signature_retry(mut self) -> Self {
         self.allow_erased_generic_signature_retry = true;

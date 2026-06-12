@@ -29,6 +29,7 @@ pub(super) struct SourceResolutionSetupInput<'a> {
     pub(super) base_dir: &'a Path,
     pub(super) source_module_resolutions:
         Option<&'a FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>>,
+    pub(super) source_module_resolution_misses: Option<&'a FxHashSet<SourceModuleResolutionKey>>,
     pub(super) program_file_index: &'a ProgramFileIndex,
     pub(super) program_paths: &'a FxHashSet<PathBuf>,
     pub(super) package_redirects: &'a FxHashMap<PathBuf, PathBuf>,
@@ -43,6 +44,7 @@ pub(super) fn prepare_source_resolution_setup(
         options,
         base_dir,
         source_module_resolutions,
+        source_module_resolution_misses,
         program_file_index,
         program_paths,
         package_redirects,
@@ -165,14 +167,15 @@ pub(super) fn prepare_source_resolution_setup(
                     *resolution_mode_override,
                 );
                 let request_kind_key = checker_resolution_request_kind(*import_kind);
-                if let Some(discovered) = source_module_resolutions.and_then(|resolutions| {
-                    resolutions.get(&SourceModuleResolutionKey {
-                        containing_file: file_path.to_path_buf(),
-                        specifier: specifier.clone(),
-                        import_kind: *import_kind,
-                        resolution_mode_override: *resolution_mode_override,
-                    })
-                }) {
+                let source_resolution_key = SourceModuleResolutionKey {
+                    containing_file: file_path.to_path_buf(),
+                    specifier: specifier.clone(),
+                    import_kind: *import_kind,
+                    resolution_mode_override: *resolution_mode_override,
+                };
+                if let Some(discovered) = source_module_resolutions
+                    .and_then(|resolutions| resolutions.get(&source_resolution_key))
+                {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
                     let canonical = if should_apply_duplicate_package_redirect(file_path) {
                         package_redirects
@@ -215,9 +218,14 @@ pub(super) fn prepare_source_resolution_setup(
                     continue;
                 }
 
+                let source_discovery_missed = source_module_resolution_misses
+                    .is_some_and(|misses| misses.contains(&source_resolution_key));
                 let result = module_resolver.lookup(
                     &request,
                     |spec, fp| {
+                        if source_discovery_missed && fp == file_path && spec == specifier {
+                            return None;
+                        }
                         resolve_module_specifier(
                             fp,
                             spec,

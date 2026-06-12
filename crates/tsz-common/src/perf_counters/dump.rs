@@ -148,6 +148,8 @@ impl PerfCounters {
             snap.resolver.candidate_paths_total,
             snap.identity.type_environment_raw_symbol_lazy_fallbacks,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
+            + &Self::dump_relation_limit_cache(&snap)
+            + &Self::dump_evaluator_memo(&snap)
             + &Self::dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
                 &snap.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues,
             )
@@ -825,6 +827,65 @@ impl PerfCounters {
             ));
         }
         out
+    }
+
+    fn dump_relation_limit_cache(snap: &PerfCounterSnapshot) -> String {
+        let counters = &snap.relation_limit_cache;
+        if counters.limit_cache_hits == 0 && counters.maybe_promotions == 0 {
+            return String::new();
+        }
+        format!(
+            "\nRelation limit-result cache:\n  \
+             limit cache hits          {:>12}\n  \
+             maybe promotions          {:>12}\n",
+            counters.limit_cache_hits, counters.maybe_promotions,
+        )
+    }
+
+    fn dump_evaluator_memo(snap: &PerfCounterSnapshot) -> String {
+        let counters = &snap.evaluator_memo;
+        if counters.constructions == 0
+            && counters.local_memo_hits == 0
+            && counters.compute_nodes == 0
+            && counters.lost_memo_recomputes == 0
+            && counters.lost_memo_mismatches == 0
+            && counters.lost_memo_recomputes_identity == 0
+            && counters.memo_nested_hits == 0
+            && counters.lost_memo_recomputes_plain == 0
+            && counters.lost_memo_recomputes_authoritative == 0
+            && counters.lost_memo_recomputes_other == 0
+            && counters.dropped_memo_entries == 0
+            && counters.dropped_aux_entries == 0
+        {
+            return String::new();
+        }
+        format!(
+            "\nEvaluator memo lifecycle:\n  \
+             constructions             {:>12}\n  \
+             local memo hits           {:>12}\n  \
+             compute nodes             {:>12}\n  \
+             lost recomputes           {:>12}\n  \
+             lost mismatches           {:>12}\n  \
+             identity recomputes       {:>12}\n  \
+             nested memo hits          {:>12}\n  \
+             plain recomputes          {:>12}\n  \
+             authoritative recomputes  {:>12}\n  \
+             other recomputes          {:>12}\n  \
+             dropped memo entries      {:>12}\n  \
+             dropped aux entries       {:>12}\n",
+            counters.constructions,
+            counters.local_memo_hits,
+            counters.compute_nodes,
+            counters.lost_memo_recomputes,
+            counters.lost_memo_mismatches,
+            counters.lost_memo_recomputes_identity,
+            counters.memo_nested_hits,
+            counters.lost_memo_recomputes_plain,
+            counters.lost_memo_recomputes_authoritative,
+            counters.lost_memo_recomputes_other,
+            counters.dropped_memo_entries,
+            counters.dropped_aux_entries,
+        )
     }
 
     fn dump_slow_check_timings(snap: &PerfCounterSnapshot) -> String {
