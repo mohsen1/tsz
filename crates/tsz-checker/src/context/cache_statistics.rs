@@ -52,6 +52,8 @@ pub struct CheckerContextCacheStatistics {
     pub flow_reference_match_cache_estimated_size_bytes: usize,
     pub flow_alias_base_assignment_cache_entries: usize,
     pub flow_alias_base_assignment_cache_estimated_size_bytes: usize,
+    pub flow_alias_path_assignment_cache_entries: usize,
+    pub flow_alias_path_assignment_cache_estimated_size_bytes: usize,
     pub js_export_surface_cache_entries: usize,
     pub js_export_surface_cache_estimated_size_bytes: usize,
     pub class_instance_type_cache_entries: usize,
@@ -92,6 +94,7 @@ impl CheckerContextCacheStatistics {
             + self.flow_numeric_atom_cache_estimated_size_bytes
             + self.flow_reference_match_cache_estimated_size_bytes
             + self.flow_alias_base_assignment_cache_estimated_size_bytes
+            + self.flow_alias_path_assignment_cache_estimated_size_bytes
             + self.js_export_surface_cache_estimated_size_bytes
             + self.class_instance_type_cache_estimated_size_bytes
             + self.class_constructor_type_cache_estimated_size_bytes
@@ -121,6 +124,7 @@ impl CheckerContextCacheStatistics {
             + self.flow_numeric_atom_cache_entries
             + self.flow_reference_match_cache_entries
             + self.flow_alias_base_assignment_cache_entries
+            + self.flow_alias_path_assignment_cache_entries
             + self.js_export_surface_cache_entries
             + self.class_instance_type_cache_entries
             + self.class_constructor_type_cache_entries
@@ -158,6 +162,7 @@ impl<'a> CheckerContext<'a> {
         let flow_numeric_atom_cache = self.flow_numeric_atom_cache.borrow();
         let flow_reference_match_cache = self.flow_reference_match_cache.borrow();
         let flow_alias_base_assignment_cache = self.symbol_flow_memo.alias_base_assignment.borrow();
+        let flow_alias_path_assignment_cache = self.symbol_flow_memo.alias_path_assignment.borrow();
         let class_chain_summary_cache = self.class_chain_summary_cache.borrow();
         let env_eval_cache = self.env_eval_cache.borrow();
         let class_symbol_to_decl_cache = self.class_symbol_to_decl_cache.borrow();
@@ -245,6 +250,10 @@ impl<'a> CheckerContext<'a> {
             flow_alias_base_assignment_cache_entries: flow_alias_base_assignment_cache.len(),
             flow_alias_base_assignment_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &flow_alias_base_assignment_cache,
+            ),
+            flow_alias_path_assignment_cache_entries: flow_alias_path_assignment_cache.len(),
+            flow_alias_path_assignment_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
+                &flow_alias_path_assignment_cache,
             ),
             js_export_surface_cache_entries: self.js_export_surface_cache.len(),
             js_export_surface_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
