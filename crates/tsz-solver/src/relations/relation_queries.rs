@@ -808,7 +808,6 @@ pub fn check_application_variance<R: TypeResolver>(
         && !s_app
             .args
             .iter()
-            .chain(t_app.args.iter())
             .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
     {
         return None;

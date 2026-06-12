@@ -69,6 +69,29 @@ function f<A, B extends A>(ca: Contra<A>, cb: Contra<B>) {
 }
 
 #[test]
+fn conditional_alias_callback_param_keeps_variance_acceptance() {
+    // Repro from `conditionalTypes2.ts` / TypeScript #33568. The expected
+    // callback parameter is `Foo3<T>` while the provided callback accepts
+    // `Foo3<string>`. During callback comparison the relation checks
+    // `Foo3<T>` against `Foo3<string>`; because the source application still
+    // carries a free type parameter, the conditional alias must remain eligible
+    // for the variance path rather than falling through to a structural
+    // false-positive override/callback diagnostic.
+    let source = r#"
+declare function ff(x: Foo3<string>): void;
+declare function gg<T>(f: (x: Foo3<T>) => void): void;
+type Foo3<T> = T extends number ? { n: T } : { x: T };
+gg(ff);
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes = codes(&diags);
+    assert!(
+        !codes.contains(&2416) && !codes.contains(&2322) && !codes.contains(&2345),
+        "expected callback assignment to stay clean. Codes: {codes:?}"
+    );
+}
+
+#[test]
 fn covariant_application_to_constrained_param_target_rejects_wider_to_narrower() {
     // Anti-regression: COVARIANT containers still reject the wider-to-narrower
     // direction. `Covariant<A>` -> `Covariant<B>` fails when B extends A,
