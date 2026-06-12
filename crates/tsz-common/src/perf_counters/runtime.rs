@@ -143,6 +143,18 @@ pub struct PerfCounters {
     /// band-conditional `LimitTrue` entries.
     pub relation_maybe_promotions: AtomicU64,
 
+    // ─── relation failure-reason single pass (issue #13243) ─────────────
+    /// Failure-reason walks executed after a failing reason-collecting
+    /// assignability relation (`is_weak_union_violation` plus
+    /// `explain_failure` on the configured `CompatChecker`). Each walk
+    /// re-traverses the failing relation graph, so on diagnostic-heavy code
+    /// this is the duplicated cost the single-pass campaign removes.
+    pub relation_failure_reason_walks: AtomicU64,
+    /// Failing relation analyses served from the checker's stamp-guarded
+    /// failure-analysis memo instead of re-running the relation engine plus
+    /// the failure-reason walk.
+    pub relation_failure_memo_hits: AtomicU64,
+
     // ─── solver concrete materialization (issue #13242) ─────────────────
     pub union_subtype_reduction_calls: AtomicU64,
     pub union_subtype_reduction_members_total: AtomicU64,
@@ -323,6 +335,8 @@ impl PerfCounters {
                 CHECKER_CREATION_REASON_COUNT],
             relation_limit_cache_hits: AtomicU64::new(0),
             relation_maybe_promotions: AtomicU64::new(0),
+            relation_failure_reason_walks: AtomicU64::new(0),
+            relation_failure_memo_hits: AtomicU64::new(0),
             union_subtype_reduction_calls: AtomicU64::new(0),
             union_subtype_reduction_members_total: AtomicU64::new(0),
             union_subtype_reduction_members_max: AtomicU64::new(0),
@@ -1315,6 +1329,30 @@ pub fn record_relation_maybe_promotion() {
     }
     counters()
         .relation_maybe_promotions
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one failure-reason walk over a failing reason-collecting
+/// assignability relation (issue #13243).
+#[inline]
+pub fn record_relation_failure_reason_walk() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .relation_failure_reason_walks
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one failing relation analysis served from the checker's
+/// stamp-guarded failure-analysis memo (issue #13243).
+#[inline]
+pub fn record_relation_failure_memo_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .relation_failure_memo_hits
         .fetch_add(1, Ordering::Relaxed);
 }
 

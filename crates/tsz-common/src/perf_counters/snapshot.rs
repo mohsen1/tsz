@@ -32,6 +32,8 @@ pub struct PerfCounterSnapshot {
     pub interner: InternerCounters,
     /// Solver relation limit-result cache (issue #13241).
     pub relation_limit_cache: RelationLimitCacheCounters,
+    /// Relation failure-reason single-pass campaign (issue #13243).
+    pub relation_failure: RelationFailureCounters,
     /// Solver concrete-form materialization counters (issue #13242).
     pub solver_materialization: SolverMaterializationCounters,
     /// Solver evaluator memo lifecycle (issue #13097): what the per-run
@@ -481,6 +483,17 @@ pub struct RelationLimitCacheCounters {
     pub maybe_promotions: u64,
 }
 
+/// Relation failure-reason single-pass counters (issue #13243): how many
+/// failing reason-collecting relations re-walked the relation graph vs were
+/// served from the checker's stamp-guarded failure-analysis memo.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RelationFailureCounters {
+    /// Failure-reason walks executed by the solver on a failing relation.
+    pub reason_walks: u64,
+    /// Failing analyses served from the failure-analysis memo.
+    pub memo_hits: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SolverMaterializationCounters {
     pub union_subtype_reduction_calls: u64,
@@ -674,6 +687,10 @@ impl PerfCounters {
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
                 maybe_promotions: load(&c.relation_maybe_promotions),
+            },
+            relation_failure: RelationFailureCounters {
+                reason_walks: load(&c.relation_failure_reason_walks),
+                memo_hits: load(&c.relation_failure_memo_hits),
             },
             solver_materialization: SolverMaterializationCounters {
                 union_subtype_reduction_calls: load(&c.union_subtype_reduction_calls),

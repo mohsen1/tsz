@@ -109,6 +109,9 @@ mod assignability_display_relation_routing_arch_tests;
 #[path = "tests/assignability_eval_memo_tests.rs"]
 mod assignability_eval_memo_tests;
 #[cfg(test)]
+#[path = "tests/assignability_failure_memo_tests.rs"]
+mod assignability_failure_memo_tests;
+#[cfg(test)]
 #[path = "tests/assignability_index_access_normalization_boundary_arch_tests.rs"]
 mod assignability_index_access_normalization_boundary_arch_tests;
 #[cfg(test)]
