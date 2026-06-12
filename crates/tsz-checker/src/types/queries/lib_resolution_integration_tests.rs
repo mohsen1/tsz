@@ -46,8 +46,7 @@ fn keyword_type_refs_no_error() {
 
 #[test]
 fn keyword_type_in_function_params_no_error() {
-    let codes =
-        check_source_codes("function f(a: string, b: number): boolean { return true; }");
+    let codes = check_source_codes("function f(a: string, b: number): boolean { return true; }");
     assert!(
         codes.is_empty(),
         "Keyword types in function params should produce no errors: {codes:?}"
@@ -87,8 +86,7 @@ fn promise_in_return_type_no_crash() {
 #[test]
 fn promise_all_pattern_no_crash() {
     // Promise.all-like usage pattern
-    let _codes =
-        check_source_codes("async function f() { const a = await Promise.resolve(1); }");
+    let _codes = check_source_codes("async function f() { const a = await Promise.resolve(1); }");
 }
 
 #[test]
@@ -199,30 +197,26 @@ fn async_function_inferred_return_type_no_crash() {
 #[test]
 fn promise_with_void_type_arg_no_crash() {
     // Promise<void> is common for side-effect-only async functions
-    let _codes =
-        check_source_codes("async function run(): Promise<void> { console.log('done'); }");
+    let _codes = check_source_codes("async function run(): Promise<void> { console.log('done'); }");
 }
 
 #[test]
 fn promise_constructor_pattern_no_crash() {
     // new Promise() pattern exercises the constructor signature lowering
-    let _codes = check_source_codes(
-        "let p = new Promise<number>((resolve, reject) => { resolve(1); });",
-    );
+    let _codes =
+        check_source_codes("let p = new Promise<number>((resolve, reject) => { resolve(1); });");
 }
 
 #[test]
 fn promise_then_chain_no_crash() {
     // .then() method resolution exercises lib heritage merging
-    let _codes =
-        check_source_codes("declare let p: Promise<number>; let q = p.then(x => x + 1);");
+    let _codes = check_source_codes("declare let p: Promise<number>; let q = p.then(x => x + 1);");
 }
 
 #[test]
 fn promise_catch_no_crash() {
-    let _codes = check_source_codes(
-        "declare let p: Promise<number>; let q = p.catch(e => console.log(e));",
-    );
+    let _codes =
+        check_source_codes("declare let p: Promise<number>; let q = p.catch(e => console.log(e));");
 }
 
 #[test]
@@ -281,8 +275,7 @@ fn value_only_local_without_type_binding_still_reports_ts2749() {
 
 #[test]
 fn omit_type_no_crash() {
-    let _codes =
-        check_source_codes("type O = Omit<{ a: number; b: string; c: boolean }, 'c'>;");
+    let _codes = check_source_codes("type O = Omit<{ a: number; b: string; c: boolean }, 'c'>;");
 }
 
 #[test]
@@ -331,8 +324,7 @@ fn import_type_in_type_alias_union_no_crash() {
 
 #[test]
 fn import_type_in_interface_extends_no_crash() {
-    let _codes =
-        check_source_codes("interface Foo extends import('./other').Bar { x: number; }");
+    let _codes = check_source_codes("interface Foo extends import('./other').Bar { x: number; }");
 }
 
 #[test]
@@ -343,16 +335,14 @@ fn import_type_in_class_implements_no_crash() {
 
 #[test]
 fn import_type_conditional_no_crash() {
-    let _codes =
-        check_source_codes("type T = import('./mod').Foo extends string ? true : false;");
+    let _codes = check_source_codes("type T = import('./mod').Foo extends string ? true : false;");
 }
 
 // ---- lib ref lowering: multiple generic params ----
 
 #[test]
 fn weak_map_weak_set_no_crash() {
-    let _codes =
-        check_source_codes("let wm: WeakMap<object, number>; let ws: WeakSet<object>;");
+    let _codes = check_source_codes("let wm: WeakMap<object, number>; let ws: WeakSet<object>;");
 }
 
 #[test]
@@ -381,8 +371,7 @@ fn async_iterable_type_no_crash() {
 
 #[test]
 fn array_method_access_no_crash() {
-    let _codes =
-        check_source_codes("let a: Array<number> = [1, 2, 3]; let b = a.map(x => x + 1);");
+    let _codes = check_source_codes("let a: Array<number> = [1, 2, 3]; let b = a.map(x => x + 1);");
 }
 
 #[test]
