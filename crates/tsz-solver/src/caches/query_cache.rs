@@ -472,7 +472,7 @@ impl<'a> QueryCache<'a> {
     /// Whether a `LimitTrue` entry's fuel band covers the current query's
     /// remaining global subtype fuel budget (and the policy is enabled).
     fn limit_true_usable(fuel_band: u32) -> bool {
-        crate::caches::limit_policy::limit_result_cache_enabled()
+        crate::limits::limit_result_cache_enabled()
             && crate::relations::subtype::cache::remaining_global_subtype_fuel() <= fuel_band
     }
 
@@ -1474,7 +1474,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.interner.is_union_too_complex() && !union_too_complex_before;
         let top_level_clean = !evaluator.recursion_limit_hit();
         if !newly_union_too_complex
-            && (top_level_clean || crate::caches::limit_policy::limit_result_cache_enabled())
+            && (top_level_clean || crate::limits::limit_result_cache_enabled())
         {
             let tainted = evaluator.take_tainted();
             let mut cache = self.eval_cache.borrow_mut();

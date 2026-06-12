@@ -95,16 +95,8 @@ pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const MAX_INTERNED_TYPES: usize = 8_000_000;
 
-/// Maximum cumulative evaluation fuel across all `TypeEvaluator` instances.
-///
-/// Mirrors TypeScript's `instantiationCount` limit (5,000,000 in tsc). This
-/// prevents deeply recursive type libraries from consuming unbounded memory
-/// through type instantiation that creates new `TypeIds` on each expansion.
-///
-/// When exceeded, evaluators return `TypeId::ERROR`, matching TS2589.
-/// Set lower than tsc's limit because our per-evaluation work is heavier
-/// (we eagerly expand where tsc defers).
-pub(crate) const MAX_EVALUATION_FUEL: u32 = 2_000_000;
+// The evaluation-fuel budget (`MAX_EVALUATION_FUEL`) lives in the
+// consolidated `crate::limits` module (issue #13091).
 
 pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
@@ -318,30 +310,9 @@ pub struct TypeInterner {
     pub(super) instance_id: u32,
 }
 
-thread_local! {
-    /// Per-thread evaluation fuel counter.
-    ///
-    /// Tracks cumulative evaluation work across the `TypeEvaluator` instances
-    /// of the file-check session running on this thread. Mirrors TypeScript's
-    /// `instantiationCount`, which bounds runaway type instantiation per
-    /// checked source element. Prevents deeply recursive type libraries (like
-    /// ts-toolbelt) from consuming unbounded memory through repeated type
-    /// instantiation that creates new `TypeIds` on each expansion.
-    ///
-    /// When this counter exceeds `MAX_EVALUATION_FUEL`, evaluators bail out
-    /// early with `TypeId::ERROR`, matching tsc's TS2589 behavior.
-    ///
-    /// This is thread-local rather than a process-global atomic on purpose:
-    /// each file-check session runs entirely on one worker thread and resets
-    /// the budget at session start (`reset_evaluation_fuel` from
-    /// `build_type_environment`). A process-global counter made concurrent
-    /// fresh-checker workers consume and reset each other's budget, so
-    /// whether a deep evaluation bailed to `TypeId::ERROR` depended on
-    /// sibling-worker scheduling — the source of flaky parallel-check
-    /// diagnostics (false TS2344) and uncached re-evaluation storms on
-    /// type-heavy projects.
-    static EVALUATION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
+// The per-thread evaluation fuel counter lives in the consolidated
+// `crate::limits` thread-local budget state (issue #13091); the methods
+// below remain the stable access surface for checker/database callers.
 
 /// Entry-count snapshot for retained `TypeInterner` predicate caches.
 ///
@@ -1309,17 +1280,14 @@ impl TypeInterner {
     /// Consume evaluation fuel and return whether fuel is exhausted.
     ///
     /// This is a per-thread budget across the `TypeEvaluator` instances of
-    /// the file-check session running on this thread (see `EVALUATION_FUEL`).
-    /// When exhausted, the current evaluation should bail out with ERROR, but
-    /// the interner remains readable so already-computed project types do not
-    /// turn into opaque `Type(N)` placeholders in later diagnostics.
+    /// the file-check session running on this thread (see
+    /// [`crate::limits::consume_evaluation_fuel`]). When exhausted, the
+    /// current evaluation should bail out with ERROR, but the interner
+    /// remains readable so already-computed project types do not turn into
+    /// opaque `Type(N)` placeholders in later diagnostics.
     #[inline]
     pub fn consume_evaluation_fuel(&self, amount: u32) -> bool {
-        EVALUATION_FUEL.with(|fuel| {
-            let next = fuel.get().wrapping_add(amount);
-            fuel.set(next);
-            next > MAX_EVALUATION_FUEL
-        })
+        crate::limits::consume_evaluation_fuel(amount)
     }
 
     /// Reset this thread's evaluation fuel counter.
@@ -1331,14 +1299,14 @@ impl TypeInterner {
     /// of any multi-thousand-file program into blanket `TypeId::ERROR`.
     #[inline]
     pub fn reset_evaluation_fuel(&self) {
-        EVALUATION_FUEL.with(|fuel| fuel.set(0));
+        crate::limits::reset_evaluation_fuel();
     }
 
     /// Check whether this thread's evaluation fuel is exhausted without
     /// consuming any.
     #[inline]
     pub fn is_evaluation_fuel_exhausted(&self) -> bool {
-        EVALUATION_FUEL.with(|fuel| fuel.get() > MAX_EVALUATION_FUEL)
+        crate::limits::is_evaluation_fuel_exhausted()
     }
 
     #[inline]

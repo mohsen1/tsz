@@ -13,12 +13,14 @@ use std::cell::Cell;
 
 /// Maximum global instantiation depth — bounds nesting of
 /// `evaluate_application_type` calls across all `CheckerContext` instances.
-const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = 50;
+/// Canonical definition in [`crate::limits`].
+const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_GLOBAL_INSTANTIATION_DEPTH;
 
 /// Maximum global instantiation fuel — limits TOTAL non-cached
 /// `evaluate_application_type` invocations per file. React's react16.d.ts
 /// can trigger thousands of unique Application evaluations; this caps work.
-const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = 2000;
+/// Canonical definition in [`crate::limits`].
+const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = crate::limits::MAX_GLOBAL_INSTANTIATION_FUEL;
 
 /// Explicit evaluation session state.
 ///

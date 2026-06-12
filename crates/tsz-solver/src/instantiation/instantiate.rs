@@ -20,8 +20,13 @@ use crate::types::{
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
-/// Maximum depth for recursive type instantiation.
-pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
+/// Maximum depth for recursive type *substitution*.
+///
+/// NOTE: distinct from (and half of) the checker-side
+/// `tsz_common::limits::MAX_INSTANTIATION_DEPTH` (100, tsc's
+/// `instantiationDepth` parity) despite the shared name; see the divergence
+/// notes at the canonical definition in [`crate::limits`].
+pub const MAX_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_TYPE_SUBSTITUTION_DEPTH;
 const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
 
 /// Instantiator for applying type substitutions.

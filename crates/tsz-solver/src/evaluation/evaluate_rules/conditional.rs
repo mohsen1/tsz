@@ -52,7 +52,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
     /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
     /// to work with up to 1000 recursive calls instead of being limited to `MAX_EVALUATE_DEPTH`.
-    const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
+    /// Exact parity with tsc's `tailCount` limit; canonical definition in [`crate::limits`].
+    const MAX_TAIL_RECURSION_DEPTH: usize = crate::limits::MAX_TAIL_RECURSION_DEPTH;
 
     fn normalize_conditional_object_operand(&mut self, type_id: TypeId) -> TypeId {
         let (shape_id, with_index) = match self.interner().lookup(type_id) {

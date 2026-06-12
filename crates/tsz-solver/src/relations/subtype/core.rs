@@ -33,12 +33,12 @@ use crate::visitor::{
     type_query_symbol, union_list_id, unique_symbol_ref,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_common::limits;
 
 /// Maximum recursion depth for subtype checking.
 /// This prevents OOM/stack overflow from infinitely expanding recursive types.
 /// Examples: `interface AA<T extends AA<T>>`, `interface List<T> { next: List<T> }`
-pub(crate) const MAX_SUBTYPE_DEPTH: u32 = limits::MAX_SUBTYPE_DEPTH;
+/// Canonical definition in [`crate::limits`].
+pub(crate) const MAX_SUBTYPE_DEPTH: u32 = crate::limits::MAX_SUBTYPE_DEPTH;
 pub(crate) const INTERSECTION_OBJECT_FAST_PATH_THRESHOLD: usize = 8;
 
 /// Result of a subtype check

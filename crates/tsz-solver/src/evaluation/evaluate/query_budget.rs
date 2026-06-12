@@ -20,7 +20,6 @@
 
 use super::TypeEvaluator;
 use crate::relations::subtype::TypeResolver;
-use std::cell::Cell;
 
 impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Enter one operation of the cross-instance per-query budget.
@@ -41,17 +40,11 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     }
 }
 
-thread_local! {
-    /// Live count of nested `evaluate` frames across *all* `TypeEvaluator`
-    /// instances on the current thread. A value of `0` means no evaluation is in
-    /// flight, so the next `evaluate` begins a fresh top-level query.
-    static EVAL_QUERY_ACTIVE: Cell<u32> = const { Cell::new(0) };
-    /// Total `evaluate` operations performed in the current top-level query.
-    /// Reset whenever `EVAL_QUERY_ACTIVE` transitions from `0`, so the budget is
-    /// per top-level query and never carries over to poison sibling type
-    /// positions. See [`DEFAULT_MAX_EVAL_OPS_PER_QUERY`].
-    static EVAL_QUERY_OPS: Cell<u32> = const { Cell::new(0) };
-}
+// The live-frame and op counters live in the consolidated `crate::limits`
+// thread-local budget state (issue #13091): the op counter is reset whenever
+// the live-frame count transitions from `0`, so the budget is per top-level
+// query and never carries over to poison sibling type positions. See
+// [`DEFAULT_MAX_EVAL_OPS_PER_QUERY`].
 
 /// Total `evaluate` operations permitted for a single top-level evaluation query
 /// (the outermost `evaluate` call on the thread, before it returns).
@@ -66,7 +59,8 @@ thread_local! {
 /// Overridable via the `TSZ_MAX_EVAL_OPS` environment variable, which tests use
 /// to force the bail quickly without a multi-million-op spin. See
 /// [`resolved_max_eval_ops`].
-pub(super) const DEFAULT_MAX_EVAL_OPS_PER_QUERY: u32 = 2_000_000;
+pub(super) const DEFAULT_MAX_EVAL_OPS_PER_QUERY: u32 =
+    crate::limits::DEFAULT_MAX_EVAL_OPS_PER_QUERY;
 
 /// Resolve the per-query `evaluate` operation budget, honoring the
 /// `TSZ_MAX_EVAL_OPS` override.
@@ -102,25 +96,17 @@ pub(super) struct EvalQueryFrame {
 impl EvalQueryFrame {
     #[inline]
     pub(super) fn enter(max_ops: u32) -> Self {
-        let active = EVAL_QUERY_ACTIVE.with(|c| {
-            let v = c.get();
-            c.set(v + 1);
-            v
-        });
-        if active == 0 {
-            EVAL_QUERY_OPS.with(|c| c.set(0));
+        // Single consolidated TLS access bumps the live frame count, resets
+        // the op counter on a fresh top-level query, and bumps the op count.
+        let entry = crate::limits::eval_query_enter();
+        if entry.began_top_level_query {
             // A fresh top-level query begins: drop any cross-evaluator result
             // memo from the previous query so results never leak across queries,
             // threads, or files (#11586).
             crate::evaluation::cross_eval_guard::reset_query_memo();
         }
-        let ops = EVAL_QUERY_OPS.with(|c| {
-            let v = c.get().saturating_add(1);
-            c.set(v);
-            v
-        });
         Self {
-            budget_exhausted: ops > max_ops,
+            budget_exhausted: entry.ops > max_ops,
         }
     }
 }
@@ -128,17 +114,14 @@ impl EvalQueryFrame {
 impl Drop for EvalQueryFrame {
     #[inline]
     fn drop(&mut self) {
-        EVAL_QUERY_ACTIVE.with(|c| c.set(c.get().saturating_sub(1)));
+        crate::limits::eval_query_leave();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DEFAULT_MAX_EVAL_OPS_PER_QUERY, EVAL_QUERY_ACTIVE, EVAL_QUERY_OPS, EvalQueryFrame,
-        resolved_max_eval_ops,
-    };
-    use std::cell::Cell;
+    use super::{DEFAULT_MAX_EVAL_OPS_PER_QUERY, EvalQueryFrame, resolved_max_eval_ops};
+    use crate::limits::{eval_query_active, eval_query_ops};
 
     /// The per-query operation counter resets when a fresh top-level query
     /// begins (live frame count returns to zero), so one type position can never
@@ -149,15 +132,15 @@ mod tests {
             let _f1 = EvalQueryFrame::enter(1000);
             let _f2 = EvalQueryFrame::enter(1000);
             let _f3 = EvalQueryFrame::enter(1000);
-            assert_eq!(EVAL_QUERY_OPS.with(Cell::get), 3);
-            assert_eq!(EVAL_QUERY_ACTIVE.with(Cell::get), 3);
+            assert_eq!(eval_query_ops(), 3);
+            assert_eq!(eval_query_active(), 3);
         }
         // All frames dropped -> live count back to zero.
-        assert_eq!(EVAL_QUERY_ACTIVE.with(Cell::get), 0);
+        assert_eq!(eval_query_active(), 0);
 
         // Second top-level query starts fresh: op counter reset to 1, not 4.
         let _f = EvalQueryFrame::enter(1000);
-        assert_eq!(EVAL_QUERY_OPS.with(Cell::get), 1);
+        assert_eq!(eval_query_ops(), 1);
     }
 
     /// Once the budget is exceeded within a single query, the frame reports
@@ -177,7 +160,7 @@ mod tests {
             "still exhausted while the query is live"
         );
         drop((f1, f2, f3, f4));
-        assert_eq!(EVAL_QUERY_ACTIVE.with(Cell::get), 0);
+        assert_eq!(eval_query_active(), 0);
     }
 
     /// With no override set the resolved budget is the default.
