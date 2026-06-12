@@ -453,6 +453,7 @@ impl<'a> CheckerState<'a> {
                             if substitution.get(name).is_none_or(|existing| {
                                 existing == TypeId::UNKNOWN
                                     || existing == TypeId::ERROR
+                                    || self.inference_type_is_anyish(existing)
                                     || common::contains_type_parameters(self.ctx.types, existing)
                                     || common::contains_infer_types(self.ctx.types, existing)
                             }) {
@@ -460,7 +461,88 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-
+                    let mut partial_fixpoint_iterations = 0usize;
+                    loop {
+                        if partial_fixpoint_iterations > shape.type_params.len() {
+                            break;
+                        }
+                        partial_fixpoint_iterations += 1;
+                        let mut substitution_changed = false;
+                        for (i, &arg_idx) in args.iter().enumerate() {
+                            if !extracted_round1_partials.get(i).copied().unwrap_or(false) {
+                                continue;
+                            }
+                            let Some(param_type) = evaluated_shape.params.get(i).map(|p| p.type_id)
+                            else {
+                                continue;
+                            };
+                            let instantiated_param_type =
+                                crate::query_boundaries::common::instantiate_type(
+                                    self.ctx.types,
+                                    param_type,
+                                    &substitution,
+                                );
+                            let Some(refined_partial) = self
+                                .extract_inference_contributing_object_type(
+                                    arg_idx,
+                                    instantiated_param_type,
+                                    &type_param_names,
+                                )
+                                .or_else(|| {
+                                    self.extract_inference_contributing_array_type(
+                                        arg_idx,
+                                        instantiated_param_type,
+                                        &type_param_names,
+                                    )
+                                })
+                            else {
+                                continue;
+                            };
+                            if refined_partial != TypeId::UNKNOWN
+                                && refined_partial != TypeId::ERROR
+                            {
+                                round1_arg_types[i] = refined_partial;
+                            }
+                            let mut partial_substitution =
+                                crate::query_boundaries::common::TypeSubstitution::new();
+                            let mut visited = FxHashSet::default();
+                            self.collect_return_context_substitution(
+                                param_type,
+                                refined_partial,
+                                &tracked_type_params,
+                                &mut partial_substitution,
+                                &mut visited,
+                            );
+                            for (&name, &ty) in partial_substitution.map() {
+                                if ty == TypeId::UNKNOWN
+                                    || ty == TypeId::ERROR
+                                    || self.target_contains_blocking_return_context_type_params(
+                                        ty,
+                                        &tracked_type_params,
+                                    )
+                                {
+                                    continue;
+                                }
+                                let should_update = substitution.get(name).is_none_or(|existing| {
+                                    existing == TypeId::UNKNOWN
+                                        || existing == TypeId::ERROR
+                                        || self.inference_type_is_anyish(existing)
+                                        || common::contains_type_parameters(
+                                            self.ctx.types,
+                                            existing,
+                                        )
+                                        || common::contains_infer_types(self.ctx.types, existing)
+                                });
+                                if should_update {
+                                    substitution.insert(name, ty);
+                                    substitution_changed = true;
+                                }
+                            }
+                        }
+                        if !substitution_changed {
+                            break;
+                        }
+                    }
                     // Extract ThisType<T> marker from raw parameter types and
                     // instantiate with the Round 1 substitution. Push to
                     // this_type_stack so nested object literal methods resolve

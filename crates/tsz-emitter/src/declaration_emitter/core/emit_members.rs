@@ -295,8 +295,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .collect();
 
             if let Some(method_type_id) = method_type_id {
-                if let Some(predicate_text) = self
-                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                if let Some(predicate_text) =
+                    self.method_type_predicate_text_from_candidates(method_idx, method)
                 {
                     self.write(": ");
                     self.write(&predicate_text);
@@ -317,7 +317,7 @@ impl<'a> DeclarationEmitter<'a> {
                         && method_body.is_some()
                     {
                         if self.body_returns_void(method_body) {
-                            self.write(": void");
+                            self.write_method_void_return_type(method);
                         } else if let Some(type_text) =
                             self.function_body_preferred_return_type_text(method_body)
                         {
@@ -398,7 +398,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         self.write(&type_text);
                     } else if self.body_returns_void(method_body) {
-                        self.write(": void");
+                        self.write_method_void_return_type(method);
                     } else if let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                     {
@@ -417,7 +417,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&type_text);
                 } else if self.body_returns_void(method_body) {
-                    self.write(": void");
+                    self.write_method_void_return_type(method);
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
@@ -439,7 +439,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&type_text);
                 } else if self.body_returns_void(method_body) {
-                    self.write(": void");
+                    self.write_method_void_return_type(method);
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
@@ -541,8 +541,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
             if let Some(method_type_id) = method_type_id {
-                if let Some(predicate_text) = self
-                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                if let Some(predicate_text) =
+                    self.method_type_predicate_text_from_candidates(method_idx, method)
                 {
                     self.write(&predicate_text);
                 } else if let Some(return_type_id) =
@@ -560,7 +560,7 @@ impl<'a> DeclarationEmitter<'a> {
                         && method_body.is_some()
                         && self.body_returns_void(method_body)
                     {
-                        self.write("void");
+                        self.write_method_function_type_void_return(method);
                     } else if method_body.is_some()
                         && let Some(type_text) =
                             self.function_body_preferred_return_type_text(method_body)
@@ -583,7 +583,7 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write_type_text_with_current_indent(&type_text);
                     } else if self.body_returns_void(method_body) {
-                        self.write("void");
+                        self.write_method_function_type_void_return(method);
                     } else if let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                     {
@@ -600,7 +600,7 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write_type_text_with_current_indent(&type_text);
                 } else if self.body_returns_void(method_body) {
-                    self.write("void");
+                    self.write_method_function_type_void_return(method);
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
@@ -619,7 +619,7 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write_type_text_with_current_indent(&type_text);
             } else if self.body_returns_void(method_body) {
-                self.write("void");
+                self.write_method_function_type_void_return(method);
             } else if let Some(type_text) =
                 self.function_body_preferred_return_type_text(method_body)
             {
@@ -632,6 +632,38 @@ impl<'a> DeclarationEmitter<'a> {
         } else if !self.source_is_declaration_file {
             self.write("any");
         }
+    }
+
+    fn write_method_void_return_type(&mut self, method: &MethodDeclData) {
+        self.write(": ");
+        self.write_method_function_type_void_return(method);
+    }
+
+    fn write_method_function_type_void_return(&mut self, method: &MethodDeclData) {
+        let type_text = self.wrap_async_method_return_type_text(method, "void".to_string());
+        self.write(&type_text);
+    }
+
+    fn method_type_predicate_text_from_candidates(
+        &self,
+        method_idx: NodeIndex,
+        method: &MethodDeclData,
+    ) -> Option<String> {
+        let cache = self.type_cache.as_ref()?;
+        let candidates = [
+            cache
+                .node_types
+                .get(&method_idx.0)
+                .copied()
+                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY),
+            self.get_node_type_or_names(&[method.name]),
+            self.get_type_via_symbol_for_func(method_idx, method.name),
+            cache.node_types.get(&method_idx.0).copied(),
+        ];
+
+        candidates.into_iter().flatten().find_map(|type_id| {
+            self.function_type_predicate_text(type_id, method.type_parameters.as_ref())
+        })
     }
 
     fn static_method_returning_this_type_text(

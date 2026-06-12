@@ -146,6 +146,24 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 return None;
             }
+            if let Some(method) = self.arena.get_method_decl(parent_node) {
+                for &param_idx in &method.parameters.nodes {
+                    let param_node = self.arena.get(param_idx)?;
+                    let param = self.arena.get_parameter(param_node)?;
+                    if self.get_identifier_text(param.name).as_deref() == Some(name.as_str()) {
+                        return self
+                            .source_slice_from_arena(self.arena, param.type_annotation)
+                            .or_else(|| {
+                                self.type_annotation_text_from_arena_node(
+                                    self.arena,
+                                    param.type_annotation,
+                                )
+                            })
+                            .map(|text| text.trim().to_string());
+                    }
+                }
+                return None;
+            }
             current = parent_idx;
         }
         None
