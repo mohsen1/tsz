@@ -20,9 +20,13 @@ include!("perf_counters/definitions.rs");
 include!("perf_counters/runtime.rs");
 include!("perf_counters/dump.rs");
 include!("perf_counters/snapshot.rs");
+include!("perf_counters/residency.rs");
 
 #[cfg(test)]
 include!("perf_counters/tests.rs");
 
 #[cfg(test)]
 include!("perf_counters/dump_tests.rs");
+
+#[cfg(test)]
+include!("perf_counters/residency_tests.rs");

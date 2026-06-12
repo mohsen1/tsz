@@ -2,10 +2,11 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_seven() {
+    fn schema_version_is_eight() {
         // Bumping schema_version is a breaking change for the bench harness;
-        // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 7);
+        // make the intent explicit. v8 added the `residency` breakdown
+        // (issue #13249 step 1).
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 8);
     }
 
     #[test]
@@ -55,10 +56,11 @@ mod json_tests {
             "slow_check_file_timings",
             "slow_check_statement_timings",
             "slow_type_alias_check_timings",
+            "residency",
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 7);
+        assert_eq!(json["schema_version"], 8);
     }
 
     #[test]

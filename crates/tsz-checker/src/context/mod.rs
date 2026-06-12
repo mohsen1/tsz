@@ -312,6 +312,84 @@ pub struct TypeCache {
     pub namespace_module_names: FxHashMap<TypeId, String>,
 }
 
+impl TypeCache {
+    /// Estimate the resident heap bytes of this per-file cache snapshot.
+    ///
+    /// Entry-count-based estimate for residency accounting (#13249 step 1):
+    /// emit runs pin one `TypeCache` per file until emit completes, so the
+    /// CLI driver sums this across the retained map at perf-counter
+    /// snapshot time. Never called on a checking hot path.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        // FxHashMap per-entry overhead: hash + bucket slot + padding.
+        const ENTRY_OVERHEAD: usize = 16;
+        let entry = |len: usize, key: usize, value: usize| len * (ENTRY_OVERHEAD + key + value);
+        let id = std::mem::size_of::<TypeId>();
+        let node = std::mem::size_of::<NodeIndex>();
+        let sym = std::mem::size_of::<SymbolId>();
+
+        let mut size = std::mem::size_of::<Self>();
+        size += entry(self.symbol_types.len(), sym, id);
+        size += entry(self.symbol_instance_types.len(), sym, id);
+        size += entry(self.node_types.len(), 4, id);
+        size += entry(
+            self.symbol_dependencies.len(),
+            sym,
+            std::mem::size_of::<FxHashSet<SymbolId>>(),
+        );
+        size += self
+            .symbol_dependencies
+            .values()
+            .map(|deps| deps.len() * (ENTRY_OVERHEAD + sym))
+            .sum::<usize>();
+        size += entry(self.def_to_symbol.len(), 8, sym);
+        size += entry(self.def_to_name.len(), 8, std::mem::size_of::<String>());
+        size += self
+            .def_to_name
+            .values()
+            .map(String::capacity)
+            .sum::<usize>();
+        size += entry(self.def_types.len(), 4, id);
+        size += entry(
+            self.def_type_params.len(),
+            4,
+            std::mem::size_of::<Vec<tsz_solver::TypeParamInfo>>(),
+        );
+        size += self
+            .def_type_params
+            .values()
+            .map(|params| params.capacity() * std::mem::size_of::<tsz_solver::TypeParamInfo>())
+            .sum::<usize>();
+        size += entry(self.boxed_types.len(), 8, id);
+        size += entry(
+            self.boxed_def_ids.len(),
+            8,
+            std::mem::size_of::<Vec<tsz_solver::DefId>>(),
+        );
+        size += entry(
+            self.well_known_symbol_names.len(),
+            std::mem::size_of::<String>(),
+            std::mem::size_of::<tsz_solver::SymbolRef>(),
+        );
+        size += entry(self.flow_analysis_cache.len(), 8 + sym + id, id);
+        size += entry(self.class_instance_type_to_decl.len(), id, node);
+        size += entry(self.class_instance_type_cache.len(), node, id);
+        size += entry(self.class_constructor_type_cache.len(), node, id);
+        size += entry(self.type_only_nodes.len(), node, 0);
+        size += entry(
+            self.namespace_module_names.len(),
+            id,
+            std::mem::size_of::<String>(),
+        );
+        size += self
+            .namespace_module_names
+            .values()
+            .map(String::capacity)
+            .sum::<usize>();
+        size
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct EnvEvalCacheEntry {
     pub(crate) result: TypeId,

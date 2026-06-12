@@ -150,6 +150,27 @@ impl SharedQueryCache {
     pub fn total_entries(&self) -> usize {
         self.eval_cache.len() + self.subtype_cache.len() + self.assignability_cache.len()
     }
+
+    /// Estimate the resident heap bytes of the shared cache maps.
+    ///
+    /// Entry-count-based estimate (`DashMap` does not expose bucket
+    /// capacity) for residency accounting (#13249 step 1); called once at
+    /// perf-counter snapshot time, never on a checking hot path.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        // DashMap per-entry overhead: bucket slot + hash + shard padding.
+        const DASHMAP_ENTRY_OVERHEAD: usize = 64;
+        let mut size = std::mem::size_of::<Self>();
+        size += self.eval_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<EvaluationCacheKey>()
+                + std::mem::size_of::<TypeId>());
+        size += (self.subtype_cache.len() + self.assignability_cache.len())
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<RelationCacheKey>()
+                + std::mem::size_of::<bool>());
+        size
+    }
 }
 
 impl Default for SharedQueryCache {
