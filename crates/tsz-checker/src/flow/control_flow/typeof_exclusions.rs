@@ -32,6 +32,15 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
     ) -> u8 {
         let mut memo: DpMemo<u8> = DpMemo::default();
+        self.antecedent_typeof_exclusion_mask_with_memo(flow_id, target, &mut memo)
+    }
+
+    pub(crate) fn antecedent_typeof_exclusion_mask_with_memo(
+        &self,
+        flow_id: FlowNodeId,
+        target: NodeIndex,
+        memo: &mut DpMemo<u8>,
+    ) -> u8 {
         // Back-edge / no-information element is `0` (no exclusions), so the
         // surrounding intersection collapses and loops drive no narrowing,
         // matching the previous recursive `DpState::InProgress` arm.
@@ -117,6 +126,16 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
     ) -> bool {
         self.antecedent_typeof_exclusion_mask(flow_id, target) == Self::ALL_TYPEOF_EXCLUSIONS
+    }
+
+    pub(crate) fn flow_has_exhaustive_typeof_exclusions_with_memo(
+        &self,
+        flow_id: FlowNodeId,
+        target: NodeIndex,
+        memo: &mut DpMemo<u8>,
+    ) -> bool {
+        self.antecedent_typeof_exclusion_mask_with_memo(flow_id, target, memo)
+            == Self::ALL_TYPEOF_EXCLUSIONS
     }
 
     pub(crate) fn typeof_exclusion_for_condition(

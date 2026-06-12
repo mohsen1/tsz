@@ -1,4 +1,5 @@
 use super::FlowAnalyzer;
+use super::flow_dp::FlowConditionDpMemos;
 use crate::query_boundaries::common::{NarrowingContext, TypeGuard, TypeofKind};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::{
@@ -637,6 +638,29 @@ impl<'a> FlowAnalyzer<'a> {
             is_true_branch,
             antecedent_id,
             &mut visited_aliases,
+            None,
+        )
+    }
+
+    pub(crate) fn narrow_type_by_condition_with_dp_memos(
+        &self,
+        type_id: TypeId,
+        condition_idx: NodeIndex,
+        target: NodeIndex,
+        is_true_branch: bool,
+        antecedent_id: FlowNodeId,
+        dp_memos: &mut FlowConditionDpMemos,
+    ) -> TypeId {
+        let mut visited_aliases = AliasCycleTracker::new();
+
+        self.narrow_type_by_condition_inner(
+            type_id,
+            condition_idx,
+            target,
+            is_true_branch,
+            antecedent_id,
+            &mut visited_aliases,
+            Some(dp_memos),
         )
     }
 
@@ -648,6 +672,7 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         antecedent_id: FlowNodeId,
         visited_aliases: &mut AliasCycleTracker,
+        mut dp_memos: Option<&mut FlowConditionDpMemos>,
     ) -> TypeId {
         let condition_idx = self.skip_parenthesized(condition_idx);
         let Some(cond_node) = self.arena.get(condition_idx) else {
@@ -692,7 +717,15 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(current_exclusion) =
                 self.typeof_exclusion_for_condition(condition_idx, target, is_true_branch)
         {
-            let prior_exclusions = self.antecedent_typeof_exclusion_mask(antecedent_id, target);
+            let prior_exclusions = if let Some(memos) = dp_memos.as_deref_mut() {
+                self.antecedent_typeof_exclusion_mask_with_memo(
+                    antecedent_id,
+                    target,
+                    &mut memos.typeof_exclusions,
+                )
+            } else {
+                self.antecedent_typeof_exclusion_mask(antecedent_id, target)
+            };
             let exclusions = prior_exclusions | Self::typeof_exclusion_bit(current_exclusion);
             if exclusions == Self::ALL_TYPEOF_EXCLUSIONS {
                 return empty_object_type(self.interner);
@@ -729,6 +762,7 @@ impl<'a> FlowAnalyzer<'a> {
                 is_true_branch,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             visited_aliases.pop(sym_id);
             return narrowed;
@@ -746,6 +780,7 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         antecedent_id,
                         visited_aliases,
+                        None,
                     ) {
                         return narrowed;
                     }
@@ -763,6 +798,7 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         antecedent_id,
                         visited_aliases,
+                        None,
                     ) {
                         return narrowed;
                     }
@@ -822,10 +858,18 @@ impl<'a> FlowAnalyzer<'a> {
                             );
                             if effective_sense
                                 && matches!(guard, TypeGuard::Typeof(TypeofKind::Object))
-                                && self.antecedent_chain_excludes_null_for_target(
-                                    antecedent_id,
-                                    target,
-                                )
+                                && if let Some(memos) = dp_memos.as_deref_mut() {
+                                    self.antecedent_chain_excludes_null_for_target_with_memo(
+                                        antecedent_id,
+                                        target,
+                                        &mut memos.null_exclusions,
+                                    )
+                                } else {
+                                    self.antecedent_chain_excludes_null_for_target(
+                                        antecedent_id,
+                                        target,
+                                    )
+                                }
                             {
                                 return flow_query::narrow_excluding_type_in_context(
                                     &narrowing,
@@ -917,6 +961,7 @@ impl<'a> FlowAnalyzer<'a> {
                             !is_true_branch,
                             antecedent_id,
                             visited_aliases,
+                            None,
                         );
                     }
                 }
@@ -1269,6 +1314,7 @@ impl<'a> FlowAnalyzer<'a> {
                     is_true_branch,
                     antecedent_id,
                     &mut visited,
+                    None,
                 );
             }
             return type_id;
@@ -1330,7 +1376,15 @@ impl<'a> FlowAnalyzer<'a> {
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
-                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
+                    && if let Some(memos) = dp_memos.as_deref_mut() {
+                        self.antecedent_chain_excludes_null_for_target_with_memo(
+                            antecedent_id,
+                            target,
+                            &mut memos.null_exclusions,
+                        )
+                    } else {
+                        self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
+                    }
                 {
                     return flow_query::narrow_excluding_type_in_context(
                         narrowing,
@@ -1694,6 +1748,7 @@ impl<'a> FlowAnalyzer<'a> {
             effective_sense,
             antecedent_id,
             visited_aliases,
+            None,
         ))
     }
 
@@ -1739,6 +1794,7 @@ impl<'a> FlowAnalyzer<'a> {
                     true,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 let right_true = self.narrow_type_by_condition_inner(
                     left_true,
@@ -1747,6 +1803,7 @@ impl<'a> FlowAnalyzer<'a> {
                     true,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 return Some(right_true);
             }
@@ -1758,6 +1815,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             let left_true = self.narrow_type_by_condition_inner(
                 type_id,
@@ -1766,6 +1824,7 @@ impl<'a> FlowAnalyzer<'a> {
                 true,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             let right_false = self.narrow_type_by_condition_inner(
                 left_true,
@@ -1774,6 +1833,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             return Some(self.union_logical_condition_branches(vec![left_false, right_false]));
         }
@@ -1807,6 +1867,7 @@ impl<'a> FlowAnalyzer<'a> {
                     true,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 let left_false = self.narrow_type_by_condition_inner(
                     type_id,
@@ -1815,6 +1876,7 @@ impl<'a> FlowAnalyzer<'a> {
                     false,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 let right_true = self.narrow_type_by_condition_inner(
                     left_false,
@@ -1823,6 +1885,7 @@ impl<'a> FlowAnalyzer<'a> {
                     true,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 return Some(self.union_logical_condition_branches(vec![left_true, right_true]));
             }
@@ -1834,6 +1897,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             let right_false = self.narrow_type_by_condition_inner(
                 left_false,
@@ -1842,6 +1906,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             return Some(right_false);
         }
@@ -1864,6 +1929,7 @@ impl<'a> FlowAnalyzer<'a> {
                     true,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 let left_false = self.narrow_type_by_condition_inner(
                     type_id,
@@ -1872,6 +1938,7 @@ impl<'a> FlowAnalyzer<'a> {
                     false,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 let right_true = self.narrow_type_by_condition_inner(
                     left_false,
@@ -1880,6 +1947,7 @@ impl<'a> FlowAnalyzer<'a> {
                     true,
                     antecedent_id,
                     visited_aliases,
+                    None,
                 );
                 return Some(self.union_logical_condition_branches(vec![left_true, right_true]));
             }
@@ -1891,6 +1959,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             let right_false = self.narrow_type_by_condition_inner(
                 left_false,
@@ -1899,6 +1968,7 @@ impl<'a> FlowAnalyzer<'a> {
                 false,
                 antecedent_id,
                 visited_aliases,
+                None,
             );
             return Some(right_false);
         }

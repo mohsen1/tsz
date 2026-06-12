@@ -1,3 +1,4 @@
+use super::flow_dp::FlowConditionDpMemos;
 use super::{FlowAnalyzer, defer_to_antecedent, flow_boundary, flow_step_budget, query};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -86,6 +87,8 @@ impl<'a> FlowAnalyzer<'a> {
         let mut steps = 0usize;
         let mut cacheable_walk = true;
         let mut pending_cache_writes: Vec<((FlowNodeId, SymbolId, TypeId), TypeId)> = Vec::new();
+        let mut condition_dp_memos = FlowConditionDpMemos::default();
+        condition_dp_memos.clear();
 
         // Process worklist until empty
         while let Some((current_flow, current_type)) = worklist.pop_front() {
@@ -111,7 +114,11 @@ impl<'a> FlowAnalyzer<'a> {
             let skip_cache_for_explicit_unknown_switch = initial_type == TypeId::UNKNOWN
                 && self.flow_chain_contains_switch_clause(current_flow);
             let skip_cache_for_exhaustive_unknown_typeof = initial_type == TypeId::UNKNOWN
-                && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference);
+                && self.flow_has_exhaustive_typeof_exclusions_with_memo(
+                    current_flow,
+                    reference,
+                    &mut condition_dp_memos.typeof_exclusions,
+                );
 
             // Use cache if: 1) not a switch clause, AND
             // 2) either initial type is concrete OR this is a loop label.
@@ -339,17 +346,22 @@ impl<'a> FlowAnalyzer<'a> {
                 };
 
                 if initial_type == TypeId::UNKNOWN
-                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference)
+                    && self.flow_has_exhaustive_typeof_exclusions_with_memo(
+                        current_flow,
+                        reference,
+                        &mut condition_dp_memos.typeof_exclusions,
+                    )
                 {
                     query::empty_object_type(self.interner)
                 } else {
                     let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-                    self.narrow_type_by_condition(
+                    self.narrow_type_by_condition_with_dp_memos(
                         pre_type,
                         flow.node,
                         reference,
                         is_true_branch,
                         antecedent_id,
+                        &mut condition_dp_memos,
                     )
                 }
             } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
@@ -984,7 +996,11 @@ impl<'a> FlowAnalyzer<'a> {
                 let ant_types = self.simplify_flow_merge_types(ant_types);
 
                 if initial_type == TypeId::UNKNOWN
-                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference)
+                    && self.flow_has_exhaustive_typeof_exclusions_with_memo(
+                        current_flow,
+                        reference,
+                        &mut condition_dp_memos.typeof_exclusions,
+                    )
                 {
                     query::empty_object_type(self.interner)
                 } else {
@@ -1018,7 +1034,11 @@ impl<'a> FlowAnalyzer<'a> {
                 && !(initial_type == TypeId::UNKNOWN
                     && self.flow_chain_contains_switch_clause(current_flow))
                 && !(initial_type == TypeId::UNKNOWN
-                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference))
+                    && self.flow_has_exhaustive_typeof_exclusions_with_memo(
+                        current_flow,
+                        reference,
+                        &mut condition_dp_memos.typeof_exclusions,
+                    ))
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 

@@ -19,6 +19,15 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
     ) -> bool {
         let mut memo: DpMemo<bool> = DpMemo::default();
+        self.antecedent_chain_excludes_null_for_target_with_memo(flow_id, target, &mut memo)
+    }
+
+    pub(super) fn antecedent_chain_excludes_null_for_target_with_memo(
+        &self,
+        flow_id: FlowNodeId,
+        target: NodeIndex,
+        memo: &mut DpMemo<bool>,
+    ) -> bool {
         // Back-edge / no-information element is `false` (treat the loop as not
         // contributing a null-exclusion) so loops do not over-narrow, matching
         // the previous recursive `DpState::InProgress` arm. Folded iteratively
