@@ -109,6 +109,7 @@ fn unterminated_template_recovery_normalizes_and_flags() {
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
     assert!(scanner.is_unterminated());
+    assert!(scanner.has_preceding_line_break());
     assert_eq!(scanner.get_token_value(), "abc\ndef");
 }
 

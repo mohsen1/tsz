@@ -9,8 +9,10 @@ impl ScannerState {
     /// implementation `tsc` uses (`scanTemplateAndSetTokenValue`) for both the
     /// live first scan and re-scans — so cooked values get the ECMAScript TV
     /// `<CR>`/`<CR><LF>` to `<LF>` normalization on every path. `tsc` never
-    /// sets `PrecedingLineBreak` for line breaks *inside* a template (the flag
-    /// is trivia-only), so this path does not either.
+    /// sets `PrecedingLineBreak` for line breaks inside a completed template
+    /// (the flag is trivia-only). Unterminated template recovery is the
+    /// exception: if scanning reaches EOF after crossing a line terminator, the
+    /// parser needs that line-break signal to recover following statements.
     pub(crate) fn scan_template_literal(&mut self) {
         self.token = self.scan_template_and_set_token_value(true);
     }
@@ -64,6 +66,7 @@ impl ScannerState {
         self.pos += 1;
         let mut start = self.pos;
         let mut contents = String::new();
+        let mut saw_line_terminator = false;
 
         while self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
@@ -108,6 +111,7 @@ impl ScannerState {
 
             // CR normalization (CR or CRLF -> LF)
             if ch == CharacterCodes::CARRIAGE_RETURN {
+                saw_line_terminator = true;
                 contents.push_str(&self.substring(start, self.pos));
                 self.pos += 1;
                 if self.pos < self.end
@@ -120,6 +124,12 @@ impl ScannerState {
                 start = self.pos;
                 continue;
             }
+            if ch == CharacterCodes::LINE_FEED
+                || ch == CharacterCodes::LINE_SEPARATOR
+                || ch == CharacterCodes::PARAGRAPH_SEPARATOR
+            {
+                saw_line_terminator = true;
+            }
 
             // Advance by full UTF-8 codepoint width so multi-byte chars (e.g. µ) don't
             // move the scanner into a non-char-boundary byte index.
@@ -129,6 +139,9 @@ impl ScannerState {
         // Unterminated template
         contents.push_str(&self.substring(start, self.pos));
         self.token_flags |= TokenFlags::Unterminated as u32;
+        if saw_line_terminator {
+            self.token_flags |= TokenFlags::PrecedingLineBreak as u32;
+        }
         self.token_value = contents;
         if started_with_backtick {
             SyntaxKind::NoSubstitutionTemplateLiteral
