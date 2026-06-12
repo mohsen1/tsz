@@ -47,7 +47,7 @@ mod recursive_alias_display;
 mod render_failure;
 mod suggestions;
 mod ts2820_display;
-mod type_display_policy;
+pub(crate) mod type_display_policy;
 mod type_query_alias_display;
 mod type_value;
 
