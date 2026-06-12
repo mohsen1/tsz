@@ -601,6 +601,37 @@ impl<'a> QueryCache<'a> {
         self.property_cache.borrow_mut().insert(key, result);
     }
 
+    /// `Atom`-keyed property-access resolution shared by the `&str` and `Atom`
+    /// `QueryDatabase` entry points. The cache key is already `Atom`-based, so
+    /// callers holding an `Atom` skip the property-name re-hash entirely.
+    fn property_access_atom_with_options(
+        &self,
+        object_type: TypeId,
+        prop_atom: Atom,
+        no_unchecked_indexed_access: bool,
+    ) -> PropertyAccessResult {
+        // QueryCache doesn't have full TypeResolver capability, so use
+        // PropertyAccessEvaluator with the current QueryDatabase.
+        let exact_optional_property_types =
+            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
+        let key = (
+            object_type,
+            prop_atom,
+            no_unchecked_indexed_access,
+            exact_optional_property_types,
+        );
+        if let Some(result) = self.check_property_cache(key) {
+            return result;
+        }
+
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.set_exact_optional_property_types(exact_optional_property_types);
+        let result = evaluator.resolve_property_access_atom(object_type, prop_atom);
+        self.insert_property_cache(key, result);
+        result
+    }
+
     fn check_element_access_cache(&self, key: ElementAccessTypeCacheKey) -> Option<TypeId> {
         self.element_access_cache.borrow().get(&key).copied()
     }
@@ -1867,9 +1898,17 @@ impl QueryDatabase for QueryCache<'_> {
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::operations::property::PropertyAccessResult {
-        self.resolve_property_access_with_options(
+        self.resolve_property_access_atom(object_type, self.interner.intern_string(prop_name))
+    }
+
+    fn resolve_property_access_atom(
+        &self,
+        object_type: TypeId,
+        prop_atom: Atom,
+    ) -> crate::operations::property::PropertyAccessResult {
+        self.property_access_atom_with_options(
             object_type,
-            prop_name,
+            prop_atom,
             self.no_unchecked_indexed_access(),
         )
     }
@@ -1880,27 +1919,11 @@ impl QueryDatabase for QueryCache<'_> {
         prop_name: &str,
         no_unchecked_indexed_access: bool,
     ) -> crate::operations::property::PropertyAccessResult {
-        // QueryCache doesn't have full TypeResolver capability, so use PropertyAccessEvaluator
-        // with the current QueryDatabase.
-        let prop_atom = self.interner.intern_string(prop_name);
-        let exact_optional_property_types =
-            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
-        let key = (
+        self.property_access_atom_with_options(
             object_type,
-            prop_atom,
+            self.interner.intern_string(prop_name),
             no_unchecked_indexed_access,
-            exact_optional_property_types,
-        );
-        if let Some(result) = self.check_property_cache(key) {
-            return result;
-        }
-
-        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
-        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
-        evaluator.set_exact_optional_property_types(exact_optional_property_types);
-        let result = evaluator.resolve_property_access(object_type, prop_name);
-        self.insert_property_cache(key, result);
-        result
+        )
     }
 
     fn resolve_any_index_access(
