@@ -71,8 +71,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let receiver_text = self
-            .preferred_expression_type_text(access.expression)
-            .or_else(|| self.reference_declared_type_annotation_text(access.expression))?;
+            .reference_declared_source_type_annotation_text(access.expression)
+            .or_else(|| self.reference_declared_type_annotation_text(access.expression))
+            .or_else(|| self.preferred_expression_type_text(access.expression))?;
         let element_text = Self::array_element_type_text(&receiver_text)?;
         Some(
             Self::strip_parenthesized_union_element_type_text(&element_text)

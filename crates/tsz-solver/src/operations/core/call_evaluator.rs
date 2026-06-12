@@ -98,6 +98,16 @@ pub trait AssignabilityChecker {
         self.is_assignable_to(a, b) && self.is_assignable_to(b, a)
     }
 
+    /// Normalize a resolved generic-call inference result in the caller's
+    /// semantic environment before the final substitution is published.
+    ///
+    /// The default is identity for pure solver callers. The checker adapter can
+    /// canonicalize environment-specific identity pairs such as a `Lazy`
+    /// definition and the already-resolved object shape for the same symbol.
+    fn normalize_inferred_type(&mut self, type_id: TypeId) -> TypeId {
+        type_id
+    }
+
     /// Allocate the next id used to build an inference-placeholder name
     /// (`__infer_*` / `__infer_src_*`).
     ///

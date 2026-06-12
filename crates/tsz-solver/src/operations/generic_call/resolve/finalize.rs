@@ -651,6 +651,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 ty
             };
+            let ty = self.checker.normalize_inferred_type(ty);
             trace!(
                 type_param_name = %type_param_name.as_str(),
                 var = ?var,

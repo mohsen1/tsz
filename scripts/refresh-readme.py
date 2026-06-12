@@ -4,7 +4,7 @@
 Reads:
   - ci-metrics/conformance.json (or scripts/conformance/conformance-detail.json)
   - ci-metrics/emit.json (or scripts/emit/emit-detail.json)
-  - ci-metrics/fourslash.json (or scripts/fourslash/fourslash-detail.json)
+  - ci-metrics/fourslash.json (or scripts/fourslash/fourslash-snapshot.json)
   - https://tsz.dev/benchmark-data/latest.json
 
 Updates the progress blocks between marker comments in README.md:
@@ -57,6 +57,13 @@ def normalize_suite_summary(data, suite):
         return {
             "passed": summary.get("passed"),
             "total": summary.get("total", summary.get("total_tests")),
+        }
+
+    if suite == "fourslash" and isinstance(data.get("pass"), list):
+        failed = len(data.get("fail") or [])
+        return {
+            "passed": len(data["pass"]),
+            "total": len(data["pass"]) + failed,
         }
 
     if data.get("suite") != suite:
@@ -263,7 +270,6 @@ def load_fourslash(args):
         args.fourslash_metrics_json,
         [
             ROOT / "ci-metrics" / "fourslash.json",
-            ROOT / "scripts" / "fourslash" / "fourslash-detail.json",
             ROOT / "scripts" / "fourslash" / "fourslash-snapshot.json",
         ],
     )

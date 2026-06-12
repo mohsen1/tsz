@@ -606,6 +606,14 @@ impl SymbolTable {
 /// back to a linear scan.
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct SymbolArena {
+    /// Read-only symbol prefix shared by cloned binders.
+    ///
+    /// User-file binders cloned from a premerged lib binder can append private
+    /// symbols without first deep-copying the lib symbol universe. If a caller
+    /// needs to mutate a shared-prefix symbol, [`Self::get_mut`] materializes
+    /// the prefix back into `symbols`, preserving the old COW semantics.
+    #[serde(default)]
+    shared_prefix: Arc<Vec<Symbol>>,
     /// Arc-wrapped symbol storage for O(1) clone.
     /// During binding (refcount=1), `Arc::make_mut` is zero-cost.
     /// During checking (shared across files), no mutations occur.
@@ -628,12 +636,15 @@ impl<'de> Deserialize<'de> for SymbolArena {
         /// used to leverage the derived `Deserialize` for `symbols` and `base_offset`.
         #[derive(Deserialize)]
         struct SymbolArenaRaw {
+            #[serde(default)]
+            shared_prefix: Arc<Vec<Symbol>>,
             symbols: Vec<Symbol>,
             base_offset: u32,
         }
 
         let raw = SymbolArenaRaw::deserialize(deserializer)?;
         let mut arena = Self {
+            shared_prefix: raw.shared_prefix,
             symbols: Arc::new(raw.symbols),
             base_offset: raw.base_offset,
             name_index: Arc::new(FxHashMap::default()),
@@ -652,6 +663,7 @@ impl SymbolArena {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            shared_prefix: Arc::new(Vec::new()),
             symbols: Arc::new(Vec::new()),
             base_offset: 0,
             name_index: Arc::new(FxHashMap::default()),
@@ -663,6 +675,7 @@ impl SymbolArena {
     #[must_use]
     pub fn new_with_base(base: u32) -> Self {
         Self {
+            shared_prefix: Arc::new(Vec::new()),
             symbols: Arc::new(Vec::new()),
             base_offset: base,
             name_index: Arc::new(FxHashMap::default()),
@@ -677,6 +690,7 @@ impl SymbolArena {
     pub fn with_capacity(capacity: usize) -> Self {
         let safe_capacity = capacity.min(Self::MAX_SYMBOL_PREALLOC);
         Self {
+            shared_prefix: Arc::new(Vec::new()),
             symbols: Arc::new(Vec::with_capacity(safe_capacity)),
             base_offset: 0,
             name_index: Arc::new(FxHashMap::with_capacity_and_hasher(
@@ -693,11 +707,10 @@ impl SymbolArena {
     /// Panics if the number of allocated symbols would overflow a `u32` when
     /// converted from arena length and added to `base_offset`.
     pub fn alloc(&mut self, flags: u32, name: String) -> SymbolId {
+        let next_index = self.len();
         let id = SymbolId(
             self.base_offset
-                .checked_add(
-                    u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
-                )
+                .checked_add(u32::try_from(next_index).expect("symbol arena length exceeds u32"))
                 .expect("symbol arena allocation overflows u32"),
         );
         if !name.is_empty() {
@@ -718,11 +731,10 @@ impl SymbolArena {
     /// Panics if the number of allocated symbols would overflow a `u32` when
     /// converted from arena length and added to `base_offset`.
     pub fn alloc_from(&mut self, source: &Symbol) -> SymbolId {
+        let next_index = self.len();
         let id = SymbolId(
             self.base_offset
-                .checked_add(
-                    u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
-                )
+                .checked_add(u32::try_from(next_index).expect("symbol arena length exceeds u32"))
                 .expect("symbol arena allocation overflows u32"),
         );
         if !source.escaped_name.is_empty() {
@@ -747,7 +759,13 @@ impl SymbolArena {
             // ID is from a different arena (e.g., binder vs checker)
             None
         } else {
-            self.symbols.get((id.0 - self.base_offset) as usize)
+            let idx = (id.0 - self.base_offset) as usize;
+            let shared_len = self.shared_prefix.len();
+            if idx < shared_len {
+                self.shared_prefix.get(idx)
+            } else {
+                self.symbols.get(idx - shared_len)
+            }
         }
     }
 
@@ -760,20 +778,27 @@ impl SymbolArena {
             // ID is from a different arena
             None
         } else {
-            Arc::make_mut(&mut self.symbols).get_mut((id.0 - self.base_offset) as usize)
+            let idx = (id.0 - self.base_offset) as usize;
+            let shared_len = self.shared_prefix.len();
+            if idx < shared_len {
+                self.materialize_shared_prefix();
+                Arc::make_mut(&mut self.symbols).get_mut(idx)
+            } else {
+                Arc::make_mut(&mut self.symbols).get_mut(idx - shared_len)
+            }
         }
     }
 
     /// Get the number of symbols.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.symbols.len()
+        self.shared_prefix.len() + self.symbols.len()
     }
 
     /// Check if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.symbols.is_empty()
+        self.shared_prefix.is_empty() && self.symbols.is_empty()
     }
 
     /// Estimate the heap bytes owned by this arena: symbol slots, per-symbol
@@ -785,6 +810,12 @@ impl SymbolArena {
     pub fn estimated_size_bytes(&self) -> usize {
         const BUCKET_OVERHEAD: usize = 16;
         let mut size = self.symbols.capacity() * std::mem::size_of::<Symbol>();
+        if Arc::strong_count(&self.shared_prefix) == 1 {
+            size += self.shared_prefix.capacity() * std::mem::size_of::<Symbol>();
+            for sym in self.shared_prefix.iter() {
+                size += sym.estimated_heap_bytes();
+            }
+        }
         for sym in self.symbols.iter() {
             size += sym.estimated_heap_bytes();
         }
@@ -808,6 +839,7 @@ impl SymbolArena {
 
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
+        self.shared_prefix = Arc::new(Vec::new());
         Arc::make_mut(&mut self.symbols).clear();
         Arc::make_mut(&mut self.name_index).clear();
     }
@@ -818,6 +850,14 @@ impl SymbolArena {
     pub fn rebuild_name_index(&mut self) {
         let name_index = Arc::make_mut(&mut self.name_index);
         name_index.clear();
+        for sym in self.shared_prefix.iter() {
+            if !sym.escaped_name.is_empty() {
+                name_index
+                    .entry(sym.escaped_name.clone())
+                    .or_default()
+                    .push(sym.id);
+            }
+        }
         for sym in self.symbols.iter() {
             if !sym.escaped_name.is_empty() {
                 name_index
@@ -860,12 +900,36 @@ impl SymbolArena {
 
     /// Iterate over all symbols in the arena.
     pub fn iter(&self) -> impl Iterator<Item = &Symbol> {
-        self.symbols.iter()
+        self.shared_prefix.iter().chain(self.symbols.iter())
     }
 
     /// Iterate over all symbols in the arena mutably.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Symbol> {
+        self.materialize_shared_prefix();
         Arc::make_mut(&mut self.symbols).iter_mut()
+    }
+
+    /// Move the current symbol vector into a shared read-only prefix so later
+    /// appends do not clone it. Symbol IDs and the name index remain valid.
+    pub fn share_current_symbols_for_append(&mut self) {
+        if self.symbols.is_empty() || !self.shared_prefix.is_empty() {
+            return;
+        }
+        self.shared_prefix = Arc::clone(&self.symbols);
+        self.symbols = Arc::new(Vec::new());
+    }
+
+    fn materialize_shared_prefix(&mut self) {
+        if self.shared_prefix.is_empty() {
+            return;
+        }
+        let shared_len = self.shared_prefix.len();
+        let local_len = self.symbols.len();
+        let mut materialized = Vec::with_capacity(shared_len + local_len);
+        materialized.extend(self.shared_prefix.iter().cloned());
+        materialized.extend(self.symbols.iter().cloned());
+        self.shared_prefix = Arc::new(Vec::new());
+        self.symbols = Arc::new(materialized);
     }
 
     /// Reserve `SymbolIds` in this arena by pre-allocating placeholder symbols.
@@ -888,7 +952,7 @@ impl SymbolArena {
     /// Panics if any index in `current_len..count` cannot be converted into a
     /// `u32`, or if `base_offset + index` would overflow `u32`.
     pub fn reserve_symbol_ids(&mut self, count: usize) {
-        let current_len = self.symbols.len();
+        let current_len = self.len();
         if count > current_len {
             let symbols = Arc::make_mut(&mut self.symbols);
             symbols.reserve(count);

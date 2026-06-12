@@ -7,6 +7,7 @@ import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
 const TARGET_TSZ_SPEEDUP = 2;
+const TSGO_STARTUP_FLOOR_MS = 500;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -19,6 +20,41 @@ function toPortablePath(file) {
 function asNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isProjectRowName(name) {
+  return typeof name === "string" && Object.hasOwn(PROJECT_ROWS_BY_NAME, name);
+}
+
+function startupFloorWin(row, tsgoMs) {
+  return row?.winner === "tsz" && tsgoMs != null && tsgoMs > 0 && tsgoMs <= TSGO_STARTUP_FLOOR_MS;
+}
+
+function projectRowsAggregate(rows) {
+  const projectRows = rows.filter((row) => row.is_project_row);
+  let measuredRows = 0;
+  let tszTotal = 0;
+  let tsgoTotal = 0;
+
+  for (const row of projectRows) {
+    if (row.tsz_ms == null || row.tsz_ms <= 0 || row.tsgo_ms == null || row.tsgo_ms <= 0) {
+      continue;
+    }
+    measuredRows += 1;
+    tszTotal += row.tsz_ms;
+    tsgoTotal += row.tsgo_ms;
+  }
+
+  const speedup = measuredRows > 0 && tszTotal > 0 ? tsgoTotal / tszTotal : null;
+  return {
+    eligible_green_rows: projectRows.length,
+    measured_rows: measuredRows,
+    tsz_ms_total: tszTotal,
+    tsgo_ms_total: tsgoTotal,
+    tsz_speedup_vs_tsgo: speedup,
+    target_speedup: TARGET_TSZ_SPEEDUP,
+    target_met: speedup != null ? speedup >= TARGET_TSZ_SPEEDUP : false,
+  };
 }
 
 const LOSS_CLOSURE_BY_ROW = new Map([
@@ -604,7 +640,7 @@ function duplicateProjectRows(rows) {
   const counts = new Map();
   for (const row of rows) {
     const name = typeof row?.name === "string" ? row.name : null;
-    if (!name || !Object.hasOwn(PROJECT_ROWS_BY_NAME, name)) continue;
+    if (!isProjectRowName(name)) continue;
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
 
@@ -629,14 +665,18 @@ export function createTsgoWinnerReport(input, inputPath) {
     .map((row) => {
       const speedup = tszSpeedupVsTsgo(row);
       const gapFactor = speedup == null ? null : targetGapFactor(speedup);
+      const tszMs = asNumber(row.tsz_ms);
+      const tsgoMs = asNumber(row.tsgo_ms);
       return {
         name: row.name,
         winner: row.winner ?? null,
         factor: asNumber(row.factor),
         tsz_speedup_vs_tsgo: speedup,
         target_gap_factor: gapFactor,
-        tsz_ms: asNumber(row.tsz_ms),
-        tsgo_ms: asNumber(row.tsgo_ms),
+        tsz_ms: tszMs,
+        tsgo_ms: tsgoMs,
+        is_project_row: isProjectRowName(row.name),
+        startup_floor_win: startupFloorWin(row, tsgoMs),
         lines: asNumber(row.lines),
         kb: asNumber(row.kb),
         project_files: asNumber(row.project_files),
@@ -668,6 +708,8 @@ export function createTsgoWinnerReport(input, inputPath) {
       factor: asNumber(row.factor),
       tsz_ms: asNumber(row.tsz_ms),
       tsgo_ms: asNumber(row.tsgo_ms),
+      is_project_row: isProjectRowName(row.name),
+      startup_floor_win: startupFloorWin(row, asNumber(row.tsgo_ms)),
       lines: asNumber(row.lines),
       kb: asNumber(row.kb),
       project_files: asNumber(row.project_files),
@@ -726,10 +768,11 @@ export function createTsgoWinnerReport(input, inputPath) {
     two_x_target: {
       tsz_speedup_target: TARGET_TSZ_SPEEDUP,
       eligible_green_rows: eligibleRows.length,
-      project_eligible_green_rows: eligibleRows.filter((row) => row.semantic_owner_family).length,
+      project_eligible_green_rows: eligibleRows.filter((row) => row.is_project_row).length,
       rows_meeting_target: eligibleRows.length - targetGapRows.length,
       rows_below_target: targetGapRows.length,
-      project_rows_below_target: targetGapRows.filter((row) => row.semantic_owner_family).length,
+      project_rows_below_target: targetGapRows.filter((row) => row.is_project_row).length,
+      project_rows_aggregate: projectRowsAggregate(eligibleRows),
       rows_with_attribution: targetGapRows.length - missingTargetGapAttributionRows.length,
       missing_attribution_rows: missingTargetGapAttributionRows,
       rows_with_attribution_command: targetGapRowsWithAttributionCommand,

@@ -323,9 +323,6 @@ impl<'a> TypePrinter<'a> {
         &self,
         type_id: TypeId,
     ) -> TypeId {
-        if self.recursive_expansion_depth == 0 {
-            return type_id;
-        }
         self.rename_recursive_function_type_params_inner(type_id, 0)
     }
 
@@ -474,6 +471,10 @@ impl<'a> TypePrinter<'a> {
 
     fn recursive_expansion_type_param_name(&self, name: Atom, reserved: &[String]) -> Atom {
         let base = self.interner.resolve_atom(name);
+        if !self.type_param_scope_contains_name(&base) && !reserved.iter().any(|name| name == &base)
+        {
+            return name;
+        }
         let mut suffix = 1u32;
         loop {
             let candidate = format!("{base}_{suffix}");

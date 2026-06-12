@@ -1541,12 +1541,8 @@ impl TypeInterner {
         });
     }
 
-    /// TS2590 pairwise-iteration budget for subtype reduction, matching tsc's
-    /// `removeSubtypes` bail-out at 1,000,000 pairwise checks. When `len *
-    /// (len - 1)` reaches this limit, reduction is skipped and the sticky
-    /// `union_too_complex` flag is set. `UNION_NORMALIZE_CACHE_MAX_LEN` is
-    /// derived from this value at compile time so the `normalize_union` memo
-    /// can never cache (and thus never swallow) a flag-setting input.
+    /// TS2590 pairwise-iteration budget matching tsc `removeSubtypes`.
+    /// `UNION_NORMALIZE_CACHE_MAX_LEN` keeps flag-setting inputs uncached.
     pub(crate) const UNION_SUBTYPE_PAIRWISE_LIMIT: u64 = 1_000_000;
 
     /// Remove redundant types from a union using shallow subtype checks.
@@ -1556,35 +1552,20 @@ impl TypeInterner {
         if len <= 1 {
             return;
         }
+        let pairwise = (len as u64) * (len as u64 - 1);
+        tsz_common::perf_counters::record_union_subtype_reduction(len as u64, pairwise);
         tracing::trace!(len, "reduce_union_subtypes: entry");
 
-        // Skip reduction if all types are identity-comparable or non-reducible structures.
-        // tsc's default union reduction (UnionReduction.Literal) does NOT remove structural
-        // subtypes — it only absorbs literals into primitives. Structural subtype reduction
-        // (UnionReduction.Subtype) is only used in specific contexts like conditional type
-        // results. Object/Array/Tuple/Enum types are structurally distinct after dedup, so
-        // subtype reduction would incorrectly collapse unions like `{A: number} | {A: number; B: number}`.
-        //
-        // Lazy/Application/Callable types are also non-reducible because `is_subtype_shallow`
-        // returns false for them — they require full type resolution. Including them here
-        // avoids O(N²) wasted work in unions of class types (which are Lazy at this stage).
-        //
-        // Template-literal members are special-cased: a template literal is never itself
-        // reduced (it is never a shallow subtype of a sibling), but it CAN absorb string
-        // literal members (`"foo-x" | `foo-${string}`` → `` `foo-${string}` ``). For unions
-        // composed only of unit/inert members plus template literals — the shape produced
-        // by template-literal cross-product expansion over union placeholders (large
-        // literal+template families in lib.dom) — the generic O(N²) pairwise loop reduces
-        // to a targeted literal×template pass. See
-        // `remove_string_literals_matched_by_templates`.
+        // Skip structures tsc's default literal reduction would not structurally
+        // reduce. Template-literal members can only absorb matching string
+        // literals, so that family uses a targeted pass instead of O(N²).
         {
             let mut has_primitive = false;
             let mut string_literals: Vec<(usize, Atom)> = Vec::new();
             let mut templates: Vec<TemplateLiteralId> = Vec::new();
             let all_non_reducible = flat.iter().enumerate().all(|(idx, &ty)| {
                 if self.is_identity_comparable_type(ty) {
-                    // Track whether a widened primitive is present.
-                    // If so, literals of that kind ARE reducible (absorbed by the primitive).
+                    // A widened primitive can absorb literals of its kind.
                     if ty == TypeId::STRING
                         || ty == TypeId::NUMBER
                         || ty == TypeId::BOOLEAN
@@ -1612,17 +1593,14 @@ impl TypeInterner {
                         | TypeData::Lazy(_)
                         | TypeData::Application(_)
                         | TypeData::Callable(_)
-                        // Literals without a widened primitive peer are non-reducible
-                        // (no literal is a subtype of a different literal).
+                        // Without a widened primitive peer, literals are inert.
                         | TypeData::Literal(_),
                     ) => true,
                     _ => false,
                 }
             });
             if all_non_reducible && !has_primitive {
-                // Among unit/inert members and template literals, the only shallow
-                // reduction is a string literal absorbed by a template literal.
-                // Run exactly that pass instead of the generic O(N²) loop.
+                // Only string-literal × template absorption can still reduce.
                 if !templates.is_empty() && !string_literals.is_empty() {
                     self.remove_string_literals_matched_by_templates(
                         flat,
@@ -1634,21 +1612,14 @@ impl TypeInterner {
             }
         }
 
-        // TS2590: Expression produces a union type that is too complex to represent.
-        // tsc's removeSubtypes counts pairwise iterations and bails at 1,000,000.
-        // For n types the worst-case count is n*(n-1), so n >= 1001 hits the limit.
-        // Set the flag for the checker to detect, but don't collapse to ERROR here —
-        // internal type construction (template literals, etc.) may legitimately create
-        // large unions. The checker decides whether to treat it as a diagnostic.
-        let pairwise = (len as u64) * (len as u64 - 1);
+        // TS2590 is sticky for checker diagnostics; internal construction keeps
+        // the large union instead of poisoning downstream with ERROR.
         if pairwise >= Self::UNION_SUBTYPE_PAIRWISE_LIMIT {
             self.set_union_too_complex();
             return; // skip reduction, preserve the union members as-is
         }
 
-        // OPTIMIZATION: Property-based partitioning for large object unions.
-        // For discriminated unions (common in CFA), members are disjoint based on a property value.
-        // Partitioning avoids O(N²) comparisons across disjoint groups.
+        // Partition large discriminated unions before pairwise checks.
         if len > 16
             && let Some(partitioned) = self.try_partition_union_reduction(flat)
         {
@@ -1656,12 +1627,14 @@ impl TypeInterner {
             return;
         }
 
-        // For small unions (common case), delegate to the u64-bitset implementation.
-        // For larger unions (rare, when partition fails), fall back to Vec<bool>.
+        // Small unions use a u64 bitset; larger partition misses use Vec<bool>.
         if len <= 64 {
             self.reduce_union_subtypes_quadratic(flat);
         } else {
             let mut keep = vec![true; len];
+            let shallow_checks = tsz_common::perf_counters::enabled_fast().then(|| {
+                &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks
+            });
             for i in 0..len {
                 if !keep[i] {
                     continue;
@@ -1669,6 +1642,9 @@ impl TypeInterner {
                 for j in 0..len {
                     if i == j || !keep[j] {
                         continue;
+                    }
+                    if let Some(counter) = shallow_checks {
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     if self.is_subtype_shallow(flat[i], flat[j]) {
                         keep[i] = false;
@@ -1687,11 +1663,9 @@ impl TypeInterner {
         }
     }
 
-    /// Try to reduce a large union by partitioning members by a discriminant property.
-    /// Returns `Some(reduced_vec)` if partitioning was successful, None otherwise.
+    /// Reduce large object unions by likely discriminant property when useful.
     fn try_partition_union_reduction(&self, members: &[TypeId]) -> Option<TypeListBuffer> {
-        // 1. Identify a candidate discriminant property common to many members.
-        // We look for a property that appears in at least 50% of object members.
+        // Candidate property appears in at least half of object members.
         let mut prop_counts: FxHashMap<Atom, usize> = FxHashMap::default();
         let mut object_count = 0;
 
@@ -1717,8 +1691,7 @@ impl TypeInterner {
             .max_by_key(|&(_, count)| count)
             .map(|(name, _)| name)?;
 
-        // 2. Partition members by their value for this property.
-        // Non-objects and objects missing the property go into a "fallback" group.
+        // Missing/non-object members go into a fallback group.
         let mut partitions: FxHashMap<TypeId, Vec<TypeId>> = FxHashMap::default();
         let mut fallback: Vec<TypeId> = Vec::new();
 
@@ -1743,7 +1716,7 @@ impl TypeInterner {
             }
         }
 
-        // 3. Reduce each partition independently.
+        // Reduce each partition independently.
         let mut result: TypeListBuffer = SmallVec::new();
         for (_, group) in partitions {
             let mut group_buf = TypeListBuffer::from_vec(group);
@@ -1751,15 +1724,14 @@ impl TypeInterner {
             result.extend(group_buf);
         }
 
-        // 4. Reduce fallback group and then check fallback against all winners.
+        // Reduce fallback, then check fallback against all winners.
         if !fallback.is_empty() {
             let mut fallback_buf = TypeListBuffer::from_vec(fallback);
             self.reduce_union_subtypes_quadratic(&mut fallback_buf);
             result.extend(fallback_buf);
         }
 
-        // Final quadratic pass if the result is still large, but usually partitioning
-        // significantly reduces the remaining work.
+        // Final pass only when partitioning actually reduced the problem.
         if result.len() < members.len() {
             self.reduce_union_subtypes_quadratic(&mut result);
             Some(result)
@@ -1774,16 +1746,15 @@ impl TypeInterner {
         if len <= 1 {
             return;
         }
-        // Use a u64 bitset instead of heap-allocated Vec<bool>.
-        // Safe because callers guard len (partitions are always small subsets of
-        // the already-guarded union, and the direct caller caps at 25 members).
+        // Use a u64 bitset; callers keep partitions within this size.
         debug_assert!(len <= 64, "reduce_union_subtypes_quadratic: len={len} > 64");
-        // Initialize bitset with first `len` bits set. Guard against shift overflow at len==64.
         let mut keep: u64 = if len >= 64 {
             u64::MAX
         } else {
             (1u64 << len) - 1
         };
+        let shallow_checks = tsz_common::perf_counters::enabled_fast()
+            .then(|| &tsz_common::perf_counters::counters().union_subtype_reduction_shallow_checks);
         for i in 0..len {
             if keep & (1u64 << i) == 0 {
                 continue;
@@ -1791,6 +1762,9 @@ impl TypeInterner {
             for j in 0..len {
                 if i == j || keep & (1u64 << j) == 0 {
                     continue;
+                }
+                if let Some(counter) = shallow_checks {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 if self.is_subtype_shallow(flat[i], flat[j]) {
                     keep &= !(1u64 << i);

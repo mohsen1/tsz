@@ -221,6 +221,10 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
                 .related
     }
 
+    fn normalize_inferred_type(&mut self, type_id: TypeId) -> TypeId {
+        self.normalize_lazy_object_identity_intersection(type_id)
+    }
+
     fn next_inference_placeholder_id(&mut self) -> u64 {
         self.state.ctx.next_inference_placeholder_id()
     }
@@ -239,6 +243,75 @@ impl CheckerCallAssignabilityAdapter<'_, '_> {
             &self.state.ctx,
             base,
         )
+    }
+
+    fn normalize_lazy_object_identity_intersection(&mut self, type_id: TypeId) -> TypeId {
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.state.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+
+        let lazy_members: Vec<_> = members
+            .iter()
+            .copied()
+            .filter_map(|member| {
+                crate::query_boundaries::common::lazy_def_id(self.state.ctx.types, member)
+                    .map(|def_id| (member, def_id))
+            })
+            .collect();
+        if lazy_members.is_empty() {
+            return type_id;
+        }
+
+        let mut changed = false;
+        let retained: Vec<_> = members
+            .iter()
+            .copied()
+            .filter(|&member| {
+                let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.state.ctx.types,
+                    member,
+                ) else {
+                    return true;
+                };
+                let Some(object_symbol) = shape.symbol else {
+                    return true;
+                };
+                let is_duplicate = lazy_members
+                    .iter()
+                    .any(|&(_, def_id)| self.object_symbol_matches_lazy_def(object_symbol, def_id));
+                changed |= is_duplicate;
+                !is_duplicate
+            })
+            .collect();
+
+        if changed {
+            crate::query_boundaries::common::intersection_or_single(self.state.ctx.types, retained)
+        } else {
+            type_id
+        }
+    }
+
+    fn object_symbol_matches_lazy_def(
+        &self,
+        object_symbol: tsz_binder::SymbolId,
+        def_id: tsz_solver::DefId,
+    ) -> bool {
+        let Some((def_symbol, def_file_idx)) = self.state.ctx.def_symbol_identity(def_id) else {
+            return false;
+        };
+        if object_symbol != def_symbol {
+            return false;
+        }
+
+        let object_file_idx = self.state.ctx.resolve_symbol_file_index(object_symbol);
+        match (def_file_idx, object_file_idx) {
+            (Some(def_file_idx), Some(object_file_idx)) => def_file_idx == object_file_idx,
+            (Some(def_file_idx), None) => def_file_idx == self.state.ctx.current_file_idx,
+            (None, Some(_)) => false,
+            (None, None) => true,
+        }
     }
 }
 

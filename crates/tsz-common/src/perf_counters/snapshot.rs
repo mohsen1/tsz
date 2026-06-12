@@ -34,6 +34,11 @@ pub struct PerfCounterSnapshot {
     pub relation_limit_cache: RelationLimitCacheCounters,
     /// Relation failure-reason single-pass campaign (issue #13243).
     pub relation_failure: RelationFailureCounters,
+    /// Solver concrete-form materialization counters (issue #13242).
+    pub solver_materialization: SolverMaterializationCounters,
+    /// Solver evaluator memo lifecycle (issue #13097): what the per-run
+    /// fresh-evaluator pattern recomputes and discards.
+    pub evaluator_memo: EvaluatorMemoCounters,
     /// Per-`CheckerCreationReason` breakdown. Always
     /// `CHECKER_CREATION_REASON_COUNT` long; rows for inactive reasons
     /// carry all-zero counts (matching the text dump's filter behavior
@@ -490,6 +495,52 @@ pub struct RelationFailureCounters {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct SolverMaterializationCounters {
+    pub union_subtype_reduction_calls: u64,
+    pub union_subtype_reduction_members_total: u64,
+    pub union_subtype_reduction_members_max: u64,
+    pub union_subtype_reduction_pairwise_budget_total: u64,
+    pub union_subtype_reduction_shallow_checks: u64,
+    pub property_instantiation_walks: u64,
+    pub property_instantiation_properties_total: u64,
+    pub property_instantiation_properties_max: u64,
+    pub property_instantiation_changed: u64,
+}
+
+/// Solver evaluator memo-lifecycle counters (issue #13097): how much work
+/// the per-call fresh-`TypeEvaluator` pattern repeats or discards within a
+/// single file scope.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EvaluatorMemoCounters {
+    /// `TypeEvaluator` constructions.
+    pub constructions: u64,
+    /// Hits on an evaluator's own per-run memo.
+    pub local_memo_hits: u64,
+    /// Nodes computed past every memo/cache layer.
+    pub compute_nodes: u64,
+    /// Clean computes an earlier same-file evaluator already produced
+    /// (same key and result) but discarded.
+    pub lost_memo_recomputes: u64,
+    /// Same-key clean computes whose result differed across evaluators.
+    pub lost_memo_mismatches: u64,
+    /// Subset of `lost_memo_recomputes` with identity results.
+    pub lost_memo_recomputes_identity: u64,
+    /// Nested `lookup_eval_memo` hits inside evaluators.
+    pub memo_nested_hits: u64,
+    /// Lost recomputes by plain memo-reading evaluators.
+    pub lost_memo_recomputes_plain: u64,
+    /// Lost recomputes by the authoritative checker evaluator.
+    pub lost_memo_recomputes_authoritative: u64,
+    /// Lost recomputes by other evaluator contexts.
+    pub lost_memo_recomputes_other: u64,
+    /// Memo entries discarded undrained at evaluator drop.
+    pub dropped_memo_entries: u64,
+    /// Auxiliary memo entries (conditional-subtype / contains-infer)
+    /// discarded at evaluator drop; never drained anywhere.
+    pub dropped_aux_entries: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct InternerCounters {
     /// Total `intern` calls across kinds. `None` until the solver intern
     /// site is updated to fan into a single counter.
@@ -640,6 +691,41 @@ impl PerfCounters {
             relation_failure: RelationFailureCounters {
                 reason_walks: load(&c.relation_failure_reason_walks),
                 memo_hits: load(&c.relation_failure_memo_hits),
+            },
+            solver_materialization: SolverMaterializationCounters {
+                union_subtype_reduction_calls: load(&c.union_subtype_reduction_calls),
+                union_subtype_reduction_members_total: load(
+                    &c.union_subtype_reduction_members_total,
+                ),
+                union_subtype_reduction_members_max: load(&c.union_subtype_reduction_members_max),
+                union_subtype_reduction_pairwise_budget_total: load(
+                    &c.union_subtype_reduction_pairwise_budget_total,
+                ),
+                union_subtype_reduction_shallow_checks: load(
+                    &c.union_subtype_reduction_shallow_checks,
+                ),
+                property_instantiation_walks: load(&c.property_instantiation_walks),
+                property_instantiation_properties_total: load(
+                    &c.property_instantiation_properties_total,
+                ),
+                property_instantiation_properties_max: load(
+                    &c.property_instantiation_properties_max,
+                ),
+                property_instantiation_changed: load(&c.property_instantiation_changed),
+            },
+            evaluator_memo: EvaluatorMemoCounters {
+                constructions: load(&c.eval_evaluator_constructions),
+                local_memo_hits: load(&c.eval_local_memo_hits),
+                compute_nodes: load(&c.eval_compute_nodes),
+                lost_memo_recomputes: load(&c.eval_lost_memo_recomputes),
+                lost_memo_mismatches: load(&c.eval_lost_memo_mismatches),
+                lost_memo_recomputes_identity: load(&c.eval_lost_memo_recomputes_identity),
+                memo_nested_hits: load(&c.eval_memo_nested_hits),
+                lost_memo_recomputes_plain: load(&c.eval_lost_memo_recomputes_plain),
+                lost_memo_recomputes_authoritative: load(&c.eval_lost_memo_recomputes_authoritative),
+                lost_memo_recomputes_other: load(&c.eval_lost_memo_recomputes_other),
+                dropped_memo_entries: load(&c.eval_dropped_memo_entries),
+                dropped_aux_entries: load(&c.eval_dropped_aux_entries),
             },
             by_reason: (0..CHECKER_CREATION_REASON_COUNT)
                 .map(|i| ByReasonRow {

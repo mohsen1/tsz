@@ -17,6 +17,11 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.generic_call_reverse_mapped_handler_type_text(expr_idx))
+                    .or_else(|| {
+                        self.call_expression_source_return_type_text(expr_idx)
+                            .filter(|text| text.trim_start().starts_with('['))
+                    })
+                    .or_else(|| self.generic_mapped_tuple_rest_call_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.generic_call_pick_mapped_type_text(expr_idx))
                     .or_else(|| self.generic_call_constrained_mapped_return_type_text(expr_idx))
@@ -26,10 +31,12 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
                     .or_else(|| self.generic_rest_identity_parameters_tuple_type_text(expr_idx))
                     .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
+                    .or_else(|| self.generic_spread_array_call_return_type_text(expr_idx))
                     .or_else(|| {
                         self.explicit_type_argument_indexed_member_return_type_text(expr_idx)
                     })
                     .or_else(|| self.generic_variadic_tuple_call_return_type_text(expr_idx))
+                    .or_else(|| self.generic_curried_variadic_call_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
@@ -1575,7 +1582,7 @@ fn function_returned_function_type_parameter_name(
     type_reference_identifier_name(source_arena, function_type.type_annotation)
 }
 
-fn function_declares_type_parameter(
+pub(in crate::declaration_emitter) fn function_declares_type_parameter(
     source_arena: &NodeArena,
     func: &FunctionData,
     type_param_name: &str,
@@ -1921,7 +1928,7 @@ fn identifier_text(source_arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     source_arena.identifier_text(idx).map(str::to_owned)
 }
 
-fn callable_function_from_symbol_decl(
+pub(in crate::declaration_emitter) fn callable_function_from_symbol_decl(
     source_arena: &NodeArena,
     decl_idx: NodeIndex,
 ) -> Option<&FunctionData> {

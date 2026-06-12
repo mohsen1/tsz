@@ -65,6 +65,16 @@ impl PerfCounters {
              application intern calls   {:>12}\n  \
              conditional intern calls   {:>12}\n  \
              mapped intern calls        {:>12}\n\
+             Solver materialization:\n  \
+             union subtype reductions   {:>12}\n  \
+             union reduction members    {:>12}\n  \
+             union reduction max members{:>12}\n  \
+             union pairwise budget      {:>12}\n  \
+             union shallow checks       {:>12}\n  \
+             property walks             {:>12}\n  \
+             property entries walked    {:>12}\n  \
+             property walk max entries  {:>12}\n  \
+             property walks changed     {:>12}\n\
              Resolver:\n  \
              lookup calls               {:>12}\n  \
              is_file calls              {:>12}\n  \
@@ -114,6 +124,22 @@ impl PerfCounters {
             snap.interner.application_intern_calls,
             snap.interner.conditional_intern_calls,
             snap.interner.mapped_intern_calls,
+            snap.solver_materialization
+                .union_subtype_reduction_calls,
+            snap.solver_materialization
+                .union_subtype_reduction_members_total,
+            snap.solver_materialization
+                .union_subtype_reduction_members_max,
+            snap.solver_materialization
+                .union_subtype_reduction_pairwise_budget_total,
+            snap.solver_materialization
+                .union_subtype_reduction_shallow_checks,
+            snap.solver_materialization.property_instantiation_walks,
+            snap.solver_materialization
+                .property_instantiation_properties_total,
+            snap.solver_materialization
+                .property_instantiation_properties_max,
+            snap.solver_materialization.property_instantiation_changed,
             snap.resolver.lookup_calls,
             snap.resolver.is_file_calls.unwrap_or(0),
             snap.resolver.is_dir_calls.unwrap_or(0),

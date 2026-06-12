@@ -1461,7 +1461,7 @@ impl<'a> CheckerState<'a> {
 
                 // Sensitive property: check if the contextual function type's params are concrete
                 let target_prop_type = target_props.get(&name_atom).copied().or_else(|| {
-                    self.contextual_object_literal_property_type(target_param_type, &name)
+                    self.contextual_object_property_type_for_lookup(target_param_type, &name)
                 });
                 let Some(target_prop_type) = target_prop_type else {
                     continue;
@@ -1523,47 +1523,28 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // When the return type contains unresolved type parameters AND the
-                // function body has context-sensitive return expressions (e.g., nested
-                // arrow functions with unannotated params in block-body returns),
-                // skip speculative evaluation. The speculative pass would assign the
-                // unresolved type parameter to inner function params, and while
-                // diagnostics are rolled back, the resulting cached type pollutes the
-                // inference. The full contextual type (with substituted type params)
-                // will be applied in Round 2.
-                if self.type_contains_any_type_param(target_return_type, type_param_names)
-                    && super::contextual::expression_needs_contextual_return_type(
-                        self,
-                        prop.initializer,
-                    )
+                let return_has_inferred_type_param =
+                    self.type_contains_any_type_param(target_return_type, type_param_names);
+                if return_has_inferred_type_param
+                    && self.callback_return_expression_is_contextually_sensitive(prop.initializer)
                 {
-                    // Conditional-return callbacks can still contribute their
-                    // concrete branch return without unresolved contextual T.
-                    let conditional_branch_can_seed = self
-                        .callback_first_conditional_branch(prop.initializer)
-                        .is_some_and(|branch_idx| !is_contextually_sensitive(self, branch_idx));
-                    let zero_param_can_seed = self
-                        .unannotated_zero_param_callback_return_expression(prop.initializer)
-                        .is_some_and(|return_idx| !is_contextually_sensitive(self, return_idx));
-                    if conditional_branch_can_seed || zero_param_can_seed {
-                        let value_type =
-                            self.speculative_type_of_node(prop.initializer, &TypingRequest::NONE);
-                        if !self.type_contains_any_type_param(value_type, type_param_names) {
-                            properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
-                        }
-                    }
                     continue;
                 }
 
                 // The contextual param types are concrete, so we can safely type this
                 // lambda with those contextual types and extract its return type.
-                // Use the target function type as contextual type for the lambda.
+                // When the contextual return still contains callee type parameters,
+                // keep only the parameter side of the context so the lambda body
+                // contributes its concrete return rather than echoing an inference
+                // placeholder back into Round 1.
                 // Suppress diagnostics from this speculative evaluation
                 // (the params WILL get contextual types in the final pass).
-                let value_type = self.speculative_type_of_node(
-                    prop.initializer,
-                    &TypingRequest::with_contextual_type(contextual_fn_type),
-                );
+                let request = if return_has_inferred_type_param {
+                    TypingRequest::for_assertion(contextual_fn_type)
+                } else {
+                    TypingRequest::with_contextual_type(contextual_fn_type)
+                };
+                let value_type = self.speculative_type_of_node(prop.initializer, &request);
 
                 // If the speculative result still contains any of the type parameters
                 // being inferred, skip it. Including such types in the partial can
@@ -1571,7 +1552,9 @@ impl<'a> CheckerState<'a> {
                 // (e.g., T appearing in both source and target positions).
                 // This happens when a callback's return type references T
                 // through the un-instantiated contextual return type.
-                if self.type_contains_any_type_param(value_type, type_param_names) {
+                if self.type_contains_any_type_param(value_type, type_param_names)
+                    || common::contains_infer_types(self.ctx.types, value_type)
+                {
                     continue;
                 }
 
@@ -1598,13 +1581,13 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
 
                 let target_prop_type = target_props.get(&name_atom).copied().or_else(|| {
-                    self.contextual_object_literal_property_type(target_param_type, &name)
+                    self.contextual_object_property_type_for_lookup(target_param_type, &name)
                 });
                 let Some(target_prop_type) = target_prop_type else {
                     continue;
                 };
 
-                let Some((contextual_fn_type, _target_params, _target_return_type)) = self
+                let Some((contextual_fn_type, _target_params, target_return_type)) = self
                     .inference_callable_context_for_property_target(
                         target_prop_type,
                         type_param_names,
@@ -1613,10 +1596,23 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let value_type = self.speculative_type_of_function(
-                    elem_idx,
-                    &TypingRequest::with_contextual_type(contextual_fn_type),
-                );
+                let return_has_inferred_type_param =
+                    self.type_contains_any_type_param(target_return_type, type_param_names);
+                if return_has_inferred_type_param
+                    && self.function_body_return_expression_is_contextually_sensitive(
+                        method.body,
+                        method.type_annotation.is_some(),
+                    )
+                {
+                    continue;
+                }
+
+                let request = if return_has_inferred_type_param {
+                    TypingRequest::for_assertion(contextual_fn_type)
+                } else {
+                    TypingRequest::with_contextual_type(contextual_fn_type)
+                };
+                let value_type = self.speculative_type_of_function(elem_idx, &request);
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
@@ -1665,6 +1661,64 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn callback_return_expression_is_contextually_sensitive(
+        &self,
+        callback_idx: NodeIndex,
+    ) -> bool {
+        let Some(callback_node) = self
+            .callback_function_index(callback_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))
+        else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(callback_node) else {
+            return false;
+        };
+        self.function_body_return_expression_is_contextually_sensitive(
+            func.body,
+            func.type_annotation.is_some(),
+        )
+    }
+
+    fn function_body_return_expression_is_contextually_sensitive(
+        &self,
+        body_idx: NodeIndex,
+        has_return_annotation: bool,
+    ) -> bool {
+        use super::complex::is_contextually_sensitive;
+
+        if has_return_annotation {
+            return false;
+        }
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return is_contextually_sensitive(self, body_idx);
+        }
+
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        block.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return false;
+            }
+            self.ctx
+                .arena
+                .get_return_statement(stmt_node)
+                .is_some_and(|ret| {
+                    ret.expression.is_some() && is_contextually_sensitive(self, ret.expression)
+                })
+        })
     }
 
     /// Extract inference from an object literal whose target type is a mapped type.

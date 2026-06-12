@@ -1667,6 +1667,9 @@ fn bind_file_with_libs_with_language_version(
         .cloned()
         .unwrap_or_else(BinderState::new);
     binder.set_debug_file(&file_name);
+    if premerged_lib_binder.is_some() {
+        binder.symbols.share_current_symbols_for_append();
+    }
 
     // IMPORTANT: Merge lib symbols BEFORE binding source file
     // so that symbols like console, Array, Promise are available during binding

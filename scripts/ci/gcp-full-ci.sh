@@ -1075,7 +1075,7 @@ run_fourslash_aggregate() {
   fi
 
   local baseline
-  baseline="$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)"
+  baseline="$(jq -r '.summary.passed // .passed // (.pass | length) // 0' scripts/fourslash/fourslash-snapshot.json)"
   if [[ "$baseline" -gt 0 ]]; then
     local tolerance floor
     tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
