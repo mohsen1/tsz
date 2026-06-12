@@ -36,6 +36,8 @@ pub(in crate::intern::core) struct CachedUnionMember {
     pub(in crate::intern::core) obj_anon_shape: Option<u32>,
     /// For Callable: the symbol's raw u32 (if the shape has a symbol)
     pub(in crate::intern::core) callable_symbol: Option<u32>,
+    /// For string literals: resolved text used by union-member ordering.
+    pub(in crate::intern::core) string_literal_text: Option<Arc<str>>,
     /// Monotonic allocation counter for source-order sorting
     pub(in crate::intern::core) alloc_order: Option<u32>,
 }
