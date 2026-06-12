@@ -1461,6 +1461,18 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 parallel_qc_stats.merge(&query_cache.statistics());
             }
         }
+        // Residency accounting (#13249 step 1): the shared cross-file query
+        // cache drops at the end of this branch, so record its resident size
+        // here while it is still alive. No-op unless TSZ_PERF_COUNTERS is
+        // set; the walk is O(1) (DashMap len() per map).
+        if tsz_common::perf_counters::enabled()
+            && let Some(shared) = shared_query_cache.as_ref()
+        {
+            tsz_common::perf_counters::record_shared_query_cache_residency(
+                shared.total_entries() as u64,
+                shared.estimated_size_bytes() as u64,
+            );
+        }
         // PERF: `DefinitionStore::statistics()` walks every entry (and
         // `estimated_size_bytes()` walks again) — only worth paying for
         // when --diagnostics or --extendedDiagnostics is requested.
@@ -1883,6 +1895,24 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         } else {
             tracing::info!(target: "def_publication_census", "\n{report}");
         }
+    }
+
+    // Residency accounting (#13249 step 1): record the per-category byte
+    // breakdown into the process-wide perf-counter gauges before the driver
+    // writes the JSON snapshot. The merged program is at its final retained
+    // size here; the per-file `TypeCache` map (pinned for emit; empty under
+    // pure `--noEmit`) is fully populated. No-op (single branch) unless
+    // `TSZ_PERF_COUNTERS` is set.
+    if tsz_common::perf_counters::enabled() {
+        program.record_residency_breakdown();
+        let tc_out = type_cache_output
+            .lock()
+            .expect("type_cache_output mutex poisoned");
+        let type_cache_bytes: usize = tc_out.values().map(TypeCache::estimated_size_bytes).sum();
+        tsz_common::perf_counters::record_type_cache_residency(
+            tc_out.len() as u64,
+            type_cache_bytes as u64,
+        );
     }
 
     CollectDiagnosticsResult {
