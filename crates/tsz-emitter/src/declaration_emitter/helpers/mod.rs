@@ -177,19 +177,8 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
         interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::types::TypeId> {
         let &type_id = self.cache.def_types.get(&def_id.0)?;
-        use tsz_solver::types::TypeData;
-        match interner.lookup(type_id) {
-            Some(TypeData::Union(_))
-            | Some(TypeData::Intersection(_))
-            | Some(TypeData::Lazy(_))
-            | Some(TypeData::Conditional(_))
-            | Some(TypeData::IndexAccess(_, _))
-            | Some(TypeData::KeyOf(_))
-            | Some(TypeData::TemplateLiteral(_)) => Some(type_id),
-            _ if type_id.is_intrinsic() => Some(type_id),
-            _ if tsz_solver::visitor::literal_value(interner, type_id).is_some() => Some(type_id),
-            _ => None,
-        }
+        tsz_solver::type_queries::lazy_body_resolves_for_declaration_display(interner, type_id)
+            .then_some(type_id)
     }
 
     fn get_lazy_type_params(
