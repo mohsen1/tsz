@@ -91,7 +91,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         }
         if self
             .state
-            .temporal_rounding_options_shape_compatibility(source, target)
+            .generic_indexed_options_shape_compatibility(source, target)
         {
             return true;
         }
@@ -316,18 +316,50 @@ impl CheckerCallAssignabilityAdapter<'_, '_> {
 }
 
 impl CheckerState<'_> {
-    fn temporal_rounding_options_shape_compatibility(
+    fn generic_indexed_options_shape_compatibility(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        crate::query_boundaries::common::contains_generic_indexed_access_surface(
+        if !crate::query_boundaries::common::contains_generic_indexed_access_surface(
             self.ctx.types,
             target,
-        ) && self.type_has_named_property_for_call_compat(target, "largestUnit")
-            && self.type_has_named_property_for_call_compat(target, "smallestUnit")
-            && self.type_has_named_property_for_call_compat(source, "largestUnit")
-            && self.type_has_named_property_for_call_compat(source, "smallestUnit")
+        ) {
+            return false;
+        }
+
+        let Some(source_shape) = self.object_shape_for_call_compat(source) else {
+            return false;
+        };
+        if source_shape.properties.is_empty() {
+            return false;
+        }
+
+        let source_names: Vec<_> = source_shape
+            .properties
+            .iter()
+            .map(|prop| self.ctx.types.resolve_atom(prop.name))
+            .collect();
+        source_names
+            .iter()
+            .all(|name| self.type_has_named_property_for_call_compat(target, name.as_ref()))
+    }
+
+    fn object_shape_for_call_compat(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id).or_else(
+            || {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                (evaluated != type_id).then(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                })?
+            },
+        )
     }
 
     fn type_has_named_property_for_call_compat(&mut self, type_id: TypeId, name: &str) -> bool {
