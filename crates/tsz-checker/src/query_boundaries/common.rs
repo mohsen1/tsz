@@ -448,6 +448,10 @@ pub(crate) fn union_with_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     db.union2(type_id, TypeId::UNDEFINED)
 }
 
+pub(crate) fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
+    tsz_solver::utils::intersection_or_single(db, types)
+}
+
 // ── Union / classifier wrappers ──
 
 pub(crate) fn is_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

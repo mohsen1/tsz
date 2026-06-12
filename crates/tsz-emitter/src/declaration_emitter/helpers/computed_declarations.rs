@@ -166,10 +166,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(callable) = tsz_solver::type_queries::get_callable_shape(interner, type_id) else {
             return printed;
         };
-        if !callable.properties.iter().any(|prop| {
-            interner.resolve_atom(prop.name) == property_name
-                && prop.type_id == tsz_solver::TypeId::ANY
-        }) {
+        if !callable
+            .properties
+            .iter()
+            .any(|prop| interner.resolve_atom(prop.name) == property_name)
+        {
             return printed;
         }
 
@@ -181,13 +182,11 @@ impl<'a> DeclarationEmitter<'a> {
         property_name: &str,
     ) -> String {
         let mut output = String::with_capacity(printed.len() + crate::ELIDED_ANY.len());
-        let mut elided = false;
+        let segments = printed.split_inclusive('\n').collect::<Vec<_>>();
+        let mut index = 0;
 
-        for segment in printed.split_inclusive('\n') {
-            if elided {
-                output.push_str(segment);
-                continue;
-            }
+        while index < segments.len() {
+            let segment = segments[index];
 
             let (line, newline) = segment
                 .strip_suffix('\n')
@@ -197,13 +196,33 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 output.push_str(&line);
                 output.push_str(newline);
-                elided = true;
-            } else {
-                output.push_str(segment);
+                output.extend(segments[index + 1..].iter().copied());
+                return output;
             }
+
+            if let Some(end_index) = Self::recursive_static_class_expression_member_block_end(
+                &segments,
+                index,
+                property_name,
+            ) {
+                output.push_str(
+                    &Self::recursive_static_class_expression_member_replacement_line(
+                        line,
+                        property_name,
+                    ),
+                );
+                if segments[end_index].ends_with('\n') {
+                    output.push('\n');
+                }
+                output.extend(segments[end_index + 1..].iter().copied());
+                return output;
+            }
+
+            output.push_str(segment);
+            index += 1;
         }
 
-        if elided { output } else { printed.to_string() }
+        printed.to_string()
     }
 
     fn elide_recursive_static_class_expression_member_line(
@@ -227,6 +246,52 @@ impl<'a> DeclarationEmitter<'a> {
         output.push(';');
         output.push_str(&line[trailing_start..]);
         Some(output)
+    }
+
+    fn recursive_static_class_expression_member_block_end(
+        segments: &[&str],
+        start_index: usize,
+        property_name: &str,
+    ) -> Option<usize> {
+        let first_line = segments
+            .get(start_index)?
+            .strip_suffix('\n')
+            .unwrap_or(segments[start_index]);
+        let trimmed = first_line.trim();
+        if trimmed != format!("{property_name}: {{") {
+            return None;
+        }
+
+        let mut depth = 0i32;
+        for (offset, segment) in segments[start_index..].iter().enumerate() {
+            let line = segment.strip_suffix('\n').unwrap_or(segment);
+            for ch in line.chars() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth == 0 && line.trim_end().ends_with(';') {
+                return Some(start_index + offset);
+            }
+        }
+        None
+    }
+
+    fn recursive_static_class_expression_member_replacement_line(
+        line: &str,
+        property_name: &str,
+    ) -> String {
+        let trimmed_start = line.trim_start();
+        let leading_len = line.len() - trimmed_start.len();
+        let mut output = String::with_capacity(line.len() + crate::ELIDED_ANY.len());
+        output.push_str(&line[..leading_len]);
+        output.push_str(property_name);
+        output.push_str(": ");
+        output.push_str(crate::ELIDED_ANY);
+        output.push(';');
+        output
     }
 
     pub(in crate::declaration_emitter) fn property_initializer_is_recursive_class_expression(
@@ -304,5 +369,16 @@ mod tests {
         );
 
         assert_eq!(printed, actual);
+    }
+
+    #[test]
+    fn recursive_static_class_expression_elision_rewrites_nested_constructor_member() {
+        let printed =
+            "{\n    new (): {};\n    D: {\n        new (): {};\n        D: any;\n    };\n}";
+
+        let actual =
+            DeclarationEmitter::elide_recursive_static_class_expression_member_text(printed, "D");
+
+        assert_eq!("{\n    new (): {};\n    D: /*elided*/ any;\n}", actual);
     }
 }

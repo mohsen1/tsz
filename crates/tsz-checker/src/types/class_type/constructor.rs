@@ -16,26 +16,14 @@ use super::can_skip_base_instantiation;
 
 #[path = "constructor_parts/helpers.rs"]
 mod helpers;
-
+#[path = "constructor_parts/inferred_predicates.rs"]
+mod inferred_predicates;
+#[path = "constructor_parts/member_aggregates.rs"]
+mod member_aggregates;
 #[path = "constructor_parts/rough_partial.rs"]
 mod rough_partial;
 
-struct MethodAggregate {
-    overload_signatures: Vec<CallSignature>,
-    impl_signatures: Vec<CallSignature>,
-    overload_optional: bool,
-    impl_optional: bool,
-    visibility: Visibility,
-    /// Node index of the implementation method (body present), used to cache
-    /// the final callable type in `node_types` for declaration emit.
-    impl_member_idx: Option<NodeIndex>,
-}
-
-struct AccessorAggregate {
-    getter: Option<TypeId>,
-    setter: Option<TypeId>,
-    visibility: Visibility,
-}
+use member_aggregates::{AccessorAggregate, MethodAggregate};
 
 struct StaticMemberBuildData<'a> {
     current_sym: Option<tsz_binder::SymbolId>,
@@ -505,8 +493,10 @@ impl<'a> CheckerState<'a> {
                         self.clear_excluded_params_for_type_param_constraints();
                         let (params, this_type) =
                             self.extract_params_from_parameter_list(&method.parameters);
-                        let (return_type, type_predicate) =
-                            self.return_type_and_predicate(method.type_annotation, &params);
+                        let ret_pred = self.method_return_type_and_predicate_for_class_summary(
+                            member_idx, method, &params,
+                        );
+                        let (return_type, type_predicate) = ret_pred;
                         self.pop_type_parameters(type_param_updates);
                         let callable_type = factory.callable(CallableShape {
                             call_signatures: vec![CallSignature {

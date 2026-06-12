@@ -702,6 +702,9 @@ impl<'a> DeclarationEmitter<'a> {
                             && self.function_initializer_has_parameter_type_annotations(
                                 initializer,
                             ))
+                        || self.function_initializer_has_rest_tuple_parameter_annotation(
+                            initializer,
+                        )
                         || self.function_initializer_has_typeof_in_param_annotations(initializer)
                         || self.function_initializer_has_destructured_parameters(initializer)
                         || self.function_initializer_has_inferred_return_via_symbol(
@@ -743,7 +746,11 @@ impl<'a> DeclarationEmitter<'a> {
                     });
                 if !emitted_truncation_diagnostic {
                     self.write(": ");
-                    if keyword == "const"
+                    if let Some(element_type) =
+                        self.element_access_array_element_type_text(initializer)
+                    {
+                        self.write(&element_type);
+                    } else if keyword == "const"
                         && let Some(template_index_type) =
                             self.template_index_signature_element_access_type_text(initializer)
                     {
@@ -1178,6 +1185,11 @@ impl<'a> DeclarationEmitter<'a> {
                             self.template_index_signature_element_access_type_text(initializer)
                     {
                         self.write(&template_index_type);
+                    } else if has_initializer
+                        && let Some(element_type) =
+                            self.element_access_array_element_type_text(initializer)
+                    {
+                        self.write(&element_type);
                     } else {
                         self.write(&Self::strip_synthetic_anonymous_object_members(
                             &selected_type_text,

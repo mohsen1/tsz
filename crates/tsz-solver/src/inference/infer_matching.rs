@@ -1657,15 +1657,32 @@ impl<'a> InferenceContext<'a> {
         let source_list = self.interner.type_list(source_members);
         let target_list = self.interner.type_list(target_members);
 
-        // For intersections, we can pick any member that matches
-        for source_ty in source_list.iter() {
-            for target_ty in target_list.iter() {
-                // Don't fail if one member doesn't match
+        // For structured intersection members, we can pick any source member
+        // that matches. A naked target type parameter is different: matching it
+        // against every source member turns `A & B` against `T & B` into
+        // candidates from both `A` and `B`, so `T` resolves to an artificial
+        // `A & B`. When both intersections have the same arity, preserve the
+        // positional correspondence for those naked parameters while keeping
+        // broad matching for the structured members.
+        let use_positional_naked_params = source_list.len() == target_list.len();
+        for (target_index, target_ty) in target_list.iter().enumerate() {
+            if use_positional_naked_params && self.is_naked_inference_target(*target_ty) {
+                let _ = self.infer_from_types(source_list[target_index], *target_ty, priority);
+                continue;
+            }
+            for source_ty in source_list.iter() {
                 let _ = self.infer_from_types(*source_ty, *target_ty, priority);
             }
         }
 
         Ok(())
+    }
+
+    fn is_naked_inference_target(&self, target: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(target),
+            Some(TypeData::TypeParameter(info)) if self.find_type_param(info.name).is_some()
+        )
     }
 
     /// Infer from `TypeApplication` (generic type instantiations)
