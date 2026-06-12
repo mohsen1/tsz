@@ -55,8 +55,12 @@ pub struct DeclarationEmitter<'a> {
     pub(super) public_api_scope_depth: u32,
     /// Raw source text for this source file, used for keyword fallback emission.
     pub(super) source_file_text: Option<Arc<str>>,
-    /// Type cache for looking up inferred types
-    pub(super) type_cache: Option<TypeCacheView>,
+    /// Type cache for looking up inferred types.
+    ///
+    /// Read-only after construction; shared by `Arc` so per-file and scratch
+    /// emitters reference one program-produced view instead of deep-cloning
+    /// every cache map.
+    pub(super) type_cache: Option<Arc<TypeCacheView>>,
     /// Root source-file node for the current emit pass.
     pub(super) current_source_file_idx: Option<NodeIndex>,
     /// Type interner for printing types
@@ -76,12 +80,16 @@ pub struct DeclarationEmitter<'a> {
     pub(super) current_file_path: Option<String>,
     /// Parsed JSON module values keyed by resolved source path.
     pub(super) json_module_value_cache: FxHashMap<PathBuf, Arc<serde_json::Value>>,
-    /// Map of arena address -> file path (for resolving foreign symbol locations)
-    pub(super) arena_to_path: FxHashMap<usize, String>,
-    /// Map of file index -> file path (fallback for resolving symbol source via `decl_file_idx`)
-    pub(super) file_idx_to_path: FxHashMap<u32, String>,
+    /// Map of arena address -> file path (for resolving foreign symbol locations).
+    /// Program-wide and read-only after construction; `Arc`-shared across
+    /// per-file and scratch emitters.
+    pub(super) arena_to_path: Arc<FxHashMap<usize, String>>,
+    /// Map of file index -> file path (fallback for resolving symbol source via `decl_file_idx`).
+    /// Program-wide and read-only after construction; `Arc`-shared.
+    pub(super) file_idx_to_path: Arc<FxHashMap<u32, String>>,
     /// Canonicalized root files from the original compilation request.
-    pub(super) root_file_paths: FxHashSet<String>,
+    /// Program-wide and read-only after construction; `Arc`-shared.
+    pub(super) root_file_paths: Arc<FxHashSet<String>>,
     /// Global symbol-to-arena mapping from all program files, enabling cross-file
     /// symbol source path resolution for TS2883 portability checks.
     pub(super) global_symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
@@ -156,7 +164,8 @@ pub struct DeclarationEmitter<'a> {
     /// When true, strip declarations annotated with `@internal` (--stripInternal)
     pub(super) strip_internal: bool,
     /// Set of absolute file paths whose source contains module augmentations.
-    pub(super) files_with_augmentations: FxHashSet<String>,
+    /// Program-wide and read-only after construction; `Arc`-shared.
+    pub(super) files_with_augmentations: Arc<FxHashSet<String>>,
     /// Tracks whether any non-exported declaration was actually emitted
     /// (used for deciding whether `export {};` scope fix marker is needed)
     pub(super) emitted_non_exported_declaration: bool,
