@@ -803,24 +803,19 @@ pub fn check_application_variance<R: TypeResolver>(
         return None;
     }
 
-    let context = RelationContext {
-        query_db: context.query_db.or(query_db),
-        ..context
-    };
-    let mut checker = configured_subtype_checker(db, resolver, policy, context);
-    let result = checker.try_variance_fast_path(s_app_id, t_app_id)?;
+    let _ = (s_app_id, t_app_id, policy, context, query_db);
 
-    // This public pre-evaluation boundary is acceptance-only: a proven
-    // positive result can safely avoid the duplicate boundary argument walk,
-    // but a rejection may still be accepted by structural expansion of
-    // conditional, recursive, mapped, or method-bivariant alias bodies. Let the
-    // full relation decide those negative cases, matching the old duplicated
-    // boundary's conservative fallback shape.
-    if !result.is_true() {
-        return None;
-    }
-
-    Some(true)
+    // This public pre-evaluation boundary must be conservative. The solver
+    // engine still owns variance-based App/App decisions through
+    // `SubtypeChecker::try_variance_fast_path` after the ordinary relation
+    // reaches it, but accepting here skips structural expansion before the
+    // relation has seen conditional, recursive, mapped, and declared-variance
+    // bodies. Conformance witnesses (`promisesWithConstraints.ts`,
+    // `recursiveConditionalTypes.ts`, `conditionalTypes2.ts`, and
+    // `varianceAnnotations.ts`) show that even delegated positive results can
+    // suppress `tsc` diagnostics at this public boundary. Fall through until
+    // the boundary has a structural proof that a positive result is parity-safe.
+    None
 }
 
 /// Check if two type parameters are assignable to each other.
