@@ -541,6 +541,7 @@ pub(super) fn compile_inner(
         outfile_bundle_paths,
         outfile_bundle_dependencies,
         module_resolutions,
+        module_resolution_misses,
         type_reference_errors,
         resolution_mode_errors,
     } = {
@@ -964,6 +965,7 @@ pub(super) fn compile_inner(
         effective_cache,
         &parallel_type_caches,
         Some(&module_resolutions),
+        Some(&module_resolution_misses),
     );
     let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
     let check_duration = collect_diagnostics_start.elapsed();
