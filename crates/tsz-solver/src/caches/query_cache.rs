@@ -1898,7 +1898,7 @@ impl QueryDatabase for QueryCache<'_> {
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.set_exact_optional_property_types(exact_optional_property_types);
-        let result = evaluator.resolve_property_access(object_type, prop_name);
+        let result = evaluator.resolve_property_access_with_atom(object_type, prop_name, prop_atom);
         self.insert_property_cache(key, result);
         result
     }

@@ -11,7 +11,8 @@ mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
 pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
-    AssignabilityEvalMemo, AssignabilityEvalStamp, CowCache, NarrowableIdentifierCache,
+    AssignabilityEvalMemo, AssignabilityEvalStamp, AssignabilityFailureKey,
+    AssignabilityFailureMemo, CachedAssignabilityAnalysis, CowCache, NarrowableIdentifierCache,
     NodeTypeCache, SharedConstraintProofCache, SymbolTypeCache, TypeNodeSurfaceCaches,
     TypeReferenceValidationCaches,
 };

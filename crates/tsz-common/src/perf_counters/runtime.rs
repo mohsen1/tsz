@@ -105,6 +105,21 @@ pub struct PerfCounters {
     /// `(files_checked - 1)` and `checker_state_constructed` falls by the
     /// same amount versus the baseline construction-per-file path.
     pub file_session_resets: AtomicU64,
+    /// High-water retained checker-context cache entries observed immediately
+    /// before `CheckerContext::reset_for_next_file()` clears file-local state.
+    pub file_session_reset_cache_entries_max: AtomicU64,
+    /// High-water estimated bytes for the same reset-boundary cache snapshot.
+    pub file_session_reset_cache_bytes_max: AtomicU64,
+    pub file_session_reset_namespace_member_entries_max: AtomicU64,
+    pub file_session_reset_namespace_member_bytes_max: AtomicU64,
+    pub file_session_reset_export_equals_entries_max: AtomicU64,
+    pub file_session_reset_export_equals_bytes_max: AtomicU64,
+    pub file_session_reset_nested_namespace_entries_max: AtomicU64,
+    pub file_session_reset_nested_namespace_bytes_max: AtomicU64,
+    pub file_session_reset_lowering_entity_name_entries_max: AtomicU64,
+    pub file_session_reset_lowering_entity_name_bytes_max: AtomicU64,
+    pub file_session_reset_env_eval_entries_max: AtomicU64,
+    pub file_session_reset_env_eval_bytes_max: AtomicU64,
 
     // ─── overlay copy ────────────────────────────────────────────────────
     pub copy_symbol_file_targets_calls: AtomicU64,
@@ -142,6 +157,18 @@ pub struct PerfCounters {
     /// keys promoted to definitive `true` plus fuel-derived keys promoted to
     /// band-conditional `LimitTrue` entries.
     pub relation_maybe_promotions: AtomicU64,
+
+    // ─── relation failure-reason single pass (issue #13243) ─────────────
+    /// Failure-reason walks executed after a failing reason-collecting
+    /// assignability relation (`is_weak_union_violation` plus
+    /// `explain_failure` on the configured `CompatChecker`). Each walk
+    /// re-traverses the failing relation graph, so on diagnostic-heavy code
+    /// this is the duplicated cost the single-pass campaign removes.
+    pub relation_failure_reason_walks: AtomicU64,
+    /// Failing relation analyses served from the checker's stamp-guarded
+    /// failure-analysis memo instead of re-running the relation engine plus
+    /// the failure-reason walk.
+    pub relation_failure_memo_hits: AtomicU64,
 
     // ─── solver concrete materialization (issue #13242) ─────────────────
     pub union_subtype_reduction_calls: AtomicU64,
@@ -308,6 +335,18 @@ impl PerfCounters {
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
                 CHECKER_CREATION_REASON_COUNT],
             file_session_resets: AtomicU64::new(0),
+            file_session_reset_cache_entries_max: AtomicU64::new(0),
+            file_session_reset_cache_bytes_max: AtomicU64::new(0),
+            file_session_reset_namespace_member_entries_max: AtomicU64::new(0),
+            file_session_reset_namespace_member_bytes_max: AtomicU64::new(0),
+            file_session_reset_export_equals_entries_max: AtomicU64::new(0),
+            file_session_reset_export_equals_bytes_max: AtomicU64::new(0),
+            file_session_reset_nested_namespace_entries_max: AtomicU64::new(0),
+            file_session_reset_nested_namespace_bytes_max: AtomicU64::new(0),
+            file_session_reset_lowering_entity_name_entries_max: AtomicU64::new(0),
+            file_session_reset_lowering_entity_name_bytes_max: AtomicU64::new(0),
+            file_session_reset_env_eval_entries_max: AtomicU64::new(0),
+            file_session_reset_env_eval_bytes_max: AtomicU64::new(0),
             copy_symbol_file_targets_calls: AtomicU64::new(0),
             copy_symbol_file_targets_entries_total: AtomicU64::new(0),
             copy_symbol_file_targets_entries_max: AtomicU64::new(0),
@@ -323,6 +362,8 @@ impl PerfCounters {
                 CHECKER_CREATION_REASON_COUNT],
             relation_limit_cache_hits: AtomicU64::new(0),
             relation_maybe_promotions: AtomicU64::new(0),
+            relation_failure_reason_walks: AtomicU64::new(0),
+            relation_failure_memo_hits: AtomicU64::new(0),
             union_subtype_reduction_calls: AtomicU64::new(0),
             union_subtype_reduction_members_total: AtomicU64::new(0),
             union_subtype_reduction_members_max: AtomicU64::new(0),
@@ -1318,6 +1359,30 @@ pub fn record_relation_maybe_promotion() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record one failure-reason walk over a failing reason-collecting
+/// assignability relation (issue #13243).
+#[inline]
+pub fn record_relation_failure_reason_walk() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .relation_failure_reason_walks
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one failing relation analysis served from the checker's
+/// stamp-guarded failure-analysis memo (issue #13243).
+#[inline]
+pub fn record_relation_failure_memo_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .relation_failure_memo_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record one concrete union-subtype reduction attempt.
 #[inline]
 pub fn record_union_subtype_reduction(member_count: u64, pairwise_budget: u64) {
@@ -1661,6 +1726,97 @@ pub fn record_file_session_reset() {
     counters()
         .file_session_resets
         .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record high-water retained checker-context cache sizes immediately before
+/// a reused checker clears file-local state. This is attribution-only data for
+/// issue #13246's session-reuse accumulation audit; it never changes reset or
+/// cache behavior.
+pub struct FileSessionResetCacheStatistics {
+    /// Total retained cache entries observed at the reset boundary.
+    pub total_entries: u64,
+    /// Estimated total retained cache bytes observed at the reset boundary.
+    pub total_bytes: u64,
+    /// Namespace-member resolution cache entries observed at reset.
+    pub namespace_member_entries: u64,
+    /// Namespace-member resolution cache estimated bytes observed at reset.
+    pub namespace_member_bytes: u64,
+    /// `export =` named cache entries observed at reset.
+    pub export_equals_entries: u64,
+    /// `export =` named cache estimated bytes observed at reset.
+    pub export_equals_bytes: u64,
+    /// Nested-namespace candidate cache entries observed at reset.
+    pub nested_namespace_entries: u64,
+    /// Nested-namespace candidate cache estimated bytes observed at reset.
+    pub nested_namespace_bytes: u64,
+    /// Lowering entity-name resolution cache entries observed at reset.
+    pub lowering_entity_name_entries: u64,
+    /// Lowering entity-name resolution cache estimated bytes observed at reset.
+    pub lowering_entity_name_bytes: u64,
+    /// Environment evaluation cache entries observed at reset.
+    pub env_eval_entries: u64,
+    /// Environment evaluation cache estimated bytes observed at reset.
+    pub env_eval_bytes: u64,
+}
+
+#[inline]
+pub fn record_file_session_reset_cache_statistics(
+    stats: FileSessionResetCacheStatistics,
+) {
+    let FileSessionResetCacheStatistics {
+        total_entries,
+        total_bytes,
+        namespace_member_entries,
+        namespace_member_bytes,
+        export_equals_entries,
+        export_equals_bytes,
+        nested_namespace_entries,
+        nested_namespace_bytes,
+        lowering_entity_name_entries,
+        lowering_entity_name_bytes,
+        env_eval_entries,
+        env_eval_bytes,
+    } = stats;
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    record_max_inner(&c.file_session_reset_cache_entries_max, total_entries);
+    record_max_inner(&c.file_session_reset_cache_bytes_max, total_bytes);
+    record_max_inner(
+        &c.file_session_reset_namespace_member_entries_max,
+        namespace_member_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_namespace_member_bytes_max,
+        namespace_member_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_export_equals_entries_max,
+        export_equals_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_export_equals_bytes_max,
+        export_equals_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_nested_namespace_entries_max,
+        nested_namespace_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_nested_namespace_bytes_max,
+        nested_namespace_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_lowering_entity_name_entries_max,
+        lowering_entity_name_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_lowering_entity_name_bytes_max,
+        lowering_entity_name_bytes,
+    );
+    record_max_inner(&c.file_session_reset_env_eval_entries_max, env_eval_entries);
+    record_max_inner(&c.file_session_reset_env_eval_bytes_max, env_eval_bytes);
 }
 
 #[inline]

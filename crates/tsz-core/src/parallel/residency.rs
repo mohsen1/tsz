@@ -262,6 +262,17 @@ impl MergedProgram {
             return;
         }
 
+        let retained_stats = self.residency_stats();
+        let retained_file_state_bytes_est = retained_stats
+            .total_bound_file_bytes
+            .saturating_add(retained_stats.unique_arena_estimated_bytes);
+        let retained_file_state_pressure = match ResidencyBudget::default().assess(&retained_stats)
+        {
+            MemoryPressure::Low => pc::ResidencyPressureLevel::Low,
+            MemoryPressure::Medium => pc::ResidencyPressureLevel::Medium,
+            MemoryPressure::High => pc::ResidencyPressureLevel::High,
+        };
+
         let unique_arena_map = self.collect_unique_arenas(true);
         let ast_unique_arena_bytes_est: usize = unique_arena_map
             .values()
@@ -293,6 +304,8 @@ impl MergedProgram {
                 .map_or(0, |idx| idx.estimated_size_bytes())
                 as u64,
             pre_merge_bind_total_bytes_est: self.pre_merge_bind_total_bytes as u64,
+            retained_file_state_bytes_est: retained_file_state_bytes_est as u64,
+            retained_file_state_pressure,
         });
     }
 }

@@ -669,16 +669,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // assignable to it. We must check BEFORE evaluate_type() because
         // evaluation may change the target TypeId, losing the boxed identity.
         {
-            let is_object_interface_target = self
-                .resolver
-                .is_boxed_type_id(target, IntrinsicKind::Object)
-                || self
-                    .resolver
-                    .get_boxed_type(IntrinsicKind::Object)
-                    .is_some_and(|boxed| boxed == target)
-                || lazy_def_id(self.interner, target).is_some_and(|def_id| {
-                    self.resolver.is_boxed_def_id(def_id, IntrinsicKind::Object)
-                });
+            let is_object_interface_target =
+                crate::type_queries::is_global_interface_by_identity_with_resolver(
+                    self.interner,
+                    self.resolver,
+                    target,
+                    IntrinsicKind::Object,
+                );
             if is_object_interface_target {
                 // is_nullable() short-circuits before the interner lookup for common null/undefined/void cases.
                 if source.is_nullable() || !self.is_global_object_interface_type(source) {
@@ -706,12 +703,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Lazy(DefId) → ObjectShape, losing the DefId identity needed to
         // recognize the type as an intrinsic interface.
         if !self.bypass_evaluation
-            && (lazy_def_id(self.interner, target).is_some_and(|t_def| {
-                self.resolver
-                    .is_boxed_def_id(t_def, IntrinsicKind::Function)
-            }) || self
-                .resolver
-                .is_boxed_type_id(target, IntrinsicKind::Function))
+            && crate::type_queries::is_global_interface_by_identity_with_resolver(
+                self.interner,
+                self.resolver,
+                target,
+                IntrinsicKind::Function,
+            )
         {
             let source_eval = self.evaluate_type(source);
             if self.is_callable_type(source_eval) {

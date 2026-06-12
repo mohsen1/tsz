@@ -479,8 +479,18 @@ fn test_execute_relation_success_path_returns_clean_outcome() {
 /// so diagnostic selection can emit TS2321/TS2859 instead of a generic mismatch.
 #[test]
 fn test_bivariant_relation_boundary_preserves_overflow_flags() {
-    let boundary_source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read assignability.rs");
+    // The bivariant relation-kind helpers live in the boundary's
+    // `relation_kind_variants` submodule (split for the line cap); the parent
+    // file still owns `execute_relation` and the overflow-flag conversion.
+    let boundary_source = {
+        let mut source = fs::read_to_string("src/query_boundaries/assignability.rs")
+            .expect("failed to read assignability.rs");
+        source.push_str(
+            &fs::read_to_string("src/query_boundaries/assignability/relation_kind_variants.rs")
+                .expect("failed to read assignability/relation_kind_variants.rs"),
+        );
+        source
+    };
     let checker_source = fs::read_to_string("src/assignability/assignability_relation.rs")
         .expect("failed to read assignability_relation.rs");
 

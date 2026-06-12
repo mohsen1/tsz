@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 8;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 9;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -32,6 +32,8 @@ pub struct PerfCounterSnapshot {
     pub interner: InternerCounters,
     /// Solver relation limit-result cache (issue #13241).
     pub relation_limit_cache: RelationLimitCacheCounters,
+    /// Relation failure-reason single-pass campaign (issue #13243).
+    pub relation_failure: RelationFailureCounters,
     /// Solver concrete-form materialization counters (issue #13242).
     pub solver_materialization: SolverMaterializationCounters,
     /// Solver evaluator memo lifecycle (issue #13097): what the per-run
@@ -331,6 +333,21 @@ pub struct CheckerCounters {
     /// session-reuse path (T2.1.B). Reuse vs. construct is the comparison
     /// against `state_constructed`.
     pub file_session_resets: u64,
+    /// High-water checker-context cache entries observed just before a reused
+    /// checker reset clears file-local state.
+    pub file_session_reset_cache_entries_max: u64,
+    /// High-water estimated bytes for the same pre-reset cache snapshot.
+    pub file_session_reset_cache_bytes_max: u64,
+    pub file_session_reset_namespace_member_entries_max: u64,
+    pub file_session_reset_namespace_member_bytes_max: u64,
+    pub file_session_reset_export_equals_entries_max: u64,
+    pub file_session_reset_export_equals_bytes_max: u64,
+    pub file_session_reset_nested_namespace_entries_max: u64,
+    pub file_session_reset_nested_namespace_bytes_max: u64,
+    pub file_session_reset_lowering_entity_name_entries_max: u64,
+    pub file_session_reset_lowering_entity_name_bytes_max: u64,
+    pub file_session_reset_env_eval_entries_max: u64,
+    pub file_session_reset_env_eval_bytes_max: u64,
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
     pub compute_type_of_symbol_interface_simple_object_fastpath_hits: u64,
@@ -481,6 +498,17 @@ pub struct RelationLimitCacheCounters {
     pub maybe_promotions: u64,
 }
 
+/// Relation failure-reason single-pass counters (issue #13243): how many
+/// failing reason-collecting relations re-walked the relation graph vs were
+/// served from the checker's stamp-guarded failure-analysis memo.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RelationFailureCounters {
+    /// Failure-reason walks executed by the solver on a failing relation.
+    pub reason_walks: u64,
+    /// Failing analyses served from the failure-analysis memo.
+    pub memo_hits: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SolverMaterializationCounters {
     pub union_subtype_reduction_calls: u64,
@@ -589,6 +617,40 @@ impl PerfCounters {
                 state_constructed: load(&c.checker_state_constructed),
                 with_parent_cache_constructed: load(&c.checker_state_with_parent_cache_constructed),
                 file_session_resets: load(&c.file_session_resets),
+                file_session_reset_cache_entries_max: load(
+                    &c.file_session_reset_cache_entries_max,
+                ),
+                file_session_reset_cache_bytes_max: load(&c.file_session_reset_cache_bytes_max),
+                file_session_reset_namespace_member_entries_max: load(
+                    &c.file_session_reset_namespace_member_entries_max,
+                ),
+                file_session_reset_namespace_member_bytes_max: load(
+                    &c.file_session_reset_namespace_member_bytes_max,
+                ),
+                file_session_reset_export_equals_entries_max: load(
+                    &c.file_session_reset_export_equals_entries_max,
+                ),
+                file_session_reset_export_equals_bytes_max: load(
+                    &c.file_session_reset_export_equals_bytes_max,
+                ),
+                file_session_reset_nested_namespace_entries_max: load(
+                    &c.file_session_reset_nested_namespace_entries_max,
+                ),
+                file_session_reset_nested_namespace_bytes_max: load(
+                    &c.file_session_reset_nested_namespace_bytes_max,
+                ),
+                file_session_reset_lowering_entity_name_entries_max: load(
+                    &c.file_session_reset_lowering_entity_name_entries_max,
+                ),
+                file_session_reset_lowering_entity_name_bytes_max: load(
+                    &c.file_session_reset_lowering_entity_name_bytes_max,
+                ),
+                file_session_reset_env_eval_entries_max: load(
+                    &c.file_session_reset_env_eval_entries_max,
+                ),
+                file_session_reset_env_eval_bytes_max: load(
+                    &c.file_session_reset_env_eval_bytes_max,
+                ),
                 compute_type_of_symbol_calls: load(&c.compute_type_of_symbol_calls),
                 compute_type_of_symbol_cache_hits: load(&c.compute_type_of_symbol_cache_hits),
                 compute_type_of_symbol_interface_simple_object_fastpath_hits: load(
@@ -674,6 +736,10 @@ impl PerfCounters {
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
                 maybe_promotions: load(&c.relation_maybe_promotions),
+            },
+            relation_failure: RelationFailureCounters {
+                reason_walks: load(&c.relation_failure_reason_walks),
+                memo_hits: load(&c.relation_failure_memo_hits),
             },
             solver_materialization: SolverMaterializationCounters {
                 union_subtype_reduction_calls: load(&c.union_subtype_reduction_calls),

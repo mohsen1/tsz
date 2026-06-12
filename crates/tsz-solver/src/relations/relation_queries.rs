@@ -463,9 +463,12 @@ where
     // The failure analysis runs on the same `checker`, so its relation cache is
     // already warm with the decision's sub-results: the structural reason walk
     // observes the identical outcomes the decision did and cannot contradict it.
-    let analysis = (!related && collect_analysis).then(|| AssignabilityFailureAnalysis {
-        weak_union_violation: checker.is_weak_union_violation(source, target),
-        failure_reason: checker.explain_failure(source, target),
+    let analysis = (!related && collect_analysis).then(|| {
+        tsz_common::perf_counters::record_relation_failure_reason_walk();
+        AssignabilityFailureAnalysis {
+            weak_union_violation: checker.is_weak_union_violation(source, target),
+            failure_reason: checker.explain_failure(source, target),
+        }
     });
 
     AssignabilityQueryOutcome { result, analysis }
