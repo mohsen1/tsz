@@ -136,6 +136,45 @@ const LIB_ITER_FIXTURE_FILES: &[(&str, &str)] = &[
 const LIB_ITER_FIXTURE_TSCONFIG: &str =
     include_str!("fixtures/parallel_agreement_lib_iter/tsconfig.json");
 
+/// Third witness family (#13255 program-def in-flight remainder, distilled
+/// from `typed-orchestration-core` with binders renamed): an importer checked
+/// before the file that declares its dependency derives the cross-file types
+/// itself through cross-arena delegation. Two delegation holes made that
+/// derivation schedule-dependent:
+///
+/// - lib-origin globals (`Symbol`, `SymbolConstructor`) did not resolve
+///   through the delegate lookup binder's `program_globals`, so
+///   `[Symbol.asyncDispose]` class members were dropped as late-bound
+///   (false TS2851 on `await using` whenever the importer was checked
+///   first — sequential main-first AND every forced-parallel schedule);
+/// - a symbol-less structural interface body published by a sibling checker
+///   (the lib `Promise` body form) could not be mapped back to its def, so
+///   generic applications over it never instantiated and raw type
+///   parameters leaked (multithread-only false
+///   `TS2339: Property 'map' does not exist on type 'T'` / TS7006 storms on
+///   awaited `Promise<readonly unknown[]>` method results).
+const DISPOSABLE_FIXTURE_FILES: &[(&str, &str)] = &[
+    (
+        "src/gauges.ts",
+        include_str!("fixtures/parallel_agreement_disposable/gauges.ts"),
+    ),
+    (
+        "src/latches.ts",
+        include_str!("fixtures/parallel_agreement_disposable/latches.ts"),
+    ),
+    (
+        "src/lattice.ts",
+        include_str!("fixtures/parallel_agreement_disposable/lattice.ts"),
+    ),
+    (
+        "src/relay.ts",
+        include_str!("fixtures/parallel_agreement_disposable/relay.ts"),
+    ),
+];
+
+const DISPOSABLE_FIXTURE_TSCONFIG: &str =
+    include_str!("fixtures/parallel_agreement_disposable/tsconfig.json");
+
 fn run_project(tsz_bin: &Path, project_dir: &Path, force_parallel: bool) -> String {
     let mut cmd = Command::new(tsz_bin);
     cmd.args(["-p", "tsconfig.json", "--pretty", "false"])
@@ -197,6 +236,22 @@ fn forced_parallel_lib_iterator_heritage_matches_sequential() {
         "lib_iter",
         LIB_ITER_FIXTURE_FILES,
         LIB_ITER_FIXTURE_TSCONFIG,
+        5,
+    );
+}
+
+/// Cross-arena delegation must derive the same cross-file class/interface
+/// forms a primary checker would (lib-origin global resolution through
+/// `program_globals`; def identity recovery for symbol-less structural
+/// application bases). Pre-fix this diverged deterministically: sequential
+/// carried a false TS2851 + raw-type-parameter TS2339/TS7006 storm that
+/// forced-parallel runs did not (or vice versa per schedule).
+#[test]
+fn forced_parallel_disposable_delegation_matches_sequential() {
+    assert_parallel_matches_sequential(
+        "disposable",
+        DISPOSABLE_FIXTURE_FILES,
+        DISPOSABLE_FIXTURE_TSCONFIG,
         5,
     );
 }
