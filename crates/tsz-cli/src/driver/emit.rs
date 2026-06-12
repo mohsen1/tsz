@@ -198,7 +198,7 @@ pub(crate) fn emit_outputs(
     // This enables the declaration emitter's portability check to resolve
     // cross-file symbols (e.g., imported types from node_modules) to their
     // source file paths, which is required for TS2883 diagnostics.
-    let global_symbol_arenas = (*context.program.symbol_arenas).clone();
+    let global_symbol_arenas = std::sync::Arc::clone(&context.program.symbol_arenas);
 
     // Collect file paths that contain module augmentations.
     // The declaration emitter uses this to preserve side-effect imports for
@@ -607,7 +607,9 @@ pub(crate) fn emit_outputs(
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
                     emitter.set_root_file_paths(root_file_paths.clone());
-                    emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
+                    emitter.set_shared_global_symbol_arenas(std::sync::Arc::clone(
+                        &global_symbol_arenas,
+                    ));
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
@@ -627,7 +629,9 @@ pub(crate) fn emit_outputs(
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
                     emitter.set_root_file_paths(root_file_paths.clone());
-                    emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
+                    emitter.set_shared_global_symbol_arenas(std::sync::Arc::clone(
+                        &global_symbol_arenas,
+                    ));
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
