@@ -1111,11 +1111,33 @@ pub(crate) struct NodeArenaPoolLengths {
     pub jsx_text: usize,
     pub jsx_namespaced_names: usize,
     pub source_files: usize,
+    pub class_body_var_fn_recoveries: usize,
 }
 
 // =============================================================================
 // Thin Node Arena
 // =============================================================================
+
+/// A class-body member that parser error recovery dropped after it matched
+/// tsc's `var <name>() { }` statement-level recovery shape: a `var` keyword
+/// treated as an invalid member modifier, a plain identifier name, an empty
+/// parameter list, no type parameters or return type, and an empty `{ }`
+/// body.
+///
+/// tsc parses this construct as trailing statements (`var <name>;` plus an
+/// arrow function recovered from `() { }`), so the class emitters append the
+/// equivalent tail after the class output. The parser records the recovery
+/// here so emit consumes parser-owned AST data instead of re-scanning raw
+/// source text.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClassBodyVarFnRecovery {
+    /// Start position of the dropped member (the `var` keyword, or the first
+    /// modifier when other modifiers precede it). Always inside the span of
+    /// the class whose body the member appeared in.
+    pub pos: u32,
+    /// Recovered declaration name, preserving any original escape spelling.
+    pub name: String,
+}
 
 /// Arena for thin nodes with typed data pools.
 /// Provides O(1) allocation and cache-efficient storage.
@@ -1258,6 +1280,12 @@ pub struct NodeArenaInner {
 
     // Extended node info (for nodes that need parent, id, full flags)
     pub extended_info: Vec<ExtendedNodeInfo>,
+
+    /// Class-body members dropped by parser error recovery whose shape
+    /// matches tsc's `var <name>() { }` recovery emit. See
+    /// [`ClassBodyVarFnRecovery`].
+    #[serde(default)]
+    pub class_body_var_fn_recoveries: Vec<ClassBodyVarFnRecovery>,
 }
 
 /// Cheap-to-clone wrapper around the parse-immutable node arena.
@@ -1464,6 +1492,7 @@ impl NodeArenaInner {
         jsx_text,
         jsx_namespaced_names,
         source_files,
+        class_body_var_fn_recoveries,
     );
 
     /// Estimate the total heap memory footprint of this arena in bytes.
