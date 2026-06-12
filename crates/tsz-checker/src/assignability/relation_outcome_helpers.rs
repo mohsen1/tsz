@@ -626,6 +626,20 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute the diagnostic-bearing non-keyof index-constraint probe used by
+    /// foreign-keyof `TS2536` detection (`constraint -> keyof B`).
+    /// Decision-only: the caller reads only `outcome.related`. This wraps the
+    /// legacy boolean relation decision directly (no input re-preparation) so
+    /// `TS2536` emission/suppression behavior is byte-for-byte preserved while
+    /// the probe stays grep-distinct as a named indexed-access outcome.
+    pub(crate) fn indexed_access_foreign_keyof_constraint_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        self.diagnostic_relation_outcome(source, target)
+    }
+
     /// Execute a diagnostic-bearing conditional constraint component relation
     /// for raw checker types, preserving the canonical conditional request
     /// shape.
