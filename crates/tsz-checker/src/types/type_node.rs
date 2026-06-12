@@ -1978,8 +1978,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 }
 
 fn scoped_type_node_cache_allowed(kind: u16) -> bool {
+    // Tuple nodes can participate in recursive conditional and constraint
+    // evaluation. The scoped cache key captures lexical type-parameter
+    // bindings, but not recursion/fuel/constraint state, so tuples must fall
+    // through and recompute under generic scope.
     kind == syntax_kind_ext::ARRAY_TYPE
-        || kind == syntax_kind_ext::TUPLE_TYPE
         || kind == syntax_kind_ext::UNION_TYPE
         || kind == syntax_kind_ext::INTERSECTION_TYPE
 }
