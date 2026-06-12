@@ -10,7 +10,7 @@ use tsz_solver::TypeId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(dead_code)]
-pub(in crate::error_reporter) enum DiagnosticTypeDisplayRole {
+pub(crate) enum DiagnosticTypeDisplayRole {
     DefaultDiagnostic,
     WidenedDiagnostic,
     FlattenedDiagnostic,
@@ -152,11 +152,14 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_diagnostic(ty);
         }
+        if let Some(display) = self.format_type_for_basic_diagnostic_role(ty, role) {
+            return display;
+        }
         match role {
-            DiagnosticTypeDisplayRole::DefaultDiagnostic => self.format_type_diagnostic(ty),
-            DiagnosticTypeDisplayRole::WidenedDiagnostic => self.format_type_diagnostic_widened(ty),
-            DiagnosticTypeDisplayRole::FlattenedDiagnostic => {
-                self.format_type_diagnostic_flattened(ty)
+            DiagnosticTypeDisplayRole::DefaultDiagnostic
+            | DiagnosticTypeDisplayRole::WidenedDiagnostic
+            | DiagnosticTypeDisplayRole::FlattenedDiagnostic => {
+                unreachable!("basic diagnostic roles are handled by the checker formatting factory")
             }
             DiagnosticTypeDisplayRole::Assignability => {
                 self.format_type_for_assignability_message(ty)
