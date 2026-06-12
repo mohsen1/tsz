@@ -1281,7 +1281,11 @@ impl BinderState {
                     if let Some(module_exports) = symbol.exports.as_ref() {
                         for (export_name, &export_sym_id) in module_exports.iter() {
                             if !file_exports.has(export_name) {
-                                file_exports.set(export_name.clone(), export_sym_id);
+                                file_exports.set_with_atom(
+                                    export_name.clone(),
+                                    module_exports.atom_for_symbol(export_sym_id),
+                                    export_sym_id,
+                                );
                             }
                         }
                     }
@@ -1306,7 +1310,11 @@ impl BinderState {
                     {
                         Arc::make_mut(&mut self.alias_partners).insert(sym_id, existing_id);
                     }
-                    file_exports.set(name.clone(), sym_id);
+                    file_exports.set_with_atom(
+                        name.clone(),
+                        self.file_locals.atom_for_symbol(sym_id),
+                        sym_id,
+                    );
                 }
             }
         }
