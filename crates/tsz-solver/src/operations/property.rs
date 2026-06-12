@@ -485,11 +485,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             TypeData::Object(shape_id) => self
-                .visit_object_impl(shape_id.0, prop_name, prop_atom)
+                .visit_object_impl(shape_id.0, prop_name, Some(prop_atom))
                 .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
 
             TypeData::ObjectWithIndex(shape_id) => self
-                .visit_object_with_index_impl(shape_id.0, prop_name, prop_atom)
+                .visit_object_with_index_impl(shape_id.0, prop_name, Some(prop_atom))
                 .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
 
             TypeData::Array(_) | TypeData::Tuple(_) => self
@@ -797,11 +797,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // inner types it must resolve against ReadonlyArray<T> so that mutating
             // methods (push, pop, splice, etc.) are absent — matching tsc behaviour.
             TypeData::NoInfer(inner) => {
-                self.resolve_property_access_inner(inner, prop_name, prop_atom)
+                self.resolve_property_access_inner(inner, prop_name, Some(prop_atom))
             }
 
             TypeData::ReadonlyType(inner) => {
-                self.resolve_readonly_type_property(obj_type, inner, prop_name, prop_atom)
+                self.resolve_readonly_type_property(obj_type, inner, prop_name, Some(prop_atom))
             }
 
             TypeData::TypeParameter(info) | TypeData::Infer(info) => {
@@ -884,7 +884,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // Use nominal resolution for Application types
                 // This preserves class/interface identity instead of structurally expanding
-                self.resolve_application_property(obj_type, app_id, prop_name, prop_atom)
+                self.resolve_application_property(obj_type, app_id, prop_name, Some(prop_atom))
             }
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types
@@ -933,7 +933,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                    self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
                     // Evaluation didn't change the type - try apparent members
                     let prop_atom = prop_atom;
@@ -963,7 +963,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                    self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
                     // Evaluation didn't change the type - try apparent members
                     let prop_atom = prop_atom;
@@ -994,7 +994,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .db
                     .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
-                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                    self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
                     // Evaluation didn't change the type (still deferred).
                     // Try resolving the base constraint of the indexed access:
@@ -1020,7 +1020,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             return self.resolve_property_access_inner(
                                 base_constraint,
                                 prop_name,
-                                prop_atom,
+                                Some(prop_atom),
                             );
                         }
                     }
@@ -1041,7 +1041,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .db
                     .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
-                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                    self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
                     let prop_atom = prop_atom;
                     // KeyOf typically returns string/number/symbol, try string member access
@@ -1086,7 +1086,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         resolved
                     };
                     // Successfully resolved - resolve property on the concrete type
-                    self.resolve_property_access_inner(resolved, prop_name, prop_atom)
+                    self.resolve_property_access_inner(resolved, prop_name, Some(prop_atom))
                 } else {
                     // Can't resolve lazy type - try apparent members
                     let prop_atom = prop_atom;
@@ -1103,7 +1103,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Enum values inherit methods from their structural member type
             // (number for numeric enums, string for string enums)
             TypeData::Enum(_def_id, member_type) => {
-                self.resolve_property_access_inner(member_type, prop_name, prop_atom)
+                self.resolve_property_access_inner(member_type, prop_name, Some(prop_atom))
             }
 
             // StringIntrinsic (Uppercase<T>, Lowercase<T>, etc.) — resolve as string
