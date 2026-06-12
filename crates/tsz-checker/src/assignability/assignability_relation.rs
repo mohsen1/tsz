@@ -727,12 +727,11 @@ impl<'a> CheckerState<'a> {
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
             };
-            if let Some(result) = check_application_variance_assignability(&inputs) {
-                if result
-                    || !self.same_type_alias_application_uses_conditional_infer(source, target)
-                {
-                    return result;
-                }
+            if let Some(result) = check_application_variance_assignability(&inputs)
+                && (result
+                    || !self.same_type_alias_application_uses_conditional_infer(source, target))
+            {
+                return result;
             }
         }
 
