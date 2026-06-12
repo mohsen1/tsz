@@ -465,6 +465,10 @@ impl<'a> CheckerContext<'a> {
         // receive the heritage-merged finalized body, and under parallel
         // fresh checking sibling checkers resolve them to pre-heritage
         // intermediate forms (issue #13255 witness 3 false TS2741).
+        // Deliberately checks `lib_symbol_ids` directly rather than the
+        // broader `symbol_is_from_actual_or_cloned_lib`: that helper also
+        // classifies arena-less / unmapped-arena symbols as lib, which
+        // would misattribute cross-arena program symbols here.
         let is_current_file_local_symbol = self.binder.file_locals.get(expected_name)
             == Some(sym_id)
             && self
@@ -472,7 +476,8 @@ impl<'a> CheckerContext<'a> {
                 .symbols
                 .get(sym_id)
                 .is_some_and(|symbol| symbol.escaped_name == expected_name)
-            && !self.symbol_is_from_actual_or_cloned_lib(sym_id);
+            && !self.symbol_is_from_actual_lib(sym_id)
+            && !self.binder.lib_symbol_ids.contains(&sym_id);
         let symbol_index_matches_name = self
             .definition_store
             .find_def_by_symbol(sym_id.0)
