@@ -41,9 +41,9 @@ scripts/
 | Script | Purpose |
 |--------|---------|
 | `scripts/fourslash/run-fourslash.sh` | Run language service fourslash tests |
-| `scripts/fourslash/run-fourslash.sh ... --json-out` | Run fourslash tests and write `fourslash-detail.json` |
+| `scripts/fourslash/run-fourslash.sh ... --json-out` | Run fourslash tests and write `fourslash-snapshot.json` |
 | `scripts/fourslash/query-fourslash.py` | Offline fourslash results analysis and querying |
-| `scripts/fourslash/fourslash-detail.json` | Per-test fourslash results (offline analysis) |
+| `scripts/fourslash/fourslash-snapshot.json` | Compact checked-in fourslash snapshot (offline analysis) |
 
 ### README Progress Refresh
 | Script | Purpose |

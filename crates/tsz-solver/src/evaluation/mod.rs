@@ -1,6 +1,7 @@
 pub(crate) mod cross_eval_guard;
 pub(crate) mod evaluate;
 pub(crate) mod evaluate_rules;
+pub(crate) mod memo_audit;
 pub(crate) mod recursive_growth;
 pub mod request;
 pub mod result;

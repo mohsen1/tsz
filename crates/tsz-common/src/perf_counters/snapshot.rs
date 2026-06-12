@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 9;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 8;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -34,6 +34,9 @@ pub struct PerfCounterSnapshot {
     pub relation_limit_cache: RelationLimitCacheCounters,
     /// Solver concrete-form materialization counters (issue #13242).
     pub solver_materialization: SolverMaterializationCounters,
+    /// Solver evaluator memo lifecycle (issue #13097): what the per-run
+    /// fresh-evaluator pattern recomputes and discards.
+    pub evaluator_memo: EvaluatorMemoCounters,
     /// Per-`CheckerCreationReason` breakdown. Always
     /// `CHECKER_CREATION_REASON_COUNT` long; rows for inactive reasons
     /// carry all-zero counts (matching the text dump's filter behavior
@@ -297,7 +300,6 @@ pub struct WiredCounters {
     pub interner_intern_calls: bool,
     pub interner_per_kind: bool,
     pub interner_lock_wait: bool,
-    pub solver_materialization: bool,
     pub resolver_lookup: bool,
     pub resolver_fs_probes: bool,
     pub compute_type_of_symbol: bool,
@@ -492,6 +494,39 @@ pub struct SolverMaterializationCounters {
     pub property_instantiation_changed: u64,
 }
 
+/// Solver evaluator memo-lifecycle counters (issue #13097): how much work
+/// the per-call fresh-`TypeEvaluator` pattern repeats or discards within a
+/// single file scope.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EvaluatorMemoCounters {
+    /// `TypeEvaluator` constructions.
+    pub constructions: u64,
+    /// Hits on an evaluator's own per-run memo.
+    pub local_memo_hits: u64,
+    /// Nodes computed past every memo/cache layer.
+    pub compute_nodes: u64,
+    /// Clean computes an earlier same-file evaluator already produced
+    /// (same key and result) but discarded.
+    pub lost_memo_recomputes: u64,
+    /// Same-key clean computes whose result differed across evaluators.
+    pub lost_memo_mismatches: u64,
+    /// Subset of `lost_memo_recomputes` with identity results.
+    pub lost_memo_recomputes_identity: u64,
+    /// Nested `lookup_eval_memo` hits inside evaluators.
+    pub memo_nested_hits: u64,
+    /// Lost recomputes by plain memo-reading evaluators.
+    pub lost_memo_recomputes_plain: u64,
+    /// Lost recomputes by the authoritative checker evaluator.
+    pub lost_memo_recomputes_authoritative: u64,
+    /// Lost recomputes by other evaluator contexts.
+    pub lost_memo_recomputes_other: u64,
+    /// Memo entries discarded undrained at evaluator drop.
+    pub dropped_memo_entries: u64,
+    /// Auxiliary memo entries (conditional-subtype / contains-infer)
+    /// discarded at evaluator drop; never drained anywhere.
+    pub dropped_aux_entries: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InternerCounters {
     /// Total `intern` calls across kinds. `None` until the solver intern
@@ -533,7 +568,6 @@ impl PerfCounters {
                 interner_intern_calls: true,
                 interner_per_kind: true,
                 interner_lock_wait: lock_wait_histogram_wired(),
-                solver_materialization: true,
                 resolver_lookup: true,
                 resolver_fs_probes: true,
                 compute_type_of_symbol: true,
@@ -657,8 +691,24 @@ impl PerfCounters {
                 property_instantiation_properties_total: load(
                     &c.property_instantiation_properties_total,
                 ),
-                property_instantiation_properties_max: load(&c.property_instantiation_properties_max),
+                property_instantiation_properties_max: load(
+                    &c.property_instantiation_properties_max,
+                ),
                 property_instantiation_changed: load(&c.property_instantiation_changed),
+            },
+            evaluator_memo: EvaluatorMemoCounters {
+                constructions: load(&c.eval_evaluator_constructions),
+                local_memo_hits: load(&c.eval_local_memo_hits),
+                compute_nodes: load(&c.eval_compute_nodes),
+                lost_memo_recomputes: load(&c.eval_lost_memo_recomputes),
+                lost_memo_mismatches: load(&c.eval_lost_memo_mismatches),
+                lost_memo_recomputes_identity: load(&c.eval_lost_memo_recomputes_identity),
+                memo_nested_hits: load(&c.eval_memo_nested_hits),
+                lost_memo_recomputes_plain: load(&c.eval_lost_memo_recomputes_plain),
+                lost_memo_recomputes_authoritative: load(&c.eval_lost_memo_recomputes_authoritative),
+                lost_memo_recomputes_other: load(&c.eval_lost_memo_recomputes_other),
+                dropped_memo_entries: load(&c.eval_dropped_memo_entries),
+                dropped_aux_entries: load(&c.eval_dropped_aux_entries),
             },
             by_reason: (0..CHECKER_CREATION_REASON_COUNT)
                 .map(|i| ByReasonRow {
