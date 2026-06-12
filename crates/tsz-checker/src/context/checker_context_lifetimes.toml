@@ -54,20 +54,9 @@ type_resolution_visiting = { lifetime = "FileLocalReset", capability = "Relation
 pruning_union_members = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 jsdoc_typedef_resolving = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 jsdoc_generic_typedef_resolving = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-flow_analysis_cache = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
-flow_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
-flow_in_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
-flow_visited = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
-flow_results = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
-flow_reference_keys = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "per-run structural reference-path interner shared across file sessions within one worker; run-local ids are dropped on cross-run snapshot so persisted paths cannot alias" }
-narrowing_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+flow_shared = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "context-owned flow cache bundle; internal members handle speculation snapshots, worker scratch reuse, and file-session resets through the flow-session owner" }
 narrowable_identifier_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-flow_switch_reference_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-flow_numeric_atom_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-flow_reference_match_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-symbol_flow_memo = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "symbol-stable flow memo tables reused only within the active file session; reset at file-session boundary" }
 symbol_flow_confirmed = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking; also reset at file-session boundary" }
-call_type_predicates = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 daa_error_nodes = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive narrowing-suppression markers tied to emitted TS2454 diagnostics; also cleared at file-session boundary" }
 deferred_ts2454_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 flow_narrowed_nodes = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking; also reset at file-session boundary" }

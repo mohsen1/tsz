@@ -3,7 +3,6 @@
 //! Contains the main `get_type_of_property_access_inner` function that handles
 //! all property access type resolution including optional chaining, enum/namespace
 //! fast paths, class member access, and diagnostic emission.
-
 use crate::context::TypingRequest;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::CheckerState;
