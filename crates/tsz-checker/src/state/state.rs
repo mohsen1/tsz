@@ -782,16 +782,30 @@ impl<'a> CheckerState<'a> {
         compiler_options: &CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
+        use crate::context::constructors::{
+            CacheRestoreOrder, ContextParts, DefStorePlan, OptionsPolicy,
+        };
         tsz_common::perf_counters::record_checker_state_constructed();
-        let compiler_options = compiler_options.clone().apply_strict_defaults();
+        // Historical behavior preserved: this path expands the strict family
+        // here (the only `CheckerState` constructor that does) AND pushes the
+        // index flags into the `QueryDatabase`. The expansion now happens in
+        // the shared `CheckerContext::from_parts` build path instead of at
+        // the state layer.
         CheckerState {
-            ctx: CheckerContext::new_with_shared_def_store(
+            ctx: CheckerContext::from_parts(
                 arena,
                 binder,
                 types,
-                file_name,
-                compiler_options,
-                definition_store,
+                ContextParts {
+                    file_name,
+                    compiler_options: compiler_options.clone(),
+                    options_policy: OptionsPolicy::EXPAND_STRICT_AND_PUSH,
+                    def_store: DefStorePlan::Shared(definition_store),
+                    cache: None,
+                    cache_order: CacheRestoreOrder::BeforeWarm,
+                    inherit_has_lib: false,
+                    symbol_cache_capacity: None,
+                },
             ),
         }
     }
