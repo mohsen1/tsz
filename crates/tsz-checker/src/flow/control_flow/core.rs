@@ -369,6 +369,9 @@ impl<'a> FlowGraph<'a> {
 // FlowAnalyzer
 // =============================================================================
 
+type AliasBaseAssignmentKey = (u32, u32);
+type AliasBaseAssignmentCache = RefCell<FxHashMap<AliasBaseAssignmentKey, bool>>;
+
 /// Flow analyzer for control flow-based type narrowing.
 ///
 /// Walks the control flow graph backwards from a reference point to determine
@@ -406,7 +409,7 @@ pub struct FlowAnalyzer<'a> {
     /// Key: (`target_reference_node`, `alias_decl_pos`) -> whether any
     /// containing-function assignment after the alias declaration targets the
     /// reference or its base.
-    pub(crate) shared_alias_base_assignment_cache: Option<&'a RefCell<FxHashMap<(u32, u32), bool>>>,
+    pub(crate) shared_alias_base_assignment_cache: Option<&'a AliasBaseAssignmentCache>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
