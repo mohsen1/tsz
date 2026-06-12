@@ -1313,7 +1313,7 @@ jobs:
   publish:
     name: bench-publish
     needs: bench
-    if: always() && (needs.bench.result == 'success' || needs.bench.result == 'failure')
+    if: always() && (needs.bench.result == 'success' || needs.bench.result == 'failure' || needs.bench.result == 'cancelled')
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     steps:
