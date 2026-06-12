@@ -541,3 +541,49 @@ fn test_regex_hex_escape_keeps_real_hex_digit_validation() {
         "regex `\\u\\i...` must still emit TS1125 for non-hex non-separator chars, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_regex_trailing_flag_scan_uses_es_identifier_part() {
+    // tsc terminates regex-flag scanning with `isIdentifierPart`
+    // (`scanner.ts`), so any ES `ID_Continue` code point after the flags is
+    // consumed and reported as TS1499. U+00B7 (Other_ID_Continue) and U+309B
+    // (Other_ID_Start, NFKC-unstable so absent from XID tables) are both
+    // identifier parts; `char::is_alphabetic` rejected both.
+    for (source, label) in [
+        ("let r = /foo/g\u{00B7};\n", "U+00B7 MIDDLE DOT"),
+        (
+            "let r = /foo/\u{309B};\n",
+            "U+309B KATAKANA-HIRAGANA VOICED SOUND MARK",
+        ),
+    ] {
+        let (parser, _root) = parse_source(source);
+
+        let diagnostics = parser.get_diagnostics();
+        let ts1499_count = diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::UNKNOWN_REGULAR_EXPRESSION_FLAG)
+            .count();
+
+        assert_eq!(
+            ts1499_count, 1,
+            "{label} after regex flags must emit exactly one TS1499, got {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn test_regex_trailing_non_identifier_codepoint_ends_flag_scan() {
+    // Negative guard: U+2117 SOUND RECORDING COPYRIGHT is not in ES
+    // `ID_Continue`, so tsc ends the flag scan before it and never reports
+    // TS1499 for it.
+    let source = "let r = /foo/g\u{2117};\n";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::UNKNOWN_REGULAR_EXPRESSION_FLAG),
+        "non-ID_Continue code point after flags must not emit TS1499, got {diagnostics:?}"
+    );
+}

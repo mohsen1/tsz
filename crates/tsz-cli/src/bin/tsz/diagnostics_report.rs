@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tsz::checker::diagnostics::DiagnosticCategory;
+use tsz::parallel::residency::{MemoryPressure, ResidencyBudget};
 
 use super::driver;
 
@@ -109,6 +110,7 @@ struct DiagnosticsReport {
     residency_arena_kb: f64,
     residency_file_count: usize,
     residency_bound_kb: f64,
+    residency_pressure: &'static str,
     residency_has_pre_merge: bool,
     residency_pre_merge_kb: f64,
     residency_has_skeleton: bool,
@@ -207,6 +209,7 @@ fn build_diagnostics_report(
         report.residency_arena_kb = rs.unique_arena_estimated_bytes as f64 / 1024.0;
         report.residency_file_count = rs.file_count;
         report.residency_bound_kb = rs.total_bound_file_bytes as f64 / 1024.0;
+        report.residency_pressure = residency_pressure_label(ResidencyBudget::default().assess(rs));
         report.residency_has_pre_merge = rs.pre_merge_bind_total_bytes > 0;
         report.residency_pre_merge_kb = rs.pre_merge_bind_total_bytes as f64 / 1024.0;
         report.residency_has_skeleton = rs.has_skeleton_index;
@@ -445,6 +448,11 @@ fn render_diagnostics_report(report: &DiagnosticsReport, extended: bool) -> Stri
             "Bound files:                   {} ({:.1}K)",
             report.residency_file_count, report.residency_bound_kb,
         );
+        let _ = writeln!(
+            out,
+            "Retained residency pressure:   {}",
+            report.residency_pressure
+        );
         if report.residency_has_pre_merge {
             let _ = writeln!(
                 out,
@@ -501,6 +509,14 @@ fn render_diagnostics_report(report: &DiagnosticsReport, extended: bool) -> Stri
     }
 
     out
+}
+
+const fn residency_pressure_label(pressure: MemoryPressure) -> &'static str {
+    match pressure {
+        MemoryPressure::Low => "low",
+        MemoryPressure::Medium => "medium",
+        MemoryPressure::High => "high",
+    }
 }
 
 /// Thin orchestrator: collect data, render, then emit to stdout.

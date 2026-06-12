@@ -236,7 +236,7 @@ impl<'a> NarrowingContext<'a> {
 
             // Use resolve_property_access for proper optional property handling
             // This correctly handles properties that are optional (prop?: type)
-            match evaluator.resolve_property_access(type_id, prop_name_str) {
+            match evaluator.resolve_property_access_atom(type_id, prop_name) {
                 PropertyAccessResult::Success {
                     type_id: prop_type_id,
                     ..

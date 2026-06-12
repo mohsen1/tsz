@@ -116,6 +116,59 @@ export class ParseThemeData {\n\
 }
 
 #[test]
+fn es5_template_downlevel_normalizes_crlf_and_lone_cr_in_string_text() {
+    // tsc cooks <CR><LF> and <CR> to <LF> (TV), so ES5 .concat() downlevel
+    // emits "\n", never "\r\n". Lone-CR no-substitution literal included.
+    let output = parse_lower_emit(
+        "const y = `before\r\n${value}\r\nafter`;\nconst z = `a\rb`;\n",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(r#"var y = "before\n".concat(value, "\nafter");"#),
+        "ES5 template downlevel should normalize CRLF to LF in string text.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"var z = "a\nb";"#),
+        "ES5 no-substitution downlevel should normalize lone CR to LF.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_tagged_template_raw_array_normalizes_crlf() {
+    // tsc's getRawLiteral (ES6 11.8.6.1 TRV) normalizes <CR><LF> and <CR> to
+    // <LF> in the downlevel raw array, matching the cooked array.
+    let output = parse_lower_emit(
+        "function tag(s: any, ...a: any[]): any { return s; }\nconst t = tag`x\r\n${1}y\r`;\n",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(r#"__makeTemplateObject(["x\n", "y\n"], ["x\n", "y\n"])"#),
+        "ES5 tagged-template raw and cooked arrays should both normalize CR/CRLF to LF.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_template_emit_preserves_source_crlf_verbatim() {
+    // Verbatim native template emit copies source bytes (tsc does too); the
+    // TV/TRV normalization applies only to cooked values and downlevel raw.
+    let output = parse_lower_emit(
+        "function tag(s: any, ...a: any[]): any { return s; }\nconst t = tag`x\r\n${1}y`;\nconst u = `p\r\nq`;\n",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains("tag `x\r\n${1}y`"),
+        "ES2015 tagged template should stay native with source CRLF preserved.\nOutput:\n{output:?}"
+    );
+    assert!(
+        output.contains("`p\r\nq`"),
+        "ES2015 template literal should keep source CRLF verbatim.\nOutput:\n{output:?}"
+    );
+}
+
+#[test]
 fn es5_tagged_template_cooked_non_bmp_codepoints_use_surrogate_escapes() {
     let output = parse_lower_emit(
         r#"

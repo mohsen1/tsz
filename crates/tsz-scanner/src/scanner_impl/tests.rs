@@ -55,6 +55,150 @@ fn scan_identifier_with_other_id_continue_middle_dot() {
     assert_eq!(tokens[0], (SyntaxKind::Identifier, "a·b".to_string()));
 }
 
+// ── ECMAScript ID_Start/ID_Continue parity ────────────────────────
+
+/// ES2024 12.7 `UnicodeIDStart` is the Unicode `ID_Start` property, which
+/// includes the `Other_ID_Start` code points (UCD `PropList.txt`). tsc
+/// accepts all of them as identifier starts (`unicodeESNextIdentifierStart`).
+#[test]
+fn scan_other_id_start_codepoints_as_identifier_start() {
+    for source in ["\u{2118}", "\u{212E}", "\u{309B}", "\u{309C}"] {
+        let tokens = scan_all(source);
+        assert_eq!(
+            tokens,
+            vec![(SyntaxKind::Identifier, source.to_string())],
+            "U+{:04X} must scan as an identifier start",
+            source.chars().next().unwrap() as u32
+        );
+    }
+}
+
+#[test]
+fn scan_var_statement_with_script_capital_p_identifier() {
+    let tokens = scan_all("var ℘ = 1");
+    assert_eq!(tokens.len(), 4);
+    assert_eq!(tokens[0].0, SyntaxKind::VarKeyword);
+    assert_eq!(tokens[1], (SyntaxKind::Identifier, "℘".to_string()));
+    assert_eq!(tokens[2].0, SyntaxKind::EqualsToken);
+    assert_eq!(tokens[3].0, SyntaxKind::NumericLiteral);
+}
+
+/// Complete `ID_Start - XID_Start` difference set (Unicode 15.1), verified
+/// by an exhaustive code-point sweep against tsc's
+/// `unicodeESNextIdentifierStart`/`unicodeESNextIdentifierPart` tables.
+/// `ID_Continue` contains `ID_Start`, so each must also be a valid part.
+#[test]
+fn es_id_start_includes_nfkc_unstable_id_start_codepoints() {
+    for ch in [
+        0x037A, // GREEK YPOGEGRAMMENI
+        0x0E33, // THAI CHARACTER SARA AM
+        0x0EB3, // LAO VOWEL SIGN AM
+        0x309B, 0x309C, // KATAKANA-HIRAGANA (SEMI-)VOICED SOUND MARK
+        0xFC5E, 0xFC63, // ARABIC LIGATURE ... ISOLATED FORM (range ends)
+        0xFDFA, 0xFDFB, // ARABIC LIGATURE SALLALLAHOU/JALLAJALALOUHOU
+        0xFE70, 0xFE72, 0xFE74, 0xFE76, 0xFE78, 0xFE7A, 0xFE7C,
+        0xFE7E, // ARABIC ... ISOLATED FORM
+        0xFF9E, 0xFF9F, // HALFWIDTH KATAKANA (SEMI-)VOICED SOUND MARK
+    ] {
+        assert!(is_identifier_start(ch), "U+{ch:04X} is ES ID_Start");
+        assert!(is_identifier_part(ch), "U+{ch:04X} is ES ID_Continue");
+    }
+}
+
+/// U+2118 and U+212E are `Other_ID_Start` but NFKC-stable, so `XID_Start`
+/// already contains them; they need no patch entry, only this guard.
+#[test]
+fn nfkc_stable_other_id_start_codepoints_accepted() {
+    for ch in [0x2118, 0x212E] {
+        assert!(is_identifier_start(ch), "U+{ch:04X} is ES ID_Start");
+        assert!(is_identifier_part(ch), "U+{ch:04X} is ES ID_Continue");
+    }
+}
+
+/// `Other_ID_Continue` code points and ZWNJ/ZWJ join controls continue an
+/// identifier (ES2024 12.7 `IdentifierPartChar`), as do `Other_ID_Start`
+/// code points in continuation position.
+#[test]
+fn scan_other_id_continue_and_join_controls_as_identifier_part() {
+    for (source, label) in [
+        ("a\u{00B7}b", "U+00B7 MIDDLE DOT (Other_ID_Continue)"),
+        (
+            "a\u{19DA}b",
+            "U+19DA NEW TAI LUE THAM DIGIT ONE (Other_ID_Continue)",
+        ),
+        ("a\u{200C}b", "U+200C ZWNJ"),
+        ("a\u{200D}b", "U+200D ZWJ"),
+        ("a\u{309B}b", "U+309B as identifier continuation"),
+    ] {
+        let tokens = scan_all(source);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "{label} must continue the identifier: {tokens:?}"
+        );
+        assert_eq!(tokens[0].0, SyntaxKind::Identifier, "{label}");
+    }
+}
+
+/// Representatives from every range of the deleted hand-maintained
+/// combining-mark list: each assigned Mn/Mc member is already covered by
+/// `XID_Continue`, so deleting the list keeps them accepted.
+#[test]
+fn combining_marks_accepted_via_xid_continue_after_list_deletion() {
+    for ch in [
+        0x0300, 0x036F, // Combining Diacritical Marks
+        0x0591, 0x05C7, // Hebrew points
+        0x064B, 0x0652, 0x0670, // Arabic harakat, superscript alef
+        0x0900, 0x0903, 0x093A, 0x094D, 0x0951, 0x0962, // Devanagari
+        0x0981, 0x09BC, 0x09CD, // Bengali
+        0x0B01, 0x0B3C, 0x0BBE, 0x0BCD, // Oriya, Tamil
+        0x0C00, 0x0C3E, 0x0C81, 0x0CBC, // Telugu, Kannada
+        0x0D00, 0x0D3B, 0x0D4D, // Malayalam
+        0x0E31, 0x0E3A, 0x0E47, 0x0E4E, // Thai
+        0x1AB0, 0x1DC0, 0x1DFF, // Combining Diacritical Marks Extended/Supplement
+        0x20D0, 0x20E1, 0x20F0, // Combining Diacritical Marks for Symbols (Mn)
+    ] {
+        assert!(
+            is_identifier_part(ch),
+            "U+{ch:04X} must stay accepted via XID_Continue after list deletion"
+        );
+    }
+}
+
+/// The deleted list was not a pure no-op: it also admitted code points that
+/// are NOT in ES `ID_Continue` — Me (enclosing) marks, Hebrew punctuation,
+/// and unassigned holes inside the listed blocks. tsc rejects all of these
+/// (absent from `unicodeESNextIdentifierPart`); they must stay rejected.
+#[test]
+fn non_id_continue_codepoints_from_deleted_list_rejected() {
+    for ch in [
+        0x05BE, // HEBREW PUNCTUATION MAQAF (Pd)
+        0x05C0, // HEBREW PUNCTUATION PASEQ (Po)
+        0x1ABE, // COMBINING PARENTHESES OVERLAY (Me)
+        0x20DD, // COMBINING ENCLOSING CIRCLE (Me)
+        0x20E0, // COMBINING ENCLOSING CIRCLE BACKSLASH (Me)
+        0x09C5, // unassigned hole in the Bengali block
+        0x20F1, // unassigned hole after COMBINING ASTERISK ABOVE
+    ] {
+        assert!(
+            !is_identifier_part(ch),
+            "U+{ch:04X} is not ES ID_Continue; tsc rejects it"
+        );
+    }
+}
+
+/// Adjacent negative cases: rejected by both `XID_Start` and ES `ID_Start`.
+#[test]
+fn non_id_start_codepoints_rejected() {
+    for ch in [
+        0x00D7, // MULTIPLICATION SIGN (Sm)
+        0x2117, // SOUND RECORDING COPYRIGHT (So), neighbor of U+2118
+    ] {
+        assert!(!is_identifier_start(ch), "U+{ch:04X} is not ES ID_Start");
+        assert!(!is_identifier_part(ch), "U+{ch:04X} is not ES ID_Continue");
+    }
+}
+
 #[test]
 fn scan_es2015_braced_astral_escape_as_identifier_start() {
     let mut scanner = ScannerState::new(r"\u{102A7}tail".to_string(), true);
