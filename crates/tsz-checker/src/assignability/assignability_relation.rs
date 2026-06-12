@@ -326,7 +326,13 @@ impl<'a> CheckerState<'a> {
             return outcome(false);
         }
 
+        if self.same_base_generic_mapped_application_variance_accepts(source, target) {
+            return outcome(true);
+        }
+
         {
+            let ignore_variance_rejection =
+                self.same_base_generic_mapped_application_has_type_param_arg(source, target);
             let env = self.ctx.type_env.borrow();
             let flags = self.ctx.pack_relation_flags();
             let inputs = AssignabilityQueryInputs {
@@ -338,7 +344,9 @@ impl<'a> CheckerState<'a> {
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
             };
-            if let Some(result) = check_application_variance_assignability(&inputs) {
+            if let Some(result) = check_application_variance_assignability(&inputs)
+                && (result || !ignore_variance_rejection)
+            {
                 return outcome(result);
             }
         }
@@ -711,6 +719,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.same_base_generic_mapped_application_variance_accepts(source, target) {
+            return true;
+        }
+
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
         // type arguments using computed variance BEFORE structural expansion.
@@ -729,7 +741,10 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(result) = check_application_variance_assignability(&inputs)
                 && (result
-                    || !self.same_type_alias_application_uses_conditional_infer(source, target))
+                    || (!self.same_type_alias_application_uses_conditional_infer(source, target)
+                        && !self.same_base_generic_mapped_application_has_type_param_arg(
+                            source, target,
+                        )))
             {
                 return result;
             }
@@ -1146,32 +1161,6 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn is_recursive_alias_application(&mut self, base: TypeId, args: &[TypeId]) -> bool {
-        let application = self.ctx.types.application(base, args.to_vec());
-        crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
-            self.ctx.types,
-            &self.ctx.definition_store,
-            application,
-        )
-    }
-
-    fn type_alias_args_are_unwitnessed(
-        &self,
-        def_id: tsz_solver::def::DefId,
-        arg_len: usize,
-    ) -> bool {
-        crate::query_boundaries::variance::compute_type_param_variances_with_resolver_cached(
-            self.ctx.types.as_type_database(),
-            &self.ctx,
-            self.ctx.types,
-            def_id,
-        )
-        .as_ref()
-        .is_some_and(|variances| {
-            variances.len() == arg_len && variances.iter().all(|v| v.is_independent())
-        })
-    }
-
     fn homomorphic_mapped_display_source_assignable_to_target(
         &mut self,
         source: TypeId,
@@ -1280,7 +1269,11 @@ impl<'a> CheckerState<'a> {
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
             };
-            if let Some(result) = check_application_variance_assignability(&inputs) {
+            if let Some(result) = check_application_variance_assignability(&inputs)
+                && (result
+                    || !self
+                        .same_base_generic_mapped_application_has_type_param_arg(source, target))
+            {
                 return result;
             }
         }
@@ -1812,7 +1805,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.same_base_generic_mapped_application_variance_accepts(source, target) {
+            return true;
+        }
+
         {
+            let ignore_variance_rejection =
+                self.same_base_generic_mapped_application_has_type_param_arg(source, target);
             let env = self.ctx.type_env.borrow();
             let flags = self.ctx.pack_relation_flags();
             let inputs = AssignabilityQueryInputs {
@@ -1824,7 +1823,9 @@ impl<'a> CheckerState<'a> {
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
             };
-            if let Some(result) = check_application_variance_assignability(&inputs) {
+            if let Some(result) = check_application_variance_assignability(&inputs)
+                && (result || !ignore_variance_rejection)
+            {
                 return result;
             }
         }

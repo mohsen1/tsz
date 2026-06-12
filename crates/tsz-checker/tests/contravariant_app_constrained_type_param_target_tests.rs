@@ -352,6 +352,58 @@ function f<A, B extends A>(a: Invariant<A>, b: Invariant<B>) {
 }
 
 #[test]
+fn same_base_mapped_record_alias_keeps_tsc_variance_quirk() {
+    let source = r#"
+type RecordA<K extends keyof any, T> = {
+    [P in K]: T;
+};
+type RecordB<K extends keyof any, T> = {
+    [P in K]: T;
+};
+
+function sameA(x: RecordA<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function sameB(x: RecordB<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+function mixedA(x: RecordB<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function mixedB(x: RecordA<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+function sameGenericA<T>(x: RecordA<'a', T>, y: RecordA<string, T>) {
+    x = y;
+}
+function sameGenericB<T>(x: RecordB<'a', T>, y: RecordB<string, T>) {
+    x = y;
+}
+function mixedGenericA<T>(x: RecordB<'a', T>, y: RecordA<string, T>) {
+    x = y;
+}
+function mixedGenericB<T>(x: RecordA<'a', T>, y: RecordB<string, T>) {
+    x = y;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", T>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", T>'"),
+        ],
+    );
+}
+
+#[test]
 fn promise_like_method_callback_variance_still_rejects_unconstrained_applications() {
     let source = r#"// @target: es2015
 interface Promise<T> {
