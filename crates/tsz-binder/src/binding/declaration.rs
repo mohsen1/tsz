@@ -6,6 +6,7 @@
 use crate::state::FileFeatures;
 use crate::{ContainerKind, FlowNodeId, SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
+use tsz_common::interner::AstAtom;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -28,6 +29,12 @@ pub(crate) struct SemanticDefDetails {
 }
 
 impl BinderState {
+    fn identifier_atom(arena: &NodeArena, index: NodeIndex) -> Option<AstAtom> {
+        arena
+            .get_identifier_at(index)
+            .and_then(|ident| (ident.atom != AstAtom::NONE).then_some(ident.atom))
+    }
+
     /// Append a `(name, declaration)` entry to the `module_augmentations`
     /// table for the given target module specifier.
     pub(crate) fn record_module_augmentation_entry(
@@ -158,7 +165,14 @@ impl BinderState {
                         .push(crate::state::GlobalAugmentation::new(idx, flags));
                 }
 
-                let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
+                let sym_id = self.declare_symbol_with_atom(
+                    arena,
+                    name,
+                    Self::identifier_atom(arena, decl.name),
+                    flags,
+                    idx,
+                    is_exported,
+                );
                 Arc::make_mut(&mut self.node_symbols).insert(decl.name.0, sym_id);
                 self.record_semantic_def(
                     sym_id,
@@ -249,8 +263,14 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
-                let sym_id =
-                    self.declare_symbol(arena, name, symbol_flags::FUNCTION, idx, is_exported);
+                let sym_id = self.declare_symbol_with_atom(
+                    arena,
+                    name,
+                    Self::identifier_atom(arena, func.name),
+                    symbol_flags::FUNCTION,
+                    idx,
+                    is_exported,
+                );
                 if self.in_global_augmentation {
                     self.record_global_value_augmentation(
                         name,
@@ -298,9 +318,10 @@ impl BinderState {
             self.bind_modifiers(arena, param.modifiers.as_ref());
             if let Some(name) = Self::get_identifier_name(arena, param.name) {
                 tracing::debug!(param_name = %name, param_name_idx = param.name.0, "Binding parameter");
-                let sym_id = self.declare_symbol(
+                let sym_id = self.declare_symbol_with_atom(
                     arena,
                     name,
+                    Self::identifier_atom(arena, param.name),
                     symbol_flags::FUNCTION_SCOPED_VARIABLE,
                     idx,
                     false,
@@ -373,7 +394,14 @@ impl BinderState {
             }
             // Use the parameter node as the declaration so the checker can
             // distinguish parameter-property PROPERTY symbols from regular ones.
-            self.declare_symbol(arena, name, flags, param_idx, false);
+            self.declare_symbol_with_atom(
+                arena,
+                name,
+                Self::identifier_atom(arena, param.name),
+                flags,
+                param_idx,
+                false,
+            );
         }
     }
 
@@ -424,9 +452,10 @@ impl BinderState {
                         type_param_name = %name,
                         "Binding type parameter"
                     );
-                    let sym_id = self.declare_symbol(
+                    let sym_id = self.declare_symbol_with_atom(
                         arena,
                         name,
+                        Self::identifier_atom(arena, type_param.name),
                         symbol_flags::TYPE_PARAMETER,
                         param_idx,
                         false,
@@ -1007,8 +1036,14 @@ impl BinderState {
                 return;
             }
 
-            let sym_id =
-                self.declare_symbol(arena, name, symbol_flags::INTERFACE, idx, is_exported);
+            let sym_id = self.declare_symbol_with_atom(
+                arena,
+                name,
+                Self::identifier_atom(arena, iface.name),
+                symbol_flags::INTERFACE,
+                idx,
+                is_exported,
+            );
             let tp_count = iface
                 .type_parameters
                 .as_ref()
@@ -1185,8 +1220,14 @@ impl BinderState {
                     },
                 );
             } else {
-                let sym_id =
-                    self.declare_symbol(arena, name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+                let sym_id = self.declare_symbol_with_atom(
+                    arena,
+                    name,
+                    Self::identifier_atom(arena, alias.name),
+                    symbol_flags::TYPE_ALIAS,
+                    idx,
+                    is_exported,
+                );
                 let tp_count = alias
                     .type_parameters
                     .as_ref()
@@ -1239,7 +1280,14 @@ impl BinderState {
                 symbol_flags::REGULAR_ENUM
             };
 
-            let enum_sym_id = self.declare_symbol(arena, name, enum_flags, idx, is_exported);
+            let enum_sym_id = self.declare_symbol_with_atom(
+                arena,
+                name,
+                Self::identifier_atom(arena, enum_decl.name),
+                enum_flags,
+                idx,
+                is_exported,
+            );
 
             // Collect enum member names at bind time for stable identity.
             let enum_member_names: Vec<String> = enum_decl

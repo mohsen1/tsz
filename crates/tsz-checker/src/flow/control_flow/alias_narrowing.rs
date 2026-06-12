@@ -23,8 +23,6 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         antecedent_id: FlowNodeId,
     ) -> bool {
-        use tsz_binder::flow_flags;
-
         // Get the alias declaration position
         let alias_pos = match self.binder.get_symbol(alias_sym_id) {
             Some(sym) if sym.value_declaration.is_some() => self
@@ -35,40 +33,9 @@ impl<'a> FlowAnalyzer<'a> {
             _ => return false,
         };
 
-        // Walk the flow graph backward from the condition's antecedent.
-        // Check if any ASSIGNMENT node on the current path targets the reference
-        // (or its base). Stop when we reach nodes at or before the alias position.
-        let mut visited = rustc_hash::FxHashSet::default();
-        let mut stack = vec![antecedent_id];
-
-        while let Some(flow_id) = stack.pop() {
-            if flow_id.is_none() || !visited.insert(flow_id) {
-                continue;
-            }
-
-            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
-                continue;
-            };
-
-            // Stop walking if this flow node is at or before the alias declaration
-            if let Some(node) = self.arena.get(flow.node)
-                && node.pos <= alias_pos
-            {
-                continue;
-            }
-
-            // Check if this is an assignment targeting our reference or its base
-            if flow.has_any_flags(flow_flags::ASSIGNMENT)
-                && (self.assignment_targets_reference_node(flow.node, target)
-                    || self.assignment_targets_base_of_reference(flow.node, target))
-            {
-                return true;
-            }
-
-            // Continue to antecedents
-            for &ant in &flow.antecedent {
-                stack.push(ant);
-            }
+        if self.alias_path_has_assignment_after_pos(alias_sym_id, target, antecedent_id, alias_pos)
+        {
+            return true;
         }
 
         // Mirrors tsc's `isConstantReference` (checker.ts ~28978):
@@ -90,6 +57,67 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         false
+    }
+
+    fn alias_path_has_assignment_after_pos(
+        &self,
+        alias_sym_id: SymbolId,
+        target: NodeIndex,
+        antecedent_id: FlowNodeId,
+        alias_pos: u32,
+    ) -> bool {
+        use tsz_binder::flow_flags;
+
+        let cache_key = (alias_sym_id.0, target.0, antecedent_id.0);
+        if let Some(cache) = self.shared_alias_path_assignment_cache {
+            let cached = cache.borrow().get(&cache_key).copied();
+            if let Some(result) = cached {
+                return result;
+            }
+        }
+
+        // Walk the flow graph backward from the condition's antecedent.
+        // Check if any ASSIGNMENT node on the current path targets the
+        // reference (or its base). Stop when we reach nodes at or before the
+        // alias position.
+        let mut visited = rustc_hash::FxHashSet::default();
+        let mut stack = vec![antecedent_id];
+
+        let mut result = false;
+        while let Some(flow_id) = stack.pop() {
+            if flow_id.is_none() || !visited.insert(flow_id) {
+                continue;
+            }
+
+            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+                continue;
+            };
+
+            // Stop walking if this flow node is at or before the alias declaration
+            if let Some(node) = self.arena.get(flow.node)
+                && node.pos <= alias_pos
+            {
+                continue;
+            }
+
+            // Check if this is an assignment targeting our reference or its base
+            if flow.has_any_flags(flow_flags::ASSIGNMENT)
+                && (self.assignment_targets_reference_node(flow.node, target)
+                    || self.assignment_targets_base_of_reference(flow.node, target))
+            {
+                result = true;
+                break;
+            }
+
+            // Continue to antecedents
+            for &ant in &flow.antecedent {
+                stack.push(ant);
+            }
+        }
+        if let Some(cache) = self.shared_alias_path_assignment_cache {
+            cache.borrow_mut().insert(cache_key, result);
+        }
+        result
     }
 
     /// Determine whether `target` is a constant reference for the purposes of
@@ -319,11 +347,20 @@ impl<'a> FlowAnalyzer<'a> {
     fn has_base_assignment_after_pos(&self, target: NodeIndex, after_pos: u32) -> bool {
         use tsz_binder::flow_flags;
 
+        let cache_key = (target.0, after_pos);
+        if let Some(cache) = self.shared_alias_base_assignment_cache {
+            let cached = cache.borrow().get(&cache_key).copied();
+            if let Some(result) = cached {
+                return result;
+            }
+        }
+
         // Find the containing function's position bounds to scope the search.
         // This prevents matching `this.x = 10` in class C11 when checking
         // an alias in class C10.
         let (fn_start, fn_end) = self.containing_function_bounds(target);
 
+        let mut result = false;
         let flow_count = self.binder.flow_nodes.len();
         for i in 0..flow_count {
             let flow_id = tsz_binder::FlowNodeId(i as u32);
@@ -353,10 +390,14 @@ impl<'a> FlowAnalyzer<'a> {
             if self.assignment_targets_reference_node(flow.node, target)
                 || self.assignment_targets_base_of_reference(flow.node, target)
             {
-                return true;
+                result = true;
+                break;
             }
         }
-        false
+        if let Some(cache) = self.shared_alias_base_assignment_cache {
+            cache.borrow_mut().insert(cache_key, result);
+        }
+        result
     }
 
     /// Get the position bounds (start, end) of the containing function-like

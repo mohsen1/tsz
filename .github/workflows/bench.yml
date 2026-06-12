@@ -36,6 +36,7 @@ env:
   BENCH_REQUIRE_PGO: "1"
   HYPERFINE_VER: "1.18.0"
   BENCH_MAX_TARGET_AGE_HOURS: "48"
+  BENCH_CATCH_UP_MIN_INTERVAL_HOURS: "4"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
@@ -1370,22 +1371,28 @@ jobs:
           TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 \
           scripts/ci/project-compile-guard.sh
 
-      - name: Merge benchmark results
+      - id: merge
+        name: Merge benchmark results
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
+          expected_shards=8
+          echo "json_count=${#json_files[@]}" >> "$GITHUB_OUTPUT"
+          echo "expected_json_count=${expected_shards}" >> "$GITHUB_OUTPUT"
           if [[ "${#json_files[@]}" -eq 0 ]]; then
             echo "No benchmark result JSON files found."
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          if [[ "${#json_files[@]}" -ne 8 ]]; then
-            echo "Expected 8 benchmark shard JSON files, found ${#json_files[@]}."
+          if [[ "${#json_files[@]}" -ne "${expected_shards}" ]]; then
+            echo "::warning::Expected ${expected_shards} benchmark shard JSON files, found ${#json_files[@]}; merging partial artifact for diagnosis, but public publish will fail."
             printf 'Found JSON files:\n'
             printf '  %s\n' "${json_files[@]}"
             find bench-artifacts -maxdepth 2 -type f -print || true
-            exit 1
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=true" >> "$GITHUB_OUTPUT"
           fi
           node scripts/bench/merge-results.mjs \
             "$GITHUB_WORKSPACE/bench-results.json" \
@@ -1443,7 +1450,9 @@ jobs:
           fi
           exit "$status"
 
-      - name: Check public benchmark project timings
+      - id: readiness
+        name: Check public benchmark project timings
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -1470,7 +1479,21 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
+      - name: Fail non-published partial benchmark artifact
+        if: steps.merge.outputs.complete != 'true' || steps.readiness.outcome != 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.merge.outputs.complete }}" != "true" ]]; then
+            echo "Merged ${{ steps.merge.outputs.json_count }}/${{ steps.merge.outputs.expected_json_count }} benchmark shard JSON files into bench-results-merged for diagnosis, but refusing to publish it as latest."
+          fi
+          if [[ "${{ steps.readiness.outcome }}" != "success" ]]; then
+            echo "Benchmark artifact readiness check did not pass; refusing to publish it as latest."
+          fi
+          exit 1
+
       - name: Publish results
+        if: steps.merge.outputs.complete == 'true' && steps.readiness.outcome == 'success'
         id: publish
         run: |
           set -euo pipefail
@@ -1672,6 +1695,28 @@ jobs:
             exit 0
           fi
 
+          min_catch_up_interval_hours="${BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4}"
+          if ! [[ "${min_catch_up_interval_hours}" =~ ^[0-9]+$ ]]; then
+            min_catch_up_interval_hours=4
+          fi
+          min_catch_up_interval_seconds=$((min_catch_up_interval_hours * 3600))
+          recent_dispatches="$(
+            gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --limit 20 \
+              --json databaseId,event,createdAt,status,conclusion,headSha,url \
+              --jq '.[] | select(.databaseId != ${{ github.run_id }} and .event == "workflow_dispatch") | [.databaseId, .createdAt, .status, .conclusion, .headSha, .url] | @tsv'
+          )"
+          now_epoch="$(date -u +%s)"
+          while IFS=$'\t' read -r run_id created_at status conclusion run_sha run_url; do
+            [[ -n "${run_id:-}" ]] || continue
+            created_epoch="$(date -u -d "${created_at}" +%s 2>/dev/null || true)"
+            if [[ "${created_epoch}" =~ ^[0-9]+$ &&
+                  $((now_epoch - created_epoch)) -lt "${min_catch_up_interval_seconds}" ]]; then
+              echo "A Bench catch-up dispatch ran within the last ${min_catch_up_interval_hours}h; skipping another dispatch."
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${run_id}" "${created_at}" "${status}" "${conclusion}" "${run_sha}" "${run_url}"
+              exit 0
+            fi
+          done <<< "${recent_dispatches}"
+
           echo "Bench target ${target_sha} did not publish and main is now ${main_sha}; dispatching one catch-up Bench run."
           curl -fsSL \
             -X POST \
@@ -1759,6 +1804,28 @@ jobs:
             printf '%s\n' "${active_dispatches}"
             exit 0
           fi
+
+          min_catch_up_interval_hours="${BENCH_CATCH_UP_MIN_INTERVAL_HOURS:-4}"
+          if ! [[ "${min_catch_up_interval_hours}" =~ ^[0-9]+$ ]]; then
+            min_catch_up_interval_hours=4
+          fi
+          min_catch_up_interval_seconds=$((min_catch_up_interval_hours * 3600))
+          recent_dispatches="$(
+            gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --limit 20 \
+              --json databaseId,event,createdAt,status,conclusion,headSha,url \
+              --jq '.[] | select(.databaseId != ${{ github.run_id }} and .databaseId != '"${ACTIVE_RUN_ID}"' and .event == "workflow_dispatch") | [.databaseId, .createdAt, .status, .conclusion, .headSha, .url] | @tsv'
+          )"
+          now_epoch="$(date -u +%s)"
+          while IFS=$'\t' read -r run_id created_at status conclusion run_sha run_url; do
+            [[ -n "${run_id:-}" ]] || continue
+            created_epoch="$(date -u -d "${created_at}" +%s 2>/dev/null || true)"
+            if [[ "${created_epoch}" =~ ^[0-9]+$ &&
+                  $((now_epoch - created_epoch)) -lt "${min_catch_up_interval_seconds}" ]]; then
+              echo "A Bench catch-up dispatch ran within the last ${min_catch_up_interval_hours}h; skipping another dispatch."
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${run_id}" "${created_at}" "${status}" "${conclusion}" "${run_sha}" "${run_url}"
+              exit 0
+            fi
+          done <<< "${recent_dispatches}"
 
           echo "Active Bench run ${ACTIVE_RUN_ID} completed without bench-publish; dispatching one fresh main Bench run for ${main_sha}."
           curl -fsSL \

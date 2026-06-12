@@ -1,6 +1,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Root of the checker crate's production sources, anchored on the manifest
+/// directory so the scan works regardless of the test runner's working
+/// directory.
+fn checker_src_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+/// Read one checker source file by its `src/`-relative path.
+fn read_checker_source(relative: &str) -> String {
+    fs::read_to_string(checker_src_root().join(relative))
+        .unwrap_or_else(|err| panic!("failed to read src/{relative}: {err}"))
+}
+
 const RAW_RELATION_PATTERNS: &[&str] = &[
     ".is_assignable_to(",
     ".is_assignable_to_bivariant(",
@@ -86,8 +99,7 @@ fn function_body_between<'a>(source: &'a str, start_marker: &str, end_marker: &s
 
 #[test]
 fn assign_relation_outcome_fast_path_uses_named_diagnostic_guard() {
-    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
-        .expect("failed to read assignability relation source");
+    let source = read_checker_source("assignability/assignability_relation.rs");
     let body = function_body_between(
         &source,
         "pub(crate) fn assign_relation_outcome(",
@@ -107,8 +119,7 @@ fn assign_relation_outcome_fast_path_uses_named_diagnostic_guard() {
 
 #[test]
 fn relation_outcome_with_env_fast_path_uses_named_diagnostic_guard() {
-    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
-        .expect("failed to read assignability relation source");
+    let source = read_checker_source("assignability/assignability_relation.rs");
     let body = function_body_between(
         &source,
         "fn relation_outcome_with_env(",
@@ -128,8 +139,7 @@ fn relation_outcome_with_env_fast_path_uses_named_diagnostic_guard() {
 
 #[test]
 fn type_parameter_constraint_elaboration_uses_named_outcome_helper() {
-    let source = fs::read_to_string("src/error_reporter/assignability.rs")
-        .expect("failed to read error reporter assignability source");
+    let source = read_checker_source("error_reporter/assignability.rs");
     let body = function_body_between(
         &source,
         "fn unrelated_type_parameter_target_related_info(",
@@ -152,9 +162,16 @@ fn type_parameter_constraint_elaboration_uses_named_outcome_helper() {
 #[test]
 fn production_checker_relation_truth_uses_outcome_boundaries() {
     let mut violations = Vec::new();
+    let src_root = checker_src_root();
 
-    for path in rust_sources_under(Path::new("src")) {
-        let relative_path = path.to_string_lossy().replace('\\', "/");
+    for path in rust_sources_under(&src_root) {
+        let relative_path = format!(
+            "src/{}",
+            path.strip_prefix(&src_root)
+                .expect("scanned path is under the src root")
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
         let source = fs::read_to_string(&path).expect("failed to read Rust source");
         for (line_index, line) in source.lines().enumerate() {
             for pattern in RAW_RELATION_PATTERNS {

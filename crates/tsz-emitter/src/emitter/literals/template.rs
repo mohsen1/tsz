@@ -363,7 +363,16 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
         let lit = self.arena.get_literal(node)?;
         if let Some(raw) = lit.raw_text.as_deref() {
-            let mut text = strip_template_delimiters(node.kind, raw).to_string();
+            let stripped = strip_template_delimiters(node.kind, raw);
+            // tsc's `getRawLiteral` (ES6 11.8.6.1 TRV): `<CR><LF>` and `<CR>`
+            // line terminators normalize to `<LF>` in downlevel raw text. This
+            // helper exclusively feeds the ES5 template downlevel paths;
+            // verbatim ES2015+ emit copies source bytes and is unaffected.
+            let mut text = if stripped.contains('\r') {
+                stripped.replace("\r\n", "\n").replace('\r', "\n")
+            } else {
+                stripped.to_string()
+            };
             if unterminated_template_part_ends_with_recovery_brace(node.kind, raw) {
                 text.push('\n');
             }
