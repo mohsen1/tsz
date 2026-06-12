@@ -1472,22 +1472,51 @@ pub fn record_file_session_reset() {
 /// a reused checker clears file-local state. This is attribution-only data for
 /// issue #13246's session-reuse accumulation audit; it never changes reset or
 /// cache behavior.
+pub struct FileSessionResetCacheStatistics {
+    /// Total retained cache entries observed at the reset boundary.
+    pub total_entries: u64,
+    /// Estimated total retained cache bytes observed at the reset boundary.
+    pub total_bytes: u64,
+    /// Namespace-member resolution cache entries observed at reset.
+    pub namespace_member_entries: u64,
+    /// Namespace-member resolution cache estimated bytes observed at reset.
+    pub namespace_member_bytes: u64,
+    /// `export =` named cache entries observed at reset.
+    pub export_equals_entries: u64,
+    /// `export =` named cache estimated bytes observed at reset.
+    pub export_equals_bytes: u64,
+    /// Nested-namespace candidate cache entries observed at reset.
+    pub nested_namespace_entries: u64,
+    /// Nested-namespace candidate cache estimated bytes observed at reset.
+    pub nested_namespace_bytes: u64,
+    /// Lowering entity-name resolution cache entries observed at reset.
+    pub lowering_entity_name_entries: u64,
+    /// Lowering entity-name resolution cache estimated bytes observed at reset.
+    pub lowering_entity_name_bytes: u64,
+    /// Environment evaluation cache entries observed at reset.
+    pub env_eval_entries: u64,
+    /// Environment evaluation cache estimated bytes observed at reset.
+    pub env_eval_bytes: u64,
+}
+
 #[inline]
-#[allow(clippy::too_many_arguments)]
 pub fn record_file_session_reset_cache_statistics(
-    total_entries: u64,
-    total_bytes: u64,
-    namespace_member_entries: u64,
-    namespace_member_bytes: u64,
-    export_equals_entries: u64,
-    export_equals_bytes: u64,
-    nested_namespace_entries: u64,
-    nested_namespace_bytes: u64,
-    lowering_entity_name_entries: u64,
-    lowering_entity_name_bytes: u64,
-    env_eval_entries: u64,
-    env_eval_bytes: u64,
+    stats: FileSessionResetCacheStatistics,
 ) {
+    let FileSessionResetCacheStatistics {
+        total_entries,
+        total_bytes,
+        namespace_member_entries,
+        namespace_member_bytes,
+        export_equals_entries,
+        export_equals_bytes,
+        nested_namespace_entries,
+        nested_namespace_bytes,
+        lowering_entity_name_entries,
+        lowering_entity_name_bytes,
+        env_eval_entries,
+        env_eval_bytes,
+    } = stats;
     if !enabled_fast() {
         return;
     }

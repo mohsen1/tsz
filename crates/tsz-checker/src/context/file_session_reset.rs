@@ -92,18 +92,31 @@ impl<'a> CheckerContext<'a> {
         if tsz_common::perf_counters::enabled_fast() {
             let stats = self.cache_statistics();
             tsz_common::perf_counters::record_file_session_reset_cache_statistics(
-                stats.entries() as u64,
-                stats.estimated_size_bytes() as u64,
-                stats.namespace_member_resolution_cache_entries as u64,
-                stats.namespace_member_resolution_cache_estimated_size_bytes as u64,
-                stats.export_equals_named_cache_entries as u64,
-                stats.export_equals_named_cache_estimated_size_bytes as u64,
-                stats.nested_namespace_candidates_cache_entries as u64,
-                stats.nested_namespace_candidates_cache_estimated_size_bytes as u64,
-                stats.lowering_entity_name_resolution_cache_entries as u64,
-                stats.lowering_entity_name_resolution_cache_estimated_size_bytes as u64,
-                stats.env_eval_cache_entries as u64,
-                stats.env_eval_cache_estimated_size_bytes as u64,
+                tsz_common::perf_counters::FileSessionResetCacheStatistics {
+                    total_entries: stats.entries() as u64,
+                    total_bytes: stats.estimated_size_bytes() as u64,
+                    namespace_member_entries: stats.namespace_member_resolution_cache_entries
+                        as u64,
+                    namespace_member_bytes: stats
+                        .namespace_member_resolution_cache_estimated_size_bytes
+                        as u64,
+                    export_equals_entries: stats.export_equals_named_cache_entries as u64,
+                    export_equals_bytes: stats.export_equals_named_cache_estimated_size_bytes
+                        as u64,
+                    nested_namespace_entries: stats.nested_namespace_candidates_cache_entries
+                        as u64,
+                    nested_namespace_bytes: stats
+                        .nested_namespace_candidates_cache_estimated_size_bytes
+                        as u64,
+                    lowering_entity_name_entries: stats
+                        .lowering_entity_name_resolution_cache_entries
+                        as u64,
+                    lowering_entity_name_bytes: stats
+                        .lowering_entity_name_resolution_cache_estimated_size_bytes
+                        as u64,
+                    env_eval_entries: stats.env_eval_cache_entries as u64,
+                    env_eval_bytes: stats.env_eval_cache_estimated_size_bytes as u64,
+                },
             );
         }
         // Attribution counter: increments only on the sequential session-
