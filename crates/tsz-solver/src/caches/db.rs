@@ -349,6 +349,16 @@ pub trait TypeApplicationEvalCache {
     ) {
     }
 
+    /// Drop every cached application-eval entry that depends on `def_id` —
+    /// entries keyed by it directly, applications of it in a key's argument
+    /// list, and entries whose cached *result* still embeds `Lazy(def_id)`.
+    ///
+    /// Called when a definition body is (re)registered with different
+    /// content: results computed under the previous body (or before any body
+    /// existed) are stale and must be recomputed on the next query. The
+    /// default is a no-op so raw `TypeInterner` backends and tests opt out.
+    fn invalidate_application_eval_cache_for_def(&self, _def_id: DefId) {}
+
     /// Look up a cached evaluation result for a *closed* type (one with no free
     /// type parameters, `this`, `infer`, or type-query operands).
     ///

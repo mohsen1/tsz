@@ -334,12 +334,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let same_arity = s_app.args.len() == t_app.args.len();
-        let same_application_family = same_arity && s_app.base == t_app.base;
-        let variance_def_id = if same_application_family {
+        // Same definition family: identical base TypeIds, or bases whose
+        // `DefId`s canonicalize to one definition through import-alias
+        // forwarding (an alias-keyed application and the declaring module's
+        // own key must compare as one family, not degrade to a structural
+        // mismatch between an expanded shape and an opaque application).
+        // `family_via_forwarding`: the bases' `DefId`s differ but canonicalize
+        // to one definition through import-alias forwarding. Such unification
+        // is ACCEPTANCE-ONLY — it may prove the relation true (e.g. the
+        // `T<any>` shortcut for an alias-keyed/declaring-keyed pair), but a
+        // variance rejection under it must fall through to the structural
+        // path, which is what the two differently-keyed applications took
+        // before forwarding existed (tsc relates the expanded forms there).
+        let mut family_via_forwarding = false;
+        let variance_def_id = if !same_arity {
+            None
+        } else if s_app.base == t_app.base {
             self.application_base_def_id(s_app.base)
         } else {
-            None
+            match (
+                self.application_base_def_id(s_app.base),
+                self.application_base_def_id(t_app.base),
+            ) {
+                // Only forwarding-based unification: raw-def equality across
+                // *different* base TypeIds kept its historical structural
+                // path (`Lazy(def)` vs symbol-keyed object bases).
+                (Some(s_def), Some(t_def)) if s_def != t_def => {
+                    let canonical = self.resolver.canonical_def_id(s_def);
+                    let unified = canonical != s_def || canonical != t_def;
+                    let unified = unified && canonical == self.resolver.canonical_def_id(t_def);
+                    family_via_forwarding = unified;
+                    unified.then_some(canonical)
+                }
+                _ => None,
+            }
         };
+        let same_application_family =
+            (same_arity && s_app.base == t_app.base) || variance_def_id.is_some();
         let source_type = self.interner.application(s_app.base, s_app.args.clone());
         let target_type = self.interner.application(t_app.base, t_app.args.clone());
 
@@ -358,6 +389,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if same_application_family
+            && !family_via_forwarding
             && self.iterator_protocol_mismatch_for_same_application_family(source_type, target_type)
         {
             return SubtypeResult::False;
@@ -446,7 +478,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             }
                         }
                         let rejection_unreliable =
-                            variances.iter().any(|v| v.rejection_unreliable());
+                            variances.iter().any(|v| v.rejection_unreliable())
+                                || family_via_forwarding;
                         if any_checked
                             && !all_ok
                             && !needs_structural_fallback
@@ -496,6 +529,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 // type-param args, fall through — expanded forms may introduce
                                 // index signatures that make structural True valid.
                                 if rejection_unreliable
+                                    && !family_via_forwarding
                                     && s_eval == t_eval
                                     && eval_result.is_true()
                                     && !args_contain_type_parameters(self.interner, &s_app.args)
@@ -700,12 +734,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
-        // Must be the same base type (same generic definition)
-        if s_app.base != t_app.base {
-            return None;
-        }
-
-        let def_id = self.application_base_def_id(s_app.base)?;
+        // Must be the same generic definition. The base TypeIds can differ
+        // for one definition when an importing file lowers through its
+        // import-alias `DefId` while the declaring module uses its own —
+        // canonicalize both through the resolver's alias forwarding before
+        // concluding the bases name different definitions.
+        // `family_via_forwarding` unification is ACCEPTANCE-ONLY: a variance
+        // rejection for an alias-keyed/declaring-keyed pair must fall back to
+        // the structural path those pairs always took (see
+        // `check_application_to_application_subtype`).
+        let mut family_via_forwarding = false;
+        let def_id = if s_app.base == t_app.base {
+            self.application_base_def_id(s_app.base)?
+        } else {
+            // Only forwarding-based unification (see above): raw-def equality
+            // across different base TypeIds keeps the historical structural
+            // path.
+            let s_def = self.application_base_def_id(s_app.base)?;
+            let t_def = self.application_base_def_id(t_app.base)?;
+            if s_def == t_def {
+                return None;
+            }
+            let canonical = self.resolver.canonical_def_id(s_def);
+            if (canonical != s_def || canonical != t_def)
+                && canonical == self.resolver.canonical_def_id(t_def)
+            {
+                family_via_forwarding = true;
+                canonical
+            } else {
+                return None;
+            }
+        };
 
         // An indexed-access type alias (`Static<T,P> = (T & {params:P})['static']`)
         // is transparent and has no sound declared variance: comparing its raw
@@ -818,7 +877,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //
         // For non-mapped types with all-concrete args, variance failures are
         // definitive: incompatible type args means incompatible generic types.
-        let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
+        let rejection_unreliable =
+            variances.iter().any(|v| v.rejection_unreliable()) || family_via_forwarding;
         if any_checked
             && !all_ok
             && !needs_structural_fallback

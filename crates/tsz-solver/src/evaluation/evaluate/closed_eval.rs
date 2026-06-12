@@ -22,7 +22,10 @@
 //!    (`deep_recursion_seen`, the `TS2589` depth machinery, or the `TS2590`
 //!    union-too-complex flag) caches nothing — a cached read must never
 //!    short-circuit an expansion the type system must continue in order to
-//!    re-derive those diagnostics.
+//!    re-derive those diagnostics. A run that evaluated an application whose
+//!    base `DefId` had no resolvable body (`unresolved_def_seen`) also caches
+//!    nothing: its results are registration-window artifacts that would
+//!    permanently shadow the answer derived after the real body registers.
 
 use super::TypeEvaluator;
 use crate::relations::subtype::TypeResolver;
@@ -68,6 +71,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             && self.guard.depth() == 0;
         if !is_top_level
             || self.recursion_limit_hit()
+            || self.unresolved_def_seen()
             || (self.interner.is_union_too_complex() && !union_too_complex_before)
         {
             return;

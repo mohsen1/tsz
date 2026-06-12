@@ -222,6 +222,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         tracing::trace!(
             ?def_id,
+            def_name = ?self
+                .resolver
+                .get_def_name(def_id)
+                .map(|atom| self.interner.resolve_atom(atom)),
+            canonical_def = ?self.resolver.canonical_def_id(def_id),
+            resolver_gen = self.resolver.resolver_generation(),
             has_type_params = type_params.is_some(),
             type_params_count = type_params.as_ref().map(std::vec::Vec::len),
             has_resolved = resolved.is_some(),
@@ -276,6 +282,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(type_params) = ctx.type_params.as_ref() {
             let Some(resolved) = ctx.resolved else {
+                // Generic def with registered params but no body: the def is
+                // mid-registration (or owned by a file whose checker has not
+                // published it yet). The opaque result is a registration-window
+                // artifact — keep it out of the persistent caches.
+                self.mark_unresolved_def_seen();
                 return ApplicationEvalOutcome::Computed(original_type_id);
             };
             // When the resolver returns `unknown` for the alias body, the
@@ -287,6 +298,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // opaque so later evaluator passes (with a populated body) can
             // expand it correctly.
             if resolved == TypeId::UNKNOWN {
+                self.mark_unresolved_def_seen();
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
 
@@ -314,6 +326,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(TypeData::Lazy(body_def_id)) if body_def_id == def_id
                 )
             {
+                self.mark_unresolved_def_seen();
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
             self.evaluate_application_with_known_params(
@@ -352,6 +365,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ApplicationEvalOutcome::Computed(original_type_id)
             }
         } else {
+            // Neither type parameters nor a body are registered for the base
+            // def (e.g. an import-alias `DefId` that was never forwarded to
+            // its target, or a def evaluated before its declaring file
+            // published anything). Same registration-window taint as above.
+            self.mark_unresolved_def_seen();
             ApplicationEvalOutcome::Computed(original_type_id)
         }
     }

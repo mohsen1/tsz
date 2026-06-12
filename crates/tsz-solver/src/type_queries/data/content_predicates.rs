@@ -261,6 +261,57 @@ pub fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     contains_content_cached(db, type_id, &ConditionalPredicate)
 }
 
+/// Whether the alias-opaque structure of `type_id` contains a `Callable`
+/// or a `Conditional` node.
+///
+/// Used by the cross-module interface-heritage consumption gate: a published
+/// definition body carrying call/construct signatures or conditional members
+/// feeds contextual-inference paths where a pre-existing resolver-less
+/// evaluation defect (still-generic conditionals mis-distributed during union
+/// normalization) produces false relation failures. Only inference-inert
+/// (data-shaped) bodies are consumed until that defect is fixed. Treats
+/// nested `Lazy`/`Application` bases as opaque leaves, mirroring
+/// [`contains_conditional_type`].
+pub fn contains_callable_or_conditional(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(db, type_id, |key| {
+        matches!(key, TypeData::Callable(_) | TypeData::Conditional(_))
+    })
+}
+
+/// Whether `superset`'s named object properties include every named property
+/// of `subset`'s object shape.
+///
+/// Both types must be plain `Object`/`ObjectWithIndex` shapes; any other
+/// shape returns `false` (conservative). Used by the cross-module
+/// interface-heritage consumption gate: a published definition body must
+/// carry at least every member the local lowering derived (it adds heritage
+/// members on top of the same own members) — a published body missing own
+/// members is a mid-resolution partial that must not be consumed.
+pub fn object_property_names_cover(
+    db: &dyn TypeDatabase,
+    superset: TypeId,
+    subset: TypeId,
+) -> bool {
+    let shape_of = |ty: TypeId| match db.lookup(ty) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            Some(db.object_shape(shape_id))
+        }
+        _ => None,
+    };
+    let Some(subset_shape) = shape_of(subset) else {
+        return false;
+    };
+    let Some(superset_shape) = shape_of(superset) else {
+        return false;
+    };
+    subset_shape.properties.iter().all(|needed| {
+        superset_shape
+            .properties
+            .iter()
+            .any(|have| have.name == needed.name)
+    })
+}
+
 /// Whether evaluating `type_id` depends on the substitution environment.
 ///
 /// Returns `true` if the type (recursively) contains any `TypeParameter`/

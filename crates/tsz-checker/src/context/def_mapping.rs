@@ -904,12 +904,36 @@ impl<'a> CheckerContext<'a> {
     /// Register a non-generic definition body in **both** type environments.
     #[track_caller]
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
-        let body_changed = self.definition_store.get_body(def_id) != Some(body);
+        let prev_body = self.definition_store.get_body(def_id);
+        let body_changed = prev_body != Some(body);
         self.definition_store.set_body(def_id, body);
         if body_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
+            self.invalidate_application_evals_on_body_rewrite(def_id, prev_body);
         }
         self.register_in_envs(DeferredFlowEnvWrite::InsertDef { def_id, body });
+    }
+
+    /// Drop stale per-file application-eval entries when an already-published
+    /// definition body is *rewritten* to different content.
+    ///
+    /// First publication (`None -> Some`) needs no sweep: the solver's
+    /// evaluator refuses to persist application/closed-eval results computed
+    /// while the def had no resolvable body (`mark_unresolved_def_seen`), so
+    /// no entry derived from the body-less window can exist. Rewrites
+    /// (`Some(old) -> Some(new)`, e.g. a partial pre-merge interface body
+    /// upgraded to its heritage-merged form) do leave stale entries — those
+    /// were legitimately cached against `old`. The sweep is def-keyed and
+    /// rewrite-gated so the common first-registration path never pays the
+    /// cache scan.
+    fn invalidate_application_evals_on_body_rewrite(
+        &self,
+        def_id: DefId,
+        prev_body: Option<TypeId>,
+    ) {
+        if prev_body.is_some() {
+            self.types.invalidate_application_eval_cache_for_def(def_id);
+        }
     }
 
     /// Register a generic definition body (with type parameters) in **both**
@@ -926,7 +950,8 @@ impl<'a> CheckerContext<'a> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
-        let body_changed = self.definition_store.get_body(def_id) != Some(body);
+        let prev_body = self.definition_store.get_body(def_id);
+        let body_changed = prev_body != Some(body);
         let params_changed = self
             .definition_store
             .get_type_params(def_id)
@@ -935,6 +960,9 @@ impl<'a> CheckerContext<'a> {
             .set_body_with_params(def_id, body, Some(params.clone()));
         if body_changed || params_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
+        }
+        if body_changed {
+            self.invalidate_application_evals_on_body_rewrite(def_id, prev_body);
         }
         let declared_variances = TypeResolver::get_type_param_variance(self, def_id);
         self.register_in_envs(DeferredFlowEnvWrite::InsertDefWithParams {
