@@ -1705,3 +1705,109 @@ fn import_control_ts_extension_still_reports_ts5097() {
         "plain import of a .ts specifier remains the working control, got: {codes:?}"
     );
 }
+
+#[test]
+fn compile_export_from_ts_extension_reports_ts5097() {
+    // tsc emits TS5097 for re-export module specifiers ending in `.ts` when
+    // `allowImportingTsExtensions` is off, exactly like the import forms
+    // (#13212 F2: tsz previously checked ImportDeclaration only).
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "files": ["star.ts", "named.ts", "ns.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export const x = 1;\nexport type T = number;");
+    write_file(&base.join("star.ts"), "export * from './a.ts';\n");
+    write_file(&base.join("named.ts"), "export { x } from './a.ts';\n");
+    write_file(&base.join("ns.ts"), "export * as ns from './a.ts';\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should complete");
+    let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS;
+            3
+        ],
+        "expected TS5097 for each export-from form (star, named, namespace), got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_type_only_export_from_ts_extension_matrix() {
+    // Statement-level type-only re-exports suppress TS5097; a specifier-level
+    // `type` does NOT (matches tsc).
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "files": ["stmt.ts", "spec.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export const x = 1;\nexport type T = number;");
+    write_file(&base.join("stmt.ts"), "export type { T } from './a.ts';\n");
+    write_file(&base.join("spec.ts"), "export { type T } from './a.ts';\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should complete");
+    let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS
+        ],
+        "statement-level type-only export must suppress TS5097 while \
+         specifier-level `type` must not, got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_export_from_ts_extension_allowed_when_option_enabled() {
+    // Control: allowImportingTsExtensions=true silences the diagnostic for
+    // export-from exactly as for imports.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "allowImportingTsExtensions": true,
+            "noEmit": true
+          },
+          "files": ["star.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export const x = 1;");
+    write_file(&base.join("star.ts"), "export * from './a.ts';\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should complete");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "allowImportingTsExtensions must silence export-from TS5097, got: {:?}",
+        result.diagnostics
+    );
+}
