@@ -897,83 +897,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// # Returns
     /// `true` if no excess properties found, `false` if TS2353 should be reported
     fn check_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
-        use super::freshness::is_fresh_object_type;
-        use crate::visitor::{ObjectTypeKind, classify_object_type};
-
-        // When the source is a union, the excess-property rule applies
-        // independently to each fresh object-literal member. tsc keeps a fresh
-        // literal "fresh" even after it flows through a `?:`, `??`, or other
-        // expression that yields a union — assigning that union to a closed
-        // target must still reject excess properties on any fresh member.
-        if let Some(TypeData::Union(members_id)) = self.interner.lookup(source) {
-            let members: Vec<TypeId> = self.interner.type_list(members_id).to_vec();
-            return members
-                .iter()
-                .all(|&m| self.check_excess_properties(m, target));
-        }
-
-        // Only check fresh object literals
-        if !is_fresh_object_type(self.interner, source) {
-            return true;
-        }
-
-        // Get source shape
-        let source_shape_id = match classify_object_type(self.interner, source) {
-            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
-                shape_id
-            }
-            ObjectTypeKind::NotObject => return true,
-        };
-
-        let source_shape = self.interner.object_shape(source_shape_id);
-
-        let (string_index_types, has_number_index) = self.check_index_signatures(target);
-
-        // If target has a string index signature that accepts all strings,
-        // skip excess-property checks entirely.
-        if string_index_types
-            .iter()
-            .any(|&key_type| self.subtype.is_subtype_of(TypeId::STRING, key_type))
-        {
-            return true;
-        }
-
-        // Collect all target properties (including base types if intersection)
-        let target_properties = self.collect_target_properties(target);
-
-        // TypeScript forgives excess properties when the target type is completely empty
-        // (like `{}`, an empty interface, or an empty class) because it accepts any
-        // non-primitive and has no string-index-style constraints.
-        if target_properties.is_empty() && !has_number_index && string_index_types.is_empty() {
-            return true;
-        }
-
-        // Check each source property
-        for prop_info in &source_shape.properties {
-            if !target_properties.contains(&prop_info.name) {
-                // If target has a numeric index signature, numeric-named properties are allowed
-                if has_number_index {
-                    let name_str = self.interner.resolve_atom(prop_info.name);
-                    if crate::utils::is_numeric_literal_name(name_str.as_ref()) {
-                        continue;
-                    }
-                }
-                if !string_index_types.is_empty() {
-                    let prop_name_type = self.interner.literal_string_atom(prop_info.name);
-                    let matches_string_index = string_index_types
-                        .iter()
-                        .any(|&index_key| self.subtype.is_subtype_of(prop_name_type, index_key));
-
-                    if matches_string_index {
-                        continue;
-                    }
-                }
-                // Excess property found!
-                return false;
-            }
-        }
-
-        true
+        self.find_excess_property_in(source, target, false)
+            .is_none()
     }
 
     /// Find the first excess property in object literal assignment.
@@ -981,16 +906,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Returns `Some(property_name)` if an excess property is found, `None` otherwise.
     /// This is used by `explain_failure` to generate TS2353 diagnostics.
     fn find_excess_property(&mut self, source: TypeId, target: TypeId) -> Option<Atom> {
+        self.find_excess_property_in(source, target, true)
+    }
+
+    fn find_excess_property_in(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        normalize_target: bool,
+    ) -> Option<Atom> {
         use super::freshness::is_fresh_object_type;
         use crate::visitor::{ObjectTypeKind, classify_object_type};
 
         // Union sources: report the first excess property found in any fresh
-        // member. Symmetric with `check_excess_properties` above.
+        // member.
         if let Some(TypeData::Union(members_id)) = self.interner.lookup(source) {
             let members: Vec<TypeId> = self.interner.type_list(members_id).to_vec();
             return members
                 .iter()
-                .find_map(|&m| self.find_excess_property(m, target));
+                .find_map(|&m| self.find_excess_property_in(m, target, normalize_target));
         }
 
         // Only check fresh object literals
@@ -1008,18 +942,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let source_shape = self.interner.object_shape(source_shape_id);
 
-        // Get target shape - resolve Lazy, Mapped, and Application types
-        let target_key = self.interner.lookup(target);
-        let resolved_target = match target_key {
-            Some(TypeData::Lazy(def_id)) => {
-                // Try to resolve the Lazy type
-                self.subtype.resolver.resolve_lazy(def_id, self.interner)?
-            }
-            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
-                // Evaluate mapped and application types
-                self.subtype.evaluate_type(target)
-            }
-            _ => target,
+        let resolved_target = if normalize_target {
+            self.try_normalize_excess_property_target(target)?
+        } else {
+            target
         };
 
         let (string_index_types, has_number_index) = self.check_index_signatures(resolved_target);
@@ -1071,6 +997,23 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         None
     }
 
+    fn try_normalize_excess_property_target(&mut self, type_id: TypeId) -> Option<TypeId> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Lazy(def_id)) => {
+                self.subtype.resolver.resolve_lazy(def_id, self.interner)
+            }
+            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
+                Some(self.subtype.evaluate_type(type_id))
+            }
+            _ => Some(type_id),
+        }
+    }
+
+    fn normalize_excess_property_target(&mut self, type_id: TypeId) -> TypeId {
+        self.try_normalize_excess_property_target(type_id)
+            .unwrap_or(type_id)
+    }
+
     /// Collect all property names from a type into a set (handles intersections and unions).
     ///
     /// For both intersections and unions: property exists if it's in ANY member.
@@ -1109,17 +1052,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return (Vec::new(), false);
         }
 
-        let type_id = match self.interner.lookup(type_id) {
-            Some(TypeData::Lazy(def_id)) => self
-                .subtype
-                .resolver
-                .resolve_lazy(def_id, self.interner)
-                .unwrap_or(type_id),
-            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
-                self.subtype.evaluate_type(type_id)
-            }
-            _ => type_id,
-        };
+        let type_id = self.normalize_excess_property_target(type_id);
 
         if type_id == TypeId::ANY
             || type_id == TypeId::UNKNOWN
@@ -1168,17 +1101,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
         // Handle Mapped, Application, Lazy, and Conditional types by evaluating/resolving
         // them to concrete types before property collection.
-        let type_id = match self.interner.lookup(type_id) {
-            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
-                self.subtype.evaluate_type(type_id)
-            }
-            Some(TypeData::Lazy(def_id)) => self
-                .subtype
-                .resolver
-                .resolve_lazy(def_id, self.interner)
-                .unwrap_or(type_id),
-            _ => type_id,
-        };
+        let type_id = self.normalize_excess_property_target(type_id);
 
         let mut properties = rustc_hash::FxHashSet::default();
 
