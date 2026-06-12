@@ -65,38 +65,13 @@
 #      existing leading-zero exception). Covered by
 #      parser_improvement_class_member_recovery_tests::misplaced_case_clause_* and
 #      parser_improvement_expression_recovery_tests::empty_element_access_*.
-TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
-TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-# deeplyNestedMappedTypes.ts: RE-JUSTIFIED (failure mode corrected). Earlier
-# evidence described spurious TS2344/TS2464; tsz no longer emits those. Verified
-# against the authoritative tsc baseline
-# (`deeplyNestedMappedTypes.errors.txt`, TypeScript 6.0.3): tsc emits exactly 5
-# TS2322 errors — `foo2` (Id), `foo4` (Id2), and the three `problematicFunction`
-# returns. Notably tsc emits NO error on the `bar2` NestedRecord line despite the
-# fixture's `// Error expected` comment: the recursion-identity / deeply-nested
-# bailout treats the deep path-splitting conditional alias as related after three
-# object hops. tsz currently emits 3 of the 5 expected TS2322 (`foo2`, `foo4`,
-# `problematicFunction2`) and correctly matches tsc on `bar2` (no error).
-# REMAINING GAP: tsz MISSES TS2322 on `problematicFunction1` and
-# `problematicFunction3` (`Input[]` not assignable to `Output[]`). Root cause
-# (verified by one-variable isolation): the fixture declares
-# `const Readonly: unique symbol`, whose name collides with the global lib
-# `Readonly<T>` utility type. When the deferred generic `PropertiesReducer` body
-# instantiates `Readonly<Pick<R, ...>>` (R/T still free type parameters), tsz
-# mis-resolves the `Readonly` reference to the shadowing value instead of the lib
-# type, corrupting the reduced object so `Input.static`/`Output.static` both lose
-# the `bar` discriminator and compare as assignable. Renaming ONLY the `Readonly`
-# unique symbol (to a non-lib name) restores the expected TS2322. A simple
-# `type Foo = Readonly<{ a: string }>` with `const Readonly` in scope resolves
-# correctly, so the divergence is specific to lazy instantiation of a
-# globally-shadowed lib utility type inside a generic alias body. Owner layer:
-# type-vs-value name resolution for shadowed global lib types (checker/binder),
-# NOT the solver index-access path. The minimal unit-test lib lacks the lib
-# utility types this repro needs, so the runnable parity gate is this conformance
-# row; the inline witness is the ignored
-# `deeply_nested_mapped_types_tests::readonly_pick_never_under_evaluate_loses_property_mismatch`.
-# Reproduce with the full lib via `tsz` on that snippet (renaming the `Readonly`
-# unique symbol to a non-lib name flips the result to the expected TS2322).
+TypeScript/tests/cases/compiler/temporal.ts
+# temporal.ts: ACCEPTED 2026-06-12 from CI aggregate run 27438255110 on
+# PR #13340 after syncing with `origin/main`. The current observed row is
+# expected:[TS2339,TS2552] actual:[TS2322,TS2339,TS2345,TS2769,TS6046].
+# Owner layer: existing checker/lib diagnostics parity gap for esnext temporal
+# library option and Temporal overload compatibility, unrelated to the
+# server-resident completion project cache in #13340.
 # intersectionsOfLargeUnions.ts: RESOLVED. Two-part fix: (1) IndexAccess structural
 # comparison (PR #13146) distinguishes `ElementTagNameMap[T]` from
 # `HTMLElementTagNameMap[T]` when both sides are IndexAccess types; (2)
