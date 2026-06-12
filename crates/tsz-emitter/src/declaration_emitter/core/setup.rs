@@ -39,7 +39,7 @@ impl<'a> DeclarationEmitter<'a> {
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
             root_file_paths: FxHashSet::default(),
-            global_symbol_arenas: FxHashMap::default(),
+            global_symbol_arenas: Arc::new(FxHashMap::default()),
             bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
@@ -167,7 +167,7 @@ impl<'a> DeclarationEmitter<'a> {
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
             root_file_paths: FxHashSet::default(),
-            global_symbol_arenas: FxHashMap::default(),
+            global_symbol_arenas: Arc::new(FxHashMap::default()),
             bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
@@ -360,6 +360,19 @@ impl<'a> DeclarationEmitter<'a> {
     pub fn set_global_symbol_arenas(
         &mut self,
         global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    ) {
+        self.global_symbol_arenas = Arc::new(global_symbol_arenas);
+    }
+
+    /// Share the global symbol-to-arena mapping from all program files.
+    ///
+    /// Batch declaration emit creates one scratch emitter per file. Passing the
+    /// program-owned map by `Arc` avoids cloning the full symbol universe into
+    /// every scratch emitter while preserving the same read-only lookup
+    /// behavior.
+    pub fn set_shared_global_symbol_arenas(
+        &mut self,
+        global_symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     ) {
         self.global_symbol_arenas = global_symbol_arenas;
     }
