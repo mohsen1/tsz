@@ -493,11 +493,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
 
             TypeData::Array(_) | TypeData::Tuple(_) => self
-                .visit_array_impl(obj_type, prop_name, prop_atom)
+                .visit_array_impl(obj_type, prop_name, Some(prop_atom))
                 .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
 
             TypeData::Union(list_id) => self
-                .visit_union_impl(list_id.0, prop_name, prop_atom)
+                .visit_union_impl(list_id.0, prop_name, Some(prop_atom))
                 .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
 
             TypeData::Intrinsic(kind) => {
