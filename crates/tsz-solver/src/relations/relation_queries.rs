@@ -780,11 +780,6 @@ pub fn check_application_variance<R: TypeResolver>(
     let t_app = db.type_application(t_app_id);
 
     let same_base_same_arity = s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
-    let def_id = if same_base_same_arity {
-        lazy_def_id(db, s_app.base)
-    } else {
-        None
-    };
     let is_conditional_alias_base = |base| {
         if query_db.is_some_and(|query_db| query_db.is_conditional_alias_base(base)) {
             return true;
@@ -815,37 +810,17 @@ pub fn check_application_variance<R: TypeResolver>(
     let mut checker = configured_subtype_checker(db, resolver, policy, context);
     let result = checker.try_variance_fast_path(s_app_id, t_app_id)?;
 
-    // Rejections for aliases whose body forwards through an application with
-    // type parameters are not definitive at this query boundary. Let structural
-    // expansion decide, matching the pre-refactor `check_application_variance`
-    // fallback while still keeping acceptance-only fast paths.
-    if !result.is_true()
-        && let Some(def_id) = def_id
-        && alias_body_application_uses_type_parameters(db, resolver, def_id)
-    {
+    // This public pre-evaluation boundary is acceptance-only: a proven
+    // positive result can safely avoid the duplicate boundary argument walk,
+    // but a rejection may still be accepted by structural expansion of
+    // conditional, recursive, mapped, or method-bivariant alias bodies. Let the
+    // full relation decide those negative cases, matching the old duplicated
+    // boundary's conservative fallback shape.
+    if !result.is_true() {
         return None;
     }
 
-    Some(result.is_true())
-}
-
-fn alias_body_application_uses_type_parameters<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
-    def_id: crate::def::DefId,
-) -> bool {
-    let Some(body) = resolver.resolve_lazy(def_id, db) else {
-        return false;
-    };
-    crate::visitors::visitor_predicates::contains_type_matching(db, body, |key| {
-        let crate::types::TypeData::Application(app_id) = key else {
-            return false;
-        };
-        let app = db.type_application(*app_id);
-        app.args
-            .iter()
-            .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
-    })
+    Some(true)
 }
 
 /// Check if two type parameters are assignable to each other.
