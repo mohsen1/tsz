@@ -1,5 +1,5 @@
+use super::super::flow_dp::FlowConditionDpMemos;
 use super::{FlowAnalyzer, defer_to_antecedent, flow_boundary, flow_step_budget, query};
-use crate::query_boundaries::flow::control_flow::flow_dp::FlowConditionDpMemos;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags};
