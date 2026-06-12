@@ -349,17 +349,18 @@ impl CheckerState<'_> {
         &mut self,
         type_id: TypeId,
     ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id).or_else(
-            || {
-                let evaluated = self.evaluate_type_for_assignability(type_id);
-                (evaluated != type_id).then(|| {
-                    crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        evaluated,
-                    )
-                })?
-            },
-        )
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+        {
+            return Some(shape);
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        if evaluated == type_id {
+            return None;
+        }
+
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
     }
 
     fn type_has_named_property_for_call_compat(&mut self, type_id: TypeId, name: &str) -> bool {
