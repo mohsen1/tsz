@@ -16,6 +16,7 @@ mod awaited_variance_normalization;
 mod callable_union_relation;
 pub(crate) mod compound_assignment;
 mod constrained_type_param_assertion;
+mod failure_memo;
 mod index_access_normalization;
 mod nullish_error_targets;
 mod overload_subtype_pass;

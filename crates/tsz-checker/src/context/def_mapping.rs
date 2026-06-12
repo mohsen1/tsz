@@ -1339,8 +1339,13 @@ impl<'a> CheckerContext<'a> {
         // referenced from different checker contexts. Use the symbol_only_index
         // to find the canonical DefId and retrieve its type params.
         let sym_id = self.def_to_symbol.borrow().get(&def_id).copied()?;
+        let requesting_def_name = self.definition_store.get(def_id).map(|info| info.name)?;
         let canonical_def_id = self.definition_store.find_def_by_symbol(sym_id.0)?;
         if canonical_def_id != def_id
+            && self
+                .definition_store
+                .get(canonical_def_id)
+                .is_some_and(|info| info.name == requesting_def_name)
             && let Some(canonical_params) = self.definition_store.get_type_params(canonical_def_id)
             && !canonical_params.is_empty()
         {

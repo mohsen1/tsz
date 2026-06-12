@@ -25,6 +25,7 @@ mod json_tests {
             "resolver",
             "interner",
             "relation_limit_cache",
+            "evaluator_memo",
             "solver_materialization",
             "by_reason",
             "delegate_miss_classification",

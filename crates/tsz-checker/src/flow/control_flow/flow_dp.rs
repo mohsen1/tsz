@@ -35,6 +35,26 @@ pub(crate) enum DpState<T: Copy> {
 /// participate in the broader checker cache plumbing.
 pub(crate) type DpMemo<T> = FxHashMap<FlowNodeId, DpState<T>>;
 
+/// Scratch DP memos for one `check_flow` traversal and one reference target.
+///
+/// These are intentionally scoped to a single flow query: both analyses key
+/// only by `FlowNodeId`, while their answers depend on the target expression
+/// being narrowed. Reusing them across references would be unsound; reusing
+/// them within one `check_flow` call avoids rebuilding the same graph folds
+/// for every worklist visit.
+#[derive(Default)]
+pub(crate) struct FlowConditionDpMemos {
+    pub(crate) typeof_exclusions: DpMemo<u8>,
+    pub(crate) null_exclusions: DpMemo<bool>,
+}
+
+impl FlowConditionDpMemos {
+    pub(crate) fn clear(&mut self) {
+        self.typeof_exclusions.clear();
+        self.null_exclusions.clear();
+    }
+}
+
 /// Drive a backward flow-graph DP fold *iteratively* over an explicit heap
 /// stack rather than the native call stack.
 ///

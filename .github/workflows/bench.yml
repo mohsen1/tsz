@@ -1381,6 +1381,19 @@ jobs:
             "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
             "$GITHUB_WORKSPACE/bench-results-missing-attribution.md"
 
+      - name: Collect target-gap attribution artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bench/run-attribution-plan.mjs \
+            "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+            "$GITHUB_WORKSPACE/bench-results" \
+            "$GITHUB_WORKSPACE/bench-results-attribution-manifest.json"
+          node scripts/bench/tsgo-winner-report.mjs \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+            "$GITHUB_WORKSPACE/bench-results-missing-attribution.md"
+
       - name: Compare project winner regressions
         continue-on-error: true
         shell: bash
@@ -1427,6 +1440,8 @@ jobs:
             bench-results.json
             bench-results-tsgo-winners.json
             bench-results-missing-attribution.md
+            bench-results-attribution-manifest.json
+            bench-results*.perf.json
             bench-results-project-winner-regressions.json
             bench-results-project-winner-regressions.md
             bench-results-readiness.json

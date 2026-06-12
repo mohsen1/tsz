@@ -1288,9 +1288,11 @@ interface Node {
         })
     }
 
-    /// Threshold boundary for the PR #5881 sequential fallback: 31 wildcard
-    /// re-exports stay parallel-eligible, 32 and far above (the 201-re-export
-    /// barrel shape from the large-ts-repo row) trip the gate.
+    /// Threshold boundary for wildcard-barrel detection: 31 wildcard
+    /// re-exports stay below the large-barrel threshold, 32 and far above (the
+    /// 201-re-export barrel shape from the large-ts-repo row) are reported as
+    /// large. The scheduling fallback was lifted in #13244; this still guards
+    /// the analysis input used by diagnostics and future targeted policies.
     #[test]
     fn wildcard_barrel_threshold_boundary_31_32_201() {
         assert!(
@@ -1303,11 +1305,11 @@ interface Node {
             program_has_large_wildcard_barrel(&program_with_wildcard_barrel(
                 LARGE_WILDCARD_BARREL_EXPORTS
             )),
-            "32 wildcard re-exports must trip the sequential fallback"
+            "32 wildcard re-exports must be reported as a large wildcard barrel"
         );
         assert!(
             program_has_large_wildcard_barrel(&program_with_wildcard_barrel(201)),
-            "201 wildcard re-exports (large-ts-repo heavy barrel) must trip the fallback"
+            "201 wildcard re-exports (large-ts-repo heavy barrel) must be reported as large"
         );
     }
 
