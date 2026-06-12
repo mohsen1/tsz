@@ -11,6 +11,9 @@ use crate::caches::db::{
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
 use crate::caches::query_trace;
+use crate::caches::shared_instantiation::{
+    application_eval_entry_references_def, shared_instantiation_family_requested,
+};
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
 use crate::def::DefId;
 use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
@@ -42,7 +45,7 @@ use tsz_common::interner::Atom;
 // homomorphic mapped type whose optional-modifier stripping depends on
 // `exactOptionalPropertyTypes`, so both options are part of the cache identity
 // (issue #10970).
-type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool, bool);
+pub(super) type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool, bool);
 // Element access (indexed access) of an optional property includes `undefined`
 // under both `exactOptionalPropertyTypes` settings (matching tsc), so the result
 // does not depend on that option and it is intentionally not part of this key.
@@ -201,24 +204,6 @@ impl Default for SharedQueryCache {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn shared_instantiation_family_requested() -> bool {
-    std::env::var_os("TSZ_SHARE_INSTANTIATION_CACHES").is_some_and(|value| value != "0")
-}
-
-fn application_eval_entry_references_def(
-    interner: &dyn crate::construction::TypeDatabase,
-    key: &ApplicationEvalCacheKey,
-    result: TypeId,
-    def_id: DefId,
-) -> bool {
-    let (key_def, key_args, _, _) = key;
-    *key_def == def_id
-        || key_args
-            .iter()
-            .any(|&arg| crate::visitors::visitor::contains_lazy_def_id(interner, arg, def_id))
-        || crate::visitors::visitor::contains_lazy_def_id(interner, result, def_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
