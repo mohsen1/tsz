@@ -35,8 +35,24 @@ use super::base::{NodeIndex, NodeList};
 use super::node::{
     ExtendedNodeInfo, IdentifierData, LiteralData, Node, NodeArenaInner, SourceFileData,
 };
+use super::node_pools::for_each_node_pool;
 
 use tsz_common::interner::{AstAtom, Interner};
+
+/// Generate the per-pool clearing used by [`NodeArenaInner::clear`] from the
+/// canonical pool registry in [`super::node_pools`].
+macro_rules! impl_clear_pools {
+    ($($pool:ident => $elem:ty),+ $(,)?) => {
+        impl NodeArenaInner {
+            /// Clear every typed data pool (the `nodes` headers, interner, and
+            /// `extended_info` are handled separately by [`Self::clear`]).
+            fn clear_pools(&mut self) {
+                $(self.$pool.clear();)+
+            }
+        }
+    };
+}
+for_each_node_pool!(impl_clear_pools);
 
 impl NodeArenaInner {
     /// Maximum pre-allocation to avoid capacity overflow in huge files.
@@ -100,107 +116,9 @@ impl NodeArenaInner {
     }
 
     pub fn clear(&mut self) {
-        macro_rules! clear_vecs {
-            ($($field:ident),+ $(,)?) => {
-                $(self.$field.clear();)+
-            };
-        }
-
-        clear_vecs!(
-            nodes,
-            identifiers,
-            qualified_names,
-            computed_properties,
-            literals,
-            binary_exprs,
-            unary_exprs,
-            call_exprs,
-            access_exprs,
-            conditional_exprs,
-            literal_exprs,
-            parenthesized,
-            unary_exprs_ex,
-            type_assertions,
-            template_exprs,
-            template_spans,
-            tagged_templates,
-            functions,
-            classes,
-            interfaces,
-            type_aliases,
-            enums,
-            enum_members,
-            modules,
-            module_blocks,
-            signatures,
-            index_signatures,
-            property_decls,
-            method_decls,
-            constructors,
-            accessors,
-            parameters,
-            type_parameters,
-            decorators,
-            heritage_clauses,
-            expr_with_type_args,
-            if_statements,
-            loops,
-            blocks,
-            variables,
-            return_data,
-            expr_statements,
-            switch_data,
-            case_clauses,
-            try_data,
-            catch_clauses,
-            labeled_data,
-            jump_data,
-            with_data,
-            type_refs,
-            composite_types,
-            function_types,
-            type_queries,
-            type_literals,
-            array_types,
-            tuple_types,
-            wrapped_types,
-            conditional_types,
-            infer_types,
-            type_operators,
-            indexed_access_types,
-            mapped_types,
-            literal_types,
-            template_literal_types,
-            named_tuple_members,
-            type_predicates,
-            import_decls,
-            import_clauses,
-            named_imports,
-            specifiers,
-            export_decls,
-            export_assignments,
-            import_attributes,
-            import_attribute,
-            binding_patterns,
-            binding_elements,
-            property_assignments,
-            shorthand_properties,
-            spread_data,
-            variable_declarations,
-            for_in_of,
-            jsx_elements,
-            jsx_opening,
-            jsx_closing,
-            jsx_fragments,
-            jsx_attributes,
-            jsx_attribute,
-            jsx_spread_attributes,
-            jsx_expressions,
-            jsx_text,
-            jsx_namespaced_names,
-            source_files,
-            extended_info,
-        );
+        self.nodes.clear();
+        self.clear_pools();
+        self.extended_info.clear();
     }
 
     #[inline]

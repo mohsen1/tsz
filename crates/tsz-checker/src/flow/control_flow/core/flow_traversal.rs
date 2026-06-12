@@ -114,7 +114,10 @@ impl<'a> FlowAnalyzer<'a> {
                     (false, false)
                 };
             let skip_cache_for_explicit_unknown_switch = initial_type == TypeId::UNKNOWN
-                && self.flow_chain_contains_switch_clause(current_flow);
+                && self.flow_chain_contains_switch_clause_with_memo(
+                    current_flow,
+                    &mut condition_dp_memos.switch_chains,
+                );
             let skip_cache_for_exhaustive_unknown_typeof = initial_type == TypeId::UNKNOWN
                 && self.flow_has_exhaustive_typeof_exclusions_with_memo(
                     current_flow,
@@ -1034,7 +1037,10 @@ impl<'a> FlowAnalyzer<'a> {
                 && (!skip_cache_for_control_flow_typed_any
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
                 && !(initial_type == TypeId::UNKNOWN
-                    && self.flow_chain_contains_switch_clause(current_flow))
+                    && self.flow_chain_contains_switch_clause_with_memo(
+                        current_flow,
+                        &mut condition_dp_memos.switch_chains,
+                    ))
                 && !(initial_type == TypeId::UNKNOWN
                     && self.flow_has_exhaustive_typeof_exclusions_with_memo(
                         current_flow,
