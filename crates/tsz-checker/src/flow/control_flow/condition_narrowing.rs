@@ -856,7 +856,7 @@ impl<'a> FlowAnalyzer<'a> {
                             );
                             if effective_sense
                                 && matches!(guard, TypeGuard::Typeof(TypeofKind::Object))
-                                && if let Some(memos) = dp_memos.as_deref_mut() {
+                                && if let Some(memos) = dp_memos.as_mut() {
                                     self.antecedent_chain_excludes_null_for_target_with_memo(
                                         antecedent_id,
                                         target,
