@@ -549,7 +549,7 @@ impl TypeInterner {
                     let b_short = str_b.len() <= 2;
                     match (a_short, b_short) {
                         (true, true) => {
-                            let cmp = str_a.cmp(&str_b);
+                            let cmp = str_a.cmp(str_b);
                             if cmp != Ordering::Equal {
                                 return cmp;
                             }
