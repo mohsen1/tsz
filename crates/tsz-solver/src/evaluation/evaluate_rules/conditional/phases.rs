@@ -38,7 +38,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let evaluated_check = self.evaluate(cond.check_type);
         let mut check_type = self.normalize_conditional_object_operand(evaluated_check);
         let evaluated_extends = self.evaluate(cond.extends_type);
-        let extends_type = self.normalize_conditional_object_operand(evaluated_extends);
+        let mut extends_type = self.normalize_conditional_object_operand(evaluated_extends);
         if matches!(
             self.interner().lookup(check_type),
             Some(TypeData::Application(_))
@@ -46,6 +46,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.try_expand_application_for_conditional_check(check_type)
         {
             check_type = expanded_check;
+        }
+        if !crate::visitors::visitor_predicates::contains_infer_types(
+            self.interner(),
+            cond.extends_type,
+        ) && matches!(
+            self.interner().lookup(extends_type),
+            Some(TypeData::Application(_))
+        ) && let Some(expanded_extends) =
+            self.try_expand_application_for_conditional_check(extends_type)
+        {
+            extends_type = expanded_extends;
         }
 
         // When check_type is an unresolvable Application (e.g., Promise<string>
