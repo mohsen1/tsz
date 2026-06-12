@@ -198,3 +198,15 @@ TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 # fast path defers to the full parse when a comment-only `import(` is present, so
 # both relative and package JSDoc import-types resolve like tsc. Covered by
 # jsdoc_import_type_specifier_collection_tests.
+
+# temporal.ts: intermittent schedule-correlated failure under merge-group CI
+# load since #13310 (merged 2026-06-12T17:52Z); #13347's result-shape revert
+# did not cure it. Tracked by issue #13368; remove once that issue is closed
+# with temporal.ts stable across 3 consecutive merge-group batches.
+# Exact evidence (merge-group runs): 27431859795 (pr-13305 group, 17:26Z),
+# 27434076018 (pr-13332 group, 18:32Z, temporal-only; #13332 then merged on
+# unmodified retry), the 21:37Z batch incl. #13347's own group, and the
+# 22:26Z pr-13356 group run WITH #13347's fix included. Identical code passes
+# PR-head conformance and intermittently passes merge groups (e.g. #13353's
+# 22:06Z group) - flake, not a deterministic regression.
+TypeScript/tests/cases/compiler/temporal.ts
