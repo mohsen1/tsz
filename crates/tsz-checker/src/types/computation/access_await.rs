@@ -147,7 +147,49 @@ impl<'a> CheckerState<'a> {
 
         // Mirror tsc's `Awaited<T>`: distribute over top-level unions and
         // recursively unwrap thenables on each branch, then rejoin.
-        self.compute_awaited_type(expr_type, 0)
+        let awaited = self.compute_awaited_type(expr_type, 0);
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let app_info =
+                tsz_solver::type_queries::get_application_info(self.ctx.types, expr_type).map(
+                    |(base, args)| {
+                        (
+                            match self.ctx.types.lookup(base) {
+                                Some(
+                                    tsz_solver::TypeData::Object(shape_id)
+                                    | tsz_solver::TypeData::ObjectWithIndex(shape_id),
+                                ) => {
+                                    let shape = self.ctx.types.object_shape(shape_id);
+                                    format!(
+                                        "Object symbol={:?} props={:?}",
+                                        shape.symbol,
+                                        shape
+                                            .properties
+                                            .iter()
+                                            .take(6)
+                                            .map(|p| self.ctx.types.resolve_atom(p.name))
+                                            .collect::<Vec<_>>(),
+                                    )
+                                }
+                                other => format!("{other:?}"),
+                            },
+                            args.iter()
+                                .map(|a| format!("{}:{:?}", a.0, self.ctx.types.lookup(*a)))
+                                .collect::<Vec<_>>(),
+                        )
+                    },
+                );
+            tracing::debug!(
+                node = idx.0,
+                file = %self.ctx.file_name,
+                operand_type = expr_type.0,
+                operand_data = ?self.ctx.types.lookup(expr_type),
+                operand_app = ?app_info,
+                awaited_type = awaited.0,
+                awaited_data = ?self.ctx.types.lookup(awaited),
+                "await expression unwrapped"
+            );
+        }
+        awaited
     }
 
     /// Fold `Awaited<X>` eagerly when X reaches this point still wrapped in an

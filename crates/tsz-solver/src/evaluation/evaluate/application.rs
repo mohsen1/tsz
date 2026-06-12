@@ -175,7 +175,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .and_then(|sym_id| {
                     self.resolver
                         .symbol_to_def_id(crate::types::SymbolRef(sym_id.0))
-                }),
+                })
+                // A structural interface body can carry no shape symbol when a
+                // checker's interface resolution returned (and published) the
+                // body form directly instead of `Lazy(DefId)` — e.g. the lib
+                // `Promise` body `{ then, catch, finally, ... }` registered
+                // through `register_type_to_def`. Recover the declaration
+                // identity through the shared store's reverse mapping so the
+                // application still instantiates its type parameters;
+                // otherwise the un-substituted body leaks raw type parameters
+                // to whichever sibling checker observes this form first
+                // (schedule-dependent false TS2339/TS7006/TS2314 storms).
+                .or_else(|| self.resolver.def_for_type(base)),
             _ => None,
         }
     }
