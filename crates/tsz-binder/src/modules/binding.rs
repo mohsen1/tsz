@@ -7,12 +7,19 @@ use crate::binding::SemanticDefDetails;
 use crate::state::BinderState;
 use crate::{ContainerKind, Symbol, SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
+use tsz_common::interner::AstAtom;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl BinderState {
+    fn module_identifier_atom(arena: &NodeArena, index: NodeIndex) -> Option<AstAtom> {
+        arena
+            .get_identifier_at(index)
+            .and_then(|ident| (ident.atom != AstAtom::NONE).then_some(ident.atom))
+    }
+
     /// Check if `idx` is nested inside an ambient module (one with `declare` or
     /// a string-literal name). Walks up through `MODULE_BLOCK` / `MODULE_DECLARATION`
     /// ancestors until it finds one that is ambient or reaches the source file.
@@ -197,6 +204,7 @@ impl BinderState {
                 // (TS1437: "Namespace must be given a name"). Treat empty name as None
                 // so the anonymous module promotion logic kicks in.
                 .filter(|n| !n.is_empty());
+            let name_atom = Self::module_identifier_atom(arena, module.name);
             let mut prior_exports: Option<SymbolTable> = None;
             let mut module_symbol_id = SymbolId::NONE;
             if let Some(name) = name {
@@ -228,7 +236,8 @@ impl BinderState {
                 }
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
-                module_symbol_id = self.declare_symbol(arena, &name, flags, idx, is_exported);
+                module_symbol_id =
+                    self.declare_symbol_with_atom(arena, &name, name_atom, flags, idx, is_exported);
                 let is_declare = Self::has_declare_modifier(arena, module.modifiers.as_ref());
                 self.record_semantic_def_with_declare(
                     module_symbol_id,
@@ -250,7 +259,8 @@ impl BinderState {
                 // to cross-file resolution and the checker cannot resolve
                 // JSX.IntrinsicElements, causing false-positive TS7026 diagnostics.
                 if self.in_global_augmentation {
-                    self.file_locals.set(name.clone(), module_symbol_id);
+                    self.file_locals
+                        .set_with_atom(name.clone(), name_atom, module_symbol_id);
                 }
 
                 prior_exports = self
@@ -272,7 +282,11 @@ impl BinderState {
                         .get(child_id)
                         .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
                     if !is_enum_member {
-                        self.current_scope.set(name.clone(), child_id);
+                        self.current_scope.set_with_atom(
+                            name.clone(),
+                            exports.atom_for_symbol(child_id),
+                            child_id,
+                        );
                     }
                 }
             }
@@ -344,14 +358,20 @@ impl BinderState {
             // `namespace Outer { module { export function f() {} } }` makes `Outer.f`
             // visible.  Collect the exported symbols before exiting so we can promote
             // them to the parent scope afterwards.
-            let anon_promoted: Vec<(String, SymbolId)> =
+            let anon_promoted: Vec<(String, Option<AstAtom>, SymbolId)> =
                 if module_symbol_id.is_none() && module.body.is_some() {
                     // Promote ALL symbols — since the module has no name, there is
                     // nothing to export FROM. TSC treats the body as if it were
                     // written directly in the enclosing scope.
                     self.current_scope
                         .iter()
-                        .map(|(name, &sym_id)| (name.clone(), sym_id))
+                        .map(|(name, &sym_id)| {
+                            (
+                                name.clone(),
+                                self.current_scope.atom_for_symbol(sym_id),
+                                sym_id,
+                            )
+                        })
                         .collect()
                 } else {
                     Vec::new()
@@ -376,8 +396,8 @@ impl BinderState {
             // After exiting the anonymous module scope, promote exported symbols
             // into the parent (enclosing namespace) scope so they are accessible
             // as members of the parent namespace.
-            for (name, sym_id) in anon_promoted {
-                self.current_scope.set(name, sym_id);
+            for (name, name_atom, sym_id) in anon_promoted {
+                self.current_scope.set_with_atom(name, name_atom, sym_id);
                 // Mark as exported so the parent namespace's exit_scope includes
                 // them in its exports table (they're effectively declared inline
                 // in the parent scope).
@@ -855,11 +875,15 @@ impl BinderState {
 
                     // Now add them to exports
                     for (name, sym_id) in &exported_symbols {
+                        let name_atom = self
+                            .current_scope
+                            .atom_for_symbol(*sym_id)
+                            .or_else(|| self.file_locals.atom_for_symbol(*sym_id));
                         if let Some(module_sym) = self.symbols.get_mut(module_symbol_id) {
                             let exports = module_sym
                                 .exports
                                 .get_or_insert_with(|| Box::new(SymbolTable::new()));
-                            exports.set(name.clone(), *sym_id);
+                            exports.set_with_atom(name.clone(), name_atom, *sym_id);
                         }
                         if let Some(child_sym) = self.symbols.get_mut(*sym_id) {
                             child_sym.is_exported = true;
@@ -895,11 +919,15 @@ impl BinderState {
                             {
                                 sym_id = type_sym_id;
                             }
+                            let name_atom = self
+                                .current_scope
+                                .atom_for_symbol(sym_id)
+                                .or_else(|| self.file_locals.atom_for_symbol(sym_id));
                             if let Some(module_sym) = self.symbols.get_mut(module_symbol_id) {
                                 let exports = module_sym
                                     .exports
                                     .get_or_insert_with(|| Box::new(SymbolTable::new()));
-                                exports.set(name.clone(), sym_id);
+                                exports.set_with_atom(name.clone(), name_atom, sym_id);
                             }
                             // Mark the child symbol as exported
                             if let Some(child_sym) = self.symbols.get_mut(sym_id) {

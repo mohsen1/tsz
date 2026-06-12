@@ -450,6 +450,7 @@ impl TypeInterner {
                 obj_symbol: None,
                 obj_anon_shape: None,
                 callable_symbol: None,
+                string_literal_text: None,
                 alloc_order: None,
             };
         }
@@ -460,9 +461,13 @@ impl TypeInterner {
         let mut obj_symbol = None;
         let mut obj_anon_shape = None;
         let mut callable_symbol = None;
+        let mut string_literal_text = None;
 
         if let Some(ref d) = data {
             match d {
+                TypeData::Literal(LiteralValue::String(atom)) => {
+                    string_literal_text = Some(self.string_interner.resolve(*atom));
+                }
                 TypeData::Object(s) | TypeData::ObjectWithIndex(s) => {
                     let shape = self.object_shape(*s);
                     if let Some(sym) = shape.symbol {
@@ -488,6 +493,7 @@ impl TypeInterner {
             obj_symbol,
             obj_anon_shape,
             callable_symbol,
+            string_literal_text,
             alloc_order,
         }
     }
@@ -528,16 +534,22 @@ impl TypeInterner {
         if let (Some(data_a), Some(data_b)) = (&a.data, &b.data) {
             match (data_a, data_b) {
                 (
-                    TypeData::Literal(LiteralValue::String(sa)),
-                    TypeData::Literal(LiteralValue::String(sb)),
+                    TypeData::Literal(LiteralValue::String(_)),
+                    TypeData::Literal(LiteralValue::String(_)),
                 ) => {
-                    let str_a = self.string_interner.resolve(*sa);
-                    let str_b = self.string_interner.resolve(*sb);
+                    let str_a = a
+                        .string_literal_text
+                        .as_deref()
+                        .expect("string literal union member must cache resolved text");
+                    let str_b = b
+                        .string_literal_text
+                        .as_deref()
+                        .expect("string literal union member must cache resolved text");
                     let a_short = str_a.len() <= 2;
                     let b_short = str_b.len() <= 2;
                     match (a_short, b_short) {
                         (true, true) => {
-                            let cmp = str_a.cmp(&str_b);
+                            let cmp = str_a.cmp(str_b);
                             if cmp != Ordering::Equal {
                                 return cmp;
                             }
