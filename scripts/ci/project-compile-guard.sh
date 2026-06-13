@@ -743,6 +743,106 @@ run_project_row() {
       tsz_write_ts_pattern_config "$FIXTURE_ROOT/ts-pattern/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/ts-pattern/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-pattern/src"
       ;;
+    trpc-project)
+      ensure_git_fixture "trpc" "$TRPC_REPO" "$TRPC_REF" "$FIXTURE_ROOT/trpc"
+      tsz_write_trpc_config "$FIXTURE_ROOT/trpc/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/trpc/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/trpc/packages/server/src"
+      ;;
+    tanstack-query-project)
+      ensure_git_fixture "tanstack-query" "$TANSTACK_QUERY_REPO" "$TANSTACK_QUERY_REF" "$FIXTURE_ROOT/tanstack-query"
+      tsz_write_tanstack_query_config "$FIXTURE_ROOT/tanstack-query/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/tanstack-query/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/tanstack-query/packages/query-core/src"
+      ;;
+    tanstack-router-project)
+      ensure_git_fixture "tanstack-router" "$TANSTACK_ROUTER_REPO" "$TANSTACK_ROUTER_REF" "$FIXTURE_ROOT/tanstack-router"
+      tsz_write_tanstack_router_config "$FIXTURE_ROOT/tanstack-router/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/tanstack-router/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/tanstack-router/packages/router-core/src"
+      ;;
+    zustand-project)
+      ensure_git_fixture "zustand" "$ZUSTAND_REPO" "$ZUSTAND_REF" "$FIXTURE_ROOT/zustand"
+      tsz_write_zustand_config "$FIXTURE_ROOT/zustand/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/zustand/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/zustand/src"
+      ;;
+    jotai-project)
+      ensure_git_fixture "jotai" "$JOTAI_REPO" "$JOTAI_REF" "$FIXTURE_ROOT/jotai"
+      tsz_write_jotai_config "$FIXTURE_ROOT/jotai/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/jotai/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/jotai/src"
+      ;;
+    fp-ts-project)
+      ensure_git_fixture "fp-ts" "$FP_TS_REPO" "$FP_TS_REF" "$FIXTURE_ROOT/fp-ts"
+      tsz_write_fp_ts_config "$FIXTURE_ROOT/fp-ts/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/fp-ts/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/fp-ts/src"
+      ;;
+    io-ts-project)
+      ensure_git_fixture "io-ts" "$IO_TS_REPO" "$IO_TS_REF" "$FIXTURE_ROOT/io-ts"
+      tsz_write_io_ts_config "$FIXTURE_ROOT/io-ts/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/io-ts/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/io-ts/src"
+      ;;
+    immer-project)
+      ensure_git_fixture "immer" "$IMMER_REPO" "$IMMER_REF" "$FIXTURE_ROOT/immer"
+      tsz_write_immer_config "$FIXTURE_ROOT/immer/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/immer/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/immer/src"
+      ;;
+    remeda-project)
+      ensure_git_fixture "remeda" "$REMEDA_REPO" "$REMEDA_REF" "$FIXTURE_ROOT/remeda"
+      tsz_write_remeda_config "$FIXTURE_ROOT/remeda/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/remeda/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/remeda/packages/remeda/src"
+      ;;
+    ts-morph-project)
+      ensure_git_fixture "ts-morph" "$TS_MORPH_REPO" "$TS_MORPH_REF" "$FIXTURE_ROOT/ts-morph"
+      tsz_write_ts_morph_config "$FIXTURE_ROOT/ts-morph/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/ts-morph/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-morph/packages/ts-morph/src"
+      ;;
+    arktype-project)
+      ensure_git_fixture "arktype" "$ARKTYPE_REPO" "$ARKTYPE_REF" "$FIXTURE_ROOT/arktype"
+      tsz_write_arktype_config "$FIXTURE_ROOT/arktype/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/arktype/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/arktype/ark/type"
+      ;;
+    superstruct-project)
+      ensure_git_fixture "superstruct" "$SUPERSTRUCT_REPO" "$SUPERSTRUCT_REF" "$FIXTURE_ROOT/superstruct"
+      tsz_write_superstruct_config "$FIXTURE_ROOT/superstruct/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/superstruct/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/superstruct/src"
+      ;;
+    runtypes-project)
+      ensure_git_fixture "runtypes" "$RUNTYPES_REPO" "$RUNTYPES_REF" "$FIXTURE_ROOT/runtypes"
+      tsz_write_runtypes_config "$FIXTURE_ROOT/runtypes/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/runtypes/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/runtypes/src"
+      ;;
+    hotscript-project)
+      ensure_git_fixture "hotscript" "$HOTSCRIPT_REPO" "$HOTSCRIPT_REF" "$FIXTURE_ROOT/hotscript"
+      tsz_write_hotscript_config "$FIXTURE_ROOT/hotscript/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/hotscript/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/hotscript/src"
+      ;;
+    typebox-project)
+      ensure_git_fixture "typebox" "$TYPEBOX_REPO" "$TYPEBOX_REF" "$FIXTURE_ROOT/typebox"
+      tsz_write_typebox_config "$FIXTURE_ROOT/typebox/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/typebox/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/typebox/src"
+      ;;
+    class-transformer-project)
+      ensure_git_fixture "class-transformer" "$CLASS_TRANSFORMER_REPO" "$CLASS_TRANSFORMER_REF" "$FIXTURE_ROOT/class-transformer"
+      tsz_write_class_transformer_config "$FIXTURE_ROOT/class-transformer/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/class-transformer/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/class-transformer/src"
+      ;;
+    type-graphql-project)
+      ensure_git_fixture "type-graphql" "$TYPE_GRAPHQL_REPO" "$TYPE_GRAPHQL_REF" "$FIXTURE_ROOT/type-graphql"
+      tsz_write_type_graphql_config "$FIXTURE_ROOT/type-graphql/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/type-graphql/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-graphql/src"
+      ;;
+    neverthrow-project)
+      ensure_git_fixture "neverthrow" "$NEVERTHROW_REPO" "$NEVERTHROW_REF" "$FIXTURE_ROOT/neverthrow"
+      tsz_write_neverthrow_config "$FIXTURE_ROOT/neverthrow/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/neverthrow/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/neverthrow/src"
+      ;;
+    xstate-project)
+      ensure_git_fixture "xstate" "$XSTATE_REPO" "$XSTATE_REF" "$FIXTURE_ROOT/xstate"
+      tsz_write_xstate_config "$FIXTURE_ROOT/xstate/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/xstate/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/xstate/packages/core/src"
+      ;;
+    mobx-project)
+      ensure_git_fixture "mobx" "$MOBX_REPO" "$MOBX_REF" "$FIXTURE_ROOT/mobx"
+      tsz_write_mobx_config "$FIXTURE_ROOT/mobx/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/mobx/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/mobx/packages/mobx/src"
+      ;;
     vite-vanilla-ts-app)
       if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then
         return 0

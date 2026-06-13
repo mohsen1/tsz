@@ -260,6 +260,15 @@ function benchmarkRowsForReadme(data) {
     : [];
 }
 
+function projectRowsForReadme(data) {
+  return Array.isArray(data?.results)
+    ? data.results.filter((row) => (
+      hasSuccessfulTimingPair(row)
+        && isProjectBenchmark(row)
+    ))
+    : [];
+}
+
 function formatDurationMs(value) {
   const ms = finiteNumber(value);
   if (ms === null) return "n/a";
@@ -299,7 +308,10 @@ function themeColors(theme) {
 }
 
 export function createReadmePerfSummary(data) {
-  const rows = benchmarkRowsForReadme(data);
+  const projectRows = projectRowsForReadme(data);
+  const microRows = benchmarkRowsForReadme(data);
+  const rows = projectRows.length > 0 ? projectRows : microRows;
+  const rowKind = projectRows.length > 0 ? "project" : "micro";
   const tszMs = rows.reduce((total, row) => total + (finiteNumber(row.tsz_ms) ?? 0), 0);
   const tsgoMs = rows.reduce((total, row) => total + (finiteNumber(row.tsgo_ms) ?? 0), 0);
   const speedup = tszMs > 0 && tsgoMs > 0 ? tsgoMs / tszMs : null;
@@ -313,6 +325,9 @@ export function createReadmePerfSummary(data) {
 
   return {
     rows: rows.length,
+    projectRows: projectRows.length,
+    microRows: microRows.length,
+    rowKind,
     totalRows: Array.isArray(data?.results) ? data.results.length : 0,
     tszMs,
     tsgoMs,
@@ -355,9 +370,9 @@ export function renderReadmePerfSvg(data, { theme = "light" } = {}) {
   const summary = createReadmePerfSummary(data);
   const maxMs = Math.max(summary.tszMs, summary.tsgoMs, 1);
   const headline = summaryLabel(summary);
-  const rowsLabel = summary.rows ? `${summary.rows} rows` : "";
+  const rowsLabel = summary.rows ? `${summary.rows} ${summary.rowKind} rows` : "";
   const desc = summary.rows
-    ? `${headline} across ${summary.rows} successful micro benchmark rows.`
+    ? `${headline} across ${summary.rows} successful ${summary.rowKind} benchmark rows.`
     : "No successful benchmark timing pairs were available for the README performance chart.";
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${SVG_WIDTH}" height="${SVG_HEIGHT}" viewBox="0 0 ${SVG_WIDTH} ${SVG_HEIGHT}" role="img" aria-labelledby="title desc">
@@ -403,7 +418,7 @@ function renderFallbackReadmePerfPng(data, { theme = "light" } = {}) {
   const summary = createReadmePerfSummary(data);
   const maxMs = Math.max(summary.tszMs, summary.tsgoMs, 1);
   const headline = summaryLabel(summary);
-  const rowsLabel = summary.rows ? `${summary.rows} rows` : "";
+  const rowsLabel = summary.rows ? `${summary.rows} ${summary.rowKind} rows` : "";
 
   const canvas = createRgbaCanvas(PNG_WIDTH, PNG_HEIGHT, colors.background);
   drawBitmapText(canvas, headline, BAR_LABEL_X, 18, 2, colors.title);

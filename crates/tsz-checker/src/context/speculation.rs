@@ -483,6 +483,10 @@ impl<'a> CheckerContext<'a> {
         &mut self,
         snap: &DiagnosticSnapshot,
     ) -> Vec<Diagnostic> {
+        if self.diagnostic_snapshot_unchanged(snap) {
+            return Vec::new();
+        }
+
         let split_at = self.clamped_diag_len(snap);
         let taken = self.diagnostics.split_off(split_at);
         // Clean up TS2454 dedup entries for taken diagnostics.
@@ -504,6 +508,10 @@ impl<'a> CheckerContext<'a> {
         snap: &DiagnosticSnapshot,
         replacement: Vec<Diagnostic>,
     ) {
+        if replacement.is_empty() && self.diagnostic_snapshot_unchanged(snap) {
+            return;
+        }
+
         // Clean up emitted_ts2454_errors for discarded TS2454 diagnostics
         // that are not in the replacement set.
         let truncate_at = self.clamped_diag_len(snap);
