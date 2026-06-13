@@ -581,15 +581,12 @@ pub fn resolve_compiler_options(
         resolved.declaration_dir = Some(PathBuf::from(declaration_dir));
     }
 
-    // composite implies declaration and incremental (matching tsc behavior)
+    // composite implies declaration and incremental. The implication itself is
+    // owned by the shared `apply_non_strict_fanout` table (tsc 6.0.3
+    // `computedOptions.declaration`/`incremental`); here we only record the
+    // raw `composite` value so the table can fan it out below.
     if let Some(composite) = options.composite {
         resolved.composite = composite;
-        if composite {
-            // composite: true implies declaration: true and incremental: true
-            resolved.emit_declarations = true;
-            resolved.checker.emit_declarations = true;
-            resolved.incremental = true;
-        }
     }
 
     if let Some(declaration) = options.declaration {
@@ -616,10 +613,9 @@ pub fn resolve_compiler_options(
     if let Some(no_emit_helpers) = options.no_emit_helpers {
         resolved.printer.no_emit_helpers = no_emit_helpers;
     }
-    if options.import_helpers == Some(true) {
-        // importHelpers means "import from tslib" - suppress inline helper emission.
-        resolved.printer.no_emit_helpers = true;
-    }
+    // `importHelpers` suppressing inline helper emission is owned by the shared
+    // `apply_non_strict_fanout` table; `resolved.import_helpers` is recorded
+    // above so the table can fan it out below.
 
     if let Some(downlevel_iteration) = options.downlevel_iteration {
         resolved.printer.downlevel_iteration = downlevel_iteration;
@@ -741,10 +737,11 @@ pub fn resolve_compiler_options(
         resolved.checker.isolated_modules = isolated_modules;
     }
 
-    // verbatimModuleSyntax implies isolatedModules in tsc — const enums get
-    // runtime bindings and are subject to TDZ checks.
+    // Record the raw `verbatimModuleSyntax` value; the
+    // `verbatimModuleSyntax -> isolatedModules` implication and the const-enum
+    // printer mirroring are owned by the shared `apply_non_strict_fanout`
+    // table (tsc 6.0.3 `computedOptions.isolatedModules`/`preserveConstEnums`).
     if options.verbatim_module_syntax == Some(true) {
-        resolved.checker.isolated_modules = true;
         resolved.checker.verbatim_module_syntax = true;
     }
 
@@ -804,17 +801,16 @@ pub fn resolve_compiler_options(
         .invalidated_options
         .iter()
         .any(|k| k == "esModuleInterop");
+    // The `esModuleInterop -> allowSyntheticDefaultImports` implication is owned
+    // by the shared `apply_non_strict_fanout` table below; this block only
+    // resolves the `esModuleInterop` value/default (engine-local because it
+    // depends on TS5024 invalidation state).
     if let Some(es_module_interop) = options.es_module_interop
         && !esmodule_invalidated
     {
         resolved.es_module_interop = es_module_interop;
         resolved.checker.es_module_interop = es_module_interop;
         resolved.printer.es_module_interop = es_module_interop;
-        // esModuleInterop implies allowSyntheticDefaultImports
-        if es_module_interop {
-            resolved.allow_synthetic_default_imports = true;
-            resolved.checker.allow_synthetic_default_imports = true;
-        }
     } else if !esmodule_invalidated {
         // tsc 6.0 defaults esModuleInterop to true when not explicitly set.
         // But do NOT apply the default when TS5024 fired for this option —
@@ -823,9 +819,15 @@ pub fn resolve_compiler_options(
         resolved.es_module_interop = true;
         resolved.checker.es_module_interop = true;
         resolved.printer.es_module_interop = true;
-        resolved.allow_synthetic_default_imports = true;
-        resolved.checker.allow_synthetic_default_imports = true;
     }
+
+    // Fan out the non-strict-family implications (composite -> declaration +
+    // incremental, isolatedModules/verbatimModuleSyntax -> preserveConstEnums,
+    // importHelpers -> no_emit_helpers, esModuleInterop ->
+    // allowSyntheticDefaultImports) through the shared table. Runs before the
+    // explicit `allowSyntheticDefaultImports` override below so an explicit
+    // value still wins over the `esModuleInterop` implication.
+    super::apply_non_strict_fanout(&mut resolved);
 
     if let Some(allow_synthetic_default_imports) = options.allow_synthetic_default_imports {
         resolved.allow_synthetic_default_imports = allow_synthetic_default_imports;
