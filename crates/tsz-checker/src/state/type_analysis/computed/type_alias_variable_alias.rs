@@ -1,5 +1,4 @@
-//! Continuation of `compute_type_of_symbol`: type alias, class property, variable,
-//! and alias symbol resolution.
+//! Continuation of `compute_type_of_symbol` for type aliases, class properties, variables, and aliases.
 
 use super::SymbolAliasCtx;
 use crate::query_boundaries::common::{array_element_type, is_generic_type};
