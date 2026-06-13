@@ -1670,6 +1670,13 @@ impl<'a> CheckerState<'a> {
                             })
                     })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+            } else if symbol.has_any_flags(symbol_flags::VARIABLE) {
+                // `typeof value` can be represented as a Lazy(value DefId) once it
+                // flows through aliases/mapped types instead of as a direct
+                // TypeQuery(SymbolRef). Relation prep must register the value-space
+                // type for that DefId so solver-side mapped/keyof evaluation does not
+                // classify the unresolved Lazy as a non-object.
+                self.type_of_value_declaration_for_symbol(sym_id, symbol.value_declaration)
             } else {
                 self.get_type_of_symbol(sym_id)
             }

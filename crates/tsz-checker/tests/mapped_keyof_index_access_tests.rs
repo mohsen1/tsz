@@ -13,6 +13,7 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
+use tsz_common::common::ModuleKind;
 
 fn check_strict(source: &str) -> Vec<Diagnostic> {
     let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
@@ -35,6 +36,90 @@ fn has_code(diags: &[Diagnostic], code: u32) -> bool {
 
 const fn no_errors(diags: &[Diagnostic]) -> bool {
     diags.is_empty()
+}
+
+/// A `typeof value` alias whose value type was inferred must stay resolvable
+/// when a mapped/keyof type is evaluated inside a relation path.
+///
+/// Before #13484, relation-driven mapped evaluation saw `V = typeof lit` as an
+/// unresolved value-symbol `Lazy(DefId)`, classified it as a non-object, and
+/// collapsed the mapped property body to `error`.
+#[test]
+fn mapped_keyof_typeof_inferred_value_resolves_in_relation_path() {
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_global_index(
+        &[
+            (
+                "/node_modules/vlib/index.d.ts",
+                r#"
+export interface Validator<T> { (props: object): any; brand?: T; }
+export interface Requireable<T> extends Validator<T> { isRequired: Validator<T & {}>; }
+export declare const str: Requireable<string>;
+"#,
+            ),
+            (
+                "file.ts",
+                r#"
+import * as P from "vlib";
+const lit = { str: P.str.isRequired };
+type V = typeof lit;
+type Mc = { [K in keyof V]: V[K] extends P.Validator<any> ? K : never };
+const ok: { str: "str" } = (null as any as Mc);
+"#,
+            ),
+        ],
+        "file.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        no_errors(&diagnostics),
+        "expected inferred typeof mapped keys to resolve without diagnostics, got: {diagnostics:#?}"
+    );
+}
+
+/// Same structure with renamed binders and an explicit negative assignment so
+/// the test is not tied to the original repro's property/type-parameter names.
+#[test]
+fn mapped_keyof_typeof_inferred_value_resolves_with_renamed_binders() {
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_global_index(
+        &[
+            (
+                "/node_modules/vlib/index.d.ts",
+                r#"
+export interface CheckBox<T> { (props: object): any; marker?: T; }
+export interface Needed<T> extends CheckBox<T> { must: CheckBox<T & {}>; }
+export declare const title: Needed<string>;
+"#,
+            ),
+            (
+                "consumer.ts",
+                r#"
+import * as Q from "vlib";
+const shape = { title: Q.title.must };
+type ShapeType = typeof shape;
+type Picked = { [Field in keyof ShapeType]: ShapeType[Field] extends Q.CheckBox<any> ? Field : never };
+const bad: { title: "other" } = (null as any as Picked);
+"#,
+            ),
+        ],
+        "consumer.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_code(&diagnostics, 2322),
+        "expected TS2322 for the wrong literal target, got: {diagnostics:#?}"
+    );
 }
 
 // ============================================================================
