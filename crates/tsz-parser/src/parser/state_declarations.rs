@@ -117,7 +117,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else {
@@ -1227,7 +1226,6 @@ impl ParserState {
                     atom,
                     escaped_text: text,
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else if self.is_token(SyntaxKind::NumericLiteral) {
@@ -1251,7 +1249,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else {
@@ -1391,7 +1388,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }

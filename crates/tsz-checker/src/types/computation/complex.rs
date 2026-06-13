@@ -1127,7 +1127,8 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
                         .collect();
-                    if seeded_literal_constraint_type_arg
+                    if (seeded_literal_constraint_type_arg
+                        || self.new_type_args_preserve_outer_type_params(&type_args))
                         && self.new_type_args_are_applyable(shape, &type_args, &substitution)
                     {
                         inferred_new_type_args = Some(type_args);
@@ -1453,7 +1454,8 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
                 .collect();
-            if seeded_literal_constraint_type_arg
+            if (seeded_literal_constraint_type_arg
+                || self.new_type_args_preserve_outer_type_params(&type_args))
                 && self.new_type_args_are_applyable(shape, &type_args, &substitution)
             {
                 inferred_new_type_args = Some(type_args);

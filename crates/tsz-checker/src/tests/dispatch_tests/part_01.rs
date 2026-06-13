@@ -1162,6 +1162,11 @@ fn interface_with_construct_signature_no_ts2351() {
 interface MyHandler<T extends object> {
     get?(target: T, p: string): any;
 }
+class MyHandlerImpl<T extends object> implements MyHandler<T> {
+    get(target: T, p: string): any {
+        return target;
+    }
+}
 interface MyConstructor {
     new <T extends object>(target: T, handler: MyHandler<T>): T;
 }
@@ -1176,6 +1181,51 @@ var p = new MyProxy(t, {});
         0,
         "Expected no TS2351 for interface with construct signature, got: {:?}",
         diagnostic_messages(&ts2351)
+    );
+}
+
+#[test]
+fn generic_construct_signature_preserves_outer_target_type_param_return() {
+    let diags = check_source_diagnostics(
+        r#"
+interface MyHandler<T extends object> {
+    get?(target: T, p: string): any;
+}
+interface MyConstructor {
+    new <T extends object>(target: T, handler: MyHandler<T>): T;
+}
+declare var MyProxy: MyConstructor;
+
+type Box = { value: string };
+
+function clone<Row extends Box>(item: Row): Row {
+    return new MyProxy(item, {});
+}
+
+function cloneRenamed<Entity extends Box>(source: Entity): Entity {
+    const handler: MyHandler<Entity> = {};
+    return new MyProxy(source, handler);
+}
+
+function cloneWithHandlerClass<Item extends Box>(source: Item): Item {
+    return new MyProxy(source, new MyHandlerImpl<Item>());
+}
+
+function cloneWithSameName<T extends Box>(source: T): T {
+    return new MyProxy(source, {});
+}
+
+function stillRejects<Row extends Box>(item: Row): number {
+    return new MyProxy(item, {});
+}
+"#,
+    );
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the bad number return to emit TS2322; generic construct returns should preserve outer type params. Got: {:?}",
+        diagnostic_messages(&ts2322)
     );
 }
 

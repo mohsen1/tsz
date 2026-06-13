@@ -1682,7 +1682,6 @@ mod is_missing_recovery_identifier_tests {
                 atom: AstAtom::NONE,
                 escaped_text: String::new(),
                 original_text: None,
-                type_arguments: None,
             },
         );
         assert!(arena.is_missing_recovery_identifier(idx));
@@ -1701,7 +1700,6 @@ mod is_missing_recovery_identifier_tests {
                 atom: AstAtom(1),
                 escaped_text: "foo".to_string(),
                 original_text: None,
-                type_arguments: None,
             },
         );
         assert!(!arena.is_missing_recovery_identifier(idx));
@@ -1718,7 +1716,6 @@ mod is_missing_recovery_identifier_tests {
                 atom: AstAtom(1),
                 escaped_text: String::new(),
                 original_text: None,
-                type_arguments: None,
             },
         );
         assert!(!arena.is_missing_recovery_identifier(idx));
@@ -1735,7 +1732,6 @@ mod is_missing_recovery_identifier_tests {
                 atom: AstAtom::NONE,
                 escaped_text: "x".to_string(),
                 original_text: None,
-                type_arguments: None,
             },
         );
         assert!(!arena.is_missing_recovery_identifier(idx));

@@ -1,4 +1,4 @@
-use crate::query_boundaries::common::TypeSubstitution;
+use crate::query_boundaries::common::{TypeSubstitution, type_param_info};
 use crate::query_boundaries::type_computation::complex as type_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -82,12 +82,10 @@ impl<'a> CheckerState<'a> {
             if type_arg == TypeId::UNKNOWN || type_arg == TypeId::ANY || type_arg == TypeId::ERROR {
                 continue;
             }
-            if crate::query_boundaries::common::contains_infer_types(self.ctx.types, type_arg)
-                || crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    type_arg,
-                )
-            {
+            if crate::query_boundaries::common::contains_current_infer_placeholder(
+                self.ctx.types,
+                type_arg,
+            ) {
                 continue;
             }
             if let Some(constraint) = type_param.constraint {
@@ -114,6 +112,13 @@ impl<'a> CheckerState<'a> {
         }
 
         has_concrete_arg
+    }
+
+    pub(super) fn new_type_args_preserve_outer_type_params(&self, type_args: &[TypeId]) -> bool {
+        type_args.iter().copied().any(|type_arg| {
+            type_param_info(self.ctx.types, type_arg)
+                .is_some_and(|info| !info.is_current_infer_placeholder())
+        })
     }
 
     pub(super) fn default_current_infer_placeholders_to_unknown(&self, type_id: TypeId) -> TypeId {

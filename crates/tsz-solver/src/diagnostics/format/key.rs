@@ -8,6 +8,8 @@ use std::borrow::Cow;
 use tracing::trace;
 use tsz_binder::SymbolId;
 
+const LONG_PROPERTY_RECEIVER_APPLICATION_ARG_DEPTH_LIMIT: u32 = 64;
+
 impl<'a> TypeFormatter<'a> {
     pub(super) fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
         match key {
@@ -443,7 +445,16 @@ impl<'a> TypeFormatter<'a> {
                 let mut args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
-                    .map(|&arg| self.format(self.simplify_application_arg_for_display(arg)))
+                    .map(|&arg| {
+                        if self.long_property_receiver_display
+                            && self.current_depth
+                                >= LONG_PROPERTY_RECEIVER_APPLICATION_ARG_DEPTH_LIMIT
+                        {
+                            Cow::Borrowed("...")
+                        } else {
+                            self.format(self.simplify_application_arg_for_display(arg))
+                        }
+                    })
                     .collect();
                 self.preserve_application_arg_index_alias_surface =
                     previous_preserve_application_arg_index_alias_surface;

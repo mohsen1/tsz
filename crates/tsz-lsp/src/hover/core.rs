@@ -888,7 +888,6 @@ impl<'a> HoverProvider<'a> {
             {
                 type_string = array_type;
             }
-            type_string = self.rewrite_date_constructor_error_types(decl_node_idx, type_string);
             type_string = format::format_hover_variable_type(&type_string);
             let keyword = self.get_variable_keyword(decl_node_idx);
             if self.is_local_variable(decl_node_idx) {
@@ -922,7 +921,6 @@ impl<'a> HoverProvider<'a> {
             {
                 type_string = array_type;
             }
-            type_string = self.rewrite_date_constructor_error_types(decl_node_idx, type_string);
             type_string = format::format_hover_variable_type(&type_string);
             if self.is_parameter_declaration(decl_node_idx) {
                 return format!("(parameter) {display_name}: {type_string}");
@@ -1417,20 +1415,6 @@ impl<'a> HoverProvider<'a> {
         }
 
         Some("any[]".to_string())
-    }
-
-    fn rewrite_date_constructor_error_types(
-        &self,
-        decl_node_idx: NodeIndex,
-        type_string: String,
-    ) -> String {
-        if !type_string.contains("dob: error")
-            || !self.source_text.contains("new Date(")
-            || !decl_node_idx.is_some()
-        {
-            return type_string;
-        }
-        type_string.replace("dob: error", "dob: Date")
     }
 
     /// Get the tsserver-compatible kind string for the symbol.

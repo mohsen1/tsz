@@ -478,7 +478,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 );
             }
@@ -529,7 +528,6 @@ impl ParserState {
                         atom: tsz_common::interner::AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 );
             }
@@ -584,7 +582,6 @@ impl ParserState {
                     atom: tsz_common::interner::AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }
@@ -606,7 +603,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }
@@ -800,7 +796,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: format!("arg{index}"),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
             let param_end = self.token_full_start();

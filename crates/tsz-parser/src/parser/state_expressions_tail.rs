@@ -70,7 +70,6 @@ impl ParserState {
                 atom: AstAtom::NONE,
                 escaped_text: String::from("#"),
                 original_text: None,
-                type_arguments: None,
             },
         )
     }
@@ -88,7 +87,6 @@ impl ParserState {
                 atom: AstAtom::NONE,
                 escaped_text: String::from("#"),
                 original_text: None,
-                type_arguments: None,
             },
         )
     }
@@ -756,6 +754,42 @@ impl ParserState {
         }
     }
 
+    /// Read the cooked text of the current identifier/keyword token and advance
+    /// past it. Returns the interned `atom`, the identifier `text`, and the
+    /// `original_text` source slice when the scanner detected unicode escapes
+    /// (tsc preserves escape sequences in emitted identifiers).
+    ///
+    /// The caller must have already verified [`Self::is_identifier_or_keyword`].
+    /// Shared by [`Self::parse_identifier`] and [`Self::parse_identifier_name`]
+    /// so identifier text/escape handling stays a single source of truth.
+    #[inline]
+    fn read_cooked_identifier_text(&mut self) -> (AstAtom, String, Option<String>) {
+        // OPTIMIZATION: Capture atom for O(1) comparison
+        let atom = self.scanner.get_token_atom();
+        let has_unicode_escape =
+            (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
+        let src = self.scanner.source_text();
+        let start = self.scanner.get_token_start();
+        let end = self.scanner.get_token_end();
+        let source_slice = (start < end && end <= src.len()).then(|| &src[start..end]);
+
+        // Without escapes the raw source slice is the cooked text; otherwise
+        // fall back to the scanner's already-cooked token value.
+        let text = match source_slice {
+            Some(slice) if !has_unicode_escape => slice.to_string(),
+            _ => self.scanner.get_token_value_ref().to_string(),
+        };
+        // tsc preserves unicode escape sequences in emitted identifiers: when the
+        // scanner detected escapes, keep the original source slice if it differs
+        // from the cooked text.
+        let original_text = match source_slice {
+            Some(slice) if has_unicode_escape && slice != text => Some(slice.to_string()),
+            _ => None,
+        };
+        self.next_token();
+        (atom, text, original_text)
+    }
+
     // Parse identifier
     // Uses zero-copy accessor and only clones when storing
     pub(crate) fn parse_identifier(&mut self) -> NodeIndex {
@@ -776,7 +810,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }
@@ -785,43 +818,7 @@ impl ParserState {
         // This allows contextual keywords (type, interface, package, etc.) to be used as identifiers
         // in appropriate contexts (e.g., type aliases, interface names)
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
-            // OPTIMIZATION: Capture atom for O(1) comparison
-            let atom = self.scanner.get_token_atom();
-            let has_unicode_escape =
-                (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
-            let text = if !has_unicode_escape {
-                let src = self.scanner.source_text();
-                let start = self.scanner.get_token_start();
-                let end = self.scanner.get_token_end();
-                if start < end && end <= src.len() {
-                    src[start..end].to_string()
-                } else {
-                    self.scanner.get_token_value_ref().to_string()
-                }
-            } else {
-                self.scanner.get_token_value_ref().to_string()
-            };
-            // tsc preserves unicode escape sequences in emitted identifiers.
-            // Capture the original source text when the scanner detected escapes.
-            let original_text = if has_unicode_escape {
-                let src = self.scanner.source_text();
-                let start = self.scanner.get_token_start();
-                let end = self.scanner.get_token_end();
-                if start < end && end <= src.len() {
-                    let slice = &src[start..end];
-                    if slice != text {
-                        Some(slice.to_string())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            self.next_token();
-            (atom, text, original_text)
+            self.read_cooked_identifier_text()
         } else {
             self.error_identifier_expected();
             (AstAtom::NONE, String::new(), None)
@@ -835,7 +832,6 @@ impl ParserState {
                 atom,
                 escaped_text: text,
                 original_text,
-                type_arguments: None,
             },
         )
     }
@@ -863,22 +859,10 @@ impl ParserState {
             }
         }
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
-            // OPTIMIZATION: Capture atom for O(1) comparison
-            let atom = self.scanner.get_token_atom();
-            let has_unicode_escape =
-                (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
-            let text = if !has_unicode_escape {
-                let src = self.scanner.source_text();
-                let start = self.scanner.get_token_start();
-                let end = self.scanner.get_token_end();
-                if start < end && end <= src.len() {
-                    src[start..end].to_string()
-                } else {
-                    self.scanner.get_token_value_ref().to_string()
-                }
-            } else {
-                self.scanner.get_token_value_ref().to_string()
-            };
+            let (atom, text, original_text) = self.read_cooked_identifier_text();
+            // Identifier-name positions (declaration names) additionally reject
+            // astral-plane characters when targeting pre-ES2015, which cannot
+            // represent them in an identifier.
             if !self.language_version.supports_es2015()
                 && let Some((offset, ch)) =
                     text.char_indices().find(|(_, ch)| (*ch as u32) > 0xFFFF)
@@ -890,25 +874,6 @@ impl ParserState {
                     diagnostic_codes::INVALID_CHARACTER,
                 );
             }
-            // Preserve unicode escape sequences for emission parity with tsc
-            let original_text = if has_unicode_escape {
-                let src = self.scanner.source_text();
-                let start = self.scanner.get_token_start();
-                let end = self.scanner.get_token_end();
-                if start < end && end <= src.len() {
-                    let slice = &src[start..end];
-                    if slice != text {
-                        Some(slice.to_string())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            self.next_token();
             (atom, text, original_text)
         } else {
             self.error_identifier_expected();
@@ -923,7 +888,6 @@ impl ParserState {
                 atom,
                 escaped_text: text,
                 original_text,
-                type_arguments: None,
             },
         )
     }
@@ -946,7 +910,6 @@ impl ParserState {
                 atom,
                 escaped_text: text,
                 original_text: None,
-                type_arguments: None,
             },
         )
     }

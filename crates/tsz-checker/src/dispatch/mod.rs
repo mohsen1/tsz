@@ -893,6 +893,28 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         | query_utils::ArrayLikeKind::Tuple
                                         | query_utils::ArrayLikeKind::Readonly(_)
                                 );
+                                let generic_indexed_assertion_source =
+                                    generic_query::contains_free_type_parameters(
+                                        self.checker.ctx.types,
+                                        expr_type,
+                                    ) && (crate::query_boundaries::common::is_index_access_type(
+                                        self.checker.ctx.types,
+                                        expr_type,
+                                    ) || query::union_members(
+                                        self.checker.ctx.types,
+                                        expr_type,
+                                    )
+                                    .is_some_and(|members| {
+                                        members.iter().any(|&member| {
+                                            crate::query_boundaries::common::is_index_access_type(
+                                                self.checker.ctx.types,
+                                                member,
+                                            ) && generic_query::contains_free_type_parameters(
+                                                self.checker.ctx.types,
+                                                member,
+                                            )
+                                        })
+                                    }));
                                 let source_to_target = if structured_generic_assertion_target {
                                     if array_like_generic_assertion_target {
                                         self.checker.is_assignable_for_type_assertion_overlap(
@@ -924,7 +946,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     )
                                 };
 
-                                if !source_to_target && !target_to_source {
+                                if !source_to_target
+                                    && !target_to_source
+                                    && !generic_indexed_assertion_source
+                                {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it
                                     // suffices if X overlaps with ANY member (A or B).

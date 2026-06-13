@@ -39,7 +39,7 @@ use crate::types::{
 use crate::visitor::lazy_def_id;
 use crate::visitors::visitor::TypeVisitor;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -669,6 +669,24 @@ struct VarianceVisitor<'a, 'b> {
     /// (e.g. `{ container: C1<T> }` should remain bivariant when `C1` is
     /// bivariant).
     inside_unreliable_application: u32,
+    /// Completed type/context pairs within this target-param walk.
+    ///
+    /// The recursion guard only catches active cycles. Drizzle-like declaration
+    /// graphs also contain wide diamonds where the same resolved subtree appears
+    /// many times after its first visit has completed. Re-entering those
+    /// completed subtrees is redundant because variance accumulation is
+    /// monotonic/idempotent for a fixed visitor context.
+    completed: FxHashSet<VarianceVisitKey>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct VarianceVisitKey {
+    type_id: TypeId,
+    polarity: bool,
+    method_bivariant: bool,
+    suppress_method_bivariance: bool,
+    inside_mapped: bool,
+    inside_unreliable_application: bool,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -689,6 +707,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             suppress_method_bivariance: false,
             strict_occurrence_seen: false,
             inside_unreliable_application: 0,
+            completed: FxHashSet::default(),
         }
     }
 
@@ -735,6 +754,11 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             return;
         }
 
+        let completed_key = self.completed_key(type_id, polarity);
+        if completed_key.is_some_and(|key| self.completed.contains(&key)) {
+            return;
+        }
+
         // Unified enter: cycle detection + depth/iteration limits
         let key = (type_id, polarity);
         match self.guard.enter(key) {
@@ -753,6 +777,26 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         self.polarity_stack.pop();
 
         self.guard.leave(key);
+
+        if !self.guard.is_exceeded()
+            && let Some(key) = completed_key
+        {
+            self.completed.insert(key);
+        }
+    }
+
+    fn completed_key(&self, type_id: TypeId, polarity: bool) -> Option<VarianceVisitKey> {
+        if !self.bound_type_params.is_empty() {
+            return None;
+        }
+        Some(VarianceVisitKey {
+            type_id,
+            polarity,
+            method_bivariant: self.method_bivariant_depth > 0,
+            suppress_method_bivariance: self.suppress_method_bivariance,
+            inside_mapped: self.inside_mapped_depth > 0,
+            inside_unreliable_application: self.inside_unreliable_application > 0,
+        })
     }
 
     /// Get the current polarity from the stack.

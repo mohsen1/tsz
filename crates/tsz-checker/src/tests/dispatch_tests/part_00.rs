@@ -238,6 +238,35 @@ function f<T>() {
 }
 
 #[test]
+fn ts2352_generic_indexed_source_suppresses_but_generic_array_source_reports() {
+    let diags = check_source_diagnostics(
+        r#"
+function indexed<Row extends { a: string }>(row: Row, key: keyof Row) {
+    row[key] as number;
+    row[key] as { z: boolean };
+}
+function arraySource<Row>(items: Row[]) {
+    items as number;
+}
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let matching = diagnostic_refs_with_code(&relevant, 2352);
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected TS2352 only for the generic array source, got: {relevant:?}"
+    );
+    assert!(
+        matching[0]
+            .message_text
+            .contains("Conversion of type 'Row[]' to type 'number'"),
+        "Expected TS2352 to stay on `Row[] as number`, got: {:?}",
+        matching[0]
+    );
+}
+
+#[test]
 fn ts2352_in_overloaded_callback_body_survives_catch_all_resolution() {
     let diags = check_source_diagnostics(
         r#"

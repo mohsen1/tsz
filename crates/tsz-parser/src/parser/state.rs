@@ -810,7 +810,6 @@ impl ParserState {
                 atom: AstAtom::NONE,
                 escaped_text: recovered,
                 original_text: None,
-                type_arguments: None,
             },
         )
     }

@@ -1103,12 +1103,12 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         if self.get_identifier_text(type_idx).as_deref() == Some("Array")
-            && let Some(identifier) = self.arena.get_identifier(type_node)
+            && self.arena.get_identifier(type_node).is_some()
         {
-            return identifier
-                .type_arguments
-                .as_ref()
-                .is_none_or(|args| args.nodes.is_empty());
+            // A bare `Array` identifier reference carries no type arguments of
+            // its own (those live on the surrounding type-reference node), so
+            // an identifier-only `Array` is always argument-free here.
+            return true;
         }
 
         let Some(expr) = self.arena.get_expr_type_args(type_node) else {

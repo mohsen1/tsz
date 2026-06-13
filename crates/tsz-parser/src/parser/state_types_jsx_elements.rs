@@ -783,7 +783,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }
@@ -892,7 +891,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 )
             } else {

@@ -102,7 +102,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else if self.is_strict_mode_future_reserved_word() {

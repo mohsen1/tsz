@@ -3,7 +3,7 @@
 use super::super::TypeFormatter;
 
 impl<'a> TypeFormatter<'a> {
-    fn collapse_truncated_tail_part(part: &str) -> String {
+    pub(super) fn collapse_truncated_tail_part(part: &str) -> String {
         let Some((prefix, ty)) = part.split_once(": ") else {
             return part.to_string();
         };
