@@ -140,9 +140,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 .is_none_or(|idx| self.string_index_signature_accepts_property(idx, prop_atom))
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(
-                    self.bind_object_receiver_this(obj_type, value_type),
-                ),
+                self.add_undefined_if_unchecked(value_type),
             ));
         }
 
@@ -228,8 +226,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             && let Some(ref idx) = shape.string_index
             && self.string_index_signature_accepts_property(idx, prop_atom)
         {
-            let bound = self.bind_object_receiver_this(obj_type, idx.value_type);
-            return Some(self.index_signature_result_with_nuia_write_type(bound));
+            return Some(self.index_signature_result_with_nuia_write_type(idx.value_type));
         }
 
         Some(PropertyAccessResult::PropertyNotFound {

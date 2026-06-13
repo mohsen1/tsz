@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
-use tsz_solver::{FunctionShape, TupleElement, TypeId};
+use tsz_solver::{FunctionShape, ObjectShape, TupleElement, TypeId};
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
@@ -130,6 +132,38 @@ pub(crate) fn contains_index_access_with_variadic_tuple_object(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::contains_index_access_with_variadic_tuple_object(db, type_id)
+}
+
+pub(crate) fn contains_generic_indexed_access_surface_for_call(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    super::super::common::contains_generic_indexed_access_surface(db, type_id)
+}
+
+pub(crate) fn object_shape_for_call(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Arc<ObjectShape>> {
+    super::super::common::object_shape_for_type(db, type_id)
+}
+
+pub(crate) const fn property_access_is_present_for_call(
+    result: &super::super::common::PropertyAccessResult,
+) -> bool {
+    matches!(
+        result,
+        super::super::common::PropertyAccessResult::Success { .. }
+            | super::super::common::PropertyAccessResult::PossiblyNullOrUndefined { .. }
+    )
+}
+
+pub(crate) fn has_property_by_str_for_call(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: &str,
+) -> bool {
+    super::super::common::has_property_by_str(db, type_id, name)
 }
 
 pub(crate) fn stable_call_recovery_return_type(
