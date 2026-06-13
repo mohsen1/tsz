@@ -1842,6 +1842,34 @@ fn densify_bind_symbols(
     lib_symbol_ids: &FxHashSet<SymbolId>,
     retained_lib_symbols: &FxHashSet<SymbolId>,
 ) -> FxHashMap<SymbolId, SymbolId> {
+    if binder.symbols.shared_prefix_len() == lib_symbol_ids.len()
+        && retained_lib_symbols.is_empty()
+    {
+        let private_count = binder.symbols.iter_private_symbols().count();
+        let mut compacted_symbols = SymbolArena::with_capacity(private_count);
+        let mut id_remap =
+            FxHashMap::with_capacity_and_hasher(private_count, Default::default());
+
+        for sym in binder.symbols.iter_private_symbols() {
+            let old_id = sym.id;
+            let new_id = compacted_symbols.alloc_from(sym);
+            id_remap.insert(old_id, new_id);
+        }
+
+        for sym in compacted_symbols.iter_mut() {
+            sym.parent = id_remap.get(&sym.parent).copied().unwrap_or(SymbolId::NONE);
+            if let Some(exports) = sym.exports.as_ref() {
+                sym.exports = remap_symbol_table_option(exports, &id_remap).map(Box::new);
+            }
+            if let Some(members) = sym.members.as_ref() {
+                sym.members = remap_symbol_table_option(members, &id_remap).map(Box::new);
+            }
+        }
+
+        binder.symbols = compacted_symbols;
+        return id_remap;
+    }
+
     let retained_count = binder
         .symbols
         .iter()
