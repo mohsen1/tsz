@@ -417,6 +417,7 @@ fn test_this_type_with_this_constraint() {
         constraint: Some(interner.lazy(DefId(1))),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let constrained_method = interner.function(FunctionShape {
@@ -425,6 +426,7 @@ fn test_this_type_with_this_constraint() {
             constraint: Some(interner.lazy(DefId(1))),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![],
         this_type: Some(t_param),
@@ -519,6 +521,7 @@ fn test_this_type_with_generic_method() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("value")),
@@ -711,6 +714,7 @@ fn test_this_type_map_method() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("fn")),

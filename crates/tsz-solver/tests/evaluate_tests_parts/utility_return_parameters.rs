@@ -809,6 +809,7 @@ fn test_return_type_conditional_return() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1214,6 +1215,7 @@ fn test_return_type_generic_with_constraint() {
         constraint: Some(func_type),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T has constraint to function type
@@ -1237,6 +1239,7 @@ fn test_parameters_variadic_tuple_type() {
         constraint: Some(t_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Variadic tuple: [...T, string]
@@ -1388,6 +1391,7 @@ fn test_return_type_mapped_type_method() {
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_param = interner.intern(TypeData::TypeParameter(k_param_info));
 
@@ -1577,6 +1581,7 @@ fn test_constructor_parameters_with_generics() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
                 name: Some(interner.intern_string("value")),

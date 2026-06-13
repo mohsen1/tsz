@@ -905,6 +905,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: (data.default != NodeIndex::NONE).then_some(TypeId::UNKNOWN),
                 is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
+                origin: tsz_solver::TypeParamOrigin::User,
             });
         }
         Some(params)

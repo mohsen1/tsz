@@ -1255,6 +1255,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         constraint: None,
                         default: None,
                         is_const: false,
+                        origin: tsz_solver::TypeParamOrigin::User,
                     };
                     bindings.push((atom, factory.type_param(placeholder)));
                 }
@@ -1291,6 +1292,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         constraint,
                         default,
                         is_const,
+                        origin: tsz_solver::TypeParamOrigin::User,
                     };
                     bindings[binding_idx] = (atom, factory.type_param(info));
                     params.push(info);

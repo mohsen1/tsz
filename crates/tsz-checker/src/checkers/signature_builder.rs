@@ -151,6 +151,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default,
                 is_const,
+                origin: tsz_solver::types::TypeParamOrigin::User,
             };
             let type_id = factory.type_param(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
@@ -497,6 +498,7 @@ impl<'a> CheckerState<'a> {
                 default: tp
                     .default
                     .map(|d| instantiate_type(self.ctx.types, d, &substitution)),
+                origin: tp.origin,
             })
             .collect();
 

@@ -1559,12 +1559,14 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let k_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let constraint = interner.keyof(t_param);
         let template = interner.index_access(t_param, k_param);
@@ -1574,6 +1576,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint,
             name_type: None,
@@ -1614,12 +1617,14 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let k_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let mapped = MappedType {
             type_param: TypeParamInfo {
@@ -1627,6 +1632,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: interner.keyof(t_param),
             name_type: None,
@@ -1670,12 +1676,14 @@ mod tests {
             constraint: Some(array_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let k_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let mapped = MappedType {
             type_param: TypeParamInfo {
@@ -1683,6 +1691,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: interner.keyof(t_param),
             name_type: None,
@@ -1715,6 +1724,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let mapped = MappedType {
             type_param: TypeParamInfo {
@@ -1722,6 +1732,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: interner.keyof(t_param),
             name_type: None,
@@ -1756,18 +1767,21 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let t_param = interner.type_param(TypeParamInfo {
             name: t_name,
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let key_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
 
         let state = interner.object(vec![crate::types::PropertyInfo::opt(a_name, t_param)]);
@@ -1778,6 +1792,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: interner.literal_string("a"),
             name_type: None,

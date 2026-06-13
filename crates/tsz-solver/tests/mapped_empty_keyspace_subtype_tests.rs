@@ -26,6 +26,7 @@ fn homomorphic_mapped(interner: &TypeInterner, source: TypeId, iter_name: &str) 
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param = interner.intern(TypeData::TypeParameter(iter_param));
     let constraint = interner.keyof(source);

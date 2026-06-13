@@ -78,6 +78,7 @@ fn test_mapped_application_constraint_excludes_literal_filter_key() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_type = interner.intern(TypeData::TypeParameter(key_param));
     let mapped = interner.mapped(MappedType {
@@ -114,6 +115,7 @@ fn test_mapped_application_constraint_does_not_exclude_unrelated_key() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_type = interner.intern(TypeData::TypeParameter(key_param));
     let mapped = interner.mapped(MappedType {
@@ -154,6 +156,7 @@ fn test_mapped_application_single_literal_arg_stays_permissive() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_type = interner.intern(TypeData::TypeParameter(key_param));
     let mapped = interner.mapped(MappedType {
@@ -204,6 +207,7 @@ fn test_validate_slice_case_reducers_keeps_plain_reducer_property_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
     let check_type = interner.index_access(acr, key_param);
@@ -522,6 +526,7 @@ fn test_intersection_ignores_deferred_any_fallback_when_other_member_has_propert
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
     let keyof_t = interner.keyof(t_param);
@@ -551,6 +556,7 @@ fn test_union_with_deferred_member_and_concrete_member_property_found() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
     let keyof_t = interner.keyof(t_param);
@@ -576,6 +582,7 @@ fn test_unconstrained_type_parameter_has_no_properties() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
 
@@ -596,6 +603,7 @@ fn test_constrained_object_like_type_parameter_keeps_object_members() {
         constraint: Some(TypeId::OBJECT),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
 
@@ -1687,6 +1695,7 @@ fn make_array_and_readonly_array_env(interner: &TypeInterner) {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 

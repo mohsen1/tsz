@@ -59,6 +59,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create keyof T
@@ -75,6 +76,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         })),
     ));
 
@@ -85,6 +87,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_t,
         name_type: None,
@@ -100,6 +103,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_t,
         name_type: None,
@@ -438,6 +442,7 @@ fn test_readonly_spread_tuple_to_type_param_is_ts2322() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let spread_tuple = interner.tuple(vec![TupleElement {
@@ -480,6 +485,7 @@ fn test_readonly_to_type_param_with_array_constraint_still_ts4104() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let readonly_source = interner.readonly_array(TypeId::UNKNOWN);
@@ -509,6 +515,7 @@ fn test_readonly_to_unconstrained_type_param_no_ts4104() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let readonly_source = interner.readonly_array(TypeId::NUMBER);
@@ -540,6 +547,7 @@ fn test_readonly_spread_tuple_to_mutable_spread_tuple_is_ts4104() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let spread_tuple = interner.tuple(vec![TupleElement {
@@ -660,6 +668,7 @@ fn test_explain_normalized_mapped_application_missing_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.intern(crate::TypeData::TypeParameter(t_param_info));
 
@@ -690,6 +699,7 @@ fn test_explain_normalized_mapped_application_missing_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param = interner.intern(crate::TypeData::TypeParameter(key_param_info));
     let gen_t = interner.application(interner.lazy(gen_def), vec![t_param]);
@@ -775,6 +785,7 @@ fn test_null_assignable_to_unconstrained_type_param_without_strict() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // With strictNullChecks (default for CompatChecker::new): null/undefined
@@ -821,6 +832,7 @@ fn test_generic_callable_return_type_mismatch_compat_layer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let s_type = interner.type_param(s_param);
     let s_array = interner.array(s_type);
@@ -843,6 +855,7 @@ fn test_generic_callable_return_type_mismatch_compat_layer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let target = interner.callable(CallableShape {

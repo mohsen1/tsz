@@ -586,6 +586,7 @@ impl<'a> CheckerState<'a> {
                                     constraint: Some(keyof_t_id),
                                     default: None,
                                     is_const: false,
+                                    origin: tsz_solver::TypeParamOrigin::User,
                                 };
                                 let k_id = factory.type_param(k_param);
                                 let t_k_id = factory.index_access(t_id, k_id);
@@ -838,6 +839,7 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     default: None,
                     is_const: false,
+                    origin: tsz_solver::TypeParamOrigin::User,
                 };
                 let ty = factory.type_param(info);
                 jsdoc_type_params.push(info);

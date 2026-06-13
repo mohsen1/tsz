@@ -49,6 +49,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let arr = db.array(infer);
         assert_eq!(fmt.format(arr), "(infer E)[]");
@@ -65,6 +66,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             });
             let arr = db.array(infer);
             assert_eq!(fmt.format(arr), format!("(infer {name})[]"));
@@ -81,6 +83,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let arr = db.array(infer);
         assert_eq!(fmt.format(arr), "(infer E extends string)[]");
@@ -116,6 +119,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let keyof = db.keyof(tp);
         let arr = db.array(keyof);
@@ -140,6 +144,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
 
         let readonly_array_base = db.unresolved_type_name(db.intern_string("ReadonlyArray"));
@@ -170,6 +175,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         assert_eq!(fmt.format(infer), "infer E extends string");
     }

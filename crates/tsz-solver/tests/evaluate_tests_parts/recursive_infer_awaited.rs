@@ -573,6 +573,7 @@ fn test_recursive_type_linked_list() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -938,6 +939,7 @@ fn test_mutually_recursive_types_request_response() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1459,6 +1461,7 @@ fn test_infer_with_default_type_used() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: { prop: infer P = string }
@@ -1497,6 +1500,7 @@ fn test_infer_with_default_type_fallback() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: { a: infer P = string }
@@ -1537,6 +1541,7 @@ fn test_infer_with_default_and_constraint() {
         constraint: Some(TypeId::OBJECT),
         default: Some(empty_object),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: { prop: infer P extends object = {} }

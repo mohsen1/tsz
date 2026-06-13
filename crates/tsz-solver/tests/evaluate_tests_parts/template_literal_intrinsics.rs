@@ -51,6 +51,7 @@ fn test_multiple_infers_both_constrained() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -59,6 +60,7 @@ fn test_multiple_infers_both_constrained() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: (a: infer A extends string, b: infer B extends number) => any
@@ -152,6 +154,7 @@ fn test_multiple_infers_constraint_violation() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -160,6 +163,7 @@ fn test_multiple_infers_constraint_violation() {
         constraint: Some(TypeId::STRING), // Constraint: string
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: (a: infer A extends string, b: infer B extends string) => any
@@ -251,6 +255,7 @@ fn test_multiple_infers_same_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let infer_y_name = interner.intern_string("Y");
@@ -259,6 +264,7 @@ fn test_multiple_infers_same_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: { a: infer X extends string, b: infer Y extends string }
@@ -314,6 +320,7 @@ fn test_multiple_infers_different_constraints() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let infer_n_name = interner.intern_string("N");
@@ -322,6 +329,7 @@ fn test_multiple_infers_different_constraints() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -330,6 +338,7 @@ fn test_multiple_infers_different_constraints() {
         constraint: Some(TypeId::BOOLEAN),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern
@@ -1553,6 +1562,7 @@ fn test_mapped_type_uppercase_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -1612,6 +1622,7 @@ fn test_mapped_type_template_literal_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 

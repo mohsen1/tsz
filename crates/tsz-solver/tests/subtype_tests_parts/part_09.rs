@@ -1285,6 +1285,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let inner_u = TypeParamInfo {
@@ -1292,6 +1293,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let outer_t_ty = interner.type_param(outer_t);
@@ -1412,18 +1414,21 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let result1 = TypeParamInfo {
         name: interner.intern_string("TResult1"),
         constraint: None,
         default: Some(interner.type_param(outer_t)),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let result2 = TypeParamInfo {
         name: interner.intern_string("TResult2"),
         constraint: None,
         default: Some(TypeId::NEVER),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let outer_t_ty = interner.type_param(outer_t);

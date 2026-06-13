@@ -40,6 +40,7 @@ fn build_instantiated_homomorphic_mapped(
             constraint: Some(original_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(concrete_source),
         name_type: None,
@@ -110,6 +111,7 @@ fn direct_mapped_over_string_does_not_short_circuit() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -251,6 +253,7 @@ fn build_identity_homomorphic_mapped(
         constraint: Some(original_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let template = interner.index_access(concrete_source, iter_param);
     MappedType {
@@ -259,6 +262,7 @@ fn build_identity_homomorphic_mapped(
             constraint: Some(original_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(concrete_source),
         name_type: None,
@@ -529,6 +533,7 @@ fn non_identity_homomorphic_mapped_over_trailing_rest_tuple_applies_per_element(
         constraint: Some(original_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let source_elements = vec![
@@ -558,6 +563,7 @@ fn non_identity_homomorphic_mapped_over_trailing_rest_tuple_applies_per_element(
             constraint: Some(original_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(source),
         name_type: None,
@@ -605,6 +611,7 @@ fn non_identity_homomorphic_mapped_over_opaque_variadic_rest_keeps_positional_ac
         constraint: Some(interner.array(TypeId::UNKNOWN)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let original_constraint = interner.keyof(t_param);
     let iter_param = interner.type_param(TypeParamInfo {
@@ -612,6 +619,7 @@ fn non_identity_homomorphic_mapped_over_opaque_variadic_rest_keeps_positional_ac
         constraint: Some(original_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let source = interner.tuple(vec![
@@ -642,6 +650,7 @@ fn non_identity_homomorphic_mapped_over_opaque_variadic_rest_keeps_positional_ac
             constraint: Some(original_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(source),
         name_type: None,
@@ -755,6 +764,7 @@ fn identity_as_clause_mapped_over_object_preserves_optional_and_readonly_modifie
             constraint: Some(original_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let template = interner.index_access(source, iter_param);
         // name_type is the iteration variable itself — identity `as K` remap.
@@ -766,6 +776,7 @@ fn identity_as_clause_mapped_over_object_preserves_optional_and_readonly_modifie
                 constraint: Some(original_constraint),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: interner.keyof(source),
             name_type: Some(name_type_param),
@@ -864,6 +875,7 @@ fn identity_as_clause_with_renamed_iter_var_is_name_agnostic() {
             constraint: Some(original_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let template = interner.index_access(source, iter_param);
         let name_type_param = interner.type_param(TypeParamInfo::simple(iter_atom));
@@ -874,6 +886,7 @@ fn identity_as_clause_with_renamed_iter_var_is_name_agnostic() {
                 constraint: Some(original_constraint),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: interner.keyof(source),
             name_type: Some(name_type_param),

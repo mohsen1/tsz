@@ -361,6 +361,7 @@ fn build_homomorphic_mapped(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let iter_type = interner.intern(TypeData::TypeParameter(iter_info));
     let template = template_builder(interner, iter_type);
@@ -406,6 +407,7 @@ fn make_iter_param(interner: &TypeInterner, name: &str) -> (TypeId, TypeParamInf
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     (interner.intern(TypeData::TypeParameter(info)), info)
 }

@@ -6,6 +6,7 @@ fn make_identity_shape(interner: &TypeInterner, param_name: &str, arg_name: &str
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     FunctionShape {
@@ -311,6 +312,7 @@ fn test_generic_call_resets_constraint_step_budget() {
         name: tp_name,
         constraint: None,
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = interner.type_param(tp);
     let identity = interner.function(FunctionShape {
@@ -369,6 +371,7 @@ fn test_generic_call_widening_falls_back_when_constraint_violated() {
         name: tp_name,
         constraint: Some(constraint),
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = interner.type_param(tp);
     let func = interner.function(FunctionShape {
@@ -439,6 +442,7 @@ fn test_generic_call_widening_applies_when_constraint_satisfied() {
         name: tp_name,
         constraint: Some(constraint),
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = interner.type_param(tp);
     let func = interner.function(FunctionShape {
@@ -505,6 +509,7 @@ fn test_generic_call_widens_fresh_object_union_inferred_type() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let func = interner.function(FunctionShape {
@@ -676,12 +681,14 @@ fn test_generic_call_uninferred_callback_param_mismatch_uses_unknown() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_param = TypeParamInfo {
         is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let u_type = interner.type_param(u_param);
@@ -991,6 +998,7 @@ fn test_binary_equality_generic_constraint_disjoint_still_boolean() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
@@ -1007,6 +1015,7 @@ fn test_binary_overlap_generic_constraint_overlap() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::STRING, "===");
@@ -1026,6 +1035,7 @@ fn test_binary_overlap_unconstrained_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
@@ -1047,6 +1057,7 @@ fn test_binary_equality_union_constraint_disjoint_still_boolean() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::BOOLEAN, "===");
@@ -1064,6 +1075,7 @@ fn test_binary_overlap_union_constraint_overlap() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");

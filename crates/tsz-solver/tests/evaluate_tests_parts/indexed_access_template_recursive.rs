@@ -1029,6 +1029,7 @@ fn test_recursive_template_literal_application_with_string_intrinsics() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let s_param = interner.intern(TypeData::TypeParameter(s_param_info));
 
@@ -1301,6 +1302,7 @@ fn test_template_literal_constrained_infer() {
         constraint: Some(TypeId::STRING), // Constrained to string
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: `prefix${infer R extends string}`

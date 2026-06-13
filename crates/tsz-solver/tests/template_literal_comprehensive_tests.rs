@@ -197,6 +197,7 @@ fn test_template_literal_with_type_param() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 

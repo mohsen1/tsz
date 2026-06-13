@@ -78,10 +78,11 @@ impl<'a> TypeInstantiator<'a> {
     pub fn new(interner: &'a dyn TypeDatabase, substitution: &'a TypeSubstitution) -> Self {
         let substitution_is_inference_only = !substitution.map.is_empty()
             && substitution.map.keys().all(|key| {
-                interner
-                    .resolve_atom_ref(*key)
-                    .as_ref()
-                    .starts_with("__infer_")
+                // Substitution keys are bare atoms (no `TypeParamInfo` reachable),
+                // so this classifies the inference-placeholder key by name.
+                crate::operations::generic_call::atom_names_inference_placeholder(
+                    interner.resolve_atom_ref(*key).as_ref(),
+                )
             });
         TypeInstantiator {
             interner,
@@ -178,10 +179,11 @@ impl<'a> TypeInstantiator<'a> {
         if !self.substitution_is_inference_only {
             return true;
         }
-        self.interner
-            .resolve_atom_ref(name)
-            .as_ref()
-            .starts_with("__infer_")
+        // `name` is the bare type-parameter atom being walked; classify by name
+        // since no `TypeParamInfo` is in hand here.
+        crate::operations::generic_call::atom_names_inference_placeholder(
+            self.interner.resolve_atom_ref(name).as_ref(),
+        )
     }
 
     /// Extract the element type from an array-like type (Array, ReadonlyType(Array),
@@ -315,6 +317,7 @@ impl<'a> TypeInstantiator<'a> {
                 name: type_param.name,
                 constraint,
                 default,
+                origin: type_param.origin,
             };
             if let Some(instantiated) = &mut instantiated {
                 instantiated.push(new_type_param);

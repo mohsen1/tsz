@@ -1269,6 +1269,8 @@ impl<'a> CheckerContext<'a> {
     /// ```text
     /// // For type List<T> = { value: T; next: List<T> | null }
     /// let def_id = ctx.get_or_create_def_id(list_sym_id);
+    /// let params = vec![TypeParamInfo { name: "T", ...,
+    /// let params = vec![TypeParamInfo { name: "T", ... origin: tsz_solver::TypeParamOrigin::User,
     /// let params = vec![TypeParamInfo { name: "T", ... }];
     /// ctx.insert_def_type_params(def_id, params);
     /// ```

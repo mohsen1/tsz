@@ -973,6 +973,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         });
         let value = db.intersection(vec![param, TypeId::NUMBER]);
 

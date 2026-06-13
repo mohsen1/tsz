@@ -71,6 +71,7 @@ fn test_type_param_not_widened() {
         ),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(info));
 
@@ -778,6 +779,7 @@ fn test_get_base_type_for_comparison_type_param_with_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp = interner.intern(TypeData::TypeParameter(info));
     // T extends "a" | "b" → comparison base is string (collapse via union)
@@ -792,6 +794,7 @@ fn test_get_base_type_for_comparison_type_param_no_constraint_unchanged() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp = interner.intern(TypeData::TypeParameter(info));
     assert_eq!(get_base_type_for_comparison(&interner, tp), tp);

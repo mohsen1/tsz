@@ -1120,6 +1120,7 @@ impl<'a> CheckerState<'a> {
                                 constraint: Some(this_arg_type),
                                 default: None,
                                 is_const: false,
+                                origin: tsz_solver::TypeParamOrigin::User,
                             };
                             let generic_this_type = factory.type_param(generic_this_param);
                             let generic_bind_sig = tsz_solver::CallSignature {

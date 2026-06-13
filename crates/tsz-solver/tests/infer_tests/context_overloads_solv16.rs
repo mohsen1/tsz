@@ -694,6 +694,7 @@ fn test_conditional_type_inference_basic() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let object_t = interner.object(vec![PropertyInfo::new(
@@ -732,6 +733,7 @@ fn test_variance_computation_covariant() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let box_type = interner.object(vec![PropertyInfo {
@@ -771,6 +773,7 @@ fn test_variance_computation_contravariant() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let func = interner.function(FunctionShape {
@@ -809,6 +812,7 @@ fn test_variance_computation_invariant() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let get_func = interner.function(FunctionShape {
@@ -861,6 +865,7 @@ fn test_variance_string() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let array_type = interner.array(t_type);
@@ -904,12 +909,14 @@ fn test_strengthen_constraints() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let _u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Add constraints: T has lower bound string, U extends T

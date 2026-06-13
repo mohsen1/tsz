@@ -117,18 +117,21 @@ fn test_base_constraint_assignability_compat() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let v_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     assert!(checker.is_assignable(t_param, TypeId::STRING));

@@ -43,6 +43,7 @@ fn generic_alias_application(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let db_type = interner.intern(TypeData::TypeParameter(db_param));
     let tb_param = TypeParamInfo {
@@ -50,6 +51,7 @@ fn generic_alias_application(
         constraint: Some(interner.keyof(db_type)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tb_type = interner.intern(TypeData::TypeParameter(tb_param));
 
@@ -100,6 +102,7 @@ fn renamed_binders_member_survives_union_evaluation() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let schema_type = interner.intern(TypeData::TypeParameter(schema_param));
     let table_param = TypeParamInfo {
@@ -107,6 +110,7 @@ fn renamed_binders_member_survives_union_evaluation() {
         constraint: Some(interner.keyof(schema_type)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let table_type = interner.intern(TypeData::TypeParameter(table_param));
 
@@ -146,6 +150,7 @@ fn concrete_application_member_still_simplifiable() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     // type Boxed<T> = { value: T }

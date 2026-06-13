@@ -1510,6 +1510,73 @@ impl ParamInfo {
     }
 }
 
+/// Origin/kind discriminant for a [`TypeParamInfo`].
+///
+/// Inference machinery synthesizes type parameters as placeholders during
+/// generic-call inference. Historically the placeholder *kind* was encoded into
+/// the `name` atom text (`__infer_{id}`, `__infer_src_{id}#{origin}`) and
+/// recovered by string scans (`starts_with("__infer_")`,
+/// `decode_src_placeholder_origin`). That put atom resolution and string parsing
+/// on memoized walk hot paths and risked colliding with a user type parameter
+/// literally named `__infer_0` (legal TS). This field makes the classification
+/// an O(1) structured read; the `name` atom is display-only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum TypeParamOrigin {
+    /// A type parameter written in user source (or any non-inference synthetic).
+    #[default]
+    User,
+    /// A call-local inference placeholder minted for a generic call's own type
+    /// parameter (`__infer_{id}` historically). `id` keeps it program-unique.
+    InferPlaceholder { id: u64 },
+    /// A higher-order *source* inference placeholder minted for a generic
+    /// function argument's type parameter (`__infer_src_{id}#{origin}`
+    /// historically, or the legacy index-named `__infer_src_ctx_{index}` form,
+    /// which carries no origin name).
+    ///
+    /// `origin_name` records the source type parameter's original name so that
+    /// re-generalized return types display with their source names; `None` for
+    /// the legacy `__infer_src_ctx_*` form.
+    InferSource { id: u64, origin_name: Option<Atom> },
+}
+
+impl TypeParamOrigin {
+    /// Any inference placeholder (call-local or higher-order source).
+    ///
+    /// Replaces the historical `starts_with("__infer_")` scan.
+    #[inline]
+    pub const fn is_infer_placeholder(self) -> bool {
+        !matches!(self, TypeParamOrigin::User)
+    }
+
+    /// Higher-order *source* inference placeholder only.
+    ///
+    /// Replaces the historical `starts_with("__infer_src_")` scan.
+    #[inline]
+    pub const fn is_infer_source(self) -> bool {
+        matches!(self, TypeParamOrigin::InferSource { .. })
+    }
+
+    /// Call-local inference placeholder only (excludes higher-order source).
+    ///
+    /// Replaces the historical
+    /// `starts_with("__infer_") && !starts_with("__infer_src_")` scan.
+    #[inline]
+    pub const fn is_current_infer_placeholder(self) -> bool {
+        matches!(self, TypeParamOrigin::InferPlaceholder { .. })
+    }
+
+    /// Origin type-parameter name for a higher-order source placeholder, if any.
+    ///
+    /// Replaces `decode_src_placeholder_origin`.
+    #[inline]
+    pub const fn infer_source_origin_name(self) -> Option<Atom> {
+        match self {
+            TypeParamOrigin::InferSource { origin_name, .. } => origin_name,
+            _ => None,
+        }
+    }
+}
+
 /// Type parameter information
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeParamInfo {
@@ -1519,17 +1586,40 @@ pub struct TypeParamInfo {
     /// Whether this is a const type parameter (TS 5.0+)
     /// Const type parameters preserve literal types and infer readonly modifiers
     pub is_const: bool,
+    /// Origin/kind discriminant. `User` for source-written and ordinary
+    /// synthetic type parameters; the inference variants mark placeholders so
+    /// classification is a field read, not a name-string scan.
+    pub origin: TypeParamOrigin,
 }
 
 impl TypeParamInfo {
-    /// Unconstrained, non-const type parameter with no default.
+    /// Unconstrained, non-const, user-origin type parameter with no default.
     pub const fn simple(name: Atom) -> Self {
         Self {
             name,
             constraint: None,
             default: None,
             is_const: false,
+            origin: TypeParamOrigin::User,
         }
+    }
+
+    /// Whether this type parameter is any inference placeholder.
+    #[inline]
+    pub const fn is_infer_placeholder(&self) -> bool {
+        self.origin.is_infer_placeholder()
+    }
+
+    /// Whether this type parameter is a higher-order source inference placeholder.
+    #[inline]
+    pub const fn is_infer_source(&self) -> bool {
+        self.origin.is_infer_source()
+    }
+
+    /// Whether this type parameter is a call-local inference placeholder.
+    #[inline]
+    pub const fn is_current_infer_placeholder(&self) -> bool {
+        self.origin.is_current_infer_placeholder()
     }
 }
 

@@ -136,6 +136,7 @@ fn test_explain_failure_mapped_type_target_missing_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_param = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(source_obj, k_param);
@@ -199,6 +200,7 @@ fn test_explain_failure_mapped_type_source_evaluated() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_param = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(concrete_obj, k_param);
@@ -1613,12 +1615,14 @@ fn test_this_type_with_generics_in_class() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let _u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     // filter method returning this (polymorphic return)
@@ -1738,6 +1742,7 @@ fn test_this_type_with_constrained_generic() {
         constraint: Some(base_ref),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let t_type_param = interner.intern(TypeData::TypeParameter(t_param));

@@ -11,6 +11,7 @@ fn type_param(interner: &TypeInterner, name: &str) -> TypeId {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     })
 }
 
@@ -20,6 +21,7 @@ fn infer_param(interner: &TypeInterner, name: &str) -> TypeId {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     })
 }
 

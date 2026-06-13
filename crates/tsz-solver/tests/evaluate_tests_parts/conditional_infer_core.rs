@@ -282,6 +282,7 @@ fn test_conditional_distributive_infer_extends_nested() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends infer R extends string ? (R extends "a" ? "yes" : "no") : "fallback"
@@ -331,6 +332,7 @@ fn test_conditional_infer_true_branch_substitution() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // "a" extends infer R extends string ? R : never
@@ -357,6 +359,7 @@ fn test_conditional_infer_false_branch_substitution() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // number extends infer R extends string ? string : R
@@ -652,6 +655,7 @@ fn test_conditional_infer_array_element_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends (infer R extends string)[] ? R : never, with T = number[] | string[].
@@ -695,6 +699,7 @@ fn test_conditional_infer_array_element_with_object_constraint() {
         constraint: Some(TypeId::OBJECT),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends (infer R extends object)[] ? R : never, with T = { name: string }[].
@@ -733,6 +738,7 @@ fn test_conditional_infer_array_element_rejects_non_array_application() {
         constraint: Some(TypeId::OBJECT),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let extends_array = interner.array(infer_r);
@@ -891,6 +897,7 @@ fn test_conditional_infer_object_property_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends { a: infer R extends string } ? R : never, with T = { a: string } | { a: number }.
@@ -1308,6 +1315,7 @@ fn eval_single_placeholder_infer(
         constraint,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // `${infer V}` — single bare placeholder, no surrounding literal text.

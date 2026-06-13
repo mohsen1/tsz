@@ -15,6 +15,7 @@ fn test_call_generic_intersection_param_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let own_props_type = interner.intern(TypeData::TypeParameter(own_props_param));
 
@@ -116,6 +117,7 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let identity = interner.function(FunctionShape {
@@ -661,18 +663,21 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let b_param = TypeParamInfo {
         name: interner.intern_string("B"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let c_param = TypeParamInfo {
         name: interner.intern_string("C"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let a_type = interner.type_param(a_param);
     let b_type = interner.type_param(b_param);
@@ -748,12 +753,14 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let y_param = TypeParamInfo {
         name: interner.intern_string("Y"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let x_type = interner.type_param(x_param);
     let y_type = interner.type_param(y_param);

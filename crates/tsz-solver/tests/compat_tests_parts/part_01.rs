@@ -1089,6 +1089,7 @@ fn test_mapped_type_over_number_keys_assignable() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1118,6 +1119,7 @@ fn test_mapped_type_over_string_keys_assignable() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1147,6 +1149,7 @@ fn test_mapped_type_over_boolean_keys_assignable() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1182,6 +1185,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -1222,6 +1226,7 @@ fn test_conditional_tuple_wrapper_no_distribution_assignable() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let tuple_check = interner.tuple(vec![TupleElement {

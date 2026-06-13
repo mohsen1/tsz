@@ -26,6 +26,7 @@ fn test_pick_basic() {
         constraint: Some(pick_keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -74,6 +75,7 @@ fn test_pick_single_key() {
         constraint: Some(lit_x),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -131,6 +133,7 @@ fn test_pick_preserves_optional() {
         constraint: Some(lit_a),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -193,6 +196,7 @@ fn test_omit_basic() {
         constraint: Some(remaining_keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -248,6 +252,7 @@ fn test_omit_union_keys() {
         constraint: Some(remaining_keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -295,6 +300,7 @@ fn test_omit_single_key() {
         constraint: Some(lit_x),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -344,6 +350,7 @@ fn test_pick_with_conditional_keys() {
         constraint: Some(extracted_keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -499,6 +506,7 @@ fn test_omit_all_keys() {
         constraint: Some(TypeId::NEVER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -540,6 +548,7 @@ fn test_pick_no_keys() {
         constraint: Some(TypeId::NEVER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -582,6 +591,7 @@ fn test_pick_with_readonly() {
         constraint: Some(lit_a),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -645,6 +655,7 @@ fn test_omit_preserves_readonly() {
         constraint: Some(lit_a),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -734,6 +745,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -1323,6 +1335,7 @@ fn test_deferred_constrained_type_param() {
         constraint: Some(TypeId::STRING), // T extends string
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let lit_true = interner.literal_string("true");
@@ -1424,6 +1437,7 @@ fn test_deferred_with_default_type_param() {
         constraint: None,
         default: Some(TypeId::STRING), // default to string
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let lit_true = interner.literal_string("true");

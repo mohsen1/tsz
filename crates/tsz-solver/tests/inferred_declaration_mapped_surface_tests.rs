@@ -15,6 +15,7 @@ fn inferred_declaration_mapped_constraint_surface_uses_primitive_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let mapped = interner.mapped(MappedType {
@@ -23,6 +24,7 @@ fn inferred_declaration_mapped_constraint_surface_uses_primitive_constraint() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(source_param),
         name_type: None,
@@ -53,6 +55,7 @@ fn inferred_declaration_mapped_constraint_surface_expands_object_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let mapped = interner.mapped(MappedType {
@@ -61,6 +64,7 @@ fn inferred_declaration_mapped_constraint_surface_expands_object_constraint() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(source_param),
         name_type: None,
@@ -105,6 +109,7 @@ fn inferred_declaration_mapped_constraint_surface_expands_concrete_object_source
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let mapped = interner.mapped(MappedType {
@@ -113,6 +118,7 @@ fn inferred_declaration_mapped_constraint_surface_expands_concrete_object_source
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(source),
         name_type: None,

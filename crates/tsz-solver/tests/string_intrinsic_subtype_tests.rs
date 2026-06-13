@@ -70,6 +70,7 @@ fn string_intrinsic_with_type_param_is_subtype_of_string() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Uppercase<T> should be assignable to string
@@ -96,12 +97,14 @@ fn string_intrinsic_covariant_same_kind() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(t_param),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let uppercase_t = interner.string_intrinsic(StringIntrinsicKind::Uppercase, t_param);
@@ -165,6 +168,7 @@ fn string_intrinsic_constraint_evaluation_literal_union() {
         constraint: Some(foo_or_bar),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create Uppercase<T>
@@ -197,6 +201,7 @@ fn string_not_subtype_of_string_intrinsic() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let uppercase_t = interner.string_intrinsic(StringIntrinsicKind::Uppercase, t_param);
 

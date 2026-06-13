@@ -134,6 +134,7 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             constraint: Some(mapped.constraint),
             default: mapped.type_param.default,
             is_const: mapped.type_param.is_const,
+            origin: mapped.type_param.origin,
         });
 
         let subst = TypeSubstitution::single(mapped.type_param.name, constrained_key);

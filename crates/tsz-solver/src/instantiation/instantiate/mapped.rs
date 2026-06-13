@@ -489,6 +489,7 @@ impl<'a> TypeInstantiator<'a> {
                 name: mapped.type_param.name,
                 constraint: new_param_constraint,
                 default: new_param_default,
+                origin: mapped.type_param.origin,
             },
             constraint: new_constraint,
             name_type: new_name_type,

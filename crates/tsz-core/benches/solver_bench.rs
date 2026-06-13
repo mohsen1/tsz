@@ -8,7 +8,7 @@ use tsz_solver::computation::{
 use tsz_solver::construction::TypeInterner;
 use tsz_solver::{
     ConditionalType, FunctionShape, ObjectShapeId, ParamInfo, PropertyInfo, TypeData, TypeId,
-    TypeParamInfo, Visibility,
+    TypeParamInfo, TypeParamOrigin, Visibility,
 };
 
 fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
@@ -155,12 +155,14 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
         constraint: None,
         default: None,
         is_const: false,
+        origin: TypeParamOrigin::User,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let u_type = interner.type_param(u_param);

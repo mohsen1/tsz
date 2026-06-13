@@ -262,6 +262,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const: tp.is_const,
+                origin: tp.origin,
             });
             substitution.insert(tp.name, fresh_type);
             renamed_type_params.push(TypeParamInfo {
@@ -273,6 +274,7 @@ impl<'a> CheckerState<'a> {
                     .default
                     .map(|default| instantiate_type(self.ctx.types, default, &substitution)),
                 is_const: tp.is_const,
+                origin: tp.origin,
             });
         }
 

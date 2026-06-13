@@ -147,6 +147,7 @@ impl<'a> CheckerState<'a> {
                         constraint,
                         default,
                         is_const,
+                        origin: tsz_solver::TypeParamOrigin::User,
                     };
                     let ty = factory.type_param(info);
                     let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);

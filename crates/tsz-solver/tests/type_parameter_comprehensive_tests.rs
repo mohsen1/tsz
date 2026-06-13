@@ -24,6 +24,7 @@ fn test_type_parameter_construction() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -45,6 +46,7 @@ fn test_type_parameter_with_no_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -65,6 +67,7 @@ fn test_type_parameter_with_default() {
         constraint: Some(TypeId::STRING),
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -84,12 +87,14 @@ fn test_multiple_type_parameters() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_info = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
@@ -112,6 +117,7 @@ fn test_type_parameter_extends_string() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -137,6 +143,7 @@ fn test_type_parameter_extends_object() {
         constraint: Some(obj),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let _type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -154,6 +161,7 @@ fn test_type_parameter_extends_union() {
         constraint: Some(string_or_number),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let _type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -173,12 +181,14 @@ fn test_type_parameter_identity_stability() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let info2 = TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let param1 = interner.intern(TypeData::TypeParameter(info1));
@@ -199,12 +209,14 @@ fn test_different_type_parameters_different_ids() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_info = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
@@ -229,6 +241,7 @@ fn test_array_of_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -252,6 +265,7 @@ fn test_type_parameter_extends_array() {
         constraint: Some(string_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let _type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -271,6 +285,7 @@ fn test_type_parameter_in_function() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -307,6 +322,7 @@ fn test_type_parameter_as_return_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -340,7 +356,8 @@ fn test_const_type_parameter() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
-        is_const: true, // const type parameter
+        is_const: true, // const type parameter,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -364,6 +381,7 @@ fn test_type_parameter_in_union() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -386,6 +404,7 @@ fn test_type_parameter_in_intersection() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -413,6 +432,7 @@ fn test_nested_type_parameters() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_param = interner.intern(TypeData::TypeParameter(u_info));
 
@@ -421,6 +441,7 @@ fn test_nested_type_parameters() {
         constraint: Some(u_param),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
 
@@ -445,6 +466,7 @@ fn test_object_with_type_parameter_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -473,6 +495,7 @@ fn test_type_parameter_extends_any() {
         constraint: Some(TypeId::ANY),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let _type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -488,6 +511,7 @@ fn test_type_parameter_extends_never() {
         constraint: Some(TypeId::NEVER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let _type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -503,6 +527,7 @@ fn test_type_parameter_extends_unknown() {
         constraint: Some(TypeId::UNKNOWN),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let _type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -523,6 +548,7 @@ fn test_type_parameter_default_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -545,6 +571,7 @@ fn test_type_parameter_default_different_from_constraint() {
         constraint: Some(union),
         default: Some(TypeId::NUMBER),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -570,6 +597,7 @@ fn test_tuple_with_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -612,12 +640,14 @@ fn test_function_with_multiple_type_parameters() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_info = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
     let u_param = interner.intern(TypeData::TypeParameter(u_info));
@@ -679,12 +709,14 @@ fn unconstrained_type_parameter_not_assignable_to_unrelated_param_or_object_unio
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let target = interner.union2(u_param, TypeId::OBJECT);
 
@@ -786,18 +818,21 @@ fn is_bare_named_type_parameter_accepts_only_bare_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u_constrained = interner.type_param(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     assert!(
@@ -847,12 +882,14 @@ fn unrelated_bare_type_parameters_are_not_subtypes() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = interner.type_param(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     assert!(!is_subtype_of(&interner, u, t), "U is not assignable to T");

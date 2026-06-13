@@ -234,6 +234,7 @@ fn mapped_type_preserves_param_name() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: db.keyof(TypeId::STRING),
         template: TypeId::NUMBER,
@@ -258,6 +259,7 @@ fn mapped_type_shows_optional_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -282,6 +284,7 @@ fn mapped_type_shows_readonly_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -502,6 +505,7 @@ fn format_union_of_intersections_factors_common_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
@@ -531,6 +535,7 @@ fn format_union_of_intersections_display_order_independent_of_alloc_order() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let one = db.literal_number(1.0); // interned first → lower alloc-order than two
     let two = db.literal_number(2.0);
@@ -553,12 +558,14 @@ fn format_union_of_intersections_does_not_factor_different_common_parts() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let union = db.union(vec![
@@ -602,12 +609,14 @@ fn format_intersection_two_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let inter = db.intersection2(t, u);
     let result = fmt.format(inter);
@@ -630,6 +639,7 @@ fn format_intersection_uses_display_properties_for_anonymous_object_member() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let intersection = db.intersection2(fresh, t);
@@ -731,6 +741,7 @@ fn format_intersection_preserves_named_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let intersection = db.intersection2(obj_a, t);
@@ -1412,6 +1423,7 @@ fn format_function_with_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1419,6 +1431,7 @@ fn format_function_with_type_params() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1449,6 +1462,7 @@ fn format_function_type_param_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1456,6 +1470,7 @@ fn format_function_type_param_with_constraint() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1488,6 +1503,7 @@ fn format_function_type_param_with_structural_array_constraint_uses_shorthand() 
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1495,6 +1511,7 @@ fn format_function_type_param_with_structural_array_constraint_uses_shorthand() 
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1530,6 +1547,7 @@ fn format_function_type_param_with_non_primitive_array_constraint_uses_generic_f
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1537,6 +1555,7 @@ fn format_function_type_param_with_non_primitive_array_constraint_uses_generic_f
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1571,6 +1590,7 @@ fn format_function_type_param_with_array_application_constraint_preserves_generi
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1578,6 +1598,7 @@ fn format_function_type_param_with_array_application_constraint_preserves_generi
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1610,6 +1631,7 @@ fn format_function_type_param_with_default() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1617,6 +1639,7 @@ fn format_function_type_param_with_default() {
             constraint: None,
             default: Some(TypeId::STRING),
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),

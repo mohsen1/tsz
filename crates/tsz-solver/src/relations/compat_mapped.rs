@@ -47,6 +47,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 constraint: Some(mapped.constraint),
                 default: None,
                 is_const: false,
+                origin: mapped.type_param.origin,
             });
             let source_value_type = self.interner.index_access(mapped_source, k_type_id);
             self.configure_subtype(self.strict_function_types);

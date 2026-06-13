@@ -109,6 +109,7 @@ fn test_distributive_conditional_over_union() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -209,6 +210,7 @@ fn test_infer_in_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let infer_u = interner.intern(TypeData::Infer(infer_u_info));
 
@@ -221,6 +223,7 @@ fn test_infer_in_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -257,6 +260,7 @@ fn test_nested_conditional_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -566,6 +570,7 @@ fn test_extract_pattern_assignable_to_extends_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Build: T extends Function ? T : never (like Extract<T, Function>)
@@ -596,6 +601,7 @@ fn test_type_parameter_assignable_to_identity_extract_target() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let identity_extract = interner.conditional(ConditionalType {
@@ -625,6 +631,7 @@ fn test_extract_pattern_assignable_to_broader_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let cond = ConditionalType {
@@ -657,6 +664,7 @@ fn test_conditional_constraint_not_assignable_to_unrelated() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let cond = ConditionalType {
@@ -686,6 +694,7 @@ fn test_conditional_non_extract_both_branches_still_works() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let cond = ConditionalType {
@@ -758,6 +767,7 @@ fn test_conditional_subtype_with_related_check_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let b_param = interner.type_param(TypeParamInfo {
@@ -765,6 +775,7 @@ fn test_conditional_subtype_with_related_check_types() {
         constraint: Some(a_param), // B extends A
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // A extends string ? A : number
@@ -841,6 +852,7 @@ fn test_conditional_subtype_same_check_type_still_works() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let cond = interner.conditional(ConditionalType {
@@ -885,6 +897,7 @@ fn test_conditional_infer_with_constrained_type_param_index_access() {
         constraint: Some(fn_returning_unknown),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Create infer R
@@ -893,6 +906,7 @@ fn test_conditional_infer_with_constrained_type_param_index_access() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // extends_type = (...args: any) => infer R
@@ -946,6 +960,7 @@ fn test_conditional_infer_with_type_param_check_type_stays_deferred() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -953,6 +968,7 @@ fn test_conditional_infer_with_type_param_check_type_stays_deferred() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let extends_fn = interner.function(FunctionShape {
@@ -1003,6 +1019,7 @@ fn test_conditional_infer_concrete_check_type_takes_true_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let extends_fn = interner.function(FunctionShape {
@@ -1050,6 +1067,7 @@ fn test_conditional_infer_non_matching_concrete_takes_false_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let extends_fn = interner.function(FunctionShape {
@@ -1102,6 +1120,7 @@ fn test_concrete_check_type_extends_type_param_assignable_to_target() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let string_array = interner.array(TypeId::STRING);
@@ -1134,6 +1153,7 @@ fn test_concrete_check_type_extends_type_param_with_non_never_false_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let string_array = interner.array(TypeId::STRING);
@@ -1167,6 +1187,7 @@ fn test_concrete_check_type_extends_type_param_different_true_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let cond = ConditionalType {
@@ -1206,6 +1227,7 @@ fn test_nested_extract_conditional_assignable_to_extends_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let u_param = interner.type_param(TypeParamInfo {
@@ -1213,6 +1235,7 @@ fn test_nested_extract_conditional_assignable_to_extends_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let v_param = interner.type_param(TypeParamInfo {
@@ -1220,6 +1243,7 @@ fn test_nested_extract_conditional_assignable_to_extends_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Inner: T extends V ? T : never
@@ -1268,6 +1292,7 @@ fn test_nested_extract_conditional_not_assignable_to_unrelated() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let u_param = interner.type_param(TypeParamInfo {
@@ -1275,6 +1300,7 @@ fn test_nested_extract_conditional_not_assignable_to_unrelated() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let v_param = interner.type_param(TypeParamInfo {
@@ -1282,6 +1308,7 @@ fn test_nested_extract_conditional_not_assignable_to_unrelated() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let w_param = interner.type_param(TypeParamInfo {
@@ -1289,6 +1316,7 @@ fn test_nested_extract_conditional_not_assignable_to_unrelated() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Inner: T extends V ? T : never
@@ -1331,6 +1359,7 @@ fn test_triple_nested_extract_conditional_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let a_param = interner.type_param(TypeParamInfo {
@@ -1338,6 +1367,7 @@ fn test_triple_nested_extract_conditional_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let b_param = interner.type_param(TypeParamInfo {
@@ -1345,6 +1375,7 @@ fn test_triple_nested_extract_conditional_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let c_param = interner.type_param(TypeParamInfo {
@@ -1352,6 +1383,7 @@ fn test_triple_nested_extract_conditional_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Innermost: T extends C ? T : never
@@ -1429,6 +1461,7 @@ fn test_distributive_conditional_constraint_zeroof() {
         constraint: Some(num_or_str),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let zero = interner.literal_number(0.0);
@@ -1475,6 +1508,7 @@ fn test_distributive_conditional_constraint_zeroof_literal_union() {
         constraint: Some(num_or_str),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let zero = interner.literal_number(0.0);
@@ -1522,6 +1556,7 @@ fn test_distributive_conditional_constraint_simple() {
         constraint: Some(str_or_num),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let cond = ConditionalType {
@@ -1564,6 +1599,7 @@ fn test_composed_extract_deferred_when_check_is_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let foo = interner.object(vec![PropertyInfo::new(
@@ -1620,6 +1656,7 @@ fn test_composed_extract_not_assignable_to_missing_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let foo = interner.object(vec![PropertyInfo::new(
@@ -1675,6 +1712,7 @@ fn test_composed_extract_assignable_to_matching_properties() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let foo = interner.object(vec![PropertyInfo::new(

@@ -459,6 +459,7 @@ fn test_constraint_infer_from_array() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Target: T[] (array of T)
@@ -485,6 +486,7 @@ fn test_constraint_infer_from_object_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let name_value = interner.intern_string("value");
@@ -516,12 +518,14 @@ fn test_constraint_infer_from_function() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Target: (x: T) => U
@@ -585,6 +589,7 @@ fn test_constraint_recursive_self_referential() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends { compareTo: (other: T) => number }
@@ -629,6 +634,7 @@ fn test_constraint_recursive_with_concrete_lower() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let name_next = interner.intern_string("next");
@@ -682,6 +688,7 @@ fn test_constraint_call_generic_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let func = interner.function(FunctionShape {
@@ -690,6 +697,7 @@ fn test_constraint_call_generic_identity() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -730,6 +738,7 @@ fn test_constraint_call_generic_with_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let func = interner.function(FunctionShape {
@@ -738,6 +747,7 @@ fn test_constraint_call_generic_with_constraint() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -777,12 +787,14 @@ fn test_constraint_call_generic_two_params() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let return_type = interner.tuple(vec![
@@ -807,12 +819,14 @@ fn test_constraint_call_generic_two_params() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         params: vec![
@@ -862,6 +876,7 @@ fn test_constraint_call_generic_array_element() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let func = interner.function(FunctionShape {
@@ -870,6 +885,7 @@ fn test_constraint_call_generic_array_element() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("arr")),
@@ -1171,6 +1187,7 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let param_obj = interner.object_with_index(ObjectShape {
@@ -1192,6 +1209,7 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1247,6 +1265,7 @@ fn test_no_eopt_preserves_explicit_undefined_in_index_signature_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let param_obj = interner.object_with_index(ObjectShape {
@@ -1268,6 +1287,7 @@ fn test_no_eopt_preserves_explicit_undefined_in_index_signature_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1335,6 +1355,7 @@ fn test_any_arg_naked_t_infers_any() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let func = interner.function(FunctionShape {
@@ -1343,6 +1364,7 @@ fn test_any_arg_naked_t_infers_any() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1384,6 +1406,7 @@ fn test_any_arg_union_member_t_infers_any() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let t_or_string = interner.union(vec![t_type, TypeId::STRING]);
 
@@ -1393,6 +1416,7 @@ fn test_any_arg_union_member_t_infers_any() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1414,6 +1438,7 @@ fn test_any_arg_union_member_t_infers_any() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let k_or_string = interner.union(vec![k_type, TypeId::STRING]);
     let func_k = interner.function(FunctionShape {
@@ -1422,6 +1447,7 @@ fn test_any_arg_union_member_t_infers_any() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1465,6 +1491,7 @@ fn test_any_arg_array_elem_t_infers_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let t_array = interner.array(t_type);
 
@@ -1474,6 +1501,7 @@ fn test_any_arg_array_elem_t_infers_unknown() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1518,6 +1546,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     // { [s: string]: T }
     let s_name = interner.intern_string("s");
@@ -1609,6 +1638,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(o_name),
@@ -1672,6 +1702,7 @@ fn test_any_arg_object_prop_t_infers_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let v_name = interner.intern_string("v");
     let param_obj = interner.object(vec![PropertyInfo::new(v_name, t_type)]);
@@ -1682,6 +1713,7 @@ fn test_any_arg_object_prop_t_infers_unknown() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1723,6 +1755,7 @@ fn test_any_arg_index_sig_t_infers_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let param_obj = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -1743,6 +1776,7 @@ fn test_any_arg_index_sig_t_infers_unknown() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1785,6 +1819,7 @@ fn test_any_arg_conditional_true_branch_t_infers_any() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     // `string extends string ? T : number`
     let cond_type = interner.conditional(ConditionalType {
@@ -1801,6 +1836,7 @@ fn test_any_arg_conditional_true_branch_t_infers_any() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1843,6 +1879,7 @@ fn test_any_arg_conditional_false_branch_t_infers_any() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     // `string extends number ? string : T`  (false branch is T)
     let cond_type = interner.conditional(ConditionalType {
@@ -1859,6 +1896,7 @@ fn test_any_arg_conditional_false_branch_t_infers_any() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1901,6 +1939,7 @@ fn test_any_arg_conditional_check_only_t_infers_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     // `T extends string ? string : number`  (T only in check)
     let cond_type = interner.conditional(ConditionalType {
@@ -1917,6 +1956,7 @@ fn test_any_arg_conditional_check_only_t_infers_unknown() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),

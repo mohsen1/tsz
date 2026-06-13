@@ -252,6 +252,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         })
     }
 
@@ -283,6 +284,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         };
         interner.mapped(MappedType {
             type_param: param,
@@ -428,6 +430,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: TypeId::STRING,
             name_type: None,
@@ -473,6 +476,7 @@ mod tests {
                 constraint: Some(keyof_t),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: keyof_t,
             name_type: None,
@@ -492,6 +496,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: TypeId::STRING,
             name_type: None,
@@ -514,6 +519,7 @@ mod tests {
                 constraint: Some(concrete_keys),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: concrete_keys,
             name_type: Some(t_param),
@@ -538,6 +544,7 @@ mod tests {
                 constraint: Some(keyof_t),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: keyof_t,
             name_type: None,
@@ -552,6 +559,7 @@ mod tests {
                 constraint: Some(keyof_t),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: keyof_t,
             name_type: None,
@@ -585,6 +593,7 @@ mod tests {
             constraint: Some(cond),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         assert!(type_parameter_has_conditional_constraint_db(&interner, tp));
     }
@@ -601,6 +610,7 @@ mod tests {
             constraint: Some(app),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         assert!(type_parameter_has_conditional_constraint_db(&interner, tp));
     }
@@ -624,6 +634,7 @@ mod tests {
                 constraint: Some(keyof_u),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: keyof_u,
             name_type: None,
@@ -636,6 +647,7 @@ mod tests {
             constraint: Some(mapped),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         assert!(type_parameter_has_mapped_constraint_db(&interner, tp));
     }
