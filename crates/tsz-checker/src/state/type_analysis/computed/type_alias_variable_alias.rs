@@ -532,17 +532,11 @@ impl<'a> CheckerState<'a> {
                             self.get_type_from_type_node(var_decl.type_annotation);
                         // `const k: unique symbol = Symbol()` — create a proper UniqueSymbol
                         // type using the variable's binder symbol as identity.
-                        if annotation_type == TypeId::SYMBOL
-                            && self.is_const_variable_declaration(resolved_value_decl)
-                            && self.is_unique_symbol_type_annotation(var_decl.type_annotation)
-                        {
-                            return (
-                                self.ctx
-                                    .types
-                                    .unique_symbol(tsz_solver::SymbolRef(sym_id.0)),
-                                Vec::new(),
-                            );
-                        }
+                        let annotation_type = self.const_unique_symbol_value_type(
+                            resolved_value_decl,
+                            var_decl.type_annotation,
+                            annotation_type,
+                        );
                         return (annotation_type, Vec::new());
                     }
                     if let Some(jsdoc_type) =
