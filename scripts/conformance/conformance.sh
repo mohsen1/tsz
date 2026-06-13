@@ -23,13 +23,10 @@ RUNNER_BIN="$REPO_ROOT/.target/dist-fast/tsz-conformance"
 
 WORKERS=16
 
-# The checked-in TSC cache is generated against the pinned TypeScript
-# checkout's lib files. Point tsz at the same lib directory during
-# conformance runs so fingerprint comparisons use the same source
-# line/column mapping instead of the embedded stripped libs.
-if [ -z "${TSZ_LIB_DIR:-}" ] && [ -d "$REPO_ROOT/TypeScript/lib" ]; then
-    export TSZ_LIB_DIR="$REPO_ROOT/TypeScript/lib"
-fi
+# TSZ_LIB_DIR (the pinned-version lib.*.d.ts set tsz must type-check against so
+# its fingerprints match the cache) is resolved inside run_tests via
+# corpus-lib-dir.sh, after ensure_scripts_deps installs
+# scripts/node_modules/typescript as a fallback (#13400).
 
 # Colors
 GREEN='\033[0;32m'
@@ -404,6 +401,18 @@ EOF
 run_tests() {
     # TypeScript lib files are needed for type checking (resolved via scripts/node_modules/typescript/lib)
     ensure_scripts_deps
+
+    # Pin tsz to the same pinned-version lib.*.d.ts set the cache was generated
+    # against, deterministically, so local and CI produce identical fingerprints
+    # (#13400). Done here (not at script top) so the scripts/node_modules
+    # fallback installed by ensure_scripts_deps above is visible to the resolver.
+    if [ -z "${TSZ_LIB_DIR:-}" ]; then
+        local resolved_lib_dir
+        resolved_lib_dir="$("$REPO_ROOT/scripts/conformance/corpus-lib-dir.sh" --repo-root "$REPO_ROOT")" \
+            || { echo "error: conformance could not resolve the pinned TypeScript lib directory (see above)." >&2; exit 1; }
+        export TSZ_LIB_DIR="$resolved_lib_dir"
+    fi
+    echo "Lib dir: ${TSZ_LIB_DIR}"
 
     echo -e "${GREEN}Running conformance tests...${NC}"
     echo "Cache file: $CACHE_FILE"
