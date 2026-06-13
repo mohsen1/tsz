@@ -33,10 +33,12 @@ const artifact = {
       winner: "tie",
     },
     {
+      // Short fixtures are no longer excluded: this <200-line case must now
+      // count toward the micro total like any other successful row.
       name: "tiny-startup",
       lines: 20,
-      tsz_ms: 10,
-      tsgo_ms: 10000,
+      tsz_ms: 500,
+      tsgo_ms: 1500,
       winner: "tsz",
     },
     {
@@ -58,10 +60,10 @@ const artifact = {
 };
 
 const summary = createReadmePerfSummary(artifact);
-assert.equal(summary.rows, 2);
+assert.equal(summary.rows, 3);
 assert.equal(summary.totalRows, 5);
-assert.equal(summary.tszMs, 1500);
-assert.equal(summary.tsgoMs, 4500);
+assert.equal(summary.tszMs, 2000);
+assert.equal(summary.tsgoMs, 6000);
 assert.equal(summary.speedup, 3);
 assert.equal(summary.winner, "tsz");
 assert.equal(summary.generatedAt, "2026-05-28T02:14:24Z");
@@ -80,8 +82,8 @@ assert.doesNotMatch(svg, />Latest benchmark snapshot</);
 assert.doesNotMatch(svg, />2 successful micro rows</);
 assert.doesNotMatch(svg, />tsz 3\.0x faster</);
 assert.match(svg, />tsz is 3\.0x faster</);
-assert.match(svg, /1\.5s/);
-assert.match(svg, /4\.5s/);
+assert.match(svg, /2\.0s/);
+assert.match(svg, /6\.0s/);
 assert.doesNotMatch(svg, /Project-mode and tiny startup fixtures are excluded/);
 
 const lightPng = await renderReadmePerfPng(artifact, { theme: "light" });

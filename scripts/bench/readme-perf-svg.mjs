@@ -18,7 +18,6 @@ const BAR_WIDTH = 520;
 const BAR_HEIGHT = 24;
 const FIRST_BAR_Y = 50;
 const SECOND_BAR_Y = 84;
-const TINY_BENCHMARK_MAX_LINES = 200;
 const MONOSPACE_FONT = "'SF Mono','Cascadia Code','JetBrains Mono','Fira Code',Menlo,Consolas,monospace";
 const THEMES = {
   light: {
@@ -250,17 +249,13 @@ function isProjectBenchmark(row) {
   return Boolean(row?.name && PROJECT_ROWS_BY_NAME[row.name]);
 }
 
-function isTinyBenchmark(row) {
-  const lines = finiteNumber(row?.lines);
-  return lines !== null && lines < TINY_BENCHMARK_MAX_LINES;
-}
-
 function benchmarkRowsForReadme(data) {
+  // Every successful non-project case counts as a micro row; short fixtures are
+  // no longer excluded, so the README total matches the site's micro chart.
   return Array.isArray(data?.results)
     ? data.results.filter((row) => (
       hasSuccessfulTimingPair(row)
         && !isProjectBenchmark(row)
-        && !isTinyBenchmark(row)
     ))
     : [];
 }
