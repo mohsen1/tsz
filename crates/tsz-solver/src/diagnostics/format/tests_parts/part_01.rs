@@ -1219,7 +1219,7 @@ fn long_property_receiver_application_display_bounds_deep_arg_formatting() {
 
     let terminal_prop_name = db.intern_string("deepTerminal");
     let mut ty = db.object(vec![PropertyInfo::new(terminal_prop_name, TypeId::STRING)]);
-    for _ in 0..48 {
+    for _ in 0..80 {
         ty = db.application(db.lazy(wrapper_def), vec![ty]);
     }
 

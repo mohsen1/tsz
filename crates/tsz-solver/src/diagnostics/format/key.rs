@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use tracing::trace;
 use tsz_binder::SymbolId;
 
-const LONG_PROPERTY_RECEIVER_APPLICATION_ARG_DEPTH_LIMIT: u32 = 32;
+const LONG_PROPERTY_RECEIVER_APPLICATION_ARG_DEPTH_LIMIT: u32 = 64;
 
 impl<'a> TypeFormatter<'a> {
     pub(super) fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
