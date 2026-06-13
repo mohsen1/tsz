@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
     /// Callers that need a fresh read must reset the context fields before
     /// invoking the relation.
     #[inline]
-    pub(super) fn propagate_overflow_flags(&self, depth_exceeded: bool, iteration_exceeded: bool) {
+    pub(crate) fn propagate_overflow_flags(&self, depth_exceeded: bool, iteration_exceeded: bool) {
         let mut overflow = self.ctx.relation_overflow.get();
         overflow.merge(depth_exceeded, iteration_exceeded);
         self.ctx.relation_overflow.set(overflow);
@@ -493,36 +493,6 @@ impl<'a> CheckerState<'a> {
         for &type_id in type_ids {
             self.ensure_relation_input_ready(type_id);
         }
-    }
-
-    /// Prepare both relation inputs, skipping expensive lazy-ref resolution
-    /// when a cached result is already available.
-    ///
-    /// Gates on `is_relation_cacheable` first: only cacheable type pairs
-    /// benefit from a cache lookup short-circuit. Non-cacheable pairs (those
-    /// containing infer placeholders or `this` types) always go through the
-    /// full `ensure_relation_input_ready` path.
-    pub(crate) fn ensure_relation_pair_ready(&mut self, source: TypeId, target: TypeId) {
-        if crate::query_boundaries::assignability::is_relation_cacheable(
-            self.ctx.types,
-            source,
-            target,
-        ) {
-            let flags = self.ctx.pack_relation_flags();
-            let cache_key = crate::query_boundaries::assignability::assignability_cache_key(
-                source, target, flags,
-            );
-            if self
-                .ctx
-                .types
-                .lookup_assignability_cache(cache_key)
-                .is_some()
-            {
-                return;
-            }
-        }
-        self.ensure_relation_input_ready(source);
-        self.ensure_relation_input_ready(target);
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.

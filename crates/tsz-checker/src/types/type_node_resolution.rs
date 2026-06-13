@@ -1307,15 +1307,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let body = lowering.lower_type(type_alias.type_node);
             let _ = self.ctx.types.take_union_too_complex();
 
-            // Register body in both type environments so resolve_lazy
-            // and flow-analysis narrowing can both find it
-            self.ctx.definition_store.set_body(def_id, body);
+            // Register body in both type environments so `resolve_lazy`
+            // and flow-analysis narrowing can both find it. Generic aliases
+            // must publish body + params through the single-entry store write:
+            // a body-only publication lets sibling parallel checkers observe
+            // the alias as arity-zero while this checker is still filling in
+            // its parameter list (#13255).
             if params.is_empty() {
                 self.ctx.register_def_in_envs(def_id, body);
             } else {
-                self.ctx
-                    .definition_store
-                    .set_type_params(def_id, params.clone());
                 self.ctx
                     .register_def_with_params_in_envs(def_id, body, params);
             }

@@ -1,5 +1,4 @@
-//! Continuation of `compute_type_of_symbol`: type alias, class property, variable,
-//! and alias symbol resolution.
+//! Continuation of `compute_type_of_symbol` for type aliases, class properties, variables, and aliases.
 
 use super::SymbolAliasCtx;
 use crate::query_boundaries::common::{array_element_type, is_generic_type};
@@ -324,7 +323,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .definition_store
                         .register_type_to_def(alias_type, def_id);
-                    self.ctx.definition_store.set_body(def_id, alias_type);
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
                     // Preserve the raw alias body so downstream consumers can
                     // continue to reason about the surrounding type graph (for
                     // example, recursive base-type diagnostics) without

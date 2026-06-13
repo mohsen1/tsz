@@ -1045,6 +1045,9 @@ jobs:
           - label: synthetic
             timeout: 120
             filter: '[0-9]+ classes|[0-9]+ generic functions|DeepPartial optional-chain|Shallow optional-chain|[0-9]+ union members'
+          - label: project-hotspots
+            timeout: 120
+            filter: 'Recursive utility aliases|Indexed access hotspot|Remapped accessor hotspot|Conditional infer hotspot|Object spread hotspot|Contextual callback hotspot'
           - label: solver-stress
             timeout: 120
             filter: 'Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches'
@@ -1377,7 +1380,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
-          expected_shards=8
+          expected_shards=9
           echo "json_count=${#json_files[@]}" >> "$GITHUB_OUTPUT"
           echo "expected_json_count=${expected_shards}" >> "$GITHUB_OUTPUT"
           if [[ "${#json_files[@]}" -eq 0 ]]; then

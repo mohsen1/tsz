@@ -54,6 +54,15 @@ assert.equal(
   false,
 );
 assert.equal(classify(["scripts/perf/collect.py", "docs/perf.md"]).perfToolOnly, true);
+assert.equal(
+  classify(["scripts/perf/forced-parallel-project-determinism.sh", "docs/perf.md"]).perfToolOnly,
+  true,
+  "perf shell harness changes should run the perf tool smoke path",
+);
+assert.equal(
+  classify(["scripts/perf/collect.py", "scripts/perf/forced-parallel-project-determinism.sh"]).perfToolOnly,
+  true,
+);
 assert.equal(classify(["scripts/arch/guard.py", "docs/arch.md"]).archToolOnly, true);
 
 {

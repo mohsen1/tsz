@@ -399,6 +399,23 @@ impl ShardedInterner {
         Self { shards }
     }
 
+    #[inline]
+    fn insert_into_shard(state: &mut ShardState, shard_idx: usize, owned: Arc<str>) -> Atom {
+        let Ok(local_index) = u32::try_from(state.strings.len()) else {
+            return Atom::NONE;
+        };
+        if local_index > (u32::MAX >> SHARD_BITS) {
+            // Return empty atom on overflow instead of panicking
+            return Atom::NONE;
+        }
+
+        let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
+        let atom = Self::make_atom(local_index, shard_idx_u32);
+        state.strings.push(Arc::clone(&owned));
+        state.map.insert(owned, atom);
+        atom
+    }
+
     /// Intern a string, returning its Atom handle.
     /// If the string was already interned, returns the existing Atom.
     #[must_use]
@@ -428,20 +445,7 @@ impl ShardedInterner {
             return atom;
         }
 
-        let Ok(local_index) = u32::try_from(state.strings.len()) else {
-            return Atom::NONE;
-        };
-        if local_index > (u32::MAX >> SHARD_BITS) {
-            // Return empty atom on overflow instead of panicking
-            return Atom::NONE;
-        }
-
-        let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
-        let atom = Self::make_atom(local_index, shard_idx_u32);
-        let owned: Arc<str> = Arc::from(s);
-        state.strings.push(Arc::clone(&owned));
-        state.map.insert(owned, atom);
-        atom
+        Self::insert_into_shard(&mut state, shard_idx, Arc::from(s))
     }
 
     /// Intern an owned String, avoiding allocation if possible.
@@ -463,20 +467,7 @@ impl ShardedInterner {
             return atom;
         }
 
-        let Ok(local_index) = u32::try_from(state.strings.len()) else {
-            return Atom::NONE;
-        };
-        if local_index > (u32::MAX >> SHARD_BITS) {
-            // Return empty atom on overflow instead of panicking
-            return Atom::NONE;
-        }
-
-        let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
-        let atom = Self::make_atom(local_index, shard_idx_u32);
-        let owned: Arc<str> = Arc::from(s);
-        state.strings.push(Arc::clone(&owned));
-        state.map.insert(owned, atom);
-        atom
+        Self::insert_into_shard(&mut state, shard_idx, Arc::from(s))
     }
 
     /// Resolve an Atom back to its string value.
