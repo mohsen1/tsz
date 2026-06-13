@@ -1098,6 +1098,7 @@ impl SymbolArena {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tsz_common::interner::AstAtom;
 
     fn sym() -> Symbol {
         Symbol::new(SymbolId(0), 0, String::new())
@@ -1166,6 +1167,31 @@ mod tests {
     fn primary_declaration_none_when_empty() {
         let s = sym();
         assert_eq!(s.primary_declaration(), None);
+    }
+
+    #[test]
+    fn symbol_table_atom_lookup_ignores_foreign_arena_atoms() {
+        let lib_owner = 11;
+        let user_owner = 22;
+        let mut table = SymbolTable::new();
+
+        table.set_with_atom(
+            "captureEvents".to_string(),
+            Some((lib_owner, AstAtom(7))),
+            SymbolId(1),
+        );
+        table.set("globalThis".to_string(), SymbolId(2));
+
+        assert_eq!(
+            table.get_by_atom_or_name(Some((lib_owner, AstAtom(7))), "missing"),
+            Some(SymbolId(1)),
+            "same-arena atom lookups may use the side index"
+        );
+        assert_eq!(
+            table.get_by_atom_or_name(Some((user_owner, AstAtom(7))), "globalThis"),
+            Some(SymbolId(2)),
+            "foreign atoms must not hit the same raw atom id in this table"
+        );
     }
 
     #[test]
