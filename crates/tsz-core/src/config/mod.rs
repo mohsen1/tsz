@@ -434,6 +434,11 @@ pub struct CompilerOptions {
 // Re-export CheckerOptions from checker::context for unified API
 pub use crate::checker::context::CheckerOptions;
 
+// Re-export the shared strict-family expansion table so every option-merge
+// surface (CLI driver, tsconfig resolution, WASM, tsz-server) resolves the
+// `--strict` umbrella through the same owner.
+pub use tsz_common::options::strict_family;
+
 /// Check whether a JSON value represents a truthy compiler option.
 /// Returns true for `true` booleans, non-empty strings, and non-null values
 /// that aren't `false`. Returns false for `None`, `null`, and `false`.
