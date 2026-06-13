@@ -15,6 +15,14 @@ pub fn record_cross_file_cache_miss_cause(cause: CrossFileCacheMissCause) {
 /// visible in attribution JSON instead of hiding behind the flat miss count.
 #[inline]
 pub fn record_source_file_symbol_arena_cache_eligibility_outcome(
+    outcome: SourceFileSymbolArenaCacheEligibilityOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().source_file_symbol_arena_cache_eligibility_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
 
 /// Record a cross-arena delegate invocation that has no cache fast path —
 /// i.e., every call is a miss. Increments both `delegate_cross_arena_calls`
@@ -126,9 +134,25 @@ pub fn record_cross_file_type_params_cache_miss() {
 
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
+    outcome: DirectCrossFileInterfaceLoweringOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().direct_cross_file_interface_lowering_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
 
 #[inline]
 pub fn record_direct_cross_file_interface_complex_reason(
+    reason: DirectCrossFileInterfaceComplexReason,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().direct_cross_file_interface_complex_reason[reason.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
 
 #[inline]
 pub fn record_direct_actual_lib_alias_body_outcome(outcome: DirectActualLibAliasBodyOutcome) {
@@ -141,21 +165,143 @@ pub fn record_direct_actual_lib_alias_body_outcome(outcome: DirectActualLibAlias
 
 #[inline]
 pub fn record_direct_source_file_type_alias_lowering_outcome(
+    outcome: DirectSourceFileTypeAliasLoweringOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().direct_source_file_type_alias_lowering_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
 
 #[inline]
 pub fn record_direct_source_file_type_alias_body_rejection_kind(
+    kind: DirectSourceFileTypeAliasBodyRejectionKind,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().direct_source_file_type_alias_body_rejection_kind[kind.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
 
 #[inline]
 pub fn record_direct_source_file_type_alias_type_reference_rejection_kind(
+    kind: DirectSourceFileTypeAliasTypeReferenceRejectionKind,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().direct_source_file_type_alias_type_reference_rejection_kind[kind.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
 
 #[inline]
 pub fn record_direct_source_file_type_alias_first_type_reference_rejection_kind(
+    kind: DirectSourceFileTypeAliasTypeReferenceRejectionKind,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().direct_source_file_type_alias_first_type_reference_rejection_kind[kind.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
 
 #[inline]
 pub fn record_direct_source_file_type_alias_body_rejection_residue(
+    input: DirectSourceFileTypeAliasBodyRejectionResidueInput<'_>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let target_file = input.target_file.map(|file| {
+        std::path::Path::new(file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file)
+            .to_owned()
+    });
+    let first_type_reference_kind = input
+        .first_type_reference_kind
+        .map(|kind| DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]);
+    let first_non_lowerable_type_reference_kind = input
+        .first_non_lowerable_type_reference_kind
+        .map(|kind| DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]);
+    let first_non_lowerable_leaf_type_reference_kind = input
+        .first_non_lowerable_leaf_type_reference_kind
+        .map(|kind| DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]);
+    let body_kind =
+        DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_NAMES[input.body_kind.as_index()];
+
+    let mut rows = direct_source_file_type_alias_body_rejection_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.name == input.name
+            && row.body_kind == body_kind
+            && row.first_type_reference_kind == first_type_reference_kind
+            && row.first_type_reference_name.as_deref() == input.first_type_reference_name
+            && row.first_non_lowerable_type_reference_kind
+                == first_non_lowerable_type_reference_kind
+            && row.first_non_lowerable_type_reference_name.as_deref()
+                == input.first_non_lowerable_type_reference_name
+            && row.first_non_lowerable_leaf_type_reference_kind
+                == first_non_lowerable_leaf_type_reference_kind
+            && row.first_non_lowerable_leaf_type_reference_name.as_deref()
+                == input.first_non_lowerable_leaf_type_reference_name
+            && row.target_file == target_file
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len() < DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT {
+        rows.push(DirectSourceFileTypeAliasBodyRejectionResidue {
+            name: input.name.to_owned(),
+            body_kind,
+            first_type_reference_kind,
+            first_type_reference_name: input.first_type_reference_name.map(str::to_owned),
+            first_non_lowerable_type_reference_kind,
+            first_non_lowerable_type_reference_name: input
+                .first_non_lowerable_type_reference_name
+                .map(str::to_owned),
+            first_non_lowerable_leaf_type_reference_kind,
+            first_non_lowerable_leaf_type_reference_name: input
+                .first_non_lowerable_leaf_type_reference_name
+                .map(str::to_owned),
+            target_file,
+            count: 1,
+        });
+    } else if let Some(row) = rows.iter_mut().find(|row| row.name == "__truncated__") {
+        row.count += 1;
+    } else {
+        rows.push(DirectSourceFileTypeAliasBodyRejectionResidue {
+            name: "__truncated__".to_string(),
+            body_kind: "overflow",
+            first_type_reference_kind: None,
+            first_type_reference_name: None,
+            first_non_lowerable_type_reference_kind: None,
+            first_non_lowerable_type_reference_name: None,
+            first_non_lowerable_leaf_type_reference_kind: None,
+            first_non_lowerable_leaf_type_reference_name: None,
+            target_file: None,
+            count: 1,
+        });
+    }
+}
 
 #[inline]
 pub fn record_direct_actual_lib_intl_interface_outcome(
+    outcome: DirectActualLibIntlInterfaceOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().direct_actual_lib_intl_interface_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 
 /// Record a raw `SymbolId`-shaped `DefId` redirect inside
 /// `TypeEnvironment::resolve_lazy`.
