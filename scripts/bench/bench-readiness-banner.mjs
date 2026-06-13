@@ -58,6 +58,19 @@ export function benchReadinessMessages(readiness, winnerReport = null) {
     );
   }
 
+  const projectAggregate = target?.project_rows_aggregate;
+  if (projectAggregate?.target_met === false) {
+    const speedup = Number(projectAggregate.tsz_speedup_vs_tsgo);
+    const speedupText = Number.isFinite(speedup) && speedup > 0
+      ? `${speedup.toFixed(2)}x`
+      : "unknown speedup";
+    const projectRows = Number(projectAggregate.rows ?? 0);
+    const rowText = projectRows > 0 ? ` across ${projectRows} project row(s)` : "";
+    messages.push(
+      `Benchmark companion report project-row aggregate is ${speedupText}${rowText}, below the 2x tsgo target; public speed claims are not launch-ready.`,
+    );
+  }
+
   const missingAttribution = Array.isArray(target?.missing_attribution_rows)
     ? target.missing_attribution_rows.length
     : 0;
