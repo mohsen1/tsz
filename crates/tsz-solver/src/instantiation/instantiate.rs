@@ -838,13 +838,21 @@ impl<'a> TypeInstantiator<'a> {
             // ReadonlyType: instantiate the operand
             TypeData::ReadonlyType(operand) => {
                 let inst_operand = self.instantiate(*operand);
-                self.interner.readonly_type(inst_operand)
+                if inst_operand == *operand {
+                    self.interner.intern(*key)
+                } else {
+                    self.interner.readonly_type(inst_operand)
+                }
             }
 
             // NoInfer: preserve wrapper, instantiate inner
             TypeData::NoInfer(inner) => {
                 let inst_inner = self.instantiate(*inner);
-                self.interner.no_infer(inst_inner)
+                if inst_inner == *inner {
+                    self.interner.intern(*key)
+                } else {
+                    self.interner.no_infer(inst_inner)
+                }
             }
 
             // Template literal: instantiate embedded types
