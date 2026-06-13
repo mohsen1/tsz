@@ -159,8 +159,8 @@ const value = 1;
         .expect("expected symbol for Merged");
     let first_decl = merged.declarations[0];
     let expected_first_span = arena.get(first_decl).map(|node| (node.pos, node.end));
-    assert_eq!(merged.first_declaration_span, expected_first_span);
-    assert_eq!(merged.value_declaration_span, None);
+    assert_eq!(merged.first_declaration_span(), expected_first_span);
+    assert_eq!(merged.value_declaration_span(), None);
 
     let value_sym_id = binder.file_locals.get("value").expect("expected value");
     let value = binder
@@ -170,8 +170,8 @@ const value = 1;
     let expected_value_span = arena
         .get(value.value_declaration)
         .map(|node| (node.pos, node.end));
-    assert_eq!(value.first_declaration_span, expected_value_span);
-    assert_eq!(value.value_declaration_span, expected_value_span);
+    assert_eq!(value.first_declaration_span(), expected_value_span);
+    assert_eq!(value.value_declaration_span(), expected_value_span);
 }
 
 #[test]

@@ -112,11 +112,9 @@ pub(super) fn apply_cli_overrides_with_config_options(
         options.type_roots = Some(type_roots.clone());
     }
     if args.composite {
+        // `composite -> declaration + incremental` is owned by the shared
+        // `apply_non_strict_fanout` table below; record only the raw value.
         options.composite = true;
-        // composite implies declaration and incremental
-        options.emit_declarations = true;
-        options.checker.emit_declarations = true;
-        options.incremental = true;
     }
     if args.declaration {
         options.emit_declarations = true;
@@ -147,10 +145,9 @@ pub(super) fn apply_cli_overrides_with_config_options(
         options.incremental = true;
     }
     if args.import_helpers {
+        // `importHelpers -> printer.import_helpers + no_emit_helpers` is owned
+        // by the shared `apply_non_strict_fanout` table below.
         options.import_helpers = true;
-        options.printer.import_helpers = true;
-        // importHelpers means "import from tslib" — suppress inline helper emission
-        options.printer.no_emit_helpers = true;
     }
     // Strict-family expansion and explicit member overrides are owned by the
     // shared `strict_family` table (tsc 6.0 `getStrictOptionValue`).
@@ -284,9 +281,8 @@ pub(super) fn apply_cli_overrides_with_config_options(
         options.es_module_interop = true;
         options.checker.es_module_interop = true;
         options.printer.es_module_interop = true;
-        // esModuleInterop implies allowSyntheticDefaultImports
-        options.allow_synthetic_default_imports = true;
-        options.checker.allow_synthetic_default_imports = true;
+        // `esModuleInterop -> allowSyntheticDefaultImports` is owned by the
+        // shared `apply_non_strict_fanout` table below.
     }
     if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
         options.allow_synthetic_default_imports = allow_synthetic_default_imports;
@@ -401,21 +397,13 @@ pub(super) fn apply_cli_overrides_with_config_options(
     if args.preserve_const_enums {
         options.printer.preserve_const_enums = true;
     }
-    // isolatedModules implies preserveConstEnums: const enums cannot be
-    // inlined across file boundaries, so they must be emitted as regular enums.
-    // Also disables const enum value inlining at usage sites.
+    // `isolatedModules`/`verbatimModuleSyntax -> preserveConstEnums` (and
+    // `verbatimModuleSyntax -> isolatedModules`) are owned by the shared
+    // `apply_non_strict_fanout` table below; record only the raw source flags.
     if args.isolated_modules {
-        options.printer.preserve_const_enums = true;
-        options.printer.no_const_enum_inlining = true;
         options.checker.isolated_modules = true;
     }
-    // verbatimModuleSyntax implies preserveConstEnums (tsc 5.0+): import/export
-    // syntax is preserved verbatim, so const enums must be emitted as regular
-    // enums rather than erased+inlined.
     if args.verbatim_module_syntax {
-        options.printer.preserve_const_enums = true;
-        options.printer.no_const_enum_inlining = true;
-        options.printer.verbatim_module_syntax = true;
         options.checker.verbatim_module_syntax = true;
     }
     if let Some(jsx) = args.jsx {
@@ -482,6 +470,22 @@ pub(super) fn apply_cli_overrides_with_config_options(
     }
     if args.suppress_implicit_any_index_errors {
         options.checker.suppress_implicit_any_index_errors = true;
+    }
+
+    // Fan out the non-strict-family implications (composite -> declaration +
+    // incremental, isolatedModules/verbatimModuleSyntax -> preserveConstEnums,
+    // importHelpers -> no_emit_helpers, esModuleInterop ->
+    // allowSyntheticDefaultImports) through the shared table, so the CLI and
+    // tsconfig engines derive them identically. Runs before the explicit
+    // `--flag false` disable pass (which resets the source flags and their
+    // derived emit fields for the CLI-only `--flag false` side-channel).
+    crate::config::apply_non_strict_fanout(options);
+    // Re-apply an explicit `--allowSyntheticDefaultImports` so it still wins
+    // over the `esModuleInterop -> allowSyntheticDefaultImports` implication
+    // (tsc resolves an explicitly provided value before any default).
+    if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
+        options.allow_synthetic_default_imports = allow_synthetic_default_imports;
+        options.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
     }
 
     apply_explicitly_disabled_bool_flags(options, args);

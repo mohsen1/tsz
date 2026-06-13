@@ -299,6 +299,22 @@ export const PROJECT_ROW_DEFINITIONS = [
     benchmark_set: "canary",
     category: "external",
   },
+  {
+    name: "ts-pattern-project",
+    label: "ts-pattern",
+    readme_candidates: ["README.md"],
+    owner: "Tracks 1, 2",
+    family: "exhaustive pattern-matching union distribution/negation; canary for symbol-keyed computed-property members from a value/type name-merge",
+    fixture_dir: "ts-pattern",
+    source_dir: "src",
+    repo_env: "TS_PATTERN_REPO",
+    ref_env: "TS_PATTERN_REF",
+    repo: "https://github.com/gvergnaud/ts-pattern.git",
+    ref: "c92ca435c7e1827e0fd55c539080ef1bfd6fe3f0",
+    guard_set: "canary",
+    benchmark_set: "canary",
+    category: "external",
+  },
 ];
 
 export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS

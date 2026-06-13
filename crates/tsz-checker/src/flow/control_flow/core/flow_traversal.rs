@@ -351,11 +351,15 @@ impl<'a> FlowAnalyzer<'a> {
                 // Switch clause - apply switch-specific narrowing
                 self.handle_switch_clause_iterative(reference, current_type, flow, results)
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                let assignment_roots_may_overlap =
+                    self.assignment_root_symbols_may_overlap(flow.node, reference, symbol_id);
                 // OPTIMIZATION: Quick symbol-based filtering before expensive AST comparison.
                 // If we have a resolved symbol and the assignment's target has a different symbol,
                 // we can skip this assignment entirely. This turns O(N²) into O(N) for cases like
                 // many independent variable assignments.
-                let targets_reference = if let Some(target_sym) = symbol_id {
+                let targets_reference = if !assignment_roots_may_overlap {
+                    false
+                } else if let Some(target_sym) = symbol_id {
                     // Get the assignment target's symbol (O(1) lookup)
                     let assignment_sym = self.reference_symbol(flow.node);
                     if assignment_sym.is_some() && assignment_sym != Some(target_sym) {
@@ -656,7 +660,9 @@ impl<'a> FlowAnalyzer<'a> {
                             }
                         }
                     }
-                } else if self.assignment_affects_reference_node(flow.node, reference) {
+                } else if assignment_roots_may_overlap
+                    && self.assignment_affects_reference_node(flow.node, reference)
+                {
                     // Two sub-cases of "affects reference":
                     // 1. Base reassignment (obj = ... affects obj.prop): clears narrowing
                     // 2. Property mutation (obj.prop.x = ... affects obj.prop): preserves narrowing

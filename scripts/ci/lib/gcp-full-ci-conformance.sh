@@ -104,14 +104,8 @@ run_conformance() {
   if [[ "$shard_count" -gt 1 ]]; then
     if [[ "$CONFORMANCE_SHARD_STRATEGY" == "weighted" ]]; then
       shard_weights_file="$METRICS_DIR/conformance-shard-weights.json"
-      local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-      if [[ -n "$bucket" ]] && command -v gsutil >/dev/null 2>&1 && \
-          gsutil -q cp "${bucket%/}/metrics/latest/conformance-timings.json" "$shard_weights_file" 2>/dev/null; then
-        echo "Using latest conformance timing weights from cache."
-      else
-        cp scripts/conformance/conformance-shard-weights.json "$shard_weights_file"
-        echo "Using checked-in conformance shard weights."
-      fi
+      cp scripts/conformance/conformance-shard-weights.json "$shard_weights_file"
+      echo "Using checked-in conformance shard weights."
     fi
     read -r shard_expected_passed shard_expected_total shard_expected_weight < <(
       conformance_shard_plan "$shard_index" "$shard_count" "$CONFORMANCE_SHARD_STRATEGY" "$shard_weights_file"

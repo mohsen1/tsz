@@ -17,6 +17,7 @@ use tsz::lib_loader::LibFile;
 use tsz::parallel;
 use tsz::parser::ParserState;
 use tsz::parser::node::NodeArena;
+use tsz_cli::config::checker_fanout::apply_checker_fanout;
 use tsz_cli::config::strict_family::{StrictFamilyOverrides, apply_strict_family};
 use tsz_cli::config::{
     checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
@@ -911,9 +912,14 @@ impl Server {
             target: checker_target,
             module: Self::parse_module(&options.module),
             es_module_interop: options.es_module_interop,
+            // Raw value only: the `esModuleInterop -> allowSyntheticDefaultImports`
+            // implication is owned by the shared `apply_checker_fanout` table
+            // (called below) so the server lane derives it identically to the
+            // CLI/tsconfig lanes. An explicit value is re-applied after the
+            // table so it still wins over the implication.
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports
-                .unwrap_or(options.es_module_interop),
+                .unwrap_or(false),
             allow_unreachable_code: options.allow_unreachable_code,
             allow_unused_labels: options.allow_unused_labels,
             no_property_access_from_index_signature: options
@@ -989,6 +995,18 @@ impl Server {
                 use_unknown_in_catch_variables: options.use_unknown_in_catch_variables,
             },
         );
+        // Fan out the checker-semantic non-strict-family implications
+        // (`verbatimModuleSyntax -> isolatedModules`,
+        // `esModuleInterop -> allowSyntheticDefaultImports`) through the shared
+        // table so the printer-less server lane derives them identically to the
+        // CLI/tsconfig lanes.
+        apply_checker_fanout(&mut checker_options);
+        // Re-apply an explicit `allowSyntheticDefaultImports` so it still wins
+        // over the `esModuleInterop -> allowSyntheticDefaultImports` implication
+        // (tsc resolves an explicitly provided value before any derivation).
+        if let Some(allow_synthetic_default_imports) = options.allow_synthetic_default_imports {
+            checker_options.allow_synthetic_default_imports = allow_synthetic_default_imports;
+        }
         checker_options
     }
 }

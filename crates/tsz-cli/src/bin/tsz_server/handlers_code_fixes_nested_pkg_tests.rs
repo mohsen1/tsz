@@ -31,6 +31,7 @@ fn make_server() -> Server {
         response_seq: 0,
         open_files: FxHashMap::default(),
         external_project_files: FxHashMap::default(),
+        completion_project_cache: None,
         _server_mode: ServerMode::Semantic,
         _log_config: LogConfig {
             level: LogLevel::Off,

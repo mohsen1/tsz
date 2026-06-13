@@ -738,6 +738,11 @@ run_project_row() {
       tsz_write_ofetch_config "$FIXTURE_ROOT/ofetch/tsconfig.tsz-guard.json"
       check_project "$name" "$FIXTURE_ROOT/ofetch/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ofetch/src"
       ;;
+    ts-pattern-project)
+      ensure_git_fixture "ts-pattern" "$TS_PATTERN_REPO" "$TS_PATTERN_REF" "$FIXTURE_ROOT/ts-pattern"
+      tsz_write_ts_pattern_config "$FIXTURE_ROOT/ts-pattern/tsconfig.tsz-guard.json"
+      check_project "$name" "$FIXTURE_ROOT/ts-pattern/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-pattern/src"
+      ;;
     vite-vanilla-ts-app)
       if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then
         return 0

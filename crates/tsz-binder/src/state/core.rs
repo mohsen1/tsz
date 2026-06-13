@@ -609,6 +609,15 @@ impl BinderState {
     /// Skipped during module augmentation to prevent augmented symbols from
     /// leaking into the augmenting file's scope (and subsequently into `file_locals/globals`).
     pub(crate) fn declare_in_persistent_scope(&mut self, name: String, sym_id: SymbolId) {
+        self.declare_in_persistent_scope_with_atom(name, None, sym_id);
+    }
+
+    pub(crate) fn declare_in_persistent_scope_with_atom(
+        &mut self,
+        name: String,
+        atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
+        sym_id: SymbolId,
+    ) {
         if self.in_module_augmentation {
             return;
         }
@@ -616,7 +625,7 @@ impl BinderState {
             && let Some(scope) =
                 Arc::make_mut(&mut self.scopes).get_mut(self.current_scope_id.0 as usize)
         {
-            scope.table.set(name, sym_id);
+            scope.table.set_with_atom(name, atom_key, sym_id);
         }
     }
 
@@ -1771,22 +1780,16 @@ impl BinderState {
                         i += 1;
                     }
                 }
-                sym.first_declaration_span = sym
-                    .declarations
-                    .first()
-                    .and_then(|decl| arena.get(*decl).map(|n| (n.pos, n.end)));
                 if sym.value_declaration == node {
                     sym.value_declaration =
                         sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                    sym.value_declaration_span = if sym.value_declaration.is_some() {
+                    let value_span = if sym.value_declaration.is_some() {
                         arena.pos_end_at(sym.value_declaration)
                     } else {
                         None
                     };
-                    sym.stable_value_declaration = crate::symbols::StableLocation::from_span(
-                        self.file_idx,
-                        sym.value_declaration_span,
-                    );
+                    sym.stable_value_declaration =
+                        crate::symbols::StableLocation::from_span(self.file_idx, value_span);
                 }
             }
         }

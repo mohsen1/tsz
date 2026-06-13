@@ -258,8 +258,6 @@ pub struct Symbol {
     ///
     /// [plan]: ../../../docs/plan/ROADMAP.md
     pub stable_declarations: Vec<StableLocation>,
-    /// Stable source span of the first declaration, if known.
-    pub first_declaration_span: Option<(u32, u32)>,
     /// First value declaration of the symbol
     pub value_declaration: NodeIndex,
     /// File-stable location parallel to [`Self::value_declaration`].
@@ -268,8 +266,6 @@ pub struct Symbol {
     /// `value_declaration` is set. Defaults to [`StableLocation::NONE`] when
     /// no value declaration has been recorded.
     pub stable_value_declaration: StableLocation,
-    /// Stable source span of the value declaration, if known.
-    pub value_declaration_span: Option<(u32, u32)>,
     /// Parent symbol (for nested symbols)
     pub parent: SymbolId,
     /// Unique ID for this symbol
@@ -315,10 +311,8 @@ impl Symbol {
             escaped_name: name,
             declarations: Vec::new(),
             stable_declarations: Vec::new(),
-            first_declaration_span: None,
             value_declaration: NodeIndex::NONE,
             stable_value_declaration: StableLocation::NONE,
-            value_declaration_span: None,
             parent: SymbolId::NONE,
             id,
             exports: None,
@@ -432,9 +426,6 @@ impl Symbol {
             self.stable_declarations
                 .push(StableLocation::from_span(u32::MAX, span));
         }
-        if self.first_declaration_span.is_none() {
-            self.first_declaration_span = span;
-        }
     }
 
     /// Record the symbol's value declaration and stable source span.
@@ -447,10 +438,43 @@ impl Symbol {
         span: Option<(u32, u32)>,
     ) {
         self.value_declaration = declaration;
-        self.value_declaration_span = span;
         self.stable_value_declaration = StableLocation::from_span(u32::MAX, span);
-        if self.first_declaration_span.is_none() {
-            self.first_declaration_span = span;
+    }
+
+    /// Stable source span `(pos, end)` of the first declaration, if known.
+    ///
+    /// Derived from the first [`StableLocation::is_known`] entry of
+    /// [`Self::stable_declarations`] (declarations are pushed in binding
+    /// order), falling back to [`Self::value_declaration_span`] for symbols
+    /// whose only recorded declaration is a value declaration. The
+    /// declaration lists are the single source of truth; no separate span
+    /// field is stored.
+    #[inline]
+    #[must_use]
+    pub fn first_declaration_span(&self) -> Option<(u32, u32)> {
+        self.stable_declarations
+            .iter()
+            .find(|loc| loc.is_known())
+            .map(|loc| (loc.pos, loc.end))
+            .or_else(|| self.value_declaration_span())
+    }
+
+    /// Stable source span `(pos, end)` of the value declaration, if known.
+    ///
+    /// Derived from [`Self::stable_value_declaration`], which
+    /// [`Self::set_value_declaration`] keeps in lockstep with
+    /// [`Self::value_declaration`]. A `(0, 0)` location is the documented
+    /// [`StableLocation`] "unknown" sentinel and yields `None`.
+    #[inline]
+    #[must_use]
+    pub const fn value_declaration_span(&self) -> Option<(u32, u32)> {
+        if self.stable_value_declaration.is_known() {
+            Some((
+                self.stable_value_declaration.pos,
+                self.stable_value_declaration.end,
+            ))
+        } else {
+            None
         }
     }
 
@@ -511,6 +535,15 @@ impl Symbol {
 pub struct SymbolTable {
     /// Symbols indexed by their escaped name (using `FxHashMap` for faster hashing)
     symbols: Arc<FxHashMap<String, SymbolId>>,
+    /// Symbols indexed by `(NodeArena identity, parsed identifier AstAtom)`.
+    ///
+    /// `AstAtom` values are per-arena. The arena key is part of the side-index
+    /// key so tables shared across files can never resolve a same-number atom
+    /// from another arena. String keys remain authoritative and are used as the
+    /// fallback for cross-arena lookups, synthetic names, and deserialized
+    /// tables with an empty runtime-only atom index.
+    #[serde(skip)]
+    atom_symbols: Arc<FxHashMap<(usize, tsz_common::interner::AstAtom), SymbolId>>,
 }
 
 impl SymbolTable {
@@ -518,6 +551,7 @@ impl SymbolTable {
     pub fn new() -> Self {
         Self {
             symbols: Arc::new(FxHashMap::default()),
+            atom_symbols: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -531,6 +565,10 @@ impl SymbolTable {
                 capacity,
                 Default::default(),
             )),
+            atom_symbols: Arc::new(FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            )),
         }
     }
 
@@ -540,14 +578,57 @@ impl SymbolTable {
         self.symbols.get(name).copied()
     }
 
+    /// Get a symbol by parsed identifier atom when the atom owner matches.
+    #[must_use]
+    pub fn get_by_atom(
+        &self,
+        atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
+    ) -> Option<SymbolId> {
+        let (owner_key, atom) = atom_key?;
+        if owner_key == 0 || atom == tsz_common::interner::AstAtom::NONE {
+            return None;
+        }
+        self.atom_symbols.get(&(owner_key, atom)).copied()
+    }
+
+    /// Get a symbol by same-arena atom when present, falling back to escaped text.
+    #[must_use]
+    pub fn get_by_atom_or_name(
+        &self,
+        atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
+        name: &str,
+    ) -> Option<SymbolId> {
+        self.get_by_atom(atom_key).or_else(|| self.get(name))
+    }
+
     /// Set a symbol by name.
     pub fn set(&mut self, name: String, symbol: SymbolId) {
         Arc::make_mut(&mut self.symbols).insert(name, symbol);
     }
 
+    /// Set a symbol by name and by same-arena parsed identifier atom.
+    pub fn set_with_atom(
+        &mut self,
+        name: String,
+        atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
+        symbol: SymbolId,
+    ) {
+        self.set(name, symbol);
+        if let Some((owner_key, atom)) = atom_key
+            && owner_key != 0
+            && atom != tsz_common::interner::AstAtom::NONE
+        {
+            Arc::make_mut(&mut self.atom_symbols).insert((owner_key, atom), symbol);
+        }
+    }
+
     /// Remove a symbol by name.
     pub fn remove(&mut self, name: &str) -> Option<SymbolId> {
-        Arc::make_mut(&mut self.symbols).remove(name)
+        let removed = Arc::make_mut(&mut self.symbols).remove(name);
+        if let Some(symbol) = removed {
+            Arc::make_mut(&mut self.atom_symbols).retain(|_, id| *id != symbol);
+        }
+        removed
     }
 
     /// Check if a name exists in the table.
@@ -571,6 +652,7 @@ impl SymbolTable {
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
         Arc::make_mut(&mut self.symbols).clear();
+        Arc::make_mut(&mut self.atom_symbols).clear();
     }
 
     /// Iterate over symbols.
@@ -587,6 +669,10 @@ impl SymbolTable {
         const BUCKET_OVERHEAD: usize = 16;
         let mut size = self.symbols.capacity()
             * (BUCKET_OVERHEAD + std::mem::size_of::<String>() + std::mem::size_of::<SymbolId>());
+        size += self.atom_symbols.capacity()
+            * (BUCKET_OVERHEAD
+                + std::mem::size_of::<(usize, tsz_common::interner::AstAtom)>()
+                + std::mem::size_of::<SymbolId>());
         for name in self.symbols.keys() {
             size += name.capacity();
         }
@@ -1036,6 +1122,7 @@ impl SymbolArena {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tsz_common::interner::AstAtom;
 
     fn sym() -> Symbol {
         Symbol::new(SymbolId(0), 0, String::new())
@@ -1104,6 +1191,117 @@ mod tests {
     fn primary_declaration_none_when_empty() {
         let s = sym();
         assert_eq!(s.primary_declaration(), None);
+    }
+
+    /// Pin the size of `Symbol` so accidental field growth is caught in
+    /// review. Dropping the redundant `first_declaration_span` /
+    /// `value_declaration_span` fields (#13072) brought this from 200 to
+    /// 176 bytes; every interned symbol pays this footprint.
+    #[test]
+    fn symbol_size_is_pinned() {
+        assert_eq!(std::mem::size_of::<Symbol>(), 176);
+    }
+
+    /// The derived span accessors must reproduce the semantics of the
+    /// removed stored fields: first non-`None` span across
+    /// `add_declaration`/`set_value_declaration` events, and the span
+    /// recorded by the last `set_value_declaration`.
+    #[test]
+    fn declaration_span_accessors_empty_symbol() {
+        let s = sym();
+        assert_eq!(s.first_declaration_span(), None);
+        assert_eq!(s.value_declaration_span(), None);
+    }
+
+    #[test]
+    fn declaration_span_accessors_add_then_set_same_span() {
+        // The dominant binder pattern: add_declaration followed by
+        // set_value_declaration with the same node and span.
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), Some((10, 20)));
+        s.set_value_declaration(NodeIndex(1), Some((10, 20)));
+        assert_eq!(s.first_declaration_span(), Some((10, 20)));
+        assert_eq!(s.value_declaration_span(), Some((10, 20)));
+    }
+
+    #[test]
+    fn declaration_span_accessors_first_span_sticks_across_merges() {
+        // Declaration merging: later declarations must not change the
+        // first-declaration span.
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), Some((10, 20)));
+        s.add_declaration(NodeIndex(2), Some((30, 40)));
+        s.set_value_declaration(NodeIndex(2), Some((30, 40)));
+        assert_eq!(s.first_declaration_span(), Some((10, 20)));
+        assert_eq!(s.value_declaration_span(), Some((30, 40)));
+    }
+
+    #[test]
+    fn declaration_span_accessors_set_before_add_enum_member_pattern() {
+        // Enum members call set_value_declaration before add_declaration
+        // with the same node and span (binding/declaration.rs).
+        let mut s = sym();
+        s.set_value_declaration(NodeIndex(7), Some((5, 9)));
+        s.add_declaration(NodeIndex(7), Some((5, 9)));
+        assert_eq!(s.first_declaration_span(), Some((5, 9)));
+        assert_eq!(s.value_declaration_span(), Some((5, 9)));
+    }
+
+    #[test]
+    fn declaration_span_accessors_value_only_symbol_falls_back() {
+        // A symbol whose only recorded declaration is a value declaration
+        // (no add_declaration) reports the value span as its first span,
+        // matching the old stored-field write in set_value_declaration.
+        let mut s = sym();
+        s.set_value_declaration(NodeIndex(3), Some((42, 50)));
+        assert_eq!(s.first_declaration_span(), Some((42, 50)));
+        assert_eq!(s.value_declaration_span(), Some((42, 50)));
+    }
+
+    #[test]
+    fn declaration_span_accessors_skip_unknown_entries() {
+        // A None-span declaration must not shadow a later known span,
+        // matching the old "first non-None event span" semantics.
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.add_declaration(NodeIndex(2), Some((30, 40)));
+        assert_eq!(s.first_declaration_span(), Some((30, 40)));
+        assert_eq!(s.value_declaration_span(), None);
+    }
+
+    #[test]
+    fn declaration_span_accessors_resetting_value_declaration_clears_span() {
+        // The incremental prune path resets the value declaration through
+        // set_value_declaration with None; the derived span must follow.
+        let mut s = sym();
+        s.set_value_declaration(NodeIndex(3), Some((42, 50)));
+        s.set_value_declaration(NodeIndex::NONE, None);
+        assert_eq!(s.value_declaration_span(), None);
+    }
+
+    #[test]
+    fn symbol_table_atom_lookup_ignores_foreign_arena_atoms() {
+        let lib_owner = 11;
+        let user_owner = 22;
+        let mut table = SymbolTable::new();
+
+        table.set_with_atom(
+            "captureEvents".to_string(),
+            Some((lib_owner, AstAtom(7))),
+            SymbolId(1),
+        );
+        table.set("globalThis".to_string(), SymbolId(2));
+
+        assert_eq!(
+            table.get_by_atom_or_name(Some((lib_owner, AstAtom(7))), "missing"),
+            Some(SymbolId(1)),
+            "same-arena atom lookups may use the side index"
+        );
+        assert_eq!(
+            table.get_by_atom_or_name(Some((user_owner, AstAtom(7))), "globalThis"),
+            Some(SymbolId(2)),
+            "foreign atoms must not hit the same raw atom id in this table"
+        );
     }
 
     #[test]

@@ -100,8 +100,11 @@ impl BinderState {
 
         let result = 'resolve: {
             // Get the identifier text
-            let name = if let Some(ident) = arena.get_identifier_at(node_idx) {
-                &ident.escaped_text
+            let (name, name_atom_key) = if let Some(ident) = arena.get_identifier_at(node_idx) {
+                (
+                    ident.escaped_text.as_str(),
+                    Some((arena.atom_owner_key(), ident.atom)),
+                )
             } else {
                 break 'resolve None;
             };
@@ -113,7 +116,7 @@ impl BinderState {
                 let mut scope_depth = 0;
                 while scope_id.is_some() {
                     if let Some(scope) = self.scopes.get(scope_id.0 as usize) {
-                        if let Some(sym_id) = scope.table.get(name) {
+                        if let Some(sym_id) = scope.table.get_by_atom_or_name(name_atom_key, name) {
                             debug!(
                                 "[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
                                 name, scope_depth, sym_id.0
@@ -146,7 +149,7 @@ impl BinderState {
             }
 
             // Finally check file locals / globals
-            if let Some(sym_id) = self.file_locals.get(name) {
+            if let Some(sym_id) = self.file_locals.get_by_atom_or_name(name_atom_key, name) {
                 debug!(
                     "[RESOLVE] '{}' FOUND in file_locals (id={})",
                     name, sym_id.0
@@ -169,7 +172,10 @@ impl BinderState {
             // Chained lookup: check lib binders for global symbols
             // This enables resolving console, Array, Object, etc. from lib.d.ts
             for (i, lib_binder) in self.lib_binders.iter().enumerate() {
-                if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                if let Some(sym_id) = lib_binder
+                    .file_locals
+                    .get_by_atom_or_name(name_atom_key, name)
+                {
                     debug!(
                         "[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
                         name, i, sym_id.0
@@ -280,7 +286,9 @@ impl BinderState {
         F: FnMut(SymbolId) -> bool,
     {
         let node = arena.get(node_idx)?;
-        let name = arena.get_identifier(node)?.escaped_text.as_str();
+        let ident = arena.get_identifier(node)?;
+        let name = ident.escaped_text.as_str();
+        let name_atom_key = Some((arena.atom_owner_key(), ident.atom));
 
         let mut consider =
             |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then_some(sym_id) };
@@ -300,7 +308,7 @@ impl BinderState {
                     break;
                 };
 
-                if let Some(sym_id) = scope.table.get(name)
+                if let Some(sym_id) = scope.table.get_by_atom_or_name(name_atom_key, name)
                     && let Some(found) = consider(sym_id)
                 {
                     return Some(found);
@@ -321,7 +329,7 @@ impl BinderState {
             }
         }
 
-        if let Some(sym_id) = self.file_locals.get(name)
+        if let Some(sym_id) = self.file_locals.get_by_atom_or_name(name_atom_key, name)
             && let Some(found) = consider(sym_id)
         {
             return Some(found);
@@ -346,7 +354,9 @@ impl BinderState {
         // `resolve_identifier_symbol` and `resolve_type_symbol` fallbacks.
         if !self.lib_symbols_merged {
             for lib_binder in lib_binders {
-                if let Some(sym_id) = lib_binder.file_locals.get(name)
+                if let Some(sym_id) = lib_binder
+                    .file_locals
+                    .get_by_atom_or_name(name_atom_key, name)
                     && let Some(found) = consider(sym_id)
                 {
                     return Some(found);
