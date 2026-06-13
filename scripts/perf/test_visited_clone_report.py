@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("visited-clone-report.py")
+ROOT = SCRIPT.parents[2]
 
 
 def load_module():
@@ -83,6 +84,18 @@ class VisitedCloneReportTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["schema_version"], 1)
         self.assertEqual(payload["summary"]["total"], 1)
         self.assertEqual(payload["hits"][0]["name"], "visited_modules")
+
+    def test_solver_infer_pattern_avoids_branch_local_visited_clone(self):
+        candidates = self.module.scan(
+            [ROOT / "crates/tsz-solver/src/evaluation/evaluate_rules"]
+        )
+
+        infer_pattern_hits = [
+            candidate
+            for candidate in candidates
+            if candidate.path.endswith("infer_pattern.rs")
+        ]
+        self.assertEqual(infer_pattern_hits, [])
 
 
 if __name__ == "__main__":

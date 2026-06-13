@@ -24,6 +24,7 @@ use tracing::trace;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+use super::infer_pattern::InferPatternVisited;
 use crate::type_queries::get_application_base;
 use phases::TailCallStep;
 
@@ -198,7 +199,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // PERF: Pre-allocate bindings and visited sets outside the tail-recursion
         // loop so their capacity is preserved across iterations.
         let mut loop_bindings: FxHashMap<Atom, TypeId> = FxHashMap::default();
-        let mut loop_visited: FxHashSet<(TypeId, TypeId)> = FxHashSet::default();
+        let mut loop_visited = InferPatternVisited::default();
         let mut tail_application_branch: Option<TypeId> = None;
         // Cycle detection for the tail-recursion loop.
         // Tracks (check_type, extends_type) pairs seen during tail calls.
@@ -278,7 +279,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // e.g., `any extends infer U ? U : never` → union(any, never) → any
                 if extends_has_infer {
                     let mut bindings = FxHashMap::default();
-                    let mut visited = FxHashSet::default();
+                    let mut visited = InferPatternVisited::default();
                     let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     self.match_infer_pattern(
@@ -533,7 +534,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     let mut bindings = FxHashMap::default();
-                    let mut visited = FxHashSet::default();
+                    let mut visited = InferPatternVisited::default();
                     if self.match_infer_pattern(
                         constraint,
                         extends_type,
@@ -864,7 +865,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     {
                         checked_concrete_constraint = true;
                         let mut bindings2 = FxHashMap::default();
-                        let mut visited2 = FxHashSet::default();
+                        let mut visited2 = InferPatternVisited::default();
                         let mut checker2 = self.conditional_subtype_checker();
                         checker2.allow_bivariant_rest = true;
                         if self.match_infer_pattern(
@@ -1771,7 +1772,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut checker = self.conditional_subtype_checker();
         checker.allow_bivariant_rest = true;
         let mut bindings = FxHashMap::default();
-        let mut visited = FxHashSet::default();
+        let mut visited = InferPatternVisited::default();
         let matched = self.match_infer_pattern(
             check_type,
             cond.extends_type,
@@ -1809,7 +1810,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 let mut bindings = FxHashMap::default();
-                let mut visited = FxHashSet::default();
+                let mut visited = InferPatternVisited::default();
                 let matched = self.match_infer_pattern(
                     reduced,
                     cond.extends_type,
@@ -1830,7 +1831,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let mut bindings = FxHashMap::default();
-            let mut visited = FxHashSet::default();
+            let mut visited = InferPatternVisited::default();
             let matched = self.match_infer_pattern(
                 alias,
                 cond.extends_type,

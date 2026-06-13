@@ -71,6 +71,55 @@ struct InferContainsWalk {
     tainted: bool,
 }
 
+/// Logged visited set for one infer-pattern match operation.
+///
+/// The match algorithm needs branch-local rollback for speculative alias
+/// recovery, but cloning the full visited set on every branch is a hot-path
+/// multiplier for recursive conditional utilities. Logging only successful
+/// inserts lets a branch checkpoint and roll back the entries it added while
+/// preserving the parent walk's cycle guard.
+#[derive(Default)]
+pub(crate) struct InferPatternVisited {
+    entries: FxHashSet<(TypeId, TypeId)>,
+    insert_log: Vec<(TypeId, TypeId)>,
+}
+
+impl InferPatternVisited {
+    #[inline]
+    fn insert(&mut self, pair: (TypeId, TypeId)) -> bool {
+        if self.entries.insert(pair) {
+            self.insert_log.push(pair);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    fn contains(&self, pair: &(TypeId, TypeId)) -> bool {
+        self.entries.contains(pair)
+    }
+
+    #[inline]
+    const fn checkpoint(&self) -> usize {
+        self.insert_log.len()
+    }
+
+    fn rollback_to(&mut self, checkpoint: usize) {
+        while self.insert_log.len() > checkpoint {
+            if let Some(pair) = self.insert_log.pop() {
+                self.entries.remove(&pair);
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+        self.insert_log.clear();
+    }
+}
+
 /// RAII guard for [`INFER_MATCH_EXPANSION_DEPTH`].
 ///
 /// `enter` returns `None` when the budget is exhausted (the caller must then
@@ -924,7 +973,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         pairs: &[(TypeId, TypeId)],
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         self.match_co_located_with_merge(
@@ -940,7 +989,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         pairs: &[(TypeId, TypeId)],
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
         merge_kind: CoLocatedMerge,
     ) -> bool {
@@ -991,7 +1040,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         residual: &[TupleElement],
         pattern_rest_type: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         if let Some(array_elem_type) = self.unwrap_array_element_for_residual(pattern_rest_type) {
@@ -1047,7 +1096,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         residual: &[TupleElement],
         target_elem: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         for source_elem in residual {
@@ -1167,7 +1216,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_elems: &[TupleElement],
         pattern_elems: &[TupleElement],
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let source_len = source_elems.len();
@@ -1309,7 +1358,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_params: &[ParamInfo],
         pattern_params: &[ParamInfo],
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         if source_params.len() != pattern_params.len() {
@@ -1432,7 +1481,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source: &TypeApplication,
         pattern: &TypeApplication,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> Option<bool> {
         if source.args.len() != pattern.args.len() {
@@ -1509,7 +1558,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         members: &[TypeId],
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let base = bindings.clone();
@@ -1555,7 +1604,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source: TypeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         if !visited.insert((source, pattern)) {
@@ -1784,17 +1833,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             return true;
                         }
                         let mut alias_bindings = bindings.clone();
-                        let mut alias_visited = visited.clone();
+                        let alias_checkpoint = visited.checkpoint();
                         if self.match_infer_pattern(
                             alias,
                             expanded_pattern,
                             &mut alias_bindings,
-                            &mut alias_visited,
+                            visited,
                             checker,
                         ) {
+                            visited.rollback_to(alias_checkpoint);
                             *bindings = alias_bindings;
                             return true;
                         }
+                        visited.rollback_to(alias_checkpoint);
                     }
                     return self.match_infer_pattern(
                         source,
@@ -1846,7 +1897,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }) {
                     for &member in members.iter() {
                         let mut local_bindings = bindings.clone();
-                        let mut local_visited = FxHashSet::default();
+                        let mut local_visited = InferPatternVisited::default();
                         if self.match_infer_pattern(
                             source,
                             member,
