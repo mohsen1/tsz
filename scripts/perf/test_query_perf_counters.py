@@ -127,6 +127,7 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("phase=body", result.stdout)
         self.assertIn("file-session reset cache high-water:", result.stdout)
         self.assertIn("dominant=env_eval", result.stdout)
+        self.assertIn("byte_share=40.6%", result.stdout)
         self.assertIn("Dominant: TypeEnvironmentCore = 7", result.stdout)
         self.assertIn("Top non-baseline T2.2 target: ImportType = 3", result.stdout)
 
@@ -164,6 +165,7 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("regressed", result.stdout)
         self.assertIn("reset-cache high-water by family:", result.stdout)
         self.assertIn("env_eval", result.stdout)
+        self.assertIn("share  40.6% →  40.6%", result.stdout)
 
     def test_by_reason_requires_by_reason_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
