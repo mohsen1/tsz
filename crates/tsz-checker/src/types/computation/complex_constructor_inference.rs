@@ -1,4 +1,4 @@
-use crate::query_boundaries::common::TypeSubstitution;
+use crate::query_boundaries::common::{TypeSubstitution, type_param_info};
 use crate::query_boundaries::type_computation::complex as type_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -116,12 +116,8 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn new_type_args_preserve_outer_type_params(&self, type_args: &[TypeId]) -> bool {
         type_args.iter().copied().any(|type_arg| {
-            crate::query_boundaries::common::collect_all_types(self.ctx.types, type_arg)
-                .into_iter()
-                .any(|part| {
-                    crate::query_boundaries::common::type_param_info(self.ctx.types, part)
-                        .is_some_and(|info| !info.is_current_infer_placeholder())
-                })
+            type_param_info(self.ctx.types, type_arg)
+                .is_some_and(|info| !info.is_current_infer_placeholder())
         })
     }
 
