@@ -1206,7 +1206,7 @@ impl<'a> CheckerState<'a> {
         // Get the property name
         let name_node = self.ctx.arena.get(access.name_or_argument)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        let property_name = ident.escaped_text.clone();
+        let property_name = self.ctx.types.intern_string(&ident.escaped_text);
 
         // Get the concrete class type for property lookup
         let concrete_this = self.current_this_type()?;
@@ -1215,7 +1215,7 @@ impl<'a> CheckerState<'a> {
         let raw_result = crate::query_boundaries::property_access::resolve_property_access_raw_this(
             self.ctx.types,
             concrete_this,
-            &property_name,
+            property_name,
         );
 
         let raw_type = match raw_result {
@@ -1291,7 +1291,7 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::property_access::resolve_property_access_raw_this(
                         self.ctx.types,
                         concrete_this,
-                        &ident.escaped_text,
+                        self.ctx.types.intern_string(&ident.escaped_text),
                     );
                 if let crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id,
@@ -1394,7 +1394,7 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::property_access::resolve_property_access_raw_this(
                         self.ctx.types,
                         concrete_this,
-                        &ident.escaped_text,
+                        self.ctx.types.intern_string(&ident.escaped_text),
                     );
                 if let crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id,
@@ -1439,7 +1439,7 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::property_access::resolve_property_access_raw_this(
                         self.ctx.types,
                         concrete_this,
-                        &ident.escaped_text,
+                        self.ctx.types.intern_string(&ident.escaped_text),
                     );
                 if let crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id,

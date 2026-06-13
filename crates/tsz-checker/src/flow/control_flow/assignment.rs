@@ -146,21 +146,20 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         };
 
-        let prop_name = self.interner.resolve_atom_ref(name_atom);
         let access_result = if let Some(env_ref) = &self.type_environment {
             let env = env_ref.borrow();
             crate::query_boundaries::property_access::resolve_property_access_with_resolver(
                 self.interner,
                 &*env,
                 base_type,
-                prop_name.as_ref(),
+                name_atom,
                 self.interner.no_unchecked_indexed_access(),
             )
         } else {
             crate::query_boundaries::property_access::resolve_property_access_with_options(
                 self.interner,
                 base_type,
-                prop_name.as_ref(),
+                name_atom,
                 self.interner.no_unchecked_indexed_access(),
             )
         };

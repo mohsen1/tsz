@@ -104,7 +104,7 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::property_access::resolve_private_identifier_property_access(
                     self.ctx.types,
                     object_type,
-                    private_name,
+                    self.ctx.types.intern_string(private_name),
                 )
                 .is_success()
             }
@@ -763,7 +763,7 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::property_access::resolve_private_identifier_property_access(
                         self.ctx.types,
                         object_type_for_check,
-                        &property_name,
+                        self.ctx.types.intern_string(&property_name),
                     ),
                     PropertyAccessResult::Success { .. }
                 )
@@ -888,7 +888,7 @@ impl<'a> CheckerState<'a> {
             match crate::query_boundaries::property_access::resolve_private_identifier_property_access(
                 self.ctx.types,
                 declaring_type,
-                &property_name,
+                self.ctx.types.intern_string(&property_name),
             ) {
             PropertyAccessResult::Success {
                 type_id,

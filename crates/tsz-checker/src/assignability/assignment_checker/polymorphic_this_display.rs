@@ -36,10 +36,11 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_identifier(node))?
             .escaped_text
             .clone();
+        let name = self.ctx.types.intern_string(&name);
         let raw = crate::query_boundaries::property_access::resolve_property_access_raw_this(
             self.ctx.types,
             self.current_this_type()?,
-            &name,
+            name,
         );
         let crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } = raw
         else {

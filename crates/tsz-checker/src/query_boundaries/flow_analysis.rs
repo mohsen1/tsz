@@ -72,7 +72,7 @@ pub(crate) fn property_access_function_returns_never(
     }
 
     matches!(
-        super::property_access::resolve_property_access(db, object_type, property_name),
+        super::property_access::resolve_property_access(db, object_type, db.intern_string(property_name)),
         super::common::PropertyAccessResult::Success { type_id, .. }
             if function_return_type(db.as_type_database(), type_id) == Some(TypeId::NEVER)
     )

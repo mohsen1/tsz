@@ -106,7 +106,7 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::property_access::resolve_property_access(
             self.ctx.types,
             type_id,
-            "then",
+            self.ctx.types.intern_string("then"),
         )
         .success_type()
         .and_then(|then_type| query::call_signatures_for_type(self.ctx.types, then_type))

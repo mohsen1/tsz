@@ -16,7 +16,7 @@ pub(crate) use super::common::{
 pub(crate) fn resolve_property_access(
     db: &dyn QueryDatabase,
     obj_type: TypeId,
-    prop_name: &str,
+    prop_name: Atom,
 ) -> PropertyAccessResult {
     resolve_property_access_with_options(db, obj_type, prop_name, false)
 }
@@ -24,15 +24,15 @@ pub(crate) fn resolve_property_access(
 pub(crate) fn receiver_property_visibility(
     db: &dyn TypeDatabase,
     object_type: TypeId,
-    property_name: &str,
+    property_name: Atom,
 ) -> Option<tsz_solver::Visibility> {
-    tsz_solver::type_queries::receiver_property_visibility(db, object_type, property_name)
+    tsz_solver::type_queries::receiver_property_visibility_atom(db, object_type, property_name)
 }
 
 pub(crate) fn protected_intersection_owner_type(
     db: &dyn TypeDatabase,
     object_type: TypeId,
-    property_name: &str,
+    property_name: Atom,
 ) -> Option<TypeId> {
     let intersection_type = db
         .get_display_alias(object_type)
@@ -48,22 +48,22 @@ pub(crate) fn protected_intersection_owner_type(
 pub(crate) fn resolve_property_access_with_options(
     db: &dyn QueryDatabase,
     obj_type: TypeId,
-    prop_name: &str,
+    prop_name: Atom,
     no_unchecked_indexed_access: bool,
 ) -> PropertyAccessResult {
     let mut evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
     evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
-    evaluator.resolve_property_access(obj_type, prop_name)
+    evaluator.resolve_property_access_atom(obj_type, prop_name)
 }
 
 pub(crate) fn resolve_private_identifier_property_access(
     db: &dyn QueryDatabase,
     obj_type: TypeId,
-    prop_name: &str,
+    prop_name: Atom,
 ) -> PropertyAccessResult {
     let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
     evaluator.set_allow_private_identifier_properties(true);
-    evaluator.resolve_property_access(obj_type, prop_name)
+    evaluator.resolve_property_access_atom(obj_type, prop_name)
 }
 
 /// Like [`resolve_property_access`] but preserves raw `ThisType` in the result.
@@ -75,7 +75,7 @@ pub(crate) fn resolve_private_identifier_property_access(
 pub(crate) fn resolve_property_access_raw_this(
     db: &dyn QueryDatabase,
     obj_type: TypeId,
-    prop_name: &str,
+    prop_name: Atom,
 ) -> PropertyAccessResult {
     resolve_property_access_raw_this_with_options(db, obj_type, prop_name, false)
 }
@@ -83,40 +83,40 @@ pub(crate) fn resolve_property_access_raw_this(
 pub(crate) fn resolve_property_access_raw_this_with_options(
     db: &dyn QueryDatabase,
     obj_type: TypeId,
-    prop_name: &str,
+    prop_name: Atom,
     no_unchecked_indexed_access: bool,
 ) -> PropertyAccessResult {
     let mut evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
     evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
     evaluator.set_skip_this_binding(true);
-    evaluator.resolve_property_access(obj_type, prop_name)
+    evaluator.resolve_property_access_atom(obj_type, prop_name)
 }
 
 pub(crate) fn resolve_property_access_with_resolver(
     db: &dyn QueryDatabase,
     resolver: &dyn tsz_solver::relations::subtype::TypeResolver,
     obj_type: TypeId,
-    prop_name: &str,
+    prop_name: Atom,
     no_unchecked_indexed_access: bool,
 ) -> PropertyAccessResult {
     let mut evaluator =
         tsz_solver::operations::property::PropertyAccessEvaluator::with_resolver(db, resolver);
     evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
-    evaluator.resolve_property_access(obj_type, prop_name)
+    evaluator.resolve_property_access_atom(obj_type, prop_name)
 }
 
 pub(crate) fn resolve_property_access_raw_this_with_resolver(
     db: &dyn QueryDatabase,
     resolver: &dyn tsz_solver::relations::subtype::TypeResolver,
     obj_type: TypeId,
-    prop_name: &str,
+    prop_name: Atom,
     no_unchecked_indexed_access: bool,
 ) -> PropertyAccessResult {
     let mut evaluator =
         tsz_solver::operations::property::PropertyAccessEvaluator::with_resolver(db, resolver);
     evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
     evaluator.set_skip_this_binding(true);
-    evaluator.resolve_property_access(obj_type, prop_name)
+    evaluator.resolve_property_access_atom(obj_type, prop_name)
 }
 
 pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -180,8 +180,8 @@ pub(crate) fn function_shape(
 ///
 /// For unions, returns true only when ALL members have the property.
 /// Used by TS2702/TS2713 diagnostic distinction.
-pub(crate) fn type_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
-    tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
+pub(crate) fn type_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: Atom) -> bool {
+    tsz_solver::type_queries::type_has_property_atom(db, type_id, name)
 }
 
 /// Check if a type is the polymorphic `this` type.

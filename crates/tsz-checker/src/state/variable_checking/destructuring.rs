@@ -1245,12 +1245,11 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             key_type,
                         )
-                        .map(|atom| self.ctx.types.resolve_atom(atom))
-                        .is_some_and(|name| {
+                        .is_some_and(|atom| {
                             crate::query_boundaries::property_access::type_has_property(
                                 self.ctx.types,
                                 parent_type,
-                                &name,
+                                atom,
                             )
                         });
                     let ts2538_type = is_invalid.or(if is_symbol { Some(key_type) } else { None });
@@ -1290,12 +1289,11 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             key_type,
                         )
-                        .map(|atom| self.ctx.types.resolve_atom(atom))
-                        .is_some_and(|name| {
+                        .is_some_and(|atom| {
                             crate::query_boundaries::property_access::type_has_property(
                                 self.ctx.types,
                                 parent_type,
-                                &name,
+                                atom,
                             )
                         });
                     if !parent_has_symbol_prop {

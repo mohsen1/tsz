@@ -493,7 +493,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let prop_result = crate::query_boundaries::property_access::resolve_property_access(
             self.ctx.types,
             property_object,
-            key,
+            self.ctx.types.intern_string(key),
         );
         if !matches!(prop_result, PropertyAccessResult::PropertyNotFound { .. }) {
             return;

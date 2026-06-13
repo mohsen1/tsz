@@ -694,6 +694,18 @@ pub fn receiver_property_visibility(
     object_type: TypeId,
     property_name: &str,
 ) -> Option<Visibility> {
+    receiver_property_visibility_atom(db, object_type, db.intern_string(property_name))
+}
+
+/// `Atom`-keyed variant of [`receiver_property_visibility`].
+///
+/// Property names are interned `Atom`s; comparison is integer identity on the
+/// stored `PropertyInfo::name` atom, with no per-property string resolution.
+pub fn receiver_property_visibility_atom(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    property_name: Atom,
+) -> Option<Visibility> {
     const fn merge_visibility(left: Visibility, right: Visibility) -> Visibility {
         match (left, right) {
             (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
@@ -702,14 +714,10 @@ pub fn receiver_property_visibility(
         }
     }
 
-    fn find_in_props(
-        db: &dyn TypeDatabase,
-        props: &[PropertyInfo],
-        property_name: &str,
-    ) -> Option<Visibility> {
+    fn find_in_props(props: &[PropertyInfo], property_name: Atom) -> Option<Visibility> {
         props
             .iter()
-            .find(|prop| db.resolve_atom_ref(prop.name).as_ref() == property_name)
+            .find(|prop| prop.name == property_name)
             .map(|prop| prop.visibility)
     }
 
@@ -720,18 +728,18 @@ pub fn receiver_property_visibility(
     match db.lookup(object_type) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
-            find_in_props(db, &shape.properties, property_name)
+            find_in_props(&shape.properties, property_name)
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            find_in_props(db, &shape.properties, property_name)
+            find_in_props(&shape.properties, property_name)
         }
         Some(TypeData::Intersection(list_id)) => {
             let members = db.type_list(list_id);
             let mut visibility = None;
             for &member in members.iter() {
                 let Some(member_visibility) =
-                    receiver_property_visibility(db, member, property_name)
+                    receiver_property_visibility_atom(db, member, property_name)
                 else {
                     continue;
                 };
@@ -1296,17 +1304,22 @@ pub fn find_property_in_type_by_str(
 /// (matching tsc's TS2713 vs TS2702 distinction).
 /// For intersection types, returns `true` if ANY member has the property.
 pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
-    fn member_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    type_has_property_atom(db, type_id, db.intern_string(name))
+}
+
+/// `Atom`-keyed variant of [`type_has_property_by_str`].
+///
+/// Property names are interned `Atom`s; comparison is integer identity on the
+/// stored `PropertyInfo::name` atom, with no per-property string resolution.
+pub fn type_has_property_atom(db: &dyn TypeDatabase, type_id: TypeId, name: Atom) -> bool {
+    fn member_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: Atom) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
         match db.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+                shape.properties.iter().any(|p| p.name == name)
             }
             Some(TypeData::Intersection(list_id)) => {
                 let members = db.type_list(list_id).to_vec();
@@ -1322,10 +1335,7 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
     match db.lookup(type_id) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
-            shape
-                .properties
-                .iter()
-                .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+            shape.properties.iter().any(|p| p.name == name)
         }
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id).to_vec();
@@ -1339,7 +1349,7 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
         // E.g., `T extends { abc: number }` — T.abc should resolve through the constraint.
         Some(TypeData::TypeParameter(info)) => {
             if let Some(constraint) = info.constraint {
-                type_has_property_by_str(db, constraint, name)
+                type_has_property_atom(db, constraint, name)
             } else {
                 false
             }
@@ -1347,10 +1357,7 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
         // Callable shapes (interfaces with call/construct signatures) also have properties
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            shape
-                .properties
-                .iter()
-                .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+            shape.properties.iter().any(|p| p.name == name)
         }
         _ => false,
     }

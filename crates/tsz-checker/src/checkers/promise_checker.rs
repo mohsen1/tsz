@@ -608,9 +608,12 @@ impl<'a> CheckerState<'a> {
         } else {
             resolved_type
         };
-        let Some(then_type) =
-            resolve_property_access(self.ctx.types, receiver_type, "then").success_type()
-        else {
+        let Some(then_type) = resolve_property_access(
+            self.ctx.types,
+            receiver_type,
+            self.ctx.types.intern_string("then"),
+        )
+        .success_type() else {
             return ThenableAwaitInfo::default();
         };
 

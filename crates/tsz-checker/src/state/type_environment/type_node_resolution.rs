@@ -973,7 +973,7 @@ impl<'a> CheckerState<'a> {
             let prop_result = crate::query_boundaries::property_access::resolve_property_access(
                 self.ctx.types,
                 window_type,
-                name,
+                self.ctx.types.intern_string(name),
             );
             if let Some(type_id) = prop_result.success_type() {
                 return type_id;

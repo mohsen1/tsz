@@ -105,7 +105,7 @@ impl<'a> FlowAnalyzer<'a> {
             .arena
             .get(access.name_or_argument)
             .and_then(|node| self.arena.get_identifier(node))
-            .map(|ident| ident.escaped_text.as_str())?;
+            .map(|ident| self.interner.intern_string(&ident.escaped_text))?;
         let receiver_type = self.fallback_expression_type_from_syntax(access.expression)?;
         crate::query_boundaries::property_access::resolve_property_access(
             self.interner,

@@ -235,7 +235,7 @@ impl<'a> CheckerState<'a> {
                                 crate::query_boundaries::property_access::type_has_property(
                                     self.ctx.types,
                                     left_type_id,
-                                    &right_name,
+                                    self.ctx.types.intern_string(&right_name),
                                 );
 
                             use crate::diagnostics::diagnostic_codes;
