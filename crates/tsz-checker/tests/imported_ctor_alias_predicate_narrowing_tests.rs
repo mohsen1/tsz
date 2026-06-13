@@ -181,6 +181,107 @@ export const r2 = new b.build({ kind: 'a' })
     );
 }
 
+#[test]
+fn imported_predicate_narrows_to_required_update_any_column_before_ts2352() {
+    let entity = r#"
+export declare const entityKind: unique symbol
+export interface DrizzleEntity {
+  [entityKind]: string
+}
+export type DrizzleEntityClass<T> =
+  & ((abstract new (...args: any[]) => T) | (new (...args: any[]) => T))
+  & DrizzleEntity
+export declare function is<T extends DrizzleEntityClass<any>>(
+  value: any,
+  type: T,
+): value is InstanceType<T>
+"#;
+    let column = r#"
+import { entityKind } from './entity'
+
+type Update<T, TUpdate> = Omit<T, keyof TUpdate> & TUpdate
+type ColumnDataType = 'string' | 'number'
+interface ColumnBaseConfig<TDataType extends ColumnDataType, TColumnType extends string> {
+  name: string
+  tableName: string
+  dataType: TDataType
+  columnType: TColumnType
+  data: unknown
+  driverParam: unknown
+  notNull: boolean
+}
+type ColumnRuntimeConfig<TData, TRuntimeConfig extends object> = {
+  name: string
+  runtime: TRuntimeConfig
+  data?: TData
+}
+export interface Column<
+  T extends ColumnBaseConfig<ColumnDataType, string> = ColumnBaseConfig<ColumnDataType, string>,
+  TRuntimeConfig extends object = object,
+  TTypeConfig extends object = object,
+> {
+  readonly _: T & TTypeConfig
+}
+export abstract class Column<
+  T extends ColumnBaseConfig<ColumnDataType, string> = ColumnBaseConfig<ColumnDataType, string>,
+  TRuntimeConfig extends object = object,
+  TTypeConfig extends object = object,
+> {
+  static readonly [entityKind]: string = 'Column'
+  declare readonly _: T & TTypeConfig
+  readonly table = { name: 'table' }
+  protected config!: ColumnRuntimeConfig<T['data'], TRuntimeConfig>
+}
+export type AnyColumn<TPartial extends Partial<ColumnBaseConfig<ColumnDataType, string>> = {}> = Column<
+  Required<Update<ColumnBaseConfig<ColumnDataType, string>, TPartial>>
+>
+"#;
+    let main = r#"
+import { is } from './entity'
+import { Column, type AnyColumn } from './column'
+
+type Table = {
+  readonly brand: 'Table'
+  readonly config: { name: string }
+  readonly name: string
+  readonly columns: Record<string, AnyColumn>
+  readonly inferSelect: { id: number }
+  readonly inferInsert: { id?: number }
+}
+type View = {
+  readonly brand: 'View'
+  readonly viewBrand: string
+  readonly selectedFields: Record<string, unknown>
+}
+
+export function aliasValue<T extends Table | View>(target: T, prop: string) {
+  const value = target[prop as keyof typeof target]
+  if (is(value, Column)) {
+    value as AnyColumn
+  }
+}
+
+export function aliasValueRenamed<Row extends Table | View>(subject: Row, keyText: string) {
+  const candidate = subject[keyText as keyof typeof subject]
+  if (is(candidate, Column)) {
+    candidate as AnyColumn
+  }
+}
+"#;
+    let diagnostics = check_files(
+        &[
+            ("entity.ts", entity),
+            ("column.ts", column),
+            ("main.ts", main),
+        ],
+        "main.ts",
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2352),
+        "predicate-narrowed Column should overlap AnyColumn with Required<Update<...>> target; got {diagnostics:#?}"
+    );
+}
+
 const RECORD_GUARDS_FILE: &str = r#"
 export type ShallowRecord<K extends keyof any, T> = {
   [P in K]: T
