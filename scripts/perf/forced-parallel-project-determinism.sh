@@ -11,7 +11,8 @@ Usage:
 
 Options:
   --row NAME        Project row to check (default: ts-toolbelt-project).
-                    Supported: ts-toolbelt-project, utility-types-project.
+                    Supported: ts-toolbelt-project, utility-types-project,
+                    dom-smoke, webworker-smoke, dom-webworker-smoke.
   --tsconfig PATH   Existing tsconfig to check instead of materializing a row.
                     Uses custom-tsconfig as the output label unless --row is
                     also provided as a descriptive label.
@@ -129,6 +130,52 @@ tsz_sync_project_row_groups
 
 mkdir -p "$FIXTURE_ROOT" "$OUT_ROOT"
 
+write_global_lib_smoke_fixture() {
+  local name="$1"
+  local libs_json="$2"
+  local global_interface="$3"
+  local global_object="$4"
+  local global_property="$5"
+  local root="$FIXTURE_ROOT/$name"
+
+  rm -rf "$root"
+  mkdir -p "$root"
+
+  cat >"$root/tsconfig.json" <<EOF
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "esnext",
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": $libs_json
+  },
+  "files": ["augment.ts", "use.ts"]
+}
+EOF
+
+  cat >"$root/augment.ts" <<EOF
+declare global {
+  interface $global_interface {
+    $global_property: string;
+  }
+
+  interface Console {
+    ${global_property}Log(value: string): void;
+  }
+}
+
+export {};
+EOF
+
+  cat >"$root/use.ts" <<EOF
+$global_object.$global_property = "stable";
+console.${global_property}Log($global_object.$global_property);
+EOF
+
+  printf '%s\n' "$root/tsconfig.json"
+}
+
 prepare_row() {
   if [[ -n "$TSCONFIG_INPUT" ]]; then
     if [[ ! -f "$TSCONFIG_INPUT" ]]; then
@@ -149,6 +196,30 @@ prepare_row() {
       tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$FIXTURE_ROOT/utility-types"
       tsz_write_utility_types_config "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json"
       printf '%s\n' "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json"
+      ;;
+    dom-smoke)
+      write_global_lib_smoke_fixture \
+        "dom-smoke" \
+        '["es2020", "dom"]' \
+        "Window" \
+        "window" \
+        "tszDomGateSmoke"
+      ;;
+    webworker-smoke)
+      write_global_lib_smoke_fixture \
+        "webworker-smoke" \
+        '["es2020", "webworker"]' \
+        "WorkerGlobalScope" \
+        "self" \
+        "tszWebworkerGateSmoke"
+      ;;
+    dom-webworker-smoke)
+      write_global_lib_smoke_fixture \
+        "dom-webworker-smoke" \
+        '["es2020", "dom", "webworker"]' \
+        "Window" \
+        "window" \
+        "tszDomWebworkerGateSmoke"
       ;;
     *)
       echo "error: unsupported row: $ROW" >&2
