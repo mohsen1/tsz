@@ -241,6 +241,9 @@ mod generic_method_override_variance_tests;
 #[path = "tests/generic_mixed_inheritance_chain_tests.rs"]
 mod generic_mixed_inheritance_chain_tests;
 #[cfg(test)]
+#[path = "tests/generic_signature_context_instantiation_tests.rs"]
+mod generic_signature_context_instantiation_tests;
+#[cfg(test)]
 #[path = "tests/global_augmentation_structural_lookup_arch_tests.rs"]
 mod global_augmentation_structural_lookup_arch_tests;
 #[cfg(test)]
