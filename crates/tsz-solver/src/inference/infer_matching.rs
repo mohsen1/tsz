@@ -1637,12 +1637,12 @@ impl<'a> InferenceContext<'a> {
             TypeData::TypeParameter(ref info) => self.find_type_param(info.name).is_some(),
             TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
-                let base = app.base;
-                let args = app.args.clone();
-                self.target_contains_inference_param_inner(base, visited)
-                    || args
+                self.target_contains_inference_param_inner(app.base, visited)
+                    || app
+                        .args
                         .iter()
-                        .any(|&arg| self.target_contains_inference_param_inner(arg, visited))
+                        .copied()
+                        .any(|arg| self.target_contains_inference_param_inner(arg, visited))
             }
             TypeData::Union(members) | TypeData::Intersection(members) => {
                 let list = self.interner.type_list(members);
