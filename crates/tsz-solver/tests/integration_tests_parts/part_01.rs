@@ -932,6 +932,7 @@ mod homomorphic_mapped_type_tests {
             constraint: Some(keyof_tp),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         };
         let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
         let index_access = interner.intern(TypeData::IndexAccess(tp, key_param_id));

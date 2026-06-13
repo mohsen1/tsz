@@ -122,6 +122,7 @@ fn test_constrained_type_parameter_template_projects_to_literal_union_target() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let cap_t = interner.string_intrinsic(StringIntrinsicKind::Capitalize, t);
     let source = interner.template_literal(vec![

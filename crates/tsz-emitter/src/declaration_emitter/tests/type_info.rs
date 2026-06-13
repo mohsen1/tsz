@@ -1578,12 +1578,14 @@ fn test_type_application_elides_trailing_default_type_argument() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: tsz_solver::types::TypeParamOrigin::User,
             },
             tsz_solver::types::TypeParamInfo {
                 name: reject_atom,
                 constraint: None,
                 default: Some(TypeId::ANY),
                 is_const: false,
+                origin: tsz_solver::types::TypeParamOrigin::User,
             },
         ],
     );
@@ -1723,6 +1725,7 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::types::TypeParamOrigin::User,
     });
     let c_atom = interner.intern_string("C");
     let c_param_info = TypeParamInfo {
@@ -1730,6 +1733,7 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::types::TypeParamOrigin::User,
     };
     let infer_c = interner.infer(c_param_info);
 

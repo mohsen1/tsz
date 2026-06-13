@@ -249,6 +249,7 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     default,
                     is_const: false,
+                    origin: tsz_solver::TypeParamOrigin::User,
                 });
                 self.ctx
                     .type_parameter_scope
@@ -1126,6 +1127,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default: None,
                 is_const: false,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
             let previous = self
                 .ctx
@@ -1666,6 +1668,7 @@ impl<'a> CheckerState<'a> {
                                     constraint: Some(constraint_type),
                                     default: None,
                                     is_const: false,
+                                    origin: tsz_solver::TypeParamOrigin::User,
                                 });
                         let previous = self
                             .ctx

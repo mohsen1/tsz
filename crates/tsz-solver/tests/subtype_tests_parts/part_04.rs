@@ -16,6 +16,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -94,6 +95,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -145,6 +147,7 @@ fn test_mapped_type_key_remap_readonly_add_subtyping() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -192,6 +195,7 @@ fn test_mapped_type_key_remap_readonly_remove_subtyping() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -236,6 +240,7 @@ fn test_mapped_type_key_remap_all_never_empty_object() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -277,6 +282,7 @@ fn test_generic_function_constraint_directionality() {
         constraint: Some(TypeId::OBJECT),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_id = interner.intern(TypeData::TypeParameter(t));
 
@@ -285,6 +291,7 @@ fn test_generic_function_constraint_directionality() {
         constraint: Some(t_id),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t1_id = interner.intern(TypeData::TypeParameter(t1));
 
@@ -293,6 +300,7 @@ fn test_generic_function_constraint_directionality() {
         constraint: Some(t_id),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_id = interner.intern(TypeData::TypeParameter(u));
 
@@ -301,6 +309,7 @@ fn test_generic_function_constraint_directionality() {
         constraint: Some(t1_id),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let v_id = interner.intern(TypeData::TypeParameter(v));
 

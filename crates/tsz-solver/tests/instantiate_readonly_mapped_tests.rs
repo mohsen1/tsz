@@ -28,6 +28,7 @@ fn instantiate_homomorphic(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let keyof_t = interner.keyof(t_type);
@@ -37,6 +38,7 @@ fn instantiate_homomorphic(
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let iter_type = interner.intern(TypeData::TypeParameter(iter_param));
     let index_access = interner.index_access(t_type, iter_type);
@@ -205,6 +207,7 @@ fn constant_template_over_object_inherits_source_property_modifiers() {
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let mapped = interner.mapped(MappedType {
         type_param: iter_param,

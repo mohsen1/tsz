@@ -113,6 +113,7 @@ fn test_concurrent_function_creation() {
                     constraint: None,
                     default: None,
                     is_const: false,
+                    origin: crate::TypeParamOrigin::User,
                 }],
                 params: vec![
                     ParamInfo {

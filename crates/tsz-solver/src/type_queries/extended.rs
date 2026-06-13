@@ -1599,6 +1599,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),
@@ -1618,6 +1619,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),
@@ -1653,6 +1655,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),
@@ -1672,6 +1675,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),

@@ -39,6 +39,7 @@ impl<'a> CheckerState<'a> {
                 constraint: Some(constraint_type),
                 default: None,
                 is_const: false,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
         let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
         Some((name, previous))

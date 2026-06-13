@@ -376,6 +376,7 @@ impl<'a> CheckerState<'a> {
                             constraint: Some(fallback),
                             default: None,
                             is_const: false,
+                            origin: tsz_solver::TypeParamOrigin::User,
                         });
                 return annotated_surface;
             }
@@ -444,6 +445,7 @@ impl<'a> CheckerState<'a> {
                             constraint,
                             default: None,
                             is_const: false,
+                            origin: tsz_solver::TypeParamOrigin::User,
                         });
                     if self.operator_operand_may_include_bigint(surface) {
                         return surface;
@@ -771,7 +773,7 @@ impl<'a> CheckerState<'a> {
         // may partially resolve the type.
         let is_infer_placeholder = |type_id: TypeId| -> bool {
             crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
-                .is_some_and(|tp| self.ctx.types.resolve_atom(tp.name).starts_with("__infer_"))
+                .is_some_and(|tp| tp.is_infer_placeholder())
         };
         if is_infer_placeholder(eval_left)
             || is_infer_placeholder(eval_right)

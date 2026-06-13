@@ -134,6 +134,7 @@ fn test_is_generic_ref_type_parameter_is_generic() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         })
     };
     assert!(
@@ -179,6 +180,7 @@ fn test_is_generic_ref_index_access_type_param_remains_generic() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let idx_access = interner.index_access(tp_m, TypeId::STRING);
     assert!(

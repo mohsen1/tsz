@@ -117,6 +117,7 @@ fn test_infer_generic_function_identity_preserves_const_type_param() {
         constraint: None,
         default: None,
         is_const: true,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -150,6 +151,7 @@ fn test_infer_generic_function_this_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -202,6 +204,7 @@ fn test_infer_generic_callable_param_from_function() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -270,6 +273,7 @@ fn test_infer_generic_function_param_from_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -338,6 +342,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -438,6 +443,7 @@ fn test_infer_generic_function_from_union_call_or_construct_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -522,6 +528,7 @@ fn test_infer_generic_final_argument_check_uses_non_strict_assignability() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -618,6 +625,7 @@ fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_t
         constraint: Some(schema_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -734,6 +742,7 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
         constraint: Some(schema_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -852,6 +861,7 @@ fn test_infer_generic_callable_param_from_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -926,6 +936,7 @@ fn test_infer_generic_construct_signature_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1000,6 +1011,7 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let keyof_param = interner.intern(TypeData::KeyOf(t_type));
@@ -1039,6 +1051,7 @@ fn test_infer_generic_index_access_param_from_object_property_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1075,6 +1088,7 @@ fn test_infer_generic_template_literal_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1119,6 +1133,7 @@ fn test_infer_generic_conditional_param_from_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1160,6 +1175,7 @@ fn test_infer_generic_conditional_param_with_check_placeholder_from_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1200,6 +1216,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1208,6 +1225,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_x = interner.literal_string("x");
     let key_y = interner.literal_string("y");
@@ -1257,12 +1275,14 @@ fn test_infer_generic_array_map() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
@@ -1343,6 +1363,7 @@ fn test_infer_generic_array_param_from_tuple_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -1391,6 +1412,7 @@ fn test_infer_generic_readonly_array_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let readonly_array_t = interner.intern(TypeData::ReadonlyType(interner.array(t_type)));
@@ -1426,6 +1448,7 @@ fn test_infer_generic_readonly_tuple_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let readonly_tuple_t =
@@ -1472,6 +1495,7 @@ fn test_infer_generic_constructor_instantiation() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1508,6 +1532,7 @@ fn test_infer_generic_application_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1545,6 +1570,7 @@ fn test_generic_call_uses_contextual_return_inference_for_application() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1630,6 +1656,7 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let callback_t_type = interner.intern(TypeData::TypeParameter(callback_t_param));
     let generic_callback = interner.function(FunctionShape {
@@ -1660,6 +1687,7 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let outer_t_type = interner.intern(TypeData::TypeParameter(outer_t_param));
     let expected_callback = interner.function(FunctionShape {

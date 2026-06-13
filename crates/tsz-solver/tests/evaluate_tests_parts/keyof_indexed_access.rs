@@ -255,6 +255,7 @@ fn test_keyof_type_param_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let result = evaluate_keyof(&interner, type_param);
@@ -279,6 +280,7 @@ fn test_base_constraint_assignability_evaluate_keyof() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let key_of = interner.intern(TypeData::KeyOf(type_param));
@@ -317,6 +319,7 @@ fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
         constraint: Some(a_param), // B extends A
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let keyof_a = evaluate_keyof(&interner, a_param);
@@ -1130,6 +1133,7 @@ fn test_keyof_mapped_type_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1167,6 +1171,7 @@ fn test_keyof_mapped_type_remapped_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -1675,6 +1680,7 @@ fn test_mapped_type_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1703,6 +1709,7 @@ fn test_mapped_type_any_keys_with_never_template_produces_indexes() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::ANY,
         name_type: None,
@@ -1745,6 +1752,7 @@ fn test_mapped_type_over_string_keys() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,

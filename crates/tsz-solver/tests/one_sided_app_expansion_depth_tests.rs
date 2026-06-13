@@ -27,6 +27,7 @@ fn insert_growing_recursive_generic(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let param_ty = interner.intern(TypeData::TypeParameter(param));
     let r_lazy = interner.lazy(def_id);
@@ -139,6 +140,7 @@ fn shallow_finite_application_still_resolves_exactly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let param_ty = interner.intern(TypeData::TypeParameter(param));
     let box_def = DefId(900);

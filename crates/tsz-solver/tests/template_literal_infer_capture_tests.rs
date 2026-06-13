@@ -10,6 +10,7 @@ fn infer_slot(interner: &TypeInterner, name: &str) -> TypeId {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }))
 }
 
@@ -26,6 +27,7 @@ fn conditional_head_capture(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let head = infer_slot(interner, head_name);
     let tail = infer_slot(interner, tail_name);

@@ -139,6 +139,7 @@ fn test_type_param_with_object_constraint_property_found() {
             constraint: Some(constraint_obj),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
         assert_property_success(
             &evaluator.resolve_property_access(type_param, "x"),
@@ -164,6 +165,7 @@ fn test_type_param_no_constraint_property_not_found() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
         assert_property_not_found(&evaluator.resolve_property_access(type_param, "x"));
         assert_property_not_found(&evaluator.resolve_property_access(type_param, "toString"));
@@ -188,6 +190,7 @@ fn test_type_param_with_union_constraint_shared_property_found() {
             constraint: Some(union_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
         // Property `x` exists on both union members — must resolve.
         let result = evaluator.resolve_property_access(type_param, "x");
@@ -219,6 +222,7 @@ fn test_type_param_with_intersection_constraint_finds_both_properties() {
             constraint: Some(intersection_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
         assert_property_success(
             &evaluator.resolve_property_access(type_param, "x"),
@@ -249,6 +253,7 @@ fn test_type_param_noinfer_constraint_resolves_inner_property() {
             constraint: Some(no_infer),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
         assert_property_success(
             &evaluator.resolve_property_access(type_param, "n"),
@@ -275,6 +280,7 @@ fn test_type_param_readonly_constraint_resolves_inner_property() {
             constraint: Some(readonly_obj),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
         assert_property_success(
             &evaluator.resolve_property_access(type_param, "value"),
@@ -302,6 +308,7 @@ fn test_type_param_unresolvable_application_constraint_no_false_success() {
             constraint: Some(synthetic_app),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
         let result = evaluator.resolve_property_access(type_param, "value");
         let is_acceptable = matches!(
@@ -335,6 +342,7 @@ fn test_nested_type_param_constraint_property_found() {
         constraint: Some(obj),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U
@@ -343,6 +351,7 @@ fn test_nested_type_param_constraint_property_found() {
         constraint: Some(u_param),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     assert_property_success(
@@ -373,6 +382,7 @@ fn test_deferred_conditional_branch_only_property_not_found() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let true_branch = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
     let false_branch = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
@@ -407,6 +417,7 @@ fn test_deferred_conditional_common_property_succeeds() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let true_branch = interner.object(vec![
         PropertyInfo::new(common_name, TypeId::NUMBER),
@@ -448,6 +459,7 @@ fn test_deferred_conditional_renamed_type_param_same_behavior() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let true_branch = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
     let false_branch = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
@@ -478,6 +490,7 @@ fn test_deferred_conditional_with_any_branch_suppresses_error() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let false_branch = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
     let cond = interner.conditional(ConditionalType {
@@ -517,12 +530,14 @@ fn test_deferred_conditional_nested_produces_not_found() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let inner_true = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
     let inner_false = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);

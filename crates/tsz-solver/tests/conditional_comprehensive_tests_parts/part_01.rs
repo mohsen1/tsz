@@ -15,6 +15,7 @@ fn test_property_collection_from_conditional_in_intersection() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let foo = interner.object(vec![PropertyInfo::new(
@@ -112,6 +113,7 @@ fn test_non_distributive_conditional_no_constraint_eval() {
         constraint: Some(str_or_num),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Non-distributive conditional (is_distributive = false)
@@ -172,6 +174,7 @@ fn make_unconstrained_param(interner: &TypeInterner, name: &str) -> TypeId {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     })
 }
 
@@ -629,12 +632,14 @@ fn make_equal_outer(interner: &TypeInterner, lhs_extends: TypeId, rhs_extends: T
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let rhs_info = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let lhs_t = interner.type_param(lhs_info);
     let rhs_t = interner.type_param(rhs_info);
@@ -898,6 +903,7 @@ fn make_infer(interner: &TypeInterner, name: &str) -> TypeId {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     })
 }
 
@@ -1066,6 +1072,7 @@ fn test_colocated_infer_constrained_first_unconstrained_second_fails() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     // Second occurrence: infer U (unconstrained, same variable)
     let infer_u_bare = interner.infer(TypeParamInfo {
@@ -1073,6 +1080,7 @@ fn test_colocated_infer_constrained_first_unconstrained_second_fails() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let extends_obj = interner.object(vec![
@@ -1109,12 +1117,14 @@ fn test_colocated_infer_unconstrained_first_constrained_second_fails() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let infer_u_constrained = interner.infer(TypeParamInfo {
         name: u_name,
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let extends_obj = interner.object(vec![
@@ -1154,12 +1164,14 @@ fn test_colocated_infer_constrained_all_satisfy_keeps_union() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let infer_u_bare = interner.infer(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let foo = interner.literal_string("foo");

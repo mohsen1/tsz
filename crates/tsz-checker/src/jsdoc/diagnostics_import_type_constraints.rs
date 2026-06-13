@@ -45,6 +45,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default: None,
                 is_const: false,
+                origin: tsz_solver::TypeParamOrigin::User,
             };
             let type_id = factory.type_param(param);
             let previous = self

@@ -8,6 +8,7 @@ fn param_info(name: tsz_common::interner::Atom) -> TypeParamInfo {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     }
 }
 

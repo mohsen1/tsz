@@ -28,6 +28,7 @@ mod generic_strictness_tests {
             constraint: Some(identifiable_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
 
         // Create an instance WITHOUT the required property
@@ -56,6 +57,7 @@ mod generic_strictness_tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
 
         // When checking against unconstrained generic, use Unknown (not Any)
@@ -95,6 +97,7 @@ mod generic_strictness_tests {
             constraint: Some(identifiable_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
 
         let obj_param = interner.object(vec![PropertyInfo::new(
@@ -817,6 +820,7 @@ mod function_variance_tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
 
         let generic_func = interner.function(FunctionShape {
@@ -841,6 +845,7 @@ mod function_variance_tests {
             constraint: Some(number_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
 
         let constrained_func = interner.function(FunctionShape {
@@ -874,6 +879,7 @@ mod function_variance_tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         };
         let source_t_type = interner.type_param(source_t);
         let source = interner.function(FunctionShape {
@@ -891,6 +897,7 @@ mod function_variance_tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         };
         let target_t_type = interner.type_param(target_t);
         let target = interner.function(FunctionShape {
@@ -1573,6 +1580,7 @@ mod unknown_fallback_tests {
             constraint: None, // No constraint - should use Unknown
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }));
 
         // Create an object with number type

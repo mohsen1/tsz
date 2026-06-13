@@ -286,6 +286,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         }
     }
 

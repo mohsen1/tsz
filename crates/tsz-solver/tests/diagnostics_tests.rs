@@ -757,6 +757,7 @@ fn test_format_union_of_intersections_parenthesized() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let obj1 = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),

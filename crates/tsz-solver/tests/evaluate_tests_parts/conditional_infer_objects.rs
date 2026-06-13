@@ -150,6 +150,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_distributive()
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends `foo${infer R extends string}` ? R : never, with T = "foo1" | "foo2".
@@ -469,6 +470,7 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends { a: { b: infer R extends string } } ? R : never, with T = { a: { b: string } } | { a: { b: number } }.
@@ -1307,6 +1309,7 @@ fn test_conditional_infer_optional_property_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends { a?: infer R extends string } ? R : never, with T = { a?: string } | { a?: number }.

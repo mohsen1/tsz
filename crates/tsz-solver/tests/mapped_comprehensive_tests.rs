@@ -38,6 +38,7 @@ fn test_mapped_type_simple() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     // Create mapped type: { [K in Keys]: number }
@@ -86,6 +87,7 @@ fn test_mapped_type_with_keyof() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped_type = MappedType {
@@ -136,6 +138,7 @@ fn test_homomorphic_mapped_preserves_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -192,6 +195,7 @@ fn test_homomorphic_mapped_preserves_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -251,6 +255,7 @@ fn test_mapped_type_add_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -300,6 +305,7 @@ fn test_mapped_type_remove_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -353,6 +359,7 @@ fn test_mapped_type_add_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -402,6 +409,7 @@ fn test_mapped_type_remove_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -467,6 +475,7 @@ fn eval_readonly_mapped_over(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
     let template = interner.index_access(source, type_param);
@@ -558,6 +567,7 @@ fn test_mapped_type_key_remap_with_template_literal() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -670,6 +680,7 @@ fn test_mapped_type_branded_string_preserves_literal_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let record_alignment = MappedType {
@@ -740,6 +751,7 @@ fn test_mapped_type_empty_object() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped_type = MappedType {
@@ -781,6 +793,7 @@ fn test_mapped_type_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -836,6 +849,7 @@ fn test_mapped_type_preserves_property_order() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped_type = MappedType {
@@ -905,6 +919,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.type_param(k_info);
     let t_param = TypeParamInfo {
@@ -912,6 +927,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
 
@@ -1082,6 +1098,7 @@ fn test_mapped_type_enum_union_constraint_with_overlapping_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped_type = MappedType {
@@ -1148,6 +1165,7 @@ fn test_identity_name_type_preserves_array_structure() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -1200,6 +1218,7 @@ fn test_non_identity_name_type_degrades_to_object() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -1211,6 +1230,7 @@ fn test_non_identity_name_type_degrades_to_object() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let other_param = interner.intern(TypeData::TypeParameter(other_param_info));
 
@@ -1250,6 +1270,7 @@ fn test_mapped_type_property_is_readonly_with_add_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped_type = MappedType {
@@ -1282,6 +1303,7 @@ fn test_mapped_type_property_is_not_readonly_without_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped_type = MappedType {
@@ -1311,6 +1333,7 @@ fn test_mapped_type_property_is_not_readonly_with_remove_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped_type = MappedType {
@@ -1339,6 +1362,7 @@ fn test_is_mapped_type_with_readonly_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     // With +readonly
@@ -1395,6 +1419,7 @@ fn test_is_readonly_index_signature_on_mapped_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let readonly_mapped = MappedType {
@@ -1485,6 +1510,7 @@ fn test_mapped_type_with_only_symbol_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let mapped = MappedType {
         type_param: k_info,
@@ -1522,6 +1548,7 @@ fn test_mapped_type_symbol_union_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let mapped = MappedType {
         type_param: k_info,
@@ -1558,6 +1585,7 @@ fn test_mapped_type_mixed_string_and_symbol_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let mapped = MappedType {
         type_param: k_info,
@@ -1609,12 +1637,14 @@ fn test_mapped_type_symbol_filter_as_clause() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.type_param(crate::types::TypeParamInfo {
         name: k_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // as K extends symbol ? K : never
@@ -1674,12 +1704,14 @@ fn test_mapped_type_string_filter_as_clause_removes_symbol_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.type_param(crate::types::TypeParamInfo {
         name: k_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // as K extends string ? K : never
@@ -1745,6 +1777,7 @@ fn eval_identity_mapped(interner: &TypeInterner, iter: &str, source: TypeId) -> 
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp = interner.intern(TypeData::TypeParameter(tp_info));
     let template = interner.index_access(source, tp);
@@ -1862,6 +1895,7 @@ fn wrapping_mapped_over_variadic_tuple_wraps_per_position_element() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp = interner.intern(TypeData::TypeParameter(tp_info));
     // template: [X[I]]

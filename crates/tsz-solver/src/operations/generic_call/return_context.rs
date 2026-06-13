@@ -115,11 +115,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(TypeData::TypeParameter(info)) = self.interner.lookup(referenced) else {
                 continue;
             };
-            if !self
-                .interner
-                .resolve_atom_ref(info.name)
-                .starts_with("__infer_src_")
-            {
+            if !info.is_infer_source() {
                 continue;
             }
             if seen.insert(info.name) {
@@ -139,17 +135,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut hoisted = Vec::with_capacity(placeholders.len());
         let mut used_names: FxHashSet<tsz_common::Atom> = FxHashSet::default();
         for info in &placeholders {
-            let raw = self.interner.resolve_atom_ref(info.name);
-            let origin = super::decode_src_placeholder_origin(&raw).unwrap_or("T");
-            let mut display_atom = self.interner.intern_string(origin);
+            // The source placeholder records its origin type-parameter name as a
+            // structured field; legacy `__infer_src_ctx_*` placeholders carry none
+            // and fall back to `T`, matching the previous decode behaviour.
+            let origin_atom = info.origin.infer_source_origin_name();
+            let mut display_atom = origin_atom.unwrap_or_else(|| self.interner.intern_string("T"));
+            let origin = self.interner.resolve_atom_ref(display_atom).to_string();
             let mut suffix = 1u32;
             while !used_names.insert(display_atom) {
                 let candidate = format!("{origin}_{suffix}");
                 display_atom = self.interner.intern_string(&candidate);
                 suffix += 1;
             }
+            // Re-generalized into a real (user-facing) type parameter; the
+            // placeholder origin is intentionally dropped.
             let renamed = TypeParamInfo {
                 name: display_atom,
+                origin: crate::types::TypeParamOrigin::User,
                 ..*info
             };
             let renamed_id = self.interner.type_param(renamed);
@@ -1102,6 +1104,7 @@ mod tests {
             constraint: Some(TypeId::UNKNOWN),
             default: Some(TypeId::ERROR),
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }
     }
 

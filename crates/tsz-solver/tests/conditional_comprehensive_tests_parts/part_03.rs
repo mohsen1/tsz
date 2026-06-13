@@ -27,6 +27,7 @@ fn test_explain_target_conditional_true_branch_mismatch_preserves_chain() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let yes = interner.literal_string("yes");
     let no = interner.literal_string("no");
@@ -89,6 +90,7 @@ fn test_explain_target_conditional_false_branch_mismatch_preserves_chain() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let yes = interner.literal_string("yes");
     let forty_two = interner.literal_number(42.0);
@@ -145,6 +147,7 @@ fn test_explain_source_conditional_true_branch_mismatch_preserves_chain() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let no = interner.literal_string("no");
     let cond = interner.conditional(ConditionalType {
@@ -203,6 +206,7 @@ fn test_explain_conditional_branch_identity_is_name_independent() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let yes = interner.literal_string("yes");
         let cond = interner.conditional(ConditionalType {

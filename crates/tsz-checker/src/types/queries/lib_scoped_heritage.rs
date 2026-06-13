@@ -11,7 +11,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, TypeId, TypeParamInfo};
+use tsz_solver::{CallSignature, CallableShape, TypeId, TypeParamInfo, TypeParamOrigin};
 
 use super::lib_resolution::{
     keyword_name_to_type_id, keyword_syntax_to_type_id, resolve_scope_chain,
@@ -164,6 +164,7 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     default,
                     is_const: arena.has_modifier(&param.modifiers, SyntaxKind::ConstKeyword),
+                    origin: TypeParamOrigin::User,
                 })
             })
             .collect()

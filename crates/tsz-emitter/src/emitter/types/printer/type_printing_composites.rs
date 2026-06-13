@@ -349,6 +349,7 @@ impl<'a> TypePrinter<'a> {
                             constraint: None,
                             default: None,
                             is_const: tp.is_const,
+                            origin: tp.origin,
                         });
                 subst.insert(tp.name, placeholder);
                 reserved_names.push(self.interner.resolve_atom(name));
@@ -368,6 +369,7 @@ impl<'a> TypePrinter<'a> {
                         instantiate_type_cached(self.interner, None, default, &subst)
                     }),
                     is_const: tp.is_const,
+                    origin: tp.origin,
                 })
                 .collect();
             let params = func

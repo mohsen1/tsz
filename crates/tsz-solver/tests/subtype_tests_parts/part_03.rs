@@ -965,6 +965,7 @@ fn test_keyof_deferred_not_subtype_of_string() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let keyof_param = interner.intern(TypeData::KeyOf(type_param));
 
@@ -981,6 +982,7 @@ fn test_keyof_deferred_subtype_of_string_number_symbol_union() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let keyof_param = interner.intern(TypeData::KeyOf(type_param));
 
@@ -998,6 +1000,7 @@ fn test_keyof_deferred_not_subtype_of_string_number_union() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let keyof_param = interner.intern(TypeData::KeyOf(type_param));
 
@@ -1055,6 +1058,7 @@ fn test_mapped_type_over_number_keys_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1087,6 +1091,7 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1133,6 +1138,7 @@ fn test_mapped_type_over_string_keys_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1162,6 +1168,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1210,6 +1217,7 @@ fn test_mapped_type_over_string_keys_key_remap_omit_length() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
     let length_key = interner.literal_string("length");
@@ -1250,6 +1258,7 @@ fn test_mapped_type_over_boolean_keys_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1279,6 +1288,7 @@ fn test_mapped_type_over_symbol_keys_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1308,6 +1318,7 @@ fn test_mapped_type_over_bigint_keys_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1343,6 +1354,7 @@ fn test_mapped_type_optional_modifier_add_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1381,6 +1393,7 @@ fn test_mapped_type_readonly_modifier_add_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1420,6 +1433,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1485,6 +1499,7 @@ fn test_mapped_type_optional_readonly_remove_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1530,6 +1545,7 @@ fn test_mapped_type_optional_modifier_remove_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1562,6 +1578,7 @@ fn test_mapped_type_optional_remove_from_optional_keyof() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1593,6 +1610,7 @@ fn test_mapped_type_readonly_remove_from_readonly_keyof() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1624,6 +1642,7 @@ fn test_mapped_type_readonly_modifier_remove_subtyping() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keys,
         name_type: None,
@@ -1660,6 +1679,7 @@ fn test_mapped_type_key_remap_subtyping() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -1706,6 +1726,7 @@ fn test_mapped_type_key_remap_optional_add_subtyping() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -1752,6 +1773,7 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 

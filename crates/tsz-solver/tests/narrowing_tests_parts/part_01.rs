@@ -160,6 +160,7 @@ fn test_narrow_by_instanceof_collapsed_any_predicate_falls_back_to_generic_const
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_info);
     let box_base = interner.lazy(DefId(4242));

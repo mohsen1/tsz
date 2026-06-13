@@ -1259,6 +1259,7 @@ impl<'a> CheckerState<'a> {
                     constraint: None,
                     default: None,
                     is_const,
+                    origin: tsz_solver::TypeParamOrigin::User,
                 };
                 // Mint through the declaration-scoped cache (not a structural
                 // `factory.type_param` intern) so the enclosing parameter
@@ -1309,6 +1310,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default: None,
                 is_const,
+                origin: tsz_solver::TypeParamOrigin::User,
             };
             let constrained_type_id = self.intern_type_param_for_decl(data.name, info);
             self.ctx

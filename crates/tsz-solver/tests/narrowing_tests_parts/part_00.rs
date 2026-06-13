@@ -681,6 +681,7 @@ fn test_narrow_by_typeof_negation_function_type_param_with_union_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -714,6 +715,7 @@ fn test_narrow_by_typeof_negation_function_type_param_to_never() {
         constraint: Some(func),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let narrowed = ctx.narrow_excluding_function(param);
@@ -729,6 +731,7 @@ fn test_narrow_by_typeof_type_param_with_union_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -761,6 +764,7 @@ fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -777,6 +781,7 @@ fn test_narrow_by_typeof_function_type_param_with_non_function_constraint() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "function");
@@ -792,6 +797,7 @@ fn test_narrow_by_typeof_function_unconstrained_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "function");
@@ -807,6 +813,7 @@ fn test_narrow_by_typeof_type_param_with_non_overlapping_constraint() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "string");
@@ -821,6 +828,7 @@ fn test_narrow_by_typeof_unconstrained_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "string");
@@ -1018,6 +1026,7 @@ fn test_narrow_excluding_type_param_with_union_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -1037,6 +1046,7 @@ fn test_narrow_excluding_type_param_with_non_overlapping_constraint() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let narrowed = ctx.narrow_excluding_type(param, TypeId::STRING);
@@ -1053,6 +1063,7 @@ fn test_narrow_excluding_type_param_to_never() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let narrowed = ctx.narrow_excluding_type(param, TypeId::STRING);
@@ -1480,12 +1491,14 @@ fn test_narrow_by_typeof_indexed_access() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let indexed_access = interner.intern(TypeData::IndexAccess(t_param, k_param));
 

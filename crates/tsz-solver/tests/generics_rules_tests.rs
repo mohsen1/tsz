@@ -128,6 +128,7 @@ fn test_try_expand_application_instantiates_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let param_type = interner.intern(TypeData::TypeParameter(param_info));
 
@@ -197,6 +198,7 @@ fn test_try_expand_application_self_reference_returns_none() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::TypeParamOrigin::User,
         }],
     );
 
@@ -217,6 +219,7 @@ fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() 
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_info);
     let u_info = TypeParamInfo {
@@ -224,6 +227,7 @@ fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() 
         constraint: Some(t_type),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let u_type = interner.type_param(u_info);
 
@@ -232,6 +236,7 @@ fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() 
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let a_type = interner.type_param(a_info);
     let b_info = TypeParamInfo {
@@ -239,6 +244,7 @@ fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() 
         constraint: Some(a_type),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let b_type = interner.type_param(b_info);
 
@@ -247,6 +253,7 @@ fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() 
         constraint: Some(a_type),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let q_type = interner.type_param(q_info);
     let source_name = interner.template_literal(vec![
@@ -267,6 +274,7 @@ fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() 
         constraint: Some(b_type),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let p_type = interner.type_param(p_info);
     let target_name = interner.template_literal(vec![
@@ -342,6 +350,7 @@ fn test_non_interface_invariant_application_structural_fallback_accepts_equivale
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     // Body doesn't use T, so all instantiations are structurally equivalent
     let body = interner.object(vec![PropertyInfo::new(
@@ -385,6 +394,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let pick_t_type = interner.intern(TypeData::TypeParameter(pick_t));
 
@@ -393,6 +403,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         constraint: Some(interner.keyof(pick_t_type)),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let pick_k_type = interner.intern(TypeData::TypeParameter(pick_k));
 
@@ -401,6 +412,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let pick_p_type = interner.intern(TypeData::TypeParameter(pick_param));
 
@@ -427,6 +439,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         constraint: Some(x_constraint),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let x_type = interner.intern(TypeData::TypeParameter(x_info));
 
@@ -487,6 +500,7 @@ fn build_pick_alias_env(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let pick_t_type = interner.intern(TypeData::TypeParameter(pick_t));
     let pick_k = TypeParamInfo {
@@ -494,6 +508,7 @@ fn build_pick_alias_env(
         constraint: Some(interner.keyof(pick_t_type)),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let pick_k_type = interner.intern(TypeData::TypeParameter(pick_k));
     let pick_iter = TypeParamInfo {
@@ -501,6 +516,7 @@ fn build_pick_alias_env(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let pick_iter_type = interner.intern(TypeData::TypeParameter(pick_iter));
     let pick_body = interner.mapped(MappedType {
@@ -523,6 +539,7 @@ fn build_pick_alias_env(
         constraint: Some(x_constraint),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let x_type = interner.intern(TypeData::TypeParameter(x_info));
     let alias_body = interner.application(
@@ -637,6 +654,7 @@ fn test_indexed_access_object_variance_with_type_param_args_falls_through() {
         )])),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
@@ -646,6 +664,7 @@ fn test_indexed_access_object_variance_with_type_param_args_falls_through() {
         )])),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let source = interner.application(interner.lazy(alias_def), vec![u_type]);
@@ -680,6 +699,7 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
         constraint: Some(x_constraint),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let x_type = interner.intern(TypeData::TypeParameter(x_info));
 
@@ -688,6 +708,7 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let mapped_param_type = interner.intern(TypeData::TypeParameter(mapped_param));
 
@@ -754,6 +775,7 @@ fn test_application_subtype_canonicalizes_lazy_and_typequery_bases() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let promise_body = interner.object(vec![PropertyInfo::new(
@@ -797,6 +819,7 @@ fn test_function_subtype_accepts_canonicalized_application_return_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let promise_body = interner.object(vec![PropertyInfo::new(
@@ -866,6 +889,7 @@ fn test_recursive_generic_extension_uses_structural_expansion_not_variance_arg_c
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -919,6 +943,7 @@ fn test_unwitnessed_recursive_type_parameter_cycle_accepts_differing_args() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let a_t_type = interner.intern(TypeData::TypeParameter(a_t_param));
     let b_t_param = TypeParamInfo {
@@ -926,6 +951,7 @@ fn test_unwitnessed_recursive_type_parameter_cycle_accepts_differing_args() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let b_t_type = interner.intern(TypeData::TypeParameter(b_t_param));
 
@@ -992,6 +1018,7 @@ fn make_homomorphic_mapped(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
     let template = interner.intern(TypeData::IndexAccess(source, k_param));
     let constraint = interner.intern(TypeData::KeyOf(source));
@@ -1001,6 +1028,7 @@ fn make_homomorphic_mapped(
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1018,6 +1046,7 @@ fn test_flatten_mapped_chain_simple_partial() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Partial<T>: { [K in keyof T]?: T[K] }
@@ -1043,6 +1072,7 @@ fn test_flatten_mapped_chain_simple_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Readonly<T>: { readonly [K in keyof T]: T[K] }
@@ -1068,6 +1098,7 @@ fn test_flatten_mapped_chain_partial_readonly_nested() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Build Readonly<T> first, then Partial<Readonly<T>>
@@ -1099,6 +1130,7 @@ fn test_flatten_mapped_chain_required_cancels_partial() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Required<Partial<T>>: outer removes optional, inner adds optional
@@ -1132,6 +1164,7 @@ fn test_mapped_to_mapped_partial_readonly_t_subtype_partial_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let readonly_t =
@@ -1164,6 +1197,7 @@ fn test_mapped_to_mapped_partial_t_not_subtype_readonly_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let partial_t =
@@ -1188,6 +1222,7 @@ fn test_mapped_to_mapped_readonly_partial_t_equiv_partial_readonly_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let readonly_t =
@@ -1234,6 +1269,7 @@ fn test_type_param_subtype_of_partial_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Partial<T>: { [K in keyof T]?: T[K] }
@@ -1255,6 +1291,7 @@ fn test_type_param_subtype_of_readonly_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Readonly<T>: { readonly [K in keyof T]: T[K] }
@@ -1276,6 +1313,7 @@ fn test_type_param_subtype_of_identity_mapped() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Identity: { [K in keyof T]: T[K] } (no modifiers)
@@ -1296,6 +1334,7 @@ fn test_partial_t_not_subtype_of_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let partial_t =
@@ -1320,6 +1359,7 @@ fn test_readonly_t_subtype_of_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let readonly_t =
@@ -1341,6 +1381,7 @@ fn test_identity_mapped_subtype_of_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let identity_t = make_homomorphic_mapped(&interner, t_param, None, None);
@@ -1360,6 +1401,7 @@ fn test_type_param_not_subtype_of_required_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Required<T>: { [K in keyof T]-?: T[K] } — removes optional
@@ -1385,6 +1427,7 @@ fn test_partial_t_subtype_of_readonly_partial_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let partial_t =
@@ -1426,6 +1469,7 @@ fn test_t_subtype_of_partial_t_with_constraint() {
         constraint: Some(constraint_obj),
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let partial_t =
@@ -1447,6 +1491,7 @@ fn test_required_t_subtype_of_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let required_t = make_homomorphic_mapped(
@@ -1472,6 +1517,7 @@ fn test_t_subtype_of_partial_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let partial_t =
@@ -1493,6 +1539,7 @@ fn test_readonly_t_bidirectional_with_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let readonly_t =
@@ -1518,6 +1565,7 @@ fn test_required_t_subtype_of_partial_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let required_t = make_homomorphic_mapped(
@@ -1545,6 +1593,7 @@ fn test_partial_t_not_subtype_of_required_t() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let partial_t =
@@ -1580,6 +1629,7 @@ fn make_filtering_mapped(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
     let template = interner.intern(TypeData::IndexAccess(source, k_param));
     let constraint = interner.intern(TypeData::KeyOf(source));
@@ -1600,6 +1650,7 @@ fn make_filtering_mapped(
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::TypeParamOrigin::User,
         },
         constraint,
         name_type: Some(name_type),
@@ -1620,12 +1671,14 @@ fn test_t_subtype_of_filter_t_no_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
     let function_type = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
         name: interner.intern_string("Function"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let filter_t = make_filtering_mapped(&interner, t_param, function_type, None, None);
@@ -1647,12 +1700,14 @@ fn test_t_subtype_of_filter_t_with_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
     let function_type = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
         name: interner.intern_string("Function"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let filter_opt_t = make_filtering_mapped(
@@ -1680,12 +1735,14 @@ fn test_t_not_subtype_of_filter_t_remove_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
     let function_type = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
         name: interner.intern_string("Function"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let filter_required_t = make_filtering_mapped(
@@ -1722,6 +1779,7 @@ fn make_homomorphic_mapped_with_template(
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -1745,6 +1803,7 @@ fn test_type_param_assignable_to_widened_template_mapped() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // Template: U[keyof U]
@@ -1772,6 +1831,7 @@ fn test_type_param_not_assignable_to_string_template_mapped() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     // { [P in keyof U]: string }
@@ -1795,6 +1855,7 @@ fn test_type_param_assignable_to_identity_mapped() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let identity_u = make_homomorphic_mapped(&interner, u_param, None, None);
@@ -1815,6 +1876,7 @@ fn test_type_param_not_assignable_to_required_mapped() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }));
 
     let required_u = make_homomorphic_mapped(

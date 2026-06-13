@@ -60,6 +60,7 @@ fn mapped_record(db: &TypeInterner, key_type: TypeId, value_type: TypeId) -> Typ
             constraint: Some(key_type),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: key_type,
         name_type: None,
@@ -133,12 +134,14 @@ fn test_resolve_string_index_from_application_mapped_record() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let value_param = TypeParamInfo {
         name: db.intern_string("Value"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_type = db.type_param(key_param);
     let value_type = db.type_param(value_param);

@@ -132,12 +132,14 @@ fn test_resolve_all_with_circular_extends_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Simulate: <T extends U, U extends T>
@@ -173,18 +175,21 @@ fn test_circular_extends_three_way_cycle() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends V, V extends T
@@ -215,6 +220,7 @@ fn test_circular_extends_self_reference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends T (self-reference)
@@ -244,12 +250,14 @@ fn test_circular_extends_with_lower_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T
@@ -284,12 +292,14 @@ fn test_circular_extends_both_have_lower_bounds() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T
@@ -325,12 +335,14 @@ fn test_circular_extends_unify_propagates() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T
@@ -366,12 +378,14 @@ fn test_circular_extends_conflicting_lower_bounds() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T
@@ -410,18 +424,21 @@ fn test_circular_extends_three_way_with_one_lower_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends V, V extends T
@@ -460,12 +477,14 @@ fn test_circular_extends_with_union_lower_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T
@@ -501,12 +520,14 @@ fn test_circular_extends_with_literal_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T
@@ -548,24 +569,28 @@ fn test_circular_extends_four_way_cycle() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let w_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: w_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends V, V extends W, W extends T
@@ -600,12 +625,14 @@ fn test_circular_extends_with_concrete_upper_and_lower() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T
@@ -645,12 +672,14 @@ fn test_circular_extends_chain_with_endpoint_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends V (chain, not cycle)
@@ -695,12 +724,14 @@ fn test_circular_extends_multiple_lower_bounds_same_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends U, U extends T

@@ -40,6 +40,7 @@ fn generic_source_file_symbol_arena_results_use_stable_cache() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     }];
 
     state.cache_symbol_arena_or_cross_file_symbol_type(

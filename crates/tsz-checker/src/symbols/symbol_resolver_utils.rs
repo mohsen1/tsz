@@ -7,9 +7,60 @@ use tracing::trace;
 use tsz_binder::symbol_flags::CLASS;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+/// Whether `node` is a string-literal ("external") ambient module declaration
+/// such as `declare module "foo"` (or, defensively, a template-literal name).
+///
+/// String-literal ambient modules are not part of the global scope: `tsc`
+/// records them in a separate ambient-module table, so they never seed
+/// `program.globals` and never become properties of `typeof globalThis`.
+/// Identifier-named namespaces (`declare module M {}`, `namespace M {}`) are
+/// genuine globals and must be retained, so the test keys on the declaration's
+/// *name* node being a string literal rather than on any module symbol flag,
+/// which cannot distinguish the two forms.
+fn declaration_is_string_literal_module(arena: &NodeArena, node: &Node) -> bool {
+    if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+        return false;
+    }
+    let Some(module) = arena.get_module(node) else {
+        return false;
+    };
+    arena.get(module.name).is_some_and(|name_node| {
+        name_node.kind == SyntaxKind::StringLiteral as u16
+            || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+    })
+}
+
+/// Whether every (resolvable) declaration of `symbol` is a string-literal
+/// ("external") ambient module. Such a symbol contributes no global value, so
+/// it must not appear on the `typeof globalThis` surface and indexing the
+/// surface by its name is a `TS2339`. A symbol that also carries a genuine
+/// value declaration is not module-only and stays on the surface.
+///
+/// `arena` must be the arena owning `symbol`'s declarations. For symbols whose
+/// declarations span lib arenas, prefer the per-declaration
+/// [`CheckerState::symbol_has_globalable_declaration`] gate, which resolves the
+/// arena for each declaration.
+pub(crate) fn symbol_is_string_literal_module_only(
+    arena: &NodeArena,
+    symbol: &tsz_binder::Symbol,
+) -> bool {
+    let mut saw_decl = false;
+    for &decl_idx in &symbol.declarations {
+        let Some(node) = arena.get(decl_idx) else {
+            continue;
+        };
+        saw_decl = true;
+        if !declaration_is_string_literal_module(arena, node) {
+            return false;
+        }
+    }
+    saw_decl
+}
 
 impl<'a> CheckerState<'a> {
     /// Find a VALUE symbol for a name across all lib binders.

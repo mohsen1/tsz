@@ -33,6 +33,7 @@ fn test_constrained_infer_param(
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     (name, id)
 }

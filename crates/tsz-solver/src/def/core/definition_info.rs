@@ -229,6 +229,7 @@ impl DefinitionInfo {
                         constraint: None,
                         default: None,
                         is_const: false,
+                        origin: crate::TypeParamOrigin::User,
                     }
                 })
                 .collect()

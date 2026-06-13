@@ -1459,12 +1459,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 matches!(
                     self.interner.lookup(param.type_id),
-                    Some(TypeData::TypeParameter(info))
-                        if self
-                            .interner
-                            .resolve_atom(info.name)
-                            .as_str()
-                            .starts_with("__infer_")
+                    Some(TypeData::TypeParameter(info)) if info.is_infer_placeholder()
                 )
             });
         if !source_fn.type_params.is_empty() && target_rest_is_outer_inference_placeholder {
@@ -1858,14 +1853,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// instantiated against the placeholder.
     fn outer_inference_placeholder_atom(&self, ty: TypeId) -> Option<tsz_common::Atom> {
         match self.interner.lookup(ty) {
-            Some(TypeData::TypeParameter(info))
-                if self
-                    .interner
-                    .resolve_atom_ref(info.name)
-                    .starts_with("__infer_") =>
-            {
-                Some(info.name)
-            }
+            Some(TypeData::TypeParameter(info)) if info.is_infer_placeholder() => Some(info.name),
             _ => None,
         }
     }

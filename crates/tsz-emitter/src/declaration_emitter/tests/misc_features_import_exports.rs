@@ -69,6 +69,7 @@ fn test_inferred_printer_reduces_conditional_alias_applications() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::types::TypeParamOrigin::User,
     };
     let cond = interner.conditional(ConditionalType {
         check_type: interner.type_param(type_param),

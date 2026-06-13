@@ -42,12 +42,14 @@ fn infer_generic_index_access_param_from_index_access_arg_resolves_to_error_type
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_param = TypeParamInfo {
         name: interner.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let k_type = interner.intern(TypeData::TypeParameter(k_param));

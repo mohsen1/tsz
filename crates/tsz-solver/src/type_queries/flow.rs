@@ -1418,6 +1418,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         };
         let t_type = db.type_param(t_info);
         let box_base = db.lazy(DefId(4242));
@@ -1464,6 +1465,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         };
         let t_type = db.type_param(t_info);
         let box_base = db.lazy(DefId(4243));
@@ -1538,6 +1540,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         };
         let t_type = db.type_param(t_info);
         let box_base = db.lazy(DefId(4244));
