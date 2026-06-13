@@ -27,17 +27,12 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        tsz_common::perf_counters::record_assignability_post_pass_probe();
-        let rejects = self.same_type_alias_application_args_reject(source, target)
+        self.same_type_alias_application_args_reject(source, target)
             || self
                 .checker_only_assignability_failure_reason(source, target)
                 .is_some()
             || self.namespace_source_has_matching_property_mismatch(source, target)
-            || self.string_literal_source_outside_keyof_target(source, target);
-        if rejects {
-            tsz_common::perf_counters::record_assignability_post_pass_override();
-        }
-        rejects
+            || self.string_literal_source_outside_keyof_target(source, target)
     }
 
     /// A string-literal source is not assignable to a `keyof` target whose

@@ -60,7 +60,6 @@ pub(crate) fn cached_final_assignability(
     let is_cacheable = is_relation_cacheable(checker.ctx.types.as_type_database(), source, target);
     let cache_key = checker_final_assignability_cache_key(source, target, flags);
     if is_cacheable && let Some(cached) = checker.ctx.types.lookup_assignability_cache(cache_key) {
-        tsz_common::perf_counters::record_assignability_final_cache_hit();
         trace!(
             source = source.0,
             target = target.0,
@@ -71,7 +70,6 @@ pub(crate) fn cached_final_assignability(
         return cached;
     }
 
-    tsz_common::perf_counters::record_assignability_final_relation_run();
     let relation_result = if use_env_resolver {
         let env = checker.ctx.type_env.borrow();
         let overrides = CheckerOverrideProvider::new(checker, Some(&env));

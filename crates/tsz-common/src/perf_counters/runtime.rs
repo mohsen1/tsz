@@ -170,21 +170,6 @@ pub struct PerfCounters {
     /// the failure-reason walk.
     pub relation_failure_memo_hits: AtomicU64,
 
-    // ─── checker assignability gauntlet (issue #13243 step 4) ───────────
-    /// Relation executions reaching the checker-final assignability funnel
-    /// (cache misses plus uncacheable pairs).
-    pub assignability_final_relation_runs: AtomicU64,
-    /// Checker-final assignability verdicts served from the relation cache
-    /// without re-running checker post-relation gates (cache honesty
-    /// short-circuits).
-    pub assignability_final_cache_hits: AtomicU64,
-    /// Executions of the checker post-relation true-override gate group
-    /// (alias-application argument rejection, iterator protocol, namespace
-    /// property mismatch, keyof literal membership).
-    pub assignability_post_pass_probes: AtomicU64,
-    /// Times the post-relation gate group rejected a relation-true verdict.
-    pub assignability_post_pass_overrides: AtomicU64,
-
     // ─── solver concrete materialization (issue #13242) ─────────────────
     pub union_subtype_reduction_calls: AtomicU64,
     pub union_subtype_reduction_members_total: AtomicU64,
@@ -379,10 +364,6 @@ impl PerfCounters {
             relation_maybe_promotions: AtomicU64::new(0),
             relation_failure_reason_walks: AtomicU64::new(0),
             relation_failure_memo_hits: AtomicU64::new(0),
-            assignability_final_relation_runs: AtomicU64::new(0),
-            assignability_final_cache_hits: AtomicU64::new(0),
-            assignability_post_pass_probes: AtomicU64::new(0),
-            assignability_post_pass_overrides: AtomicU64::new(0),
             union_subtype_reduction_calls: AtomicU64::new(0),
             union_subtype_reduction_members_total: AtomicU64::new(0),
             union_subtype_reduction_members_max: AtomicU64::new(0),
@@ -1399,54 +1380,6 @@ pub fn record_relation_failure_memo_hit() {
     }
     counters()
         .relation_failure_memo_hits
-        .fetch_add(1, Ordering::Relaxed);
-}
-
-/// Record one relation execution through the checker-final assignability
-/// funnel (issue #13243 step 4).
-#[inline]
-pub fn record_assignability_final_relation_run() {
-    if !enabled_fast() {
-        return;
-    }
-    counters()
-        .assignability_final_relation_runs
-        .fetch_add(1, Ordering::Relaxed);
-}
-
-/// Record one checker-final assignability verdict served from the relation
-/// cache without post-relation gate work (issue #13243 step 4).
-#[inline]
-pub fn record_assignability_final_cache_hit() {
-    if !enabled_fast() {
-        return;
-    }
-    counters()
-        .assignability_final_cache_hits
-        .fetch_add(1, Ordering::Relaxed);
-}
-
-/// Record one execution of the checker post-relation true-override gate
-/// group (issue #13243 step 4).
-#[inline]
-pub fn record_assignability_post_pass_probe() {
-    if !enabled_fast() {
-        return;
-    }
-    counters()
-        .assignability_post_pass_probes
-        .fetch_add(1, Ordering::Relaxed);
-}
-
-/// Record one post-relation gate rejection of a relation-true verdict
-/// (issue #13243 step 4).
-#[inline]
-pub fn record_assignability_post_pass_override() {
-    if !enabled_fast() {
-        return;
-    }
-    counters()
-        .assignability_post_pass_overrides
         .fetch_add(1, Ordering::Relaxed);
 }
 
