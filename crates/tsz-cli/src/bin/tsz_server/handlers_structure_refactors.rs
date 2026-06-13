@@ -110,7 +110,7 @@ impl Server {
             Some(serde_json::json!(refactors))
         })();
 
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     /// Parse the request's range fields, falling back to a position
@@ -326,7 +326,7 @@ impl Server {
             }]))
         })();
 
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_get_edits_for_file_rename(
@@ -397,7 +397,7 @@ impl Server {
 
             Some(serde_json::json!(file_changes))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     fn normalize_module_path(path: &std::path::Path) -> String {
@@ -566,7 +566,7 @@ impl Server {
                 Err(_) => Some(serde_json::json!([])),
             }
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_format_on_key(
@@ -649,7 +649,7 @@ impl Server {
                 Err(_) => Some(serde_json::json!([])),
             }
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn find_nearest_tsconfig(file: &str) -> Option<String> {
@@ -1142,7 +1142,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_selection_range(
@@ -1223,7 +1223,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_linked_editing_range(

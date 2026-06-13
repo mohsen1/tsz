@@ -1499,7 +1499,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(details))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     // Display parts rendering, signature help handler, and tokenization utilities
