@@ -566,6 +566,11 @@ JSON
 tsz_write_basic_external_project_config() {
   local output="$1"
   local source_dir="$2"
+  # Optional 3rd arg: extra compilerOptions JSON lines (each must include its
+  # own trailing comma) injected verbatim. Used by sources whose real tsconfig
+  # enables options the shared baseline omits (e.g. allowImportingTsExtensions
+  # for projects that import sibling modules with explicit `.ts` extensions).
+  local extra_compiler_options="${3:-}"
   cat > "$output" <<JSON
 {
   "compilerOptions": {
@@ -580,7 +585,7 @@ tsz_write_basic_external_project_config() {
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+${extra_compiler_options}    "resolveJsonModule": true
   },
   "include": ["${source_dir}/**/*.ts", "${source_dir}/**/*.tsx"],
   "exclude": [
@@ -622,7 +627,15 @@ tsz_write_ts_rest_config() {
 }
 
 tsz_write_ofetch_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # ofetch's source imports sibling modules with explicit `.ts` extensions
+  # (e.g. `export * from "./base.ts";`), which its real tsconfig.json permits
+  # via allowImportingTsExtensions: true (paired with noEmit, as here). Without
+  # the option tsc emits TS5097 on every such import and cascades into
+  # TS2304/TS2339; tsz matches that tsc behavior, so the guard config must
+  # carry the option the upstream project actually sets.
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 
 tsz_write_ts_pattern_config() {
