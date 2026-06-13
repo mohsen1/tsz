@@ -26,6 +26,7 @@
 
 #[macro_use]
 pub mod provider_macro;
+pub mod classify;
 pub mod code_actions;
 pub mod completions;
 pub mod dependency_graph;

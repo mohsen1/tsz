@@ -903,41 +903,15 @@ impl SymbolIndex {
 
 /// Convert binder symbol flags to an LSP `SymbolKind`.
 ///
-/// Checks flags in specificity order so that, e.g., a const-enum is
-/// reported as `Enum` rather than `Variable`.  Falls back to
-/// `SymbolKind::Variable` when no recognisable flag is set.
+/// Delegates the flag-priority cascade to the shared [`classify`] classifier so
+/// every provider reads one source of truth. The block-scoped/function-scoped
+/// distinction is collapsed onto `Variable` here; callers that need to
+/// distinguish `const` use [`classify::variable_decl_kind`] on the declaration.
+///
+/// [`classify`]: crate::classify
+/// [`classify::variable_decl_kind`]: crate::classify::variable_decl_kind
 const fn symbol_flags_to_kind(flags: u32) -> SymbolKind {
-    if flags & symbol_flags::FUNCTION != 0 {
-        SymbolKind::Function
-    } else if flags & symbol_flags::CLASS != 0 {
-        SymbolKind::Class
-    } else if flags & symbol_flags::INTERFACE != 0 {
-        SymbolKind::Interface
-    } else if flags & symbol_flags::ENUM != 0 {
-        SymbolKind::Enum
-    } else if flags & symbol_flags::ENUM_MEMBER != 0 {
-        SymbolKind::EnumMember
-    } else if flags & symbol_flags::TYPE_ALIAS != 0 || flags & symbol_flags::TYPE_PARAMETER != 0 {
-        SymbolKind::TypeParameter
-    } else if flags & symbol_flags::MODULE != 0 {
-        SymbolKind::Module
-    } else if flags & symbol_flags::METHOD != 0 {
-        SymbolKind::Method
-    } else if flags & symbol_flags::PROPERTY != 0 {
-        SymbolKind::Property
-    } else if flags & symbol_flags::CONSTRUCTOR != 0 {
-        SymbolKind::Constructor
-    } else if flags & symbol_flags::ACCESSOR != 0 {
-        SymbolKind::Property
-    } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
-        // const declarations get Constant; let gets Variable.
-        // The binder uses BLOCK_SCOPED_VARIABLE for both let and const.
-        // We report as Variable here; callers that need to distinguish
-        // const should check node_flags::CONST on the declaration.
-        SymbolKind::Variable
-    } else {
-        SymbolKind::Variable
-    }
+    crate::classify::classify_symbol_flags(flags).to_symbol_kind()
 }
 
 /// Statistics about the symbol index.
