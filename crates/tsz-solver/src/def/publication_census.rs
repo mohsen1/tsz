@@ -22,9 +22,9 @@
 //! (~10^3..10^4 publications per project run). Output is rendered by
 //! [`dump_to_string`]; the CLI driver owns file IO and name resolution.
 
-use super::{DefId, DefKind};
+use super::{DefId, DefKind, DefinitionInfo};
 use crate::intern::TypeInterner;
-use crate::types::{TypeData, TypeId};
+use crate::types::{TypeData, TypeId, TypeParamInfo};
 use rustc_hash::FxHashMap;
 use std::panic::Location;
 use std::sync::{Mutex, OnceLock};
@@ -189,6 +189,52 @@ pub fn record_publication(
             entry.bodies_overflowed = true;
         }
     }
+}
+
+/// Record an update against an existing guarded definition entry.
+pub fn record_existing_publication(
+    def_id: DefId,
+    entry: &DefinitionInfo,
+    new_body: TypeId,
+    new_params: Option<&[TypeParamInfo]>,
+    suppressed: bool,
+    deferred: bool,
+    caller: &'static Location<'static>,
+) {
+    let params_changed = new_params.is_some_and(|params| params != entry.type_params.as_slice());
+    let outcome = if suppressed {
+        PublicationOutcome::SuppressedDifferentBody
+    } else if deferred {
+        PublicationOutcome::DeferredDifferentBody
+    } else {
+        classify(entry.body, new_body, params_changed, true)
+    };
+    record_publication(
+        def_id,
+        Some(entry.kind),
+        entry.name,
+        entry.file_id,
+        new_body,
+        outcome,
+        caller,
+    );
+}
+
+/// Record publication of a body for a `DefId` that had no definition entry yet.
+pub fn record_minted_minimal_publication(
+    def_id: DefId,
+    new_body: TypeId,
+    caller: &'static Location<'static>,
+) {
+    record_publication(
+        def_id,
+        None,
+        Atom::NONE,
+        None,
+        new_body,
+        PublicationOutcome::MintedMinimal,
+        caller,
+    );
 }
 
 /// Classify a publication against the pre-write entry state.
