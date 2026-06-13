@@ -270,29 +270,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let name_len = member_name.len();
-        // tsc: bestDistance = (name.length + 2) * 0.34 rounded down, min 2
-        let maximum_length_difference = if name_len * 34 / 100 > 2 {
-            name_len * 34 / 100
-        } else {
-            2
-        };
-        // tsc: initial bestDistance = floor(name.length * 0.4) + 1
-        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
-        let mut best_candidate: Option<String> = None;
-
-        for candidate in export_names {
-            Self::consider_identifier_suggestion(
-                member_name,
-                candidate,
-                name_len,
-                maximum_length_difference,
-                &mut best_distance,
-                &mut best_candidate,
-            );
-        }
-
-        best_candidate
+        Self::best_spelling_suggestion(member_name, export_names.iter().map(String::as_str))
     }
 
     // =========================================================================

@@ -95,13 +95,13 @@ impl ScannerState {
             CharacterCodes::_8 | CharacterCodes::_9 => {
                 // \8 or \9 is not a valid escape sequence — emit TS1488.
                 let digit = char::from_u32(escaped).unwrap_or('?');
-                self.scanner_diagnostics.push(ScannerDiagnostic {
-                    pos: backslash_pos,
-                    length: self.pos - backslash_pos,
-                    message: diagnostic_messages::ESCAPE_SEQUENCE_IS_NOT_ALLOWED,
-                    code: diagnostic_codes::ESCAPE_SEQUENCE_IS_NOT_ALLOWED,
-                    args: vec![format!("\\{digit}")],
-                });
+                self.push_diag_args(
+                    backslash_pos,
+                    self.pos - backslash_pos,
+                    diagnostic_messages::ESCAPE_SEQUENCE_IS_NOT_ALLOWED,
+                    diagnostic_codes::ESCAPE_SEQUENCE_IS_NOT_ALLOWED,
+                    vec![format!("\\{digit}")],
+                );
                 if let Some(c) = char::from_u32(escaped) {
                     result.push(c);
                 }
@@ -187,13 +187,13 @@ impl ScannerState {
     fn emit_octal_escape_diagnostic(&mut self, backslash_pos: usize, value: u32) {
         // tsc renders the suggestion as `\xNN` with lowercase 2-digit hex.
         let suggestion = format!("\\x{value:02x}");
-        self.scanner_diagnostics.push(ScannerDiagnostic {
-            pos: backslash_pos,
-            length: self.pos - backslash_pos,
-            message: diagnostic_messages::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
-            code: diagnostic_codes::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
-            args: vec![suggestion],
-        });
+        self.push_diag_args(
+            backslash_pos,
+            self.pos - backslash_pos,
+            diagnostic_messages::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
+            diagnostic_codes::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
+            vec![suggestion],
+        );
     }
 
     fn scan_string_escape_hex(&mut self, result: &mut String) {
@@ -212,13 +212,12 @@ impl ScannerState {
         }
         if digit_count < 2 {
             self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-            self.scanner_diagnostics.push(ScannerDiagnostic {
-                pos: self.pos,
-                length: 0,
-                args: Vec::new(),
-                message: diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                code: diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-            });
+            self.push_diag(
+                self.pos,
+                0,
+                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+            );
             result.push('\\');
             result.push('x');
             return;
