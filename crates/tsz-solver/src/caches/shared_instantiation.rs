@@ -1,4 +1,4 @@
-use crate::caches::query_cache::ApplicationEvalCacheKey;
+use crate::caches::shared_query_cache::ApplicationEvalCacheKey;
 use crate::def::DefId;
 use crate::types::TypeId;
 

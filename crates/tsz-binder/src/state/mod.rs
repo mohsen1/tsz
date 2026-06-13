@@ -53,16 +53,15 @@ pub type FileReexportsMap = FxHashMap<String, FileReexports>;
 /// Maps `current_file` -> `Vec<(source_module, is_type_only)>`.
 /// The `is_type_only` flag is `true` for `export type * from "X"` chains.
 pub type WildcardReexportsMap = FxHashMap<String, Vec<(String, bool)>>;
-type ExportCache = FxHashMap<String, FxHashMap<String, Option<SymbolId>>>;
+type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
 /// Cache for the type-only re-export resolver. Mirrors [`ExportCache`] but also
 /// records whether the resolution path crossed an `export type * from ...`
-/// wildcard (the `bool` in the value). Keyed by `module_specifier` then
-/// `export_name`, so cache-hit lookup can borrow request strings without
-/// allocating an owned tuple. The result is a pure function of the request plus the
+/// wildcard (the `bool` in the value). Keyed by `(module_specifier,
+/// export_name)`. The result is a pure function of the request plus the
 /// binder's immutable re-export tables, so it is safe to memoize for the
 /// lifetime of the binder and is cleared alongside [`ExportCache`] whenever
 /// resolution caches are invalidated.
-type ExportTypeOnlyCache = FxHashMap<String, FxHashMap<String, Option<(SymbolId, bool)>>>;
+type ExportTypeOnlyCache = FxHashMap<(String, String), Option<(SymbolId, bool)>>;
 type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
 /// Cache for [`BinderState::find_enclosing_scope`], keyed by
 /// `(arena_pointer, node_index)` -> the resolved enclosing [`ScopeId`].
@@ -1110,16 +1109,12 @@ impl BinderState {
                 .resolved_export_cache
                 .read()
                 .expect("resolved_export_cache RwLock poisoned")
-                .values()
-                .map(FxHashMap::len)
-                .sum(),
+                .len(),
             export_type_only_cache_entries: self
                 .resolved_export_type_only_cache
                 .read()
                 .expect("resolved_export_type_only_cache RwLock poisoned")
-                .values()
-                .map(FxHashMap::len)
-                .sum(),
+                .len(),
             identifier_cache_entries: self
                 .resolved_identifier_cache
                 .read()

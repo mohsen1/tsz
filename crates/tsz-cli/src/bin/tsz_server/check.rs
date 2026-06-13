@@ -17,6 +17,7 @@ use tsz::lib_loader::LibFile;
 use tsz::parallel;
 use tsz::parser::ParserState;
 use tsz::parser::node::NodeArena;
+use tsz_cli::config::strict_family::{StrictFamilyOverrides, apply_strict_family};
 use tsz_cli::config::{
     checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
     resolve_lib_files_from_dir,
@@ -893,28 +894,16 @@ impl Server {
         let emitter_target = Self::parse_target(&options.target);
         let checker_target = checker_target_from_emitter(emitter_target);
 
-        // Note: We don't use CheckerOptions::default() as a base here.
-        // When strict is explicitly set (true or false), all strict-family flags
-        // that are not explicitly set should inherit from strict's value.
-        // This matches tsc behavior where @strict: false disables all strict checks.
-        // Only use defaults for flags that are truly not specified.
-
-        CheckerOptions {
-            strict: options.strict,
-            strict_null_checks: options.strict_null_checks.unwrap_or(options.strict),
-            strict_function_types: options.strict_function_types.unwrap_or(options.strict),
-            strict_bind_call_apply: options.strict_bind_call_apply.unwrap_or(options.strict),
-            strict_property_initialization: options
-                .strict_property_initialization
-                .unwrap_or(options.strict),
-            no_implicit_any: options.no_implicit_any.unwrap_or(options.strict),
-            no_implicit_this: options.no_implicit_this.unwrap_or(options.strict),
+        // Strict-family members are resolved by the shared `strict_family`
+        // table below (umbrella expansion first, then explicit member
+        // overrides — tsc 6.0 `getStrictOptionValue`, issue #3861 ordering).
+        // The placeholders contributed by `..CheckerOptions::default()` for
+        // those members are always overwritten because the server protocol's
+        // `strict` is non-optional.
+        let mut checker_options = CheckerOptions {
             no_implicit_returns: options.no_implicit_returns,
             exact_optional_property_types: options.exact_optional_property_types,
             no_unchecked_indexed_access: options.no_unchecked_indexed_access,
-            use_unknown_in_catch_variables: options
-                .use_unknown_in_catch_variables
-                .unwrap_or(options.strict),
             isolated_modules: options.isolated_modules,
             no_lib: options.no_lib,
             no_types_and_symbols: false,
@@ -936,7 +925,11 @@ impl Server {
             experimental_decorators: options.experimental_decorators,
             no_unused_locals: options.no_unused_locals,
             no_unused_parameters: options.no_unused_parameters,
-            always_strict: options.always_strict.unwrap_or(options.strict),
+            // tsc 6.0: alwaysStrict is no longer a strict-family member
+            // (utilities.ts computedOptions.alwaysStrict: "Previously a
+            // strict-mode flag, but no longer"); it resolves as
+            // `alwaysStrict !== false`, independent of `strict`.
+            always_strict: options.always_strict.unwrap_or(true),
             resolve_json_module: options.resolve_json_module,
             check_js: options.check_js,
             allow_js: options.allow_js,
@@ -978,11 +971,24 @@ impl Server {
             ignore_deprecations: false,
             allow_umd_global_access: options.allow_umd_global_access,
             preserve_const_enums: options.preserve_const_enums,
-            strict_builtin_iterator_return: options
-                .strict_builtin_iterator_return
-                .unwrap_or(options.strict),
             erasable_syntax_only: options.erasable_syntax_only,
             no_fallthrough_cases_in_switch: options.no_fallthrough_cases_in_switch,
-        }
+            ..CheckerOptions::default()
+        };
+        apply_strict_family(
+            &mut checker_options,
+            &StrictFamilyOverrides {
+                strict: Some(options.strict),
+                no_implicit_any: options.no_implicit_any,
+                no_implicit_this: options.no_implicit_this,
+                strict_null_checks: options.strict_null_checks,
+                strict_function_types: options.strict_function_types,
+                strict_bind_call_apply: options.strict_bind_call_apply,
+                strict_property_initialization: options.strict_property_initialization,
+                strict_builtin_iterator_return: options.strict_builtin_iterator_return,
+                use_unknown_in_catch_variables: options.use_unknown_in_catch_variables,
+            },
+        );
+        checker_options
     }
 }

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
+use tsz::WasmCompilerOptions;
 use tsz::binder::BinderState;
 use tsz::checker::context::CheckerOptions;
 use tsz::lib_loader::LibFile;
@@ -34,11 +35,17 @@ pub struct TsCompilerOptions {
     #[serde(default)]
     pub strict_function_types: Option<bool>,
     #[serde(default)]
+    pub strict_bind_call_apply: Option<bool>,
+    #[serde(default)]
     pub strict_property_initialization: Option<bool>,
     #[serde(default)]
     pub no_implicit_returns: Option<bool>,
     #[serde(default)]
     pub no_implicit_this: Option<bool>,
+    #[serde(default)]
+    pub use_unknown_in_catch_variables: Option<bool>,
+    #[serde(default)]
+    pub strict_builtin_iterator_return: Option<bool>,
     #[serde(default)]
     pub target: Option<u8>,
     #[serde(default)]
@@ -75,72 +82,55 @@ impl TsCompilerOptions {
     }
 
     /// Convert to internal `CheckerOptions`
+    ///
+    /// Delegates option -> `CheckerOptions` resolution (including the
+    /// `strict` family implications) to the shared owner in tsz-core,
+    /// [`WasmCompilerOptions`], so this surface cannot drift from the other
+    /// WASM program API (#13117). This wrapper only contributes:
+    /// - its non-strict default: `strict` omitted means `strict: false`,
+    ///   matching `tsc` without a tsconfig;
+    /// - options the shared resolver does not model (`declaration`,
+    ///   `checkJs`, `allowJs`, `noResolve`);
+    /// - the numeric `u8` `target`/`module` DTO encoding shared with the
+    ///   emit path (issue #3489: the checker target must follow the
+    ///   JS-supplied numeric target, collapsed post-ES2020 exactly like the
+    ///   CLI's resolved options).
     pub fn to_checker_options(&self) -> CheckerOptions {
-        let strict = self.strict.unwrap_or(false);
-        CheckerOptions {
-            strict,
-            no_implicit_any: self.no_implicit_any.unwrap_or(strict),
-            no_implicit_returns: self.no_implicit_returns.unwrap_or(false),
-            strict_null_checks: self.strict_null_checks.unwrap_or(strict),
-            strict_function_types: self.strict_function_types.unwrap_or(strict),
-            strict_property_initialization: self.strict_property_initialization.unwrap_or(strict),
-            no_implicit_this: self.no_implicit_this.unwrap_or(strict),
-            use_unknown_in_catch_variables: self.strict_null_checks.unwrap_or(strict),
-            isolated_modules: false,
-            emit_declarations: self.declaration.unwrap_or(false),
-            no_unchecked_indexed_access: false,
-            no_unchecked_side_effect_imports: false,
-            strict_bind_call_apply: false,
-            exact_optional_property_types: false,
-            no_lib: self.no_lib.unwrap_or(false),
-            no_types_and_symbols: false,
-            types_explicitly_set: false,
-            // Issue #3489: route the JS-supplied numeric `target` through to
-            // the checker. The hardcoded default silently dropped target-aware
-            // semantic diagnostics like TS2737 (BigInt literals).
-            target: tsz::config::checker_target_from_emitter(target_kind_from_u8(self.target)),
-            module: self.resolve_module(),
-            es_module_interop: false,
-            allow_synthetic_default_imports: false,
-            allow_unreachable_code: None,
-            allow_unused_labels: None,
-            no_property_access_from_index_signature: false,
-            sound_mode: self.sound_mode.unwrap_or(false),
-            sound_check_declarations: false,
-            sound_report_only: false,
-            sound_pedantic: false,
-            experimental_decorators: false,
-            no_unused_locals: false,
-            no_unused_parameters: false,
-            always_strict: strict,
-            resolve_json_module: false,
-            check_js: self.check_js.unwrap_or(false),
-            allow_js: self.allow_js.unwrap_or(false),
-            no_resolve: self.no_resolve.unwrap_or(false),
-            isolated_declarations: false,
-            no_implicit_override: false,
-            jsx_mode: tsz_common::checker_options::JsxMode::None,
-            jsx_factory: "React.createElement".to_string(),
-            jsx_factory_from_config: false,
-            jsx_fragment_factory: "React.Fragment".to_string(),
-            jsx_fragment_factory_from_config: false,
-            jsx_import_source: String::new(),
-            module_explicitly_set: self.module.is_some(),
-            suppress_excess_property_errors: false,
-            suppress_implicit_any_index_errors: false,
-            no_implicit_use_strict: false,
-            allow_importing_ts_extensions: false,
-            rewrite_relative_import_extensions: false,
-            implied_classic_resolution: false,
-            downlevel_iteration: self.downlevel_iteration.unwrap_or(false),
-            verbatim_module_syntax: false,
-            ignore_deprecations: false,
-            allow_umd_global_access: false,
-            preserve_const_enums: false,
-            strict_builtin_iterator_return: strict,
-            erasable_syntax_only: false,
-            no_fallthrough_cases_in_switch: false,
-        }
+        let shared = WasmCompilerOptions {
+            strict: Some(self.strict.unwrap_or(false)),
+            no_implicit_any: self.no_implicit_any,
+            strict_null_checks: self.strict_null_checks,
+            strict_function_types: self.strict_function_types,
+            strict_bind_call_apply: self.strict_bind_call_apply,
+            strict_property_initialization: self.strict_property_initialization,
+            no_implicit_returns: self.no_implicit_returns,
+            no_implicit_this: self.no_implicit_this,
+            use_unknown_in_catch_variables: self.use_unknown_in_catch_variables,
+            strict_builtin_iterator_return: self.strict_builtin_iterator_return,
+            target: None,
+            module: None,
+            downlevel_iteration: self.downlevel_iteration,
+            exact_optional_property_types: None,
+            no_lib: self.no_lib,
+            no_unchecked_indexed_access: None,
+            sound_mode: self.sound_mode,
+        };
+        let mut options = shared.to_checker_options();
+
+        // Surface-specific options the shared resolver does not model.
+        options.emit_declarations = self.declaration.unwrap_or(false);
+        options.check_js = self.check_js.unwrap_or(false);
+        options.allow_js = self.allow_js.unwrap_or(false);
+        options.no_resolve = self.no_resolve.unwrap_or(false);
+
+        // `target`/`module` arrive as numeric `u8` DTO fields and resolve
+        // through the same converters as the emit path (`None` -> ES5 /
+        // ModuleKind::None, matching tsc's defaults).
+        options.target = tsz::config::checker_target_from_emitter(target_kind_from_u8(self.target));
+        options.module = self.resolve_module();
+        options.module_explicitly_set = self.module.is_some();
+
+        options
     }
 }
 
