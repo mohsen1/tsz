@@ -1628,7 +1628,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let elements = self.interner().tuple_list(tuple_id);
                 if let Some(result) =
                     super::index_access_tuple_literal::evaluate_tuple_literal_index(
-                        self, &elements, index_type,
+                        self,
+                        &elements,
+                        index_type,
+                        self.no_unchecked_indexed_access(),
                     )
                     && result != TypeId::UNDEFINED
                 {

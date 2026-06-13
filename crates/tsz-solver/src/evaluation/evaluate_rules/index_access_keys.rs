@@ -235,9 +235,7 @@ impl<'a> TupleKeyVisitor<'a> {
                         if let Some(member_elements_id) = tuple_list_id(self.db, member) {
                             let member_elements = self.db.tuple_list(member_elements_id);
                             let inner_visitor = TupleKeyVisitor::new(self.db, &member_elements);
-                            if let Some(result) = inner_visitor.tuple_index_literal(inner_idx)
-                                && result != TypeId::UNDEFINED
-                            {
+                            if let Some(result) = inner_visitor.tuple_index_literal(inner_idx) {
                                 results.push(result);
                             }
                         }
