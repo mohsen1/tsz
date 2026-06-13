@@ -62,6 +62,26 @@ pub struct ProjectFile {
     pub(crate) strict: bool,
     /// Flag indicating if caches were invalidated and diagnostics need re-computation
     pub(crate) diagnostics_dirty: bool,
+    /// Diagnostics from the most recent full recompute, served by the
+    /// pull-model when still valid instead of re-running `check_source_file`.
+    ///
+    /// Cleared by `reset_analysis_state` (own edits, dependency invalidation).
+    /// Within a `Project`, validity additionally requires the stamp in
+    /// `diagnostics_generation` to match the project-wide generation, which is
+    /// the coarse cross-file invalidation barrier.
+    pub(crate) cached_diagnostics: Option<Vec<LspDiagnostic>>,
+    /// Pull-model result identity of `cached_diagnostics`.
+    ///
+    /// Assigned by the owning `Project` from a monotonically increasing
+    /// sequence on every recompute; never reused, so a client-provided
+    /// `previousResultId` can only match the exact recompute that produced it.
+    pub(crate) diagnostics_result_id: Option<String>,
+    /// Project diagnostics generation observed when `cached_diagnostics` was
+    /// computed. The owning `Project` bumps its generation on every mutation
+    /// that could affect any file's diagnostics (content change, file
+    /// add/remove, compiler-option change); a mismatched stamp marks the
+    /// cache stale.
+    pub(crate) diagnostics_generation: u64,
     /// Position-independent hash of the file's public API (exports, re-exports, augmentations).
     /// Used to avoid invalidating dependent files when only function bodies or comments change.
     pub(crate) export_signature: ExportSignature,
@@ -253,6 +273,9 @@ impl ProjectFile {
             scope_cache: ScopeCache::default(),
             strict,
             diagnostics_dirty: false,
+            cached_diagnostics: None,
+            diagnostics_result_id: None,
+            diagnostics_generation: 0,
             export_signature,
             content_hash,
             file_idx,
@@ -715,6 +738,8 @@ impl ProjectFile {
         self.type_cache = None;
         self.scope_cache.clear();
         self.diagnostics_dirty = true;
+        self.cached_diagnostics = None;
+        self.diagnostics_result_id = None;
     }
 
     pub fn get_hover(&mut self, position: Position) -> Option<HoverInfo> {
@@ -801,7 +826,27 @@ impl ProjectFile {
         )
     }
 
+    /// Diagnostics for this file, served from `cached_diagnostics` when no
+    /// invalidation happened since the last recompute.
+    ///
+    /// Standalone (non-`Project`) entry point: every mutation path of a
+    /// standalone file (`update_source`, `update_source_with_edits`,
+    /// `invalidate_caches`) goes through `reset_analysis_state`, which clears
+    /// the cache. Files owned by a `Project` are served through the
+    /// generation-checked `Project` wrapper instead, which adds the coarse
+    /// cross-file invalidation barrier on top of this flag.
     pub fn get_diagnostics(&mut self) -> Vec<LspDiagnostic> {
+        if !self.diagnostics_dirty
+            && let Some(cached) = &self.cached_diagnostics
+        {
+            return cached.clone();
+        }
+        self.compute_diagnostics()
+    }
+
+    /// Run the checker over this file unconditionally, refresh
+    /// `cached_diagnostics`, and clear `diagnostics_dirty`.
+    pub(crate) fn compute_diagnostics(&mut self) -> Vec<LspDiagnostic> {
         let file_name = self.file_name.clone();
         let source_text = self.parser.get_source_text();
         let compiler_options = tsz_checker::context::CheckerOptions {
@@ -856,7 +901,7 @@ impl ProjectFile {
 
         checker.check_source_file(self.root);
 
-        let diagnostics = checker
+        let diagnostics: Vec<LspDiagnostic> = checker
             .ctx
             .diagnostics
             .iter()
@@ -865,6 +910,7 @@ impl ProjectFile {
 
         self.type_cache = Some(checker.extract_cache());
         self.diagnostics_dirty = false;
+        self.cached_diagnostics = Some(diagnostics.clone());
         diagnostics
     }
 

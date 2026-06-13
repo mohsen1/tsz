@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   autoMergeInFlightReason,
   candidateFromCompare,
@@ -11,6 +14,13 @@ import {
   parseArgs,
   selectSortedPullRequests,
 } from "./refresh-green-prs.mjs";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
+const REFRESH_WORKFLOW = fs.readFileSync(
+  path.join(ROOT, ".github", "workflows", "refresh-green-prs.yml"),
+  "utf8",
+);
 
 function check(overrides = {}) {
   return {
@@ -45,6 +55,12 @@ assert.deepEqual(parseArgs(["--no-default-required-check"]).requiredChecks, []);
 assert.deepEqual(
   parseArgs(["--no-default-required-check", "--required-check", "queue-ci"]).requiredChecks,
   ["queue-ci"],
+);
+
+assert.match(
+  REFRESH_WORKFLOW,
+  /on:\s*\n\s+push:\s*\n\s+branches: \[main\]\s*\n\s+schedule:\s*\n\s+# Drain at most one stale green PR per run, away from the top of the hour\.\s*\n\s+- cron: '7,27,47 \* \* \* \*'/,
+  "refresh-green-prs should run automatically on main pushes and a staggered schedule",
 );
 
 assert.equal(checkRollupState([check()]).kind, "passed");

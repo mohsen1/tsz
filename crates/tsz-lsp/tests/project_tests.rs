@@ -70,6 +70,8 @@ fn range_for_substring(source: &str, line_map: &LineMap, needle: &str) -> Range 
 
 #[path = "project_tests/cache_and_auto_imports.rs"]
 mod cache_and_auto_imports;
+#[path = "project_tests/diagnostics_pull_cache.rs"]
+mod diagnostics_pull_cache;
 #[path = "project_tests/discovery_and_references.rs"]
 mod discovery_and_references;
 #[path = "project_tests/feature_wrappers.rs"]

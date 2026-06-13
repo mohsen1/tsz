@@ -201,6 +201,11 @@ impl<'a> CheckerState<'a> {
                 argument_idx: idx,
             },
         );
+        // The type whose plain render `arg_str` currently holds; `None` once a
+        // display override replaced the render with a string that was not
+        // produced from `arg_type` (overrides render their own types and
+        // carry no literal annotations to widen).
+        let mut arg_display_type = Some(arg_type);
         // Widen a fresh boolean-literal array source (`true[]`/`false[]`) to
         // `boolean[]` against a `boolean` parameter. The decision is structural;
         // the output string is plain rendering (no rendered-text decision, §25).
@@ -212,6 +217,7 @@ impl<'a> CheckerState<'a> {
             .is_some()
         {
             arg_str = "boolean[]".to_string();
+            arg_display_type = None;
         }
         let mut param_str = self.format_type_for_diagnostic_role(
             param_type,
@@ -220,25 +226,80 @@ impl<'a> CheckerState<'a> {
                 argument_idx: idx,
             },
         );
+        // The type whose plain render `param_str` currently holds (same
+        // tracking discipline as `arg_display_type`).
+        let mut param_display_type = Some(param_type);
         if let Some(display) = self.mapped_property_mismatch_parameter_display(
             &param_str,
             analysis.failure_reason.as_ref(),
         ) {
             param_str = display;
+            param_display_type = None;
         }
         if let Some(display) =
             self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
         {
             param_str = display;
+            param_display_type = None;
         }
-        if arg_str.starts_with('{') && param_str.contains("<{") {
-            param_str = Self::widen_object_member_literals_inside_generic_display(&param_str);
+        if arg_str.starts_with('{')
+            && param_str.contains("<{")
+            && let Some(display_ty) = param_display_type
+        {
+            // Generic parameter displays widen string/boolean literal
+            // annotations of objects nested in the application's type
+            // arguments: widen at the type level and reprint (#13075).
+            let widened = self.widen_annotation_literals_for_display(
+                display_ty,
+                crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::STRINGS_AND_BOOLEANS_INSIDE_APPLICATION_ARGS,
+            );
+            if widened.display_residue {
+                // Literal spellings live only in display provenance; render
+                // the canonical (display-property-free) form.
+                param_str = self.format_type_diagnostic_widened(widened.type_id);
+            } else if widened.type_id != display_ty {
+                param_str = self.format_type_for_diagnostic_role(
+                    widened.type_id,
+                    DiagnosticTypeDisplayRole::CallParameter {
+                        argument: arg_type,
+                        argument_idx: idx,
+                    },
+                );
+            }
+        }
+        if arg_str.starts_with('{')
+            && let Some(display_ty) = param_display_type
+            && self.ctx.types.get_display_properties(display_ty).is_some()
+            && !self.target_preserves_literal_surface(param_type)
+        {
+            // Parameters inferred from another fresh object literal can carry
+            // literal spellings only through display provenance (for example
+            // `NoInfer<T>` when `T` was inferred from `{ x: 3, y: 2 }`).
+            // tsc renders these parameter surfaces as annotation-like object
+            // members, so widen the display-property literals at the type
+            // level and print without the stale literal side table (#13075).
+            let widened = self.widen_annotation_literals_for_display(
+                display_ty,
+                crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+            );
+            if widened.display_residue {
+                param_str = self.format_type_diagnostic_widened(widened.type_id);
+            } else if widened.type_id != display_ty {
+                param_str = self.format_type_for_diagnostic_role(
+                    widened.type_id,
+                    DiagnosticTypeDisplayRole::CallParameter {
+                        argument: arg_type,
+                        argument_idx: idx,
+                    },
+                );
+            }
         }
         if let Some((generic_arg_str, generic_param_str)) =
             self.generic_direct_primitive_mismatch_display(arg_type, param_type, idx)
         {
             arg_str = generic_arg_str;
             param_str = generic_param_str;
+            arg_display_type = None;
         }
         if let Some(widened_arg_str) = self
             .widen_literal_call_argument_display_against_plain_primitive_parameter(
@@ -246,9 +307,30 @@ impl<'a> CheckerState<'a> {
             )
         {
             arg_str = widened_arg_str;
+            arg_display_type = None;
         }
-        if self.inline_literal_satisfies_has_permissive_target(idx) {
-            arg_str = Self::widen_member_literals_in_display_text(&arg_str);
+        if self.inline_literal_satisfies_has_permissive_target(idx)
+            && let Some(display_ty) = arg_display_type
+        {
+            // Widen the argument display's literal annotations at the type
+            // level and reprint (#13075).
+            let widened = self.widen_annotation_literals_for_display(
+                display_ty,
+                crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+            );
+            if widened.display_residue {
+                // Literal spellings live only in display provenance; render
+                // the canonical (display-property-free) form.
+                arg_str = self.format_type_diagnostic_widened(widened.type_id);
+            } else if widened.type_id != display_ty {
+                arg_str = self.format_type_for_diagnostic_role(
+                    widened.type_id,
+                    DiagnosticTypeDisplayRole::CallArgument {
+                        parameter: param_type,
+                        argument_idx: idx,
+                    },
+                );
+            }
         }
         param_str = Self::trim_single_unbalanced_trailing_type_arg_close(param_str);
         let (arg_str, param_str) =
@@ -531,81 +613,6 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|members| members.contains(&TypeId::UNDEFINED))
     }
 
-    fn widen_object_member_literals_inside_generic_display(display: &str) -> String {
-        let bytes = display.as_bytes();
-        let mut out = String::with_capacity(display.len());
-        let mut i = 0;
-        let mut angle_depth = 0usize;
-        let mut object_depth = 0usize;
-
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            match ch {
-                '<' => {
-                    angle_depth += 1;
-                    out.push(ch);
-                    i += 1;
-                }
-                '>' => {
-                    angle_depth = angle_depth.saturating_sub(1);
-                    out.push(ch);
-                    i += 1;
-                }
-                '{' if angle_depth > 0 => {
-                    object_depth += 1;
-                    out.push(ch);
-                    i += 1;
-                }
-                '}' if object_depth > 0 => {
-                    object_depth -= 1;
-                    out.push(ch);
-                    i += 1;
-                }
-                ':' if angle_depth > 0 && object_depth > 0 => {
-                    out.push(ch);
-                    i += 1;
-                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                        out.push(bytes[i] as char);
-                        i += 1;
-                    }
-                    if i >= bytes.len() {
-                        continue;
-                    }
-                    if bytes[i] == b'"' {
-                        i += 1;
-                        while i < bytes.len() {
-                            if bytes[i] == b'\\' {
-                                i = (i + 2).min(bytes.len());
-                                continue;
-                            }
-                            if bytes[i] == b'"' {
-                                i += 1;
-                                break;
-                            }
-                            i += 1;
-                        }
-                        out.push_str("string");
-                    } else if display[i..].starts_with("true") {
-                        i += 4;
-                        out.push_str("boolean");
-                    } else if display[i..].starts_with("false") {
-                        i += 5;
-                        out.push_str("boolean");
-                    } else {
-                        out.push(bytes[i] as char);
-                        i += 1;
-                    }
-                }
-                _ => {
-                    out.push(ch);
-                    i += 1;
-                }
-            }
-        }
-
-        out
-    }
-
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
     /// TS2554: Expected {0} arguments, but got {1}.
     ///
@@ -655,15 +662,23 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS2560 ("did you mean to call it?") in call-site weak-type comparisons
-    /// expects widened primitive names for callable sources.
+    /// expects widened primitive names for callable sources: widen literal
+    /// annotations at the type level and reprint (#13075).
     fn widen_weak_type_callable_source_display(
         &self,
         arg_type: TypeId,
         _arg_str: String,
     ) -> String {
-        Self::widen_member_literals_in_display_text(
-            &self.format_type_diagnostic(self.widen_literal_type(arg_type)),
-        )
+        let widened = self.widen_annotation_literals_for_display(
+            self.widen_literal_type(arg_type),
+            crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+        );
+        if widened.display_residue {
+            // Literal spellings live only in display provenance; render the
+            // canonical (display-property-free) form.
+            return self.format_type_diagnostic_widened(widened.type_id);
+        }
+        self.format_type_diagnostic(widened.type_id)
     }
 
     /// Check if a node is a `new` expression.

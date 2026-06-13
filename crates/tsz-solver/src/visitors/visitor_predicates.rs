@@ -158,6 +158,30 @@ fn is_function_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Check if an invokable type still carries unbound signature type parameters.
+///
+/// Returns `true` for `TypeData::Function` whose shape declares type
+/// parameters and for `TypeData::Callable` with at least one generic call
+/// signature. Declaration emit uses this to reject un-instantiated generic
+/// callee return types whose free type variables cannot be resolved without
+/// checker inference.
+pub fn has_generic_call_signature(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Function(shape_id)) => {
+            !types.function_shape(shape_id).type_params.is_empty()
+        }
+        Some(TypeData::Callable(shape_id)) => types
+            .callable_shape(shape_id)
+            .call_signatures
+            .iter()
+            .any(|sig| !sig.type_params.is_empty()),
+        _ => false,
+    }
+}
+
 /// Check if a type is an object-like type (suitable for typeof "object").
 ///
 /// Returns true for: Object, `ObjectWithIndex`, Array, Tuple, Mapped, `ReadonlyType` (of object)

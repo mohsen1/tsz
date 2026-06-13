@@ -1271,34 +1271,22 @@ impl<'a> Printer<'a> {
             .rsplit_once('/')
             .map(|(dir, _)| dir)
             .unwrap_or("");
-        let mut parts: Vec<&str> = if base_dir.is_empty() {
-            Vec::new()
-        } else {
-            base_dir.split('/').collect()
-        };
-        for part in raw.split('/') {
-            match part {
-                "" | "." => {}
-                ".." => {
-                    if parts.pop().is_none() {
-                        return raw.to_owned();
-                    }
-                }
-                p => parts.push(p),
-            }
-        }
-        if let Some(last) = parts.last_mut() {
-            *last = last
-                .strip_suffix(".ts")
-                .or_else(|| last.strip_suffix(".tsx"))
-                .or_else(|| last.strip_suffix(".js"))
-                .or_else(|| last.strip_suffix(".jsx"))
-                .unwrap_or(last);
-        }
-        if parts.is_empty() {
+        // Collapse loop owned by path_identity; a `..` escaping the bundle
+        // root (or a specifier collapsing to nothing) keeps the raw spelling.
+        let Some(resolved) =
+            tsz_common::module_resolution::path_identity::resolve_relative_slash_specifier(
+                base_dir, raw,
+            )
+        else {
             return raw.to_owned();
-        }
-        parts.join("/")
+        };
+        let stripped = resolved
+            .strip_suffix(".ts")
+            .or_else(|| resolved.strip_suffix(".tsx"))
+            .or_else(|| resolved.strip_suffix(".js"))
+            .or_else(|| resolved.strip_suffix(".jsx"))
+            .unwrap_or(&resolved);
+        stripped.to_owned()
     }
 
     fn collect_amd_dependency_groups(

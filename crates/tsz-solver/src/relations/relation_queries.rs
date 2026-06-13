@@ -662,17 +662,8 @@ pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     context: RelationContext<'a>,
 ) -> CompatChecker<'a, R> {
     let mut checker = CompatChecker::with_resolver(interner, resolver);
-    configure_compat_checker_policy_bits(&mut checker, policy);
+    configure_compat_checker_policy(&mut checker, policy);
     checker.set_inheritance_graph(context.inheritance_graph);
-    checker.set_strict_subtype_checking(policy.strict_subtype_checking);
-    checker.set_strict_any_propagation(policy.strict_any_propagation);
-    checker.set_any_source_not_related(matches!(
-        policy.any_propagation_mode,
-        AnyPropagationMode::AnySourceNotRelated
-    ));
-    checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
-    checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
-    checker.set_erase_generics(policy.erase_generics);
     if let Some(query_db) = context.query_db {
         checker.set_query_db(query_db);
     }
@@ -688,12 +679,8 @@ pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
     policy: RelationPolicy,
     context: RelationContext<'a>,
 ) -> SubtypeChecker<'a, R> {
-    let mut checker = configure_subtype_checker_policy_bits(
-        SubtypeChecker::with_resolver(interner, resolver),
-        policy,
-    )
-    .with_any_propagation_mode(policy.any_propagation_mode)
-    .with_assume_related_on_cycle(policy.assume_related_on_cycle);
+    let mut checker =
+        configure_subtype_checker_policy(SubtypeChecker::with_resolver(interner, resolver), policy);
     if let Some(query_db) = context.query_db {
         checker = checker.with_query_db(query_db);
     }
@@ -704,6 +691,22 @@ pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
         checker = checker.with_class_check(class_check);
     }
     checker
+}
+
+fn configure_compat_checker_policy<R: TypeResolver>(
+    checker: &mut CompatChecker<'_, R>,
+    policy: RelationPolicy,
+) {
+    configure_compat_checker_policy_bits(checker, policy);
+    checker.set_strict_subtype_checking(policy.strict_subtype_checking);
+    checker.set_strict_any_propagation(policy.strict_any_propagation);
+    checker.set_any_source_not_related(matches!(
+        policy.any_propagation_mode,
+        AnyPropagationMode::AnySourceNotRelated
+    ));
+    checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
+    checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
+    checker.set_erase_generics(policy.erase_generics);
 }
 
 fn configure_compat_checker_policy_bits<R: TypeResolver>(
@@ -719,6 +722,15 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.set_disable_method_bivariance(policy.disable_method_bivariance());
 
     apply_policy_bits_to_subtype_checker(&mut checker.subtype, policy);
+}
+
+const fn configure_subtype_checker_policy<'a, R: TypeResolver>(
+    checker: SubtypeChecker<'a, R>,
+    policy: RelationPolicy,
+) -> SubtypeChecker<'a, R> {
+    configure_subtype_checker_policy_bits(checker, policy)
+        .with_any_propagation_mode(policy.any_propagation_mode)
+        .with_assume_related_on_cycle(policy.assume_related_on_cycle)
 }
 
 const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(

@@ -158,6 +158,37 @@ fn test_default_build_info_path() {
 }
 
 #[test]
+fn test_normalize_path_collapse_behavior() {
+    // Pinned before routing through path_identity::normalize_segments: these
+    // cases are the call-site domain (outDir joined with a diff_paths result)
+    // and must not change shape.
+    assert_eq!(
+        normalize_path(Path::new("/project/dist/../tsconfig")),
+        PathBuf::from("/project/tsconfig")
+    );
+    assert_eq!(normalize_path(Path::new("/a/./b")), PathBuf::from("/a/b"));
+    // Relative outDir with a `..` overshoot keeps the unmatched `..`.
+    assert_eq!(
+        normalize_path(Path::new("dist/../../x")),
+        PathBuf::from("../x")
+    );
+    // Everything collapses away: keep the historical `.` fallback so the
+    // `.tsbuildinfo` suffix is appended to a real path component.
+    assert_eq!(normalize_path(Path::new("dist/..")), PathBuf::from("."));
+
+    // Canonical underflow semantics (changed from the historical naive pop
+    // loop, documented in PR #13118 work): `..` clamps at the filesystem
+    // root (was `/../b`) ...
+    assert_eq!(normalize_path(Path::new("/a/../../b")), PathBuf::from("/b"));
+    // ... and a `..` run on a relative path is kept instead of a later `..`
+    // popping an earlier kept `..` (was `x`).
+    assert_eq!(
+        normalize_path(Path::new("../build/../../x")),
+        PathBuf::from("../../x")
+    );
+}
+
+#[test]
 fn test_build_info_version_mismatch_returns_none() {
     use tempfile::TempDir;
 

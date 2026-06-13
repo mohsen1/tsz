@@ -1872,6 +1872,15 @@ impl ParserState {
             // var/let modifier followed by () - emit errors and attempt recovery
             use tsz_common::diagnostics::diagnostic_codes;
 
+            // tsc parses this dropped member as trailing statements
+            // (`var <name>;` plus an arrow recovered from `() { }`) and emits
+            // them after the class. Track whether the member matches that
+            // exact shape — `var` (not `let`), plain identifier name, empty
+            // `()`, no type parameters or return type, empty `{ }` — and
+            // record it on the arena for the class emitters to consume.
+            let recovered_var_fn_name = self.class_member_var_fn_recovery_name(&mods, name);
+            let mut matches_var_fn_recovery_shape = recovered_var_fn_name.is_some();
+
             // Emit error for '('
             if self.is_token(SyntaxKind::OpenParenToken) {
                 self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
@@ -1879,17 +1888,22 @@ impl ParserState {
                 self.next_token();
 
                 // Parse parameters (may be empty)
-                let _ = self.parse_parameter_list();
+                let params = self.parse_parameter_list();
+                matches_var_fn_recovery_shape &= params.nodes.is_empty();
 
                 // Consume ')' without emitting an error
                 self.parse_expected(SyntaxKind::CloseParenToken);
+            } else {
+                matches_var_fn_recovery_shape = false;
             }
 
             // Skip optional type parameters and return type for recovery
             if self.is_token(SyntaxKind::LessThanToken) {
+                matches_var_fn_recovery_shape = false;
                 let _ = self.parse_type_parameters();
             }
             if self.parse_optional(SyntaxKind::ColonToken) {
+                matches_var_fn_recovery_shape = false;
                 let _ = self.parse_return_type();
             }
 
@@ -1897,12 +1911,25 @@ impl ParserState {
             if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::EXPECTED);
                 self.next_token(); // Consume '{'
+                // Empty `{ }` body: the close brace immediately follows.
+                matches_var_fn_recovery_shape &= self.is_token(SyntaxKind::CloseBraceToken);
+            } else {
+                matches_var_fn_recovery_shape = false;
             }
 
             // Parse a statement to balance braces
             // This consumes '{ }' so the class members loop doesn't see them
             self.context_flags = method_saved_flags;
             let _ = self.parse_statement();
+
+            if matches_var_fn_recovery_shape && let Some(recovery_name) = recovered_var_fn_name {
+                self.arena.class_body_var_fn_recoveries.push(
+                    crate::parser::node::ClassBodyVarFnRecovery {
+                        pos: start_pos,
+                        name: recovery_name,
+                    },
+                );
+            }
 
             // Return NONE to indicate this is not a valid member
             NodeIndex::NONE
@@ -1917,5 +1944,43 @@ impl ParserState {
                 method_saved_flags,
             )
         }
+    }
+
+    /// Recovered declaration name for a class-body member dropped by the
+    /// var/let-modifier recovery, when the member can still match tsc's
+    /// `var <name>() { }` recovery emit: the invalid modifier must be `var`
+    /// (not `let`) and the member name a plain identifier. Prefers the
+    /// identifier's original escape spelling for emit parity.
+    fn class_member_var_fn_recovery_name(
+        &self,
+        mods: &ClassMemberModifierSet,
+        name: NodeIndex,
+    ) -> Option<String> {
+        let has_var_modifier = mods.modifiers.as_ref().is_some_and(|list| {
+            list.nodes.iter().any(|&idx| {
+                self.arena
+                    .get(idx)
+                    .is_some_and(|node| node.kind == SyntaxKind::VarKeyword as u16)
+            })
+        });
+        if !has_var_modifier {
+            return None;
+        }
+        let name_node = self.arena.get(name)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        if let Some(original) = self
+            .arena
+            .get_identifier(name_node)
+            .and_then(|ident| ident.original_text.clone())
+        {
+            return Some(original);
+        }
+        let text = self.arena.identifier_text(name)?;
+        if text.is_empty() {
+            return None;
+        }
+        Some(text.to_string())
     }
 }

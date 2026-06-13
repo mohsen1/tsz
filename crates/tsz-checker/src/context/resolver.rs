@@ -1336,6 +1336,34 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         .members
                         .as_ref()
                         .and_then(|members| members.get(segment))
+                })
+                .or_else(|| {
+                    if symbol.import_name.as_deref() != Some("*") {
+                        return None;
+                    }
+                    let module = symbol.import_module.as_deref()?;
+                    let source_file_idx = self
+                        .resolve_symbol_file_index_stable(current_sym)
+                        .or_else(|| {
+                            (symbol.decl_file_idx != u32::MAX)
+                                .then_some(symbol.decl_file_idx as usize)
+                        })
+                        .unwrap_or(self.current_file_idx);
+                    let target_idx =
+                        self.resolve_import_target_from_file(source_file_idx, module)?;
+                    let target_binder = self.get_binder_for_file(target_idx)?;
+                    let target_arena = self.get_arena_for_file(target_idx as u32);
+                    let file_name = target_arena
+                        .source_files
+                        .first()
+                        .map(|source_file| source_file.file_name.as_str());
+                    file_name
+                        .and_then(|file_name| {
+                            target_binder.resolve_import_with_reexports(file_name, segment)
+                        })
+                        .or_else(|| target_binder.resolve_import_with_reexports(module, segment))
+                        .or_else(|| target_binder.file_locals.get(segment))
+                        .inspect(|sym_id| self.register_symbol_file_target(*sym_id, target_idx))
                 })?;
         }
 
