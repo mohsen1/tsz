@@ -351,13 +351,77 @@ fn test_hover_union_array_precedence_preserved() {
     );
 }
 
+/// Hover infrastructure helper that loads `lib_source` as an ambient lib file so
+/// constructor-return inference (`new Date()` -> `Date`) resolves through the real
+/// checker, not a display-layer string patch.
+fn get_hover_at_with_lib(lib_source: &str, source: &str, line: u32, col: u32) -> Option<HoverInfo> {
+    let lib = Arc::new(LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        lib_source.to_string(),
+    ));
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &[Arc::clone(&lib)]);
+
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+    let lib_contexts = vec![LibContext {
+        arena: Arc::clone(&lib.arena),
+        binder: Arc::clone(&lib.binder),
+    }];
+    let provider = HoverProvider::with_options_and_lib_contexts(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+        FullProviderOptions {
+            strict: true,
+            sound_mode: false,
+            checker_options: None,
+            lib_contexts: &lib_contexts,
+        },
+    );
+
+    let mut cache = None;
+    provider.get_hover(root, Position::new(line, col), &mut cache)
+}
+
+/// Minimal `Date`/`DateConstructor` ambient lib so `new Date()` resolves its
+/// construct-signature return type through the real checker.
+const DATE_LIB: &str = "interface Date { getTime(): number; }\ninterface DateConstructor { new (): Date; }\ndeclare var Date: DateConstructor;";
+
 #[test]
-fn test_hover_date_constructor_rewrites_error_property_type() {
+fn test_hover_constructor_return_property_type_infers_through_checker() {
+    // `new Date()` infers `Date` from the `DateConstructor` `new()` signature.
+    // The hover type string flows from the real checker (`format_type`), so the
+    // member must render `Date` structurally — no display-layer string surgery.
     let source = "var a2 = { name: 'bob', age: 18, address: 'springfield' };\nvar b2 = { name: 'jim', age: 20, dob: new Date() };\nvar c2 = [a2, b2];\nc2;";
-    let info = get_hover_at(source, 3, 0).expect("Should find hover info for c2");
+    let info =
+        get_hover_at_with_lib(DATE_LIB, source, 3, 0).expect("Should find hover info for c2");
     assert!(
         info.display_string.contains("dob: Date"),
-        "Quick-info display should normalize constructor-based error property type to Date, got: {}",
+        "Constructor-return inference should render the property type as Date, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_constructor_return_property_type_is_not_keyed_to_dob() {
+    // The deleted string-surgery hack only rewrote the literal `dob: error`.
+    // Using a different property name (`created`) for `new Date()` proves the
+    // member now renders `Date` through real constructor-return inference rather
+    // than a name-keyed display patch. p1/p2 carry distinct extra members
+    // (label vs created) so union subtype-reduction keeps both element members.
+    let source = "var p1 = { name: 'bob', age: 18, label: 'home' };\nvar p2 = { name: 'jim', age: 20, created: new Date() };\nvar items = [p1, p2];\nitems;";
+    let info =
+        get_hover_at_with_lib(DATE_LIB, source, 3, 0).expect("Should find hover info for items");
+    assert!(
+        info.display_string.contains("created: Date"),
+        "Constructor-return inference should render the property type as Date for a non-`dob` member, got: {}",
         info.display_string
     );
 }
