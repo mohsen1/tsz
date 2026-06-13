@@ -23,7 +23,7 @@ pub use cross_file_delegation_cache::{CrossArenaSessionMemo, CrossFileDelegation
 pub use cross_file_type_params_cache::{
     CrossFileTypeParamsCacheStatistics, cross_file_type_params_cache_statistics,
 };
-mod constructors;
+pub(crate) mod constructors;
 mod core;
 pub use core::build_lib_file_local_names;
 mod cross_file_query;
