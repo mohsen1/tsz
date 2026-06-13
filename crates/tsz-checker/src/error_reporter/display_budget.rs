@@ -158,6 +158,22 @@ pub(crate) fn cached_eval(type_id: TypeId) -> Option<TypeId> {
     })
 }
 
+/// Returns true after the active display scope has exhausted either budget.
+///
+/// Callers use this to truncate the current display-normalization frame after
+/// a fuel-limited evaluation returns its input type.
+pub(crate) fn is_exhausted() -> bool {
+    if !scope_is_active() {
+        return false;
+    }
+    ACTIVE.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .is_some_and(|budget| budget.exhausted)
+    })
+}
+
 /// Record a fully computed evaluation result within the active scope.
 ///
 /// Only complete results may be recorded — cycle-truncated returns must not
@@ -252,8 +268,23 @@ mod tests {
             assert!(try_consume_eval_fuel());
         }
         assert!(!try_consume_eval_fuel());
+        assert!(is_exhausted());
 
         record_eval(TypeId::STRING, TypeId::NUMBER);
         assert_eq!(cached_eval(TypeId::STRING), None);
+    }
+
+    #[test]
+    fn exhaustion_state_resets_per_scope() {
+        {
+            let _scope = DisplayBudgetScope::enter();
+            for _ in 0..DISPLAY_EVAL_FUEL {
+                assert!(try_consume_eval_fuel());
+            }
+            assert!(!try_consume_eval_fuel());
+            assert!(is_exhausted());
+        }
+        let _scope = DisplayBudgetScope::enter();
+        assert!(!is_exhausted());
     }
 }
