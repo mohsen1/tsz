@@ -6,6 +6,57 @@ use tsz_solver::TypeId;
 use crate::query_boundaries::application_keyof as query;
 
 impl<'a> CheckerState<'a> {
+    /// Post-relation true-override gate group for the checker-final
+    /// assignability funnel (issue #13243 step 4).
+    ///
+    /// When the Lawyer relation reports `true`, these checker-side
+    /// compatibility gates can still reject the assignment:
+    /// 1. same-alias application argument rejection (`Alias<A>` vs `Alias<B>`
+    ///    whose unwitnessed arguments differ),
+    /// 2. iterator-protocol display mismatches the solver relation cannot
+    ///    observe,
+    /// 3. namespace-module source property mismatches,
+    /// 4. a string-literal source outside a resolvable `keyof` target's key
+    ///    set.
+    ///
+    /// The combined verdict is cached by the funnel under the dedicated
+    /// `RelationCacheKind::CheckerAssignable` key, so a cached answer is
+    /// authoritative and these gates only run on cache misses.
+    pub(crate) fn assignability_true_override_rejects(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.same_type_alias_application_args_reject(source, target)
+            || self
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some()
+            || self.namespace_source_has_matching_property_mismatch(source, target)
+            || self.string_literal_source_outside_keyof_target(source, target)
+    }
+
+    /// A string-literal source is not assignable to a `keyof` target whose
+    /// key set is concretely resolvable and does not contain the literal.
+    /// An empty key set means the `keyof` operand could not be resolved
+    /// (e.g. `ThisType`, `TypeParameter`, or `Application`); in that case
+    /// the solver relation verdict stands.
+    fn string_literal_source_outside_keyof_target(&self, source: TypeId, target: TypeId) -> bool {
+        let Some(keyof_type) =
+            crate::query_boundaries::assignability::get_keyof_type(self.ctx.types, target)
+        else {
+            return false;
+        };
+        let Some(source_atom) = crate::query_boundaries::assignability::get_string_literal_value(
+            self.ctx.types,
+            source,
+        ) else {
+            return false;
+        };
+        let source_str = self.ctx.types.resolve_atom(source_atom);
+        let allowed_keys =
+            crate::query_boundaries::assignability::get_allowed_keys(self.ctx.types, keyof_type);
+        !allowed_keys.is_empty() && !allowed_keys.contains(&source_str)
+    }
     pub(crate) fn application_info_or_display_alias(
         &self,
         type_id: TypeId,
@@ -113,31 +164,6 @@ impl<'a> CheckerState<'a> {
             .resolve_type_to_symbol_id(type_id)
             .or_else(|| query::object_symbol(self.ctx.types, type_id))
             == Some(base_sym)
-    }
-
-    pub(crate) fn is_unknown_source_application_fallback(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        let Some(((source_base, source_args), (target_base, target_args))) = self
-            .application_info_or_display_alias(source)
-            .zip(query::application_info(self.ctx.types, target))
-        else {
-            return false;
-        };
-
-        source_base == target_base
-            && source_args.len() == target_args.len()
-            && !source_args.is_empty()
-            && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
-            && target_args.contains(&TypeId::NEVER)
-            && target_args.iter().any(|&arg| arg != TypeId::NEVER)
-            && target_args.iter().all(|&arg| {
-                matches!(arg, TypeId::UNKNOWN | TypeId::NEVER)
-                    || query::is_type_parameter_like(self.ctx.types, arg)
-            })
-            && self.is_promise_like_application_pair(source, target)
     }
 
     pub(crate) fn is_nested_same_wrapper_application_assignment(

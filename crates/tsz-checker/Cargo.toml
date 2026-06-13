@@ -177,6 +177,9 @@ path = "tests/ts2511_abstract_type_param_tests.rs"
 name = "ts2513_abstract_super_access_tests"
 path = "tests/ts2513_abstract_super_access_tests.rs"
 [[test]]
+name = "assignability_final_relation_gate_tests"
+path = "tests/assignability_final_relation_gate_tests.rs"
+[[test]]
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 [[test]]
