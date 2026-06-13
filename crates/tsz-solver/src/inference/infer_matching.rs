@@ -1481,8 +1481,7 @@ impl<'a> InferenceContext<'a> {
             let app_id = match self.interner.lookup(type_id) {
                 Some(TypeData::Application(app_id)) => Some(app_id),
                 _ => {
-                    let evaluated =
-                        crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
+                    let evaluated = self.evaluate_type_for_inference_probe(type_id);
                     if evaluated == type_id {
                         None
                     } else {
@@ -1554,7 +1553,7 @@ impl<'a> InferenceContext<'a> {
         }
         let mut key = self.interner.lookup(type_id)?;
         if matches!(key, TypeData::Application(_) | TypeData::Lazy(_)) {
-            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
+            let evaluated = self.evaluate_type_for_inference_probe(type_id);
             if evaluated != type_id {
                 key = self.interner.lookup(evaluated)?;
             }
@@ -1587,8 +1586,15 @@ impl<'a> InferenceContext<'a> {
         if self.object_type_has_own_then_property(type_id) {
             return true;
         }
-        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
+        let evaluated = self.evaluate_type_for_inference_probe(type_id);
         evaluated != type_id && self.object_type_has_own_then_property(evaluated)
+    }
+
+    fn evaluate_type_for_inference_probe(&self, type_id: TypeId) -> TypeId {
+        if let Some(query_db) = self.query_db {
+            return query_db.evaluate_type(type_id);
+        }
+        crate::evaluation::evaluate::evaluate_type(self.interner, type_id)
     }
 
     fn object_type_has_own_then_property(&self, type_id: TypeId) -> bool {
