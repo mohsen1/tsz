@@ -98,6 +98,8 @@ pub struct AsyncES5Emitter<'a> {
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
     tslib_import_binding: String,
+    /// Per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`).
+    helper_import_aliases: rustc_hash::FxHashMap<String, String>,
     system_import_meta: bool,
     generator_this_arg: String,
 }
@@ -116,6 +118,7 @@ impl<'a> AsyncES5Emitter<'a> {
             outer_reserved_for_generator_state: Vec::new(),
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
+            helper_import_aliases: rustc_hash::FxHashMap::default(),
             system_import_meta: false,
             generator_this_arg: "this".to_string(),
         }
@@ -131,6 +134,11 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
         self.tslib_import_binding = binding;
+    }
+
+    /// Set per-file helper import renames (e.g. `__awaiter` -> `__awaiter_1`).
+    pub fn set_helper_import_aliases(&mut self, aliases: rustc_hash::FxHashMap<String, String>) {
+        self.helper_import_aliases = aliases;
     }
 
     pub const fn set_system_import_meta(&mut self, enabled: bool) {
@@ -356,6 +364,57 @@ impl<'a> AsyncES5Emitter<'a> {
             directives,
             needs_lexical_this_capture,
         )
+    }
+
+    /// Build the full `__awaiter` wrapper for an async function body as
+    /// `IRNode::AwaiterCall` (with its nested `IRNode::GeneratorBody`) and
+    /// print it through [`IRPrinter`], which owns the wrapper text: inline vs
+    /// multi-line callback format, directive prologues, hoisted `var` groups,
+    /// the `var _this = this;` lexical capture, and generator state naming.
+    ///
+    /// `force_multiline` mirrors tsc's rule that a multi-line source body
+    /// keeps the multi-line callback format even when nothing is hoisted.
+    pub fn emit_awaiter_call(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+        this_expr: &str,
+        promise_constructor: Option<String>,
+        force_multiline: bool,
+    ) -> String {
+        let mut generator_body =
+            self.transformer
+                .transform_generator_body_skipping(body_idx, has_await, &[]);
+        let directives = Self::extract_and_remove_directive_prologue(&mut generator_body);
+        let hoisted_var_groups = self
+            .transformer
+            .extract_hoisted_var_groups(&mut generator_body);
+        let needs_lexical_this_capture = generator_body.contains_captured_this_reference();
+        let awaiter_call = IRNode::AwaiterCall {
+            this_arg: Box::new(IRNode::Raw(this_expr.to_string().into())),
+            generator_body: Box::new(generator_body),
+            needs_lexical_this_capture,
+            hoisted_var_groups,
+            promise_constructor,
+            multiline_callback: force_multiline,
+            directives,
+        };
+
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_helper_import_aliases(self.helper_import_aliases.clone());
+        printer.set_system_import_meta(self.system_import_meta);
+        printer.set_generator_this_arg(self.generator_this_arg.clone());
+        printer.set_outer_reserved_for_generator_state(
+            self.outer_reserved_for_generator_state.clone(),
+        );
+        printer.emit(&awaiter_call);
+        printer.take_output()
     }
 
     fn extract_and_remove_directive_prologue(generator_body: &mut IRNode) -> Vec<String> {

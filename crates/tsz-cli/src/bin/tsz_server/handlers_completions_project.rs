@@ -1,13 +1,15 @@
 //! Project-wide completion item collection helpers for tsz-server completions.
 
-use super::Server;
+use super::{CompletionProjectCache, CompletionProjectCacheKey, Server};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use tsz::lsp::Project;
 
 impl Server {
     pub(super) fn project_completion_items(
-        &self,
+        &mut self,
         file_name: &str,
         position: tsz::lsp::position::Position,
         preferences: Option<&serde_json::Value>,
@@ -71,33 +73,70 @@ impl Server {
             return Vec::new();
         }
 
-        let mut project = Project::new();
-        project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
-        project.set_auto_imports_allowed_without_tsconfig(
-            self.auto_imports_allowed_for_inferred_projects,
-        );
-        project.set_import_module_specifier_ending(
+        let import_module_specifier_ending =
             Self::string_pref(preferences, "importModuleSpecifierEnding")
-                .or_else(|| self.completion_import_module_specifier_ending.clone()),
-        );
-        project.set_import_module_specifier_preference(
+                .or_else(|| self.completion_import_module_specifier_ending.clone());
+        let import_module_specifier_preference =
             Self::string_pref(preferences, "importModuleSpecifierPreference")
-                .or_else(|| self.import_module_specifier_preference.clone()),
-        );
-        project.set_auto_import_file_exclude_patterns(
+                .or_else(|| self.import_module_specifier_preference.clone());
+        let auto_import_file_exclude_patterns =
             Self::string_array_pref(preferences, "autoImportFileExcludePatterns")
-                .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone()),
-        );
-        project.set_auto_import_specifier_exclude_regexes(
+                .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
+        let auto_import_specifier_exclude_regexes =
             Self::string_array_pref(preferences, "autoImportSpecifierExcludeRegexes")
-                .unwrap_or_default(),
-        );
-        for (path, text) in files {
-            project.set_file(path, text);
+                .unwrap_or_default();
+        let key = CompletionProjectCacheKey {
+            files: Self::completion_project_file_fingerprints(&files),
+            allow_importing_ts_extensions: self.allow_importing_ts_extensions,
+            auto_imports_allowed_without_tsconfig: self.auto_imports_allowed_for_inferred_projects,
+            import_module_specifier_ending: import_module_specifier_ending.clone(),
+            import_module_specifier_preference: import_module_specifier_preference.clone(),
+            auto_import_file_exclude_patterns: auto_import_file_exclude_patterns.clone(),
+            auto_import_specifier_exclude_regexes: auto_import_specifier_exclude_regexes.clone(),
+        };
+
+        let cache_matches = self
+            .completion_project_cache
+            .as_ref()
+            .is_some_and(|cache| cache.key == key);
+        if !cache_matches {
+            let mut project = Project::new();
+            project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
+            project.set_auto_imports_allowed_without_tsconfig(
+                self.auto_imports_allowed_for_inferred_projects,
+            );
+            project.set_import_module_specifier_ending(import_module_specifier_ending);
+            project.set_import_module_specifier_preference(import_module_specifier_preference);
+            project.set_auto_import_file_exclude_patterns(auto_import_file_exclude_patterns);
+            project
+                .set_auto_import_specifier_exclude_regexes(auto_import_specifier_exclude_regexes);
+            for (path, text) in files {
+                project.set_file(path, text);
+            }
+            self.completion_project_cache = Some(CompletionProjectCache { key, project });
         }
-        project
-            .get_completions(file_name, position)
+
+        self.completion_project_cache
+            .as_mut()
+            .and_then(|cache| cache.project.get_completions(file_name, position))
             .unwrap_or_default()
+    }
+
+    fn completion_project_file_fingerprints(
+        files: &FxHashMap<String, String>,
+    ) -> Vec<(String, u64)> {
+        let mut fingerprints: Vec<_> = files
+            .iter()
+            .map(|(path, text)| (path.clone(), Self::hash_completion_project_text(text)))
+            .collect();
+        fingerprints.sort_by(|a, b| a.0.cmp(&b.0));
+        fingerprints
+    }
+
+    fn hash_completion_project_text(text: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        hasher.finish()
     }
 
     pub(super) fn dependency_package_names_for_file(
