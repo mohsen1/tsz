@@ -1,7 +1,8 @@
 use super::*;
 use crate::construction::TypeInterner;
 use crate::types::{
-    LiteralValue, OrderedFloat, PropertyInfo, SymbolRef, TypeData, TypeParamInfo, Visibility,
+    LiteralValue, ObjectFlags, OrderedFloat, PropertyInfo, SymbolRef, TypeData, TypeParamInfo,
+    Visibility,
 };
 
 #[test]
@@ -631,12 +632,9 @@ fn test_widen_type_for_inference_does_not_recurse_into_function() {
 
 // -------- widen_object_literal_properties (pub(crate)) -----------------------
 
-#[test]
-fn test_widen_object_literal_properties_widens_mutable_props() {
-    let interner = TypeInterner::new();
-    let lit = interner.literal_number(1.0);
-    let props = vec![PropertyInfo {
-        name: interner.intern_string("x"),
+fn mutable_lit_prop(interner: &TypeInterner, name: &str, lit: TypeId) -> PropertyInfo {
+    PropertyInfo {
+        name: interner.intern_string(name),
         type_id: lit,
         write_type: lit,
         optional: false,
@@ -649,8 +647,16 @@ fn test_widen_object_literal_properties_widens_mutable_props() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false,
-    }];
-    let obj = interner.object(props);
+    }
+}
+
+#[test]
+fn test_widen_object_literal_properties_widens_fresh_mutable_props() {
+    let interner = TypeInterner::new();
+    let lit = interner.literal_number(1.0);
+    let props = vec![mutable_lit_prop(&interner, "x", lit)];
+    // Fresh object literal carries the widening flag, so mutable props widen.
+    let obj = interner.object_with_flags(props, ObjectFlags::FRESH_LITERAL);
     let widened = widen_object_literal_properties(&interner, obj);
     match interner.lookup(widened) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
@@ -658,6 +664,26 @@ fn test_widen_object_literal_properties_widens_mutable_props() {
             assert_eq!(shape.properties[0].type_id, TypeId::NUMBER);
         }
         other => panic!("Expected widened object, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_widen_object_literal_properties_preserves_non_fresh_props() {
+    // A non-fresh object (declared/annotated type, alias instance, or
+    // object-spread result) keeps its literal property types, matching tsc's
+    // `getWidenedType`, which only widens types with `ContainsWideningType`.
+    let interner = TypeInterner::new();
+    let lit = interner.literal_number(1.0);
+    let props = vec![mutable_lit_prop(&interner, "x", lit)];
+    let obj = interner.object(props);
+    let widened = widen_object_literal_properties(&interner, obj);
+    assert_eq!(widened, obj, "non-fresh object must be returned unchanged");
+    match interner.lookup(widened) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(shape.properties[0].type_id, lit);
+        }
+        other => panic!("Expected object, got {other:?}"),
     }
 }
 
