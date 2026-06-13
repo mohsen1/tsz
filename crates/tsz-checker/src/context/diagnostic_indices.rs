@@ -62,6 +62,11 @@ impl DiagnosticIndices {
         })
     }
 
+    pub(crate) fn aux_eq(&self, other: &Self) -> bool {
+        self.ts2353_2561_positions == other.ts2353_2561_positions
+            && self.ts2322_msg_spans == other.ts2322_msg_spans
+    }
+
     fn clear_aux(&mut self) {
         self.ts2353_2561_positions.clear();
         self.ts2322_msg_spans.clear();
