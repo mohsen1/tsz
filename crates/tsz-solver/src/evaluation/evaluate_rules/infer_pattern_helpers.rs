@@ -18,10 +18,11 @@ use crate::types::{
     TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use crate::visitor::array_element_type;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+use super::infer_pattern::InferPatternVisited;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub(crate) fn implicit_sequence_property_type(
@@ -142,7 +143,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .collect();
             self.interner().tuple(tuple_elems)
         };
-        let mut local_visited = FxHashSet::default();
+        let mut local_visited = InferPatternVisited::default();
         self.match_infer_pattern(
             source_tuple_or_array,
             infer_ty,
@@ -193,7 +194,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // slots to `unknown`. Match the overlapping prefix, default the rest.
         let matched_count = source_params.len().min(fixed_param_count);
 
-        let mut local_visited = FxHashSet::default();
+        let mut local_visited = InferPatternVisited::default();
         // Function/callable parameters are contravariant: co-located same-name
         // infer slots intersect their candidates instead of failing the
         // second match through `bind_infer`'s mutual subtype check. Route
@@ -278,7 +279,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         pattern_fn_id: FunctionShapeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let pattern_fn = self.interner().function_shape(pattern_fn_id);
@@ -950,7 +951,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let tuple_ty = self.interner().tuple(tuple_elems);
 
                 // Match the tuple against the infer type
-                let mut local_visited = FxHashSet::default();
+                let mut local_visited = InferPatternVisited::default();
                 self.match_infer_pattern(tuple_ty, infer_ty, bindings, &mut local_visited, checker)
             };
 
@@ -1021,7 +1022,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // General case: match parameters individually
         let mut match_construct_params =
             |source_params: &[ParamInfo], bindings: &mut FxHashMap<Atom, TypeId>| -> bool {
-                let mut local_visited = FxHashSet::default();
+                let mut local_visited = InferPatternVisited::default();
                 self.match_signature_params(
                     source_params,
                     &pattern_fn.params,
@@ -1096,7 +1097,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         pattern_shape_id: CallableShapeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let pattern_shape = self.interner().callable_shape(pattern_shape_id);
