@@ -11,7 +11,7 @@ use web_time::Instant;
 use super::{Project, ProjectRequestKind};
 use crate::code_actions::{CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider};
 use crate::completions::{CompletionItem, CompletionItemData};
-use crate::diagnostics::{LspDiagnostic, WorkspaceDiagnosticReport};
+use crate::diagnostics::LspDiagnostic;
 use crate::editor_decorations::code_lens::CodeLens;
 use crate::hover::HoverInfo;
 use crate::navigation::definition::GoToDefinition;
@@ -356,10 +356,9 @@ impl Project {
         self.touch_file(file_name);
         let start = Instant::now();
         let scope_stats = ScopeCacheStats::default();
-        let result = {
-            let file = self.files.get_mut(file_name)?;
-            Some(file.get_diagnostics())
-        };
+        let result = self
+            .diagnostics_with_result_id(file_name)
+            .map(|(diagnostics, _)| diagnostics);
 
         self.performance.record(
             ProjectRequestKind::Diagnostics,
@@ -368,6 +367,44 @@ impl Project {
         );
 
         result
+    }
+
+    /// Whether `file_name`'s cached diagnostics are still valid: computed at
+    /// the current project generation and not invalidated since.
+    pub(crate) fn diagnostics_cache_valid(&self, file_name: &str) -> bool {
+        self.files.get(file_name).is_some_and(|file| {
+            !file.diagnostics_dirty
+                && file.diagnostics_generation == self.diagnostics_generation
+                && file.cached_diagnostics.is_some()
+                && file.diagnostics_result_id.is_some()
+        })
+    }
+
+    /// Diagnostics plus their pull-model `resultId`, served from the per-file
+    /// cache when valid and recomputed (with a fresh id) otherwise.
+    pub(crate) fn diagnostics_with_result_id(
+        &mut self,
+        file_name: &str,
+    ) -> Option<(Vec<LspDiagnostic>, String)> {
+        let generation = self.diagnostics_generation;
+        let cache_valid = self.diagnostics_cache_valid(file_name);
+        if !cache_valid {
+            self.diagnostics_result_seq += 1;
+        }
+        let next_id = self.diagnostics_result_seq;
+
+        let file = self.files.get_mut(file_name)?;
+        if cache_valid {
+            let diagnostics = file.cached_diagnostics.clone()?;
+            let result_id = file.diagnostics_result_id.clone()?;
+            return Some((diagnostics, result_id));
+        }
+
+        let diagnostics = file.compute_diagnostics();
+        let result_id = next_id.to_string();
+        file.diagnostics_generation = generation;
+        file.diagnostics_result_id = Some(result_id.clone());
+        Some((diagnostics, result_id))
     }
 
     /// Resolve import candidates for missing-name diagnostics in a file.
@@ -421,24 +458,6 @@ impl Project {
         }
 
         result
-    }
-
-    /// Get workspace diagnostics for all open files (pull model).
-    ///
-    /// Returns a `WorkspaceDiagnosticReport` containing diagnostics for every
-    /// file in the project. This implements the LSP `workspace/diagnostic`
-    /// request which allows clients to pull diagnostics on demand.
-    pub fn get_workspace_diagnostics(&mut self) -> WorkspaceDiagnosticReport {
-        let file_names: Vec<String> = self.files.keys().cloned().collect();
-        let mut items = Vec::with_capacity(file_names.len());
-
-        for file_name in file_names {
-            if let Some(diagnostics) = self.get_diagnostics(&file_name) {
-                items.push((file_name, diagnostics));
-            }
-        }
-
-        WorkspaceDiagnosticReport::from_file_diagnostics(items)
     }
 
     /// Get code lenses for a file (project-aware).

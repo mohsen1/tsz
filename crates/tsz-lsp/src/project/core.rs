@@ -352,6 +352,23 @@ pub struct Project {
     /// this to tie-break by file proximity. `None` when the editor has not
     /// yet announced any focus.
     pub(crate) focused_file: Option<String>,
+    /// Coarse cross-file invalidation barrier for cached pull-model
+    /// diagnostics.
+    ///
+    /// Bumped by every mutation that could change any file's diagnostics:
+    /// content change (`set_file`/`update_file`), file removal, and
+    /// compiler-option changes (`set_strict`). A `ProjectFile`'s
+    /// `cached_diagnostics` is only served while its stamped generation
+    /// matches this value, so a change in file A can never leave file B
+    /// serving stale diagnostics — even when the export-signature
+    /// fingerprint or the dependency graph would miss the edge.
+    pub(crate) diagnostics_generation: u64,
+    /// Monotonic sequence for pull-model diagnostic `resultId`s.
+    ///
+    /// Incremented on every per-file recompute; ids are never reused, so an
+    /// `Unchanged` report is only ever emitted against the exact recompute
+    /// that produced the client's `previousResultId`.
+    pub(crate) diagnostics_result_seq: u64,
 }
 
 /// Assigns stable `u32` file indices to file names.
@@ -543,6 +560,8 @@ impl Project {
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
             focused_file: None,
+            diagnostics_generation: 0,
+            diagnostics_result_seq: 0,
         }
     }
 
@@ -568,7 +587,23 @@ impl Project {
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
             focused_file: None,
+            diagnostics_generation: 0,
+            diagnostics_result_seq: 0,
         }
+    }
+
+    /// Invalidate every file's cached pull-model diagnostics.
+    ///
+    /// O(1): bumps the project generation instead of walking files; caches
+    /// stamped with an older generation are recomputed on next pull. Called
+    /// on every mutation that could change any file's diagnostics. This is
+    /// deliberately coarse — the dependency graph keys edges by raw import
+    /// specifiers while invalidation queries use file names, and the
+    /// export-signature fingerprint is type-blind (an
+    /// `export const x = 1` -> `export const x = "s"` edit does not change
+    /// it), so neither is a sound cross-file freshness gate on its own.
+    pub(crate) const fn invalidate_all_cached_diagnostics(&mut self) {
+        self.diagnostics_generation += 1;
     }
 
     /// Add a workspace root directory.
@@ -761,11 +796,21 @@ impl Project {
     }
 
     /// Set the strict mode directly.
+    ///
+    /// A strictness change alters the checker options for every file, so all
+    /// per-file analysis caches (type cache, scope cache, cached diagnostics)
+    /// are invalidated and the pull-model diagnostics generation is bumped.
     pub fn set_strict(&mut self, strict: bool) {
+        if self.strict == strict {
+            return;
+        }
         self.strict = strict;
-        // Update strict mode on all existing files
+        self.invalidate_all_cached_diagnostics();
+        // Update strict mode on all existing files and drop caches computed
+        // under the previous options.
         for file in self.files.values_mut() {
             file.set_strict(strict);
+            file.invalidate_caches();
         }
     }
 
@@ -963,6 +1008,12 @@ impl Project {
             return;
         }
 
+        // A new file can resolve a previously-missing import and a replaced
+        // file can change any dependent's diagnostics; the dependency graph
+        // cannot be trusted to enumerate those dependents (it keys edges by
+        // raw import specifiers), so invalidate coarsely.
+        self.invalidate_all_cached_diagnostics();
+
         // Allocate a stable file index. If the file already has one, reuse it
         // (the allocator returns the existing ID). This ensures that
         // invalidate_file + re-register uses the same ID.
@@ -1041,6 +1092,13 @@ impl Project {
             let sig = self.files.get(file_name)?.export_signature.0;
             return Some(InvalidationSummary::unchanged(file_name.to_string(), sig));
         }
+
+        // Content changed: any other file's diagnostics may be affected
+        // (inferred types of exports are not covered by the export-signature
+        // fingerprint), so coarsely invalidate all cached pull diagnostics.
+        // The signature-gated dependent invalidation below still drives the
+        // finer-grained `diagnostics_dirty` flag used by the push model.
+        self.invalidate_all_cached_diagnostics();
 
         // Capture old export signature before updating
         let old_signature = self.files.get(file_name)?.export_signature;
@@ -1137,6 +1195,10 @@ impl Project {
         let removed = self.files.remove(file_name);
 
         if removed.is_some() {
+            // Removal can introduce unresolved-import errors in any file that
+            // referenced this one; the dependency graph may miss those edges,
+            // so invalidate all cached pull diagnostics.
+            self.invalidate_all_cached_diagnostics();
             tracing::debug!(
                 file = %file_name,
                 freed_bytes,
