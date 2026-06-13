@@ -374,10 +374,6 @@ pub struct BinderState {
     pub(crate) current_flow: FlowNodeId,
     /// Unreachable flow node
     pub(crate) unreachable_flow: FlowNodeId,
-    /// Scope chain - stack of scope contexts (legacy, for hoisting)
-    pub(crate) scope_chain: Vec<crate::ScopeContext>,
-    /// Current scope index in `scope_chain`
-    pub(crate) current_scope_idx: usize,
     /// Node-to-symbol mapping.
     ///
     /// Stored behind `Arc` so cross-file lookup binders (one per file in the

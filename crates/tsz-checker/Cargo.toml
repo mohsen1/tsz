@@ -1779,5 +1779,9 @@ name = "flow_boundary_contract_tests"
 path = "tests/flow_boundary_contract_tests.rs"
 
 [[test]]
+name = "checker_constructor_matrix_tests"
+path = "tests/checker_constructor_matrix_tests.rs"
+
+[[test]]
 name = "construct_signature_boundary_matrix_tests"
 path = "tests/construct_signature_boundary_matrix_tests.rs"

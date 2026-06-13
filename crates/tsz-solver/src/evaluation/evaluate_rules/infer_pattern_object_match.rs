@@ -6,10 +6,11 @@ use crate::types::{
     TypeListId, TypeParamInfo,
 };
 use crate::utils;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+use super::infer_pattern::InferPatternVisited;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub(crate) fn match_infer_callable_pattern_properties(
@@ -44,7 +45,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             if self.type_contains_infer(pattern_prop.type_id) {
-                let mut visited = FxHashSet::default();
+                let mut visited = InferPatternVisited::default();
                 if !self.match_infer_pattern(
                     source_prop.type_id,
                     pattern_prop.type_id,
@@ -93,7 +94,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         pattern_props: &[PropertyInfo],
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let contravariant_infers = self.collect_contravariant_infer_names(pattern);
@@ -148,7 +149,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         pattern_shape_id: ObjectShapeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         match self.interner().lookup(source) {
@@ -416,7 +417,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         pattern_shape_id: ObjectShapeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let pattern_shape = self.interner().object_shape(pattern_shape_id);

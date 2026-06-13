@@ -352,6 +352,24 @@ impl<'a> TypeInstantiator<'a> {
         instantiated
     }
 
+    /// Instantiate a list of type IDs, allocating a replacement list only
+    /// after the first member changes.
+    fn instantiate_type_list_if_changed(&mut self, members: &[TypeId]) -> Option<Vec<TypeId>> {
+        let mut instantiated: Option<Vec<TypeId>> = None;
+        for (index, &member) in members.iter().enumerate() {
+            let inst = self.instantiate(member);
+            if let Some(instantiated) = &mut instantiated {
+                instantiated.push(inst);
+            } else if inst != member {
+                let mut changed = Vec::with_capacity(members.len());
+                changed.extend_from_slice(&members[..index]);
+                changed.push(inst);
+                instantiated = Some(changed);
+            }
+        }
+        instantiated
+    }
+
     /// Enter a shadowing scope for type parameters.
     ///
     /// Returns `(saved_shadowed_len, saved_visiting)` for restoring via
@@ -613,18 +631,7 @@ impl<'a> TypeInstantiator<'a> {
                 let members = origin_members
                     .as_deref()
                     .map_or(canonical_members.as_ref(), Vec::as_slice);
-                let mut changed = false;
-                let instantiated: Vec<TypeId> = members
-                    .iter()
-                    .map(|&m| {
-                        let inst = self.instantiate(m);
-                        if inst != m {
-                            changed = true;
-                        }
-                        inst
-                    })
-                    .collect();
-                if changed {
+                if let Some(instantiated) = self.instantiate_type_list_if_changed(members) {
                     let result = self.interner.union(instantiated.clone());
                     self.interner.store_union_origin(result, instantiated);
                     result
@@ -636,18 +643,8 @@ impl<'a> TypeInstantiator<'a> {
             // Intersection: instantiate all members, skip re-intern if nothing changed
             TypeData::Intersection(members) => {
                 let members = self.interner.type_list(*members);
-                let mut changed = false;
-                let instantiated: Vec<TypeId> = members
-                    .iter()
-                    .map(|&m| {
-                        let inst = self.instantiate(m);
-                        if inst != m {
-                            changed = true;
-                        }
-                        inst
-                    })
-                    .collect();
-                if changed {
+                if let Some(instantiated) = self.instantiate_type_list_if_changed(members.as_ref())
+                {
                     let result = self.interner.intersection(instantiated);
                     // Propagate display properties from original members to the result.
                     self.propagate_display_properties_for_intersection(members.as_ref(), result);
