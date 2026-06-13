@@ -580,74 +580,30 @@ impl<'a> Completions<'a> {
     }
 
     /// Determine the completion kind from a symbol.
+    ///
+    /// The flag-priority cascade lives in the shared [`classify`] classifier;
+    /// this only adds the arena-dependent `const`/`let` split that the shared
+    /// classifier defers to the caller.
+    ///
+    /// [`classify`]: crate::classify
     pub(super) fn determine_completion_kind(
         &self,
         symbol: &tsz_binder::Symbol,
     ) -> CompletionItemKind {
-        use tsz_binder::symbol_flags;
-
-        if symbol.flags & symbol_flags::ALIAS != 0 {
-            CompletionItemKind::Alias
-        } else if symbol.flags & symbol_flags::CONSTRUCTOR != 0 {
-            CompletionItemKind::Constructor
-        } else if symbol.flags & symbol_flags::FUNCTION != 0 {
-            CompletionItemKind::Function
-        } else if symbol.flags & symbol_flags::CLASS != 0 {
-            CompletionItemKind::Class
-        } else if symbol.flags & symbol_flags::INTERFACE != 0 {
-            CompletionItemKind::Interface
-        } else if symbol.flags & symbol_flags::REGULAR_ENUM != 0
-            || symbol.flags & symbol_flags::CONST_ENUM != 0
-        {
-            CompletionItemKind::Enum
-        } else if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
-            CompletionItemKind::TypeAlias
-        } else if symbol.flags & symbol_flags::TYPE_PARAMETER != 0 {
-            CompletionItemKind::TypeParameter
-        } else if symbol.flags & symbol_flags::METHOD != 0 {
-            CompletionItemKind::Method
-        } else if symbol.flags & symbol_flags::PROPERTY != 0 {
-            CompletionItemKind::Property
-        } else if symbol.flags & symbol_flags::VALUE_MODULE != 0
-            || symbol.flags & symbol_flags::NAMESPACE_MODULE != 0
-        {
-            CompletionItemKind::Module
-        } else if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
-            // Distinguish const from let by checking the declaration node flags
-            if self.is_const_declaration(symbol) {
-                CompletionItemKind::Const
-            } else {
-                CompletionItemKind::Let
-            }
+        let kind = crate::classify::classify_symbol_flags(symbol.flags).to_completion_kind();
+        if kind == CompletionItemKind::Let && self.is_const_declaration(symbol) {
+            CompletionItemKind::Const
         } else {
-            // Default to variable for var and parameters
-            CompletionItemKind::Variable
+            kind
         }
     }
 
     /// Check if a block-scoped variable symbol was declared with `const`.
     fn is_const_declaration(&self, symbol: &tsz_binder::Symbol) -> bool {
-        use tsz_parser::parser::flags::node_flags;
-
         let Some(decl) = symbol.primary_declaration() else {
             return false;
         };
-
-        // Walk up to find the VariableDeclarationList parent
-        let mut current = decl;
-        for _ in 0..3 {
-            if let Some(ext) = self.arena.get_extended(current) {
-                current = ext.parent;
-                if let Some(node) = self.arena.get(current)
-                    && node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                {
-                    return (node.flags as u32) & node_flags::CONST != 0;
-                }
-            } else {
-                break;
-            }
-        }
-        false
+        crate::classify::is_const_decl(self.arena, decl, 3)
     }
 
     fn symbol_is_parameter(&self, symbol: &tsz_binder::Symbol) -> bool {

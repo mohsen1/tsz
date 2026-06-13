@@ -415,23 +415,11 @@ impl<'a> SemanticTokensProvider<'a> {
     }
 
     /// Check if the identifier is in a `const` declaration.
+    ///
+    /// Walks `ident -> VariableDeclaration -> VariableDeclarationList` via the
+    /// shared [`classify::is_const_decl`](crate::classify::is_const_decl) walk.
     fn is_const_variable(&self, ident_idx: NodeIndex) -> bool {
-        // ident -> VariableDeclaration -> VariableDeclarationList
-        let Some(ext) = self.arena.get_extended(ident_idx) else {
-            return false;
-        };
-        let var_decl_idx = ext.parent;
-        let Some(var_decl_ext) = self.arena.get_extended(var_decl_idx) else {
-            return false;
-        };
-        let decl_list_idx = var_decl_ext.parent;
-        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-            return false;
-        };
-        if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            return (decl_list_node.flags as u32 & node_flags::CONST) != 0;
-        }
-        false
+        crate::classify::is_const_decl(self.arena, ident_idx, 2)
     }
 
     /// Check if an identifier is the name child of a `TYPE_PARAMETER` node.
