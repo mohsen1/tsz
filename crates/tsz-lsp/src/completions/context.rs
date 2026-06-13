@@ -652,127 +652,20 @@ impl<'a> Completions<'a> {
     }
 
     pub(super) fn get_symbol_detail(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
-        use tsz_binder::symbol_flags;
-
-        if symbol.has_any_flags(symbol_flags::FUNCTION) {
-            Some("function".to_string())
-        } else if symbol.has_any_flags(symbol_flags::CLASS) {
-            Some("class".to_string())
-        } else if symbol.has_any_flags(symbol_flags::INTERFACE) {
-            Some("interface".to_string())
-        } else if symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
-            || symbol.has_any_flags(symbol_flags::CONST_ENUM)
-        {
-            Some("enum".to_string())
-        } else if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
-            Some("type".to_string())
-        } else if symbol.has_any_flags(symbol_flags::TYPE_PARAMETER) {
-            Some("type parameter".to_string())
-        } else if symbol.has_any_flags(symbol_flags::METHOD) {
-            Some("method".to_string())
-        } else if symbol.has_any_flags(symbol_flags::PROPERTY) {
-            Some("property".to_string())
-        } else if symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
-            Some("let/const".to_string())
-        } else if symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE) {
-            Some("var".to_string())
-        } else if symbol.has_any_flags(symbol_flags::VALUE_MODULE)
-            || symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE)
-        {
-            Some("module".to_string())
-        } else {
-            None
-        }
+        crate::classify::classify_symbol_flags(symbol.flags)
+            .detail_str()
+            .map(str::to_string)
     }
 
-    /// Build a comma-separated `kindModifiers` string for a symbol, matching
-    /// tsserver's convention: `"export"`, `"declare"`, `"abstract"`, `"static"`,
-    /// `"private"`, `"protected"`.
+    /// Build a comma-separated `kindModifiers` string for a symbol via the
+    /// shared [`classify::kind_modifiers`](crate::classify::kind_modifiers)
+    /// builder, returning `None` when there are no modifiers.
     pub(super) fn build_kind_modifiers(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
-        use tsz_binder::symbol_flags;
-        use tsz_parser::parser::flags::node_flags;
-
-        let mut mods = Vec::with_capacity(7);
-        if symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
-            mods.push("export");
-        }
-        // Check declaration node for ambient (declare) and deprecated
-        if let Some(decl_idx) = symbol.primary_declaration() {
-            if let Some(decl_node) = self.arena.get(decl_idx) {
-                let nf = decl_node.flags as u32;
-                // Check for deprecated (set by JSDoc @deprecated tag during parsing)
-                if nf & node_flags::DEPRECATED != 0 {
-                    mods.push("deprecated");
-                }
-            }
-            // Check for declare by scanning children for DeclareKeyword
-            if self.has_declare_modifier(decl_idx) {
-                mods.push("declare");
-            }
-        }
-        if symbol.has_any_flags(symbol_flags::ABSTRACT) {
-            mods.push("abstract");
-        }
-        if symbol.has_any_flags(symbol_flags::STATIC) {
-            mods.push("static");
-        }
-        if symbol.has_any_flags(symbol_flags::PRIVATE) {
-            mods.push("private");
-        }
-        if symbol.has_any_flags(symbol_flags::PROTECTED) {
-            mods.push("protected");
-        }
-        if symbol.has_any_flags(symbol_flags::OPTIONAL) {
-            mods.push("optional");
-        }
+        let mods = crate::classify::kind_modifiers(self.arena, symbol);
         if mods.is_empty() {
             None
         } else {
             Some(mods.join(","))
         }
-    }
-
-    /// Check if a declaration node has a `declare` modifier by looking at its
-    /// modifiers list for a `DeclareKeyword` node.
-    fn has_declare_modifier(&self, decl_idx: NodeIndex) -> bool {
-        let declare_kind = SyntaxKind::DeclareKeyword as u16;
-        // Check children of the declaration for DeclareKeyword
-        if self.has_declare_child(decl_idx, declare_kind) {
-            return true;
-        }
-        // For VariableDeclaration nodes, `declare` lives on the parent
-        // VariableStatement, so check the parent chain
-        if let Some(ext) = self.arena.get_extended(decl_idx) {
-            let parent = ext.parent;
-            if parent.is_some() {
-                if self.has_declare_child(parent, declare_kind) {
-                    return true;
-                }
-                // Also check grandparent (VariableDeclaration -> VariableDeclarationList -> VariableStatement)
-                if let Some(gext) = self.arena.get_extended(parent)
-                    && gext.parent.is_some()
-                    && self.has_declare_child(gext.parent, declare_kind)
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn has_declare_child(&self, node_idx: NodeIndex, declare_kind: u16) -> bool {
-        if let Some(node) = self.arena.get(node_idx) {
-            for child_idx in self.arena.get_children(node_idx) {
-                if let Some(child) = self.arena.get(child_idx) {
-                    if child.kind == declare_kind {
-                        return true;
-                    }
-                    if child.pos >= node.pos + 20 {
-                        break;
-                    }
-                }
-            }
-        }
-        false
     }
 }

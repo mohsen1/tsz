@@ -1434,113 +1434,47 @@ impl<'a> HoverProvider<'a> {
     }
 
     /// Get the tsserver-compatible kind string for the symbol.
+    ///
+    /// The flag-priority cascade lives in the shared [`classify`] classifier.
+    /// This adds only the arena-dependent refinements the shared classifier
+    /// defers to the caller: getter/setter disambiguation via the declaration
+    /// node, the `const`/`let`/`var` keyword, and the `parameter`/`var` split.
+    ///
+    /// [`classify`]: crate::classify
     fn get_tsserver_kind(&self, symbol: &tsz_binder::Symbol, decl_node_idx: NodeIndex) -> String {
-        use tsz_binder::symbol_flags;
-        let f = symbol.flags;
-
-        if f & symbol_flags::ALIAS != 0 {
-            return "alias".to_string();
-        }
-        if f & symbol_flags::FUNCTION != 0 {
-            return "function".to_string();
-        }
-        if f & symbol_flags::CLASS != 0 {
-            return "class".to_string();
-        }
-        if f & symbol_flags::INTERFACE != 0 {
-            return "interface".to_string();
-        }
-        if f & symbol_flags::ENUM != 0 {
-            return "enum".to_string();
-        }
-        if f & symbol_flags::TYPE_ALIAS != 0 {
-            return "type".to_string();
-        }
-        if f & symbol_flags::ENUM_MEMBER != 0 {
-            return "enum member".to_string();
-        }
-        if f & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) != 0 {
-            return "module".to_string();
-        }
-        if f & symbol_flags::METHOD != 0 {
-            return "method".to_string();
-        }
-        if f & symbol_flags::CONSTRUCTOR != 0 {
-            return "constructor".to_string();
-        }
-        if f & symbol_flags::PROPERTY != 0 {
-            return "property".to_string();
-        }
-        if f & symbol_flags::TYPE_PARAMETER != 0 {
-            return "type parameter".to_string();
-        }
-        if f & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR) != 0 {
-            // Use declaration node kind to distinguish when both flags are set
-            if decl_node_idx.is_some()
-                && let Some(decl_node) = self.arena.get(decl_node_idx)
-                && decl_node.kind == tsz_parser::syntax_kind_ext::SET_ACCESSOR
-            {
-                return "setter".to_string();
+        use crate::classify::LspSymbolClass;
+        match crate::classify::classify_symbol_flags(symbol.flags) {
+            LspSymbolClass::Accessor => {
+                // Use declaration node kind to distinguish when both flags are set
+                if decl_node_idx.is_some()
+                    && let Some(decl_node) = self.arena.get(decl_node_idx)
+                    && decl_node.kind == tsz_parser::syntax_kind_ext::SET_ACCESSOR
+                {
+                    "setter".to_string()
+                } else {
+                    "getter".to_string()
+                }
             }
-            return "getter".to_string();
-        }
-        if f & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
-            return self.get_variable_keyword(decl_node_idx).to_string();
-        }
-        if f & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
-            if self.is_parameter_declaration(decl_node_idx) {
-                return "parameter".to_string();
+            LspSymbolClass::BlockScopedVariable => {
+                self.get_variable_keyword(decl_node_idx).to_string()
             }
-            return "var".to_string();
+            LspSymbolClass::FunctionScopedVariable => {
+                if self.is_parameter_declaration(decl_node_idx) {
+                    "parameter".to_string()
+                } else {
+                    "var".to_string()
+                }
+            }
+            // No recognised flag: tsserver reports `var`.
+            LspSymbolClass::Other => "var".to_string(),
+            other => other.tsserver_kind_str().to_string(),
         }
-        "var".to_string()
     }
 
-    /// Get comma-separated kind modifiers string for tsserver.
-    fn get_kind_modifiers(&self, symbol: &tsz_binder::Symbol, decl_node_idx: NodeIndex) -> String {
-        use tsz_binder::symbol_flags as sf;
-        use tsz_parser::modifier_flags as mf;
-
-        let mut modifiers = Vec::with_capacity(8);
-
-        if symbol.is_exported || symbol.flags & sf::EXPORT_VALUE != 0 {
-            modifiers.push("export");
-        }
-        if symbol.flags & sf::ABSTRACT != 0 {
-            modifiers.push("abstract");
-        }
-        if symbol.flags & sf::STATIC != 0 {
-            modifiers.push("static");
-        }
-        if symbol.flags & sf::PRIVATE != 0 {
-            modifiers.push("private");
-        }
-        if symbol.flags & sf::PROTECTED != 0 {
-            modifiers.push("protected");
-        }
-
-        if decl_node_idx.is_some()
-            && let Some(ext) = self.arena.get_extended(decl_node_idx)
-        {
-            let mflags = ext.modifier_flags;
-            if mflags & mf::AMBIENT != 0 {
-                modifiers.push("declare");
-            }
-            if mflags & mf::ASYNC != 0 {
-                modifiers.push("async");
-            }
-            if mflags & mf::READONLY != 0 {
-                modifiers.push("readonly");
-            }
-            if !modifiers.contains(&"export") && mflags & mf::EXPORT != 0 {
-                modifiers.push("export");
-            }
-            if !modifiers.contains(&"abstract") && mflags & mf::ABSTRACT != 0 {
-                modifiers.push("abstract");
-            }
-        }
-
-        modifiers.join(",")
+    /// Get comma-separated kind modifiers string for tsserver via the shared
+    /// [`classify::kind_modifiers`](crate::classify::kind_modifiers) builder.
+    fn get_kind_modifiers(&self, symbol: &tsz_binder::Symbol, _decl_node_idx: NodeIndex) -> String {
+        crate::classify::kind_modifiers(self.arena, symbol).join(",")
     }
 
     /// Determine the variable keyword (const, let, or var) from the declaration node.

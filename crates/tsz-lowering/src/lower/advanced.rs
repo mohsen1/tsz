@@ -28,35 +28,27 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a conditional type (T extends U ? X : Y)
     pub(super) fn lower_conditional_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        let data = lower_node_data!(self, node_idx, get_conditional_type, TypeId::ERROR);
+        let is_distributive = self.is_naked_type_param(data.check_type);
+        let check_type = self.lower_type(data.check_type);
+        let extends_type = self.lower_type(data.extends_type);
 
-        if let Some(data) = self.arena.get_conditional_type(node) {
-            let is_distributive = self.is_naked_type_param(data.check_type);
-            let check_type = self.lower_type(data.check_type);
-            let extends_type = self.lower_type(data.extends_type);
-
-            self.push_type_param_scope();
-            for (name, type_id) in tsz_solver::collect_infer_bindings(self.interner, extends_type) {
-                self.add_type_param_binding(name, type_id);
-            }
-            let true_type = self.lower_type(data.true_type);
-            self.pop_type_param_scope();
-            let false_type = self.lower_type(data.false_type);
-
-            let cond = ConditionalType {
-                check_type,
-                extends_type,
-                true_type,
-                false_type,
-                is_distributive,
-            };
-            self.interner.conditional(cond)
-        } else {
-            TypeId::ERROR
+        self.push_type_param_scope();
+        for (name, type_id) in tsz_solver::collect_infer_bindings(self.interner, extends_type) {
+            self.add_type_param_binding(name, type_id);
         }
+        let true_type = self.lower_type(data.true_type);
+        self.pop_type_param_scope();
+        let false_type = self.lower_type(data.false_type);
+
+        let cond = ConditionalType {
+            check_type,
+            extends_type,
+            true_type,
+            false_type,
+            is_distributive,
+        };
+        self.interner.conditional(cond)
     }
 
     pub(super) fn is_naked_type_param(&self, node_idx: NodeIndex) -> bool {
@@ -109,98 +101,78 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a mapped type ({ [K in Keys]: `ValueType` })
     pub(super) fn lower_mapped_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
+        let data = lower_node_data!(self, node_idx, get_mapped_type, TypeId::ERROR);
+        let (type_param, constraint) = self.lower_mapped_type_param(data.type_parameter);
+        self.push_type_param_scope();
+        let type_param_id = self.interner.type_param(type_param);
+        self.add_type_param_binding(type_param.name, type_param_id);
+        let name_type =
+            (data.name_type != NodeIndex::NONE).then(|| self.lower_type(data.name_type));
+        let template = self.lower_type(data.type_node);
+        self.pop_type_param_scope();
+        let mapped = MappedType {
+            type_param,
+            constraint,
+            name_type,
+            template,
+            readonly_modifier: self
+                .lower_mapped_modifier(data.readonly_token, SyntaxKind::ReadonlyKeyword as u16),
+            optional_modifier: self
+                .lower_mapped_modifier(data.question_token, SyntaxKind::QuestionToken as u16),
         };
-
-        if let Some(data) = self.arena.get_mapped_type(node) {
-            let (type_param, constraint) = self.lower_mapped_type_param(data.type_parameter);
-            self.push_type_param_scope();
-            let type_param_id = self.interner.type_param(type_param);
-            self.add_type_param_binding(type_param.name, type_param_id);
-            let name_type =
-                (data.name_type != NodeIndex::NONE).then(|| self.lower_type(data.name_type));
-            let template = self.lower_type(data.type_node);
-            self.pop_type_param_scope();
-            let mapped = MappedType {
-                type_param,
-                constraint,
-                name_type,
-                template,
-                readonly_modifier: self
-                    .lower_mapped_modifier(data.readonly_token, SyntaxKind::ReadonlyKeyword as u16),
-                optional_modifier: self
-                    .lower_mapped_modifier(data.question_token, SyntaxKind::QuestionToken as u16),
-            };
-            self.interner.mapped(mapped)
-        } else {
-            TypeId::ERROR
-        }
+        self.interner.mapped(mapped)
     }
 
     pub(super) fn lower_mapped_type_param(&self, node_idx: NodeIndex) -> (TypeParamInfo, TypeId) {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => {
-                let name = self.interner.intern_string("K");
-                return (
-                    TypeParamInfo {
-                        is_const: false,
-                        name,
-                        constraint: None,
-                        default: None,
-                        origin: TypeParamOrigin::User,
-                    },
-                    TypeId::ERROR, // Missing node - propagate error
-                );
-            }
-        };
-
-        if let Some(param_data) = self.arena.get_type_parameter(node) {
-            let name = self
-                .arena
-                .get(param_data.name)
-                .and_then(|ident_node| self.arena.get_identifier(ident_node))
-                .map_or_else(
-                    || self.interner.intern_string("K"),
-                    |ident| self.interner.intern_string(&ident.escaped_text),
-                );
-
-            let constraint = (param_data.constraint != NodeIndex::NONE)
-                .then(|| self.lower_type(param_data.constraint));
-
-            let default = (param_data.default != NodeIndex::NONE)
-                .then(|| self.lower_type(param_data.default));
-
-            // Use Unknown instead of Any for stricter type checking
-            // When a generic parameter has no constraint, use Unknown to prevent
-            // invalid values from being accepted
-            let constraint_type = constraint.unwrap_or(TypeId::UNKNOWN);
-
+        // Missing node and missing type-parameter data share one fallback: an
+        // anonymous `K` param with an `ERROR` constraint. Collapsing the guard
+        // keeps the two paths from drifting apart.
+        let param_data = lower_node_data!(
+            self,
+            node_idx,
+            get_type_parameter,
             (
                 TypeParamInfo {
                     is_const: false,
-                    name,
-                    constraint,
-                    default,
-                    origin: TypeParamOrigin::User,
-                },
-                constraint_type,
-            )
-        } else {
-            let name = self.interner.intern_string("K");
-            (
-                TypeParamInfo {
-                    is_const: false,
-                    name,
+                    name: self.interner.intern_string("K"),
                     constraint: None,
                     default: None,
                     origin: TypeParamOrigin::User,
                 },
-                TypeId::ERROR, // Missing type parameter data - propagate error
+                TypeId::ERROR, // Missing node or type parameter data - propagate error
             )
-        }
+        );
+
+        let name = self
+            .arena
+            .get(param_data.name)
+            .and_then(|ident_node| self.arena.get_identifier(ident_node))
+            .map_or_else(
+                || self.interner.intern_string("K"),
+                |ident| self.interner.intern_string(&ident.escaped_text),
+            );
+
+        let constraint = (param_data.constraint != NodeIndex::NONE)
+            .then(|| self.lower_type(param_data.constraint));
+
+        let default =
+            (param_data.default != NodeIndex::NONE).then(|| self.lower_type(param_data.default));
+
+        // Use Unknown instead of Any for stricter type checking
+        // When a generic parameter has no constraint, use Unknown to prevent
+        // invalid values from being accepted
+        let constraint_type = constraint.unwrap_or(TypeId::UNKNOWN);
+
+        (
+            TypeParamInfo {
+                is_const: false,
+                name,
+                constraint,
+                default,
+                origin: TypeParamOrigin::User,
+            },
+            constraint_type,
+        )
     }
 
     pub(super) fn lower_mapped_modifier(
@@ -226,18 +198,10 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower an indexed access type (T[K])
     pub(super) fn lower_indexed_access_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_indexed_access_type(node) {
-            let object_type = self.lower_type(data.object_type);
-            let index_type = self.lower_type(data.index_type);
-            self.interner.index_access(object_type, index_type)
-        } else {
-            TypeId::ERROR
-        }
+        let data = lower_node_data!(self, node_idx, get_indexed_access_type, TypeId::ERROR);
+        let object_type = self.lower_type(data.object_type);
+        let index_type = self.lower_type(data.index_type);
+        self.interner.index_access(object_type, index_type)
     }
 
     pub(super) fn strip_numeric_separators<'b>(text: &'b str) -> std::borrow::Cow<'b, str> {
@@ -348,12 +312,8 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a literal type ("foo", 42, etc.)
     pub(super) fn lower_literal_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_literal_type(node) {
+        let data = lower_node_data!(self, node_idx, get_literal_type, TypeId::ERROR);
+        {
             // The literal node contains the actual literal value
             if let Some(literal_node) = self.arena.get(data.literal) {
                 match literal_node.kind {
@@ -452,17 +412,14 @@ impl<'a> TypeLowering<'a> {
             } else {
                 TypeId::ERROR // Propagate error for missing literal node
             }
-        } else {
-            TypeId::ERROR // Propagate error for missing literal type data
         }
     }
 
     /// Lower a type reference (`NamedType` or `NamedType`<Args>)
     pub(super) fn lower_type_reference(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        // Only the node fetch is shared; a present node lacking type-ref data
+        // falls through to def-id resolution rather than `TypeId::ERROR`.
+        let node = lower_node_data!(self, node_idx; TypeId::ERROR);
 
         if let Some(data) = self.arena.get_type_ref(node) {
             if let Some(name_node) = self.arena.get(data.type_name)
@@ -744,12 +701,8 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower an identifier as a type (simple type reference)
     pub(super) fn lower_identifier_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_identifier(node) {
+        let data = lower_node_data!(self, node_idx, get_identifier, TypeId::ERROR);
+        {
             let name = &data.escaped_text;
 
             if let Some(type_param) = self.lookup_type_param(name) {
@@ -841,34 +794,20 @@ impl<'a> TypeLowering<'a> {
             // Mirrors the qualified-name path in `lower_qualified_name_type`.
             self.interner
                 .unresolved_type_name(self.interner.intern_string(name))
-        } else {
-            TypeId::ERROR
         }
     }
 
     /// Lower a parenthesized type
     pub(super) fn lower_parenthesized_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
         // Parenthesized types just wrap another type
-        if let Some(data) = self.arena.get_wrapped_type(node) {
-            self.lower_type(data.type_node)
-        } else {
-            TypeId::ERROR
-        }
+        let data = lower_node_data!(self, node_idx, get_wrapped_type, TypeId::ERROR);
+        self.lower_type(data.type_node)
     }
 
     /// Lower a type query (typeof expr in type position)
     pub(super) fn lower_type_query(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_type_query(node) {
+        let data = lower_node_data!(self, node_idx, get_type_query, TypeId::ERROR);
+        {
             if let Some(expr_node) = self.arena.get(data.expr_name)
                 && let Some(ident) = self.arena.get_identifier(expr_node)
             {
@@ -937,37 +876,27 @@ impl<'a> TypeLowering<'a> {
                 }
             }
             TypeId::ERROR
-        } else {
-            TypeId::ERROR
         }
     }
 
     /// Lower a type operator (keyof, readonly, unique)
     pub(super) fn lower_type_operator(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        let data = lower_node_data!(self, node_idx, get_type_operator, TypeId::ERROR);
+        let inner_type = self.lower_type(data.type_node);
 
-        if let Some(data) = self.arena.get_type_operator(node) {
-            let inner_type = self.lower_type(data.type_node);
-
-            // Check which operator it is
-            match data.operator {
-                // KeyOfKeyword = 143
-                143 => self.interner.keyof(inner_type),
-                // ReadonlyKeyword = 148
-                148 => self.interner.readonly_type(inner_type),
-                // UniqueKeyword = 158 - unique symbol
-                158 => {
-                    // unique symbol creates a unique symbol type
-                    // Use node index as unique identifier
-                    self.interner.unique_symbol(SymbolRef(node_idx.0))
-                }
-                _ => inner_type,
+        // Check which operator it is
+        match data.operator {
+            // KeyOfKeyword = 143
+            143 => self.interner.keyof(inner_type),
+            // ReadonlyKeyword = 148
+            148 => self.interner.readonly_type(inner_type),
+            // UniqueKeyword = 158 - unique symbol
+            158 => {
+                // unique symbol creates a unique symbol type
+                // Use node index as unique identifier
+                self.interner.unique_symbol(SymbolRef(node_idx.0))
             }
-        } else {
-            TypeId::ERROR
+            _ => inner_type,
         }
     }
 
@@ -994,10 +923,10 @@ impl<'a> TypeLowering<'a> {
         node_idx: NodeIndex,
         params: &[ParamInfo],
     ) -> (TypeId, Option<TypePredicate>) {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return (TypeId::ERROR, None),
-        };
+        // Node-missing and data-missing diverge: a missing node propagates an
+        // error type, while a present node lacking predicate data lowers to a
+        // plain `boolean` return. The node fetch shares the common guard.
+        let node = lower_node_data!(self, node_idx; (TypeId::ERROR, None));
 
         let Some(data) = self.arena.get_type_predicate(node) else {
             return (TypeId::BOOLEAN, None);
@@ -1033,45 +962,37 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower an infer type (infer R)
     pub(super) fn lower_infer_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        let data = lower_node_data!(self, node_idx, get_infer_type, TypeId::ERROR);
+        if let Some(info) = self.lower_type_parameter(data.type_parameter) {
+            return self.interner.infer(info);
+        }
 
-        if let Some(data) = self.arena.get_infer_type(node) {
-            if let Some(info) = self.lower_type_parameter(data.type_parameter) {
-                return self.interner.infer(info);
-            }
-
-            // Fallback: synthesize a name if the node isn't a type parameter.
-            let name = if let Some(tp_node) = self.arena.get(data.type_parameter) {
-                if let Some(id_data) = self.arena.get_identifier(tp_node) {
-                    self.interner.intern_string(&id_data.escaped_text)
-                } else {
-                    self.interner.intern_string("infer")
-                }
+        // Fallback: synthesize a name if the node isn't a type parameter.
+        let name = if let Some(tp_node) = self.arena.get(data.type_parameter) {
+            if let Some(id_data) = self.arena.get_identifier(tp_node) {
+                self.interner.intern_string(&id_data.escaped_text)
             } else {
                 self.interner.intern_string("infer")
-            };
-
-            self.interner.infer(TypeParamInfo {
-                is_const: false,
-                name,
-                constraint: None,
-                default: None,
-                origin: TypeParamOrigin::User,
-            })
+            }
         } else {
-            TypeId::ERROR
-        }
+            self.interner.intern_string("infer")
+        };
+
+        self.interner.infer(TypeParamInfo {
+            is_const: false,
+            name,
+            constraint: None,
+            default: None,
+            origin: TypeParamOrigin::User,
+        })
     }
 
     /// Lower a template literal type (`hello${T}world`)
     pub(super) fn lower_template_literal_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        // Node-missing and data-missing diverge: a missing node propagates an
+        // error type, while a present node lacking template data falls back to
+        // `string`. The node fetch shares the common guard.
+        let node = lower_node_data!(self, node_idx; TypeId::ERROR);
 
         if let Some(data) = self.arena.get_template_literal_type(node) {
             let mut spans: Vec<TemplateSpan> = Vec::new();
@@ -1115,72 +1036,55 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a named tuple member ([name: T])
     pub(super) fn lower_named_tuple_member(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_named_tuple_member(node) {
-            // Lower the type part
-            self.lower_type(data.type_node)
-        } else {
-            TypeId::ERROR
-        }
+        // Lower the type part.
+        let data = lower_node_data!(self, node_idx, get_named_tuple_member, TypeId::ERROR);
+        self.lower_type(data.type_node)
     }
 
     /// Lower a constructor type (new () => T)
     pub(super) fn lower_constructor_type(&self, node_idx: NodeIndex) -> TypeId {
         use tsz_solver::CallSignature;
 
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
+        // Constructor types create a Callable with construct_signatures
+        let data = lower_node_data!(self, node_idx, get_function_type, TypeId::ERROR);
+        let (type_params, (params, this_type, return_type, type_predicate)) = self
+            .with_type_params(&data.type_parameters, || {
+                let (params, this_type) = self.lower_params_with_this(&data.parameters);
+
+                let (return_type, type_predicate) =
+                    self.lower_return_type(data.type_annotation, &params);
+                (params, this_type, return_type, type_predicate)
+            });
+
+        // Create a construct signature instead of a function shape
+        let construct_sig = CallSignature {
+            type_params,
+            params,
+            this_type,
+            return_type,
+            type_predicate,
+            is_method: false,
         };
 
-        // Constructor types create a Callable with construct_signatures
-        if let Some(data) = self.arena.get_function_type(node) {
-            let (type_params, (params, this_type, return_type, type_predicate)) = self
-                .with_type_params(&data.type_parameters, || {
-                    let (params, this_type) = self.lower_params_with_this(&data.parameters);
+        // Create a Callable shape with construct_signatures
+        let shape = tsz_solver::CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![construct_sig],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: data.is_abstract,
+        };
 
-                    let (return_type, type_predicate) =
-                        self.lower_return_type(data.type_annotation, &params);
-                    (params, this_type, return_type, type_predicate)
-                });
-
-            // Create a construct signature instead of a function shape
-            let construct_sig = CallSignature {
-                type_params,
-                params,
-                this_type,
-                return_type,
-                type_predicate,
-                is_method: false,
-            };
-
-            // Create a Callable shape with construct_signatures
-            let shape = tsz_solver::CallableShape {
-                call_signatures: vec![],
-                construct_signatures: vec![construct_sig],
-                properties: vec![],
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: data.is_abstract,
-            };
-
-            self.interner.callable(shape)
-        } else {
-            TypeId::ERROR
-        }
+        self.interner.callable(shape)
     }
 
     /// Lower a wrapped type (optional or rest type)
     pub(super) fn lower_wrapped_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        // Only the node fetch is shared; the node is reused for a second
+        // type-operator lookup when wrapped-type data is absent.
+        let node = lower_node_data!(self, node_idx; TypeId::ERROR);
 
         if let Some(data) = self.arena.get_wrapped_type(node) {
             return self.lower_type(data.type_node);

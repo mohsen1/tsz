@@ -16,7 +16,7 @@ use tsz_binder::SymbolId;
 use tsz_binder::symbol_flags;
 use tsz_common::position::{Position, Range};
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::{NodeIndex, modifier_flags, syntax_kind_ext};
+use tsz_parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
 impl<'a> RenameProvider<'a> {
@@ -581,41 +581,20 @@ impl<'a> RenameProvider<'a> {
             return (RenameSymbolKind::Unknown, String::new(), display_name);
         };
 
-        let flags = symbol.flags;
-
-        // Determine kind
-        let kind = if flags & symbol_flags::FUNCTION != 0 {
-            RenameSymbolKind::Function
-        } else if flags & symbol_flags::CLASS != 0 {
-            RenameSymbolKind::Class
-        } else if flags & symbol_flags::INTERFACE != 0 {
-            RenameSymbolKind::Interface
-        } else if flags & symbol_flags::TYPE_ALIAS != 0 {
-            RenameSymbolKind::TypeAlias
-        } else if flags & symbol_flags::ENUM != 0 {
-            RenameSymbolKind::Enum
-        } else if flags & symbol_flags::ENUM_MEMBER != 0 {
-            RenameSymbolKind::EnumMember
-        } else if flags & symbol_flags::MODULE != 0 {
-            RenameSymbolKind::Module
-        } else if flags & symbol_flags::METHOD != 0 {
-            RenameSymbolKind::Method
-        } else if flags & symbol_flags::PROPERTY != 0 {
-            RenameSymbolKind::Property
-        } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
-            RenameSymbolKind::TypeParameter
-        } else if flags & symbol_flags::ALIAS != 0 {
-            RenameSymbolKind::Alias
-        } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
-            self.let_or_const_kind(symbol)
-        } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
-            if self.is_parameter(symbol) {
-                RenameSymbolKind::Parameter
-            } else {
-                RenameSymbolKind::Var
+        // Determine kind. The flag-priority cascade lives in the shared
+        // `classify` classifier; the block-scoped (`const`/`let`) and
+        // function-scoped (`parameter`/`var`) refinements need arena access and
+        // stay here.
+        let kind = match crate::classify::classify_symbol_flags(symbol.flags) {
+            crate::classify::LspSymbolClass::BlockScopedVariable => self.let_or_const_kind(symbol),
+            crate::classify::LspSymbolClass::FunctionScopedVariable => {
+                if self.is_parameter(symbol) {
+                    RenameSymbolKind::Parameter
+                } else {
+                    RenameSymbolKind::Var
+                }
             }
-        } else {
-            RenameSymbolKind::Unknown
+            class => class.to_rename_kind(),
         };
 
         // Determine kind modifiers (export, declare, etc.)
@@ -658,36 +637,11 @@ impl<'a> RenameProvider<'a> {
         false
     }
 
-    /// Compute comma-separated kind modifiers (e.g. `"export,declare"`).
+    /// Compute comma-separated kind modifiers (e.g. `"export,declare"`) via the
+    /// shared [`classify::kind_modifiers`](crate::classify::kind_modifiers)
+    /// builder.
     fn kind_modifiers_for_symbol(&self, symbol: &tsz_binder::Symbol) -> String {
-        let mut modifiers: Vec<&str> = Vec::new();
-
-        if symbol.is_exported {
-            modifiers.push("export");
-        }
-
-        for &decl_idx in &symbol.declarations {
-            if let Some(ext) = self.arena.get_extended(decl_idx) {
-                let mf = ext.modifier_flags;
-                if mf & modifier_flags::AMBIENT != 0 && !modifiers.contains(&"declare") {
-                    modifiers.push("declare");
-                }
-                if mf & modifier_flags::ABSTRACT != 0 && !modifiers.contains(&"abstract") {
-                    modifiers.push("abstract");
-                }
-                if mf & modifier_flags::ASYNC != 0 && !modifiers.contains(&"async") {
-                    modifiers.push("async");
-                }
-                if mf & modifier_flags::STATIC != 0 && !modifiers.contains(&"static") {
-                    modifiers.push("static");
-                }
-                if mf & modifier_flags::DEFAULT != 0 && !modifiers.contains(&"default") {
-                    modifiers.push("default");
-                }
-            }
-        }
-
-        modifiers.join(",")
+        crate::classify::kind_modifiers(self.arena, symbol).join(",")
     }
 
     /// Build a qualified display name by walking parent symbols.
