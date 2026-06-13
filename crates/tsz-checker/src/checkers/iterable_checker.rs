@@ -712,7 +712,12 @@ impl<'a> CheckerState<'a> {
     fn get_awaited_type_of_promise_like(&mut self, type_id: TypeId) -> Option<TypeId> {
         use crate::query_boundaries::property_access::resolve_property_access;
 
-        let then_type = resolve_property_access(self.ctx.types, type_id, "then").success_type()?;
+        let then_type = resolve_property_access(
+            self.ctx.types,
+            type_id,
+            self.ctx.types.intern_string("then"),
+        )
+        .success_type()?;
 
         // Get call signatures of `then`
         let sigs = call_signatures_for_type(self.ctx.types, then_type)?;

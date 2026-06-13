@@ -204,7 +204,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             &self.ctx,
             object_type,
-            prop_name,
+            self.ctx.types.intern_string(prop_name),
             self.ctx.compiler_options.no_unchecked_indexed_access,
         )
     }

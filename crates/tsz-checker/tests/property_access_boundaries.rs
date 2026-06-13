@@ -122,8 +122,8 @@ fn type_has_property_query() {
         ..Default::default()
     }]);
 
-    assert!(type_has_property(&types, obj, "x"));
-    assert!(!type_has_property(&types, obj, "y"));
+    assert!(type_has_property(&types, obj, types.intern_string("x")));
+    assert!(!type_has_property(&types, obj, types.intern_string("y")));
 }
 
 #[test]
@@ -152,9 +152,21 @@ fn type_has_property_union_requires_all_members() {
     ]);
 
     let union_type = types.union(vec![obj_with_name, obj_with_both]);
-    assert!(type_has_property(&types, union_type, "name"));
-    assert!(!type_has_property(&types, union_type, "age"));
-    assert!(!type_has_property(&types, union_type, "missing"));
+    assert!(type_has_property(
+        &types,
+        union_type,
+        types.intern_string("name")
+    ));
+    assert!(!type_has_property(
+        &types,
+        union_type,
+        types.intern_string("age")
+    ));
+    assert!(!type_has_property(
+        &types,
+        union_type,
+        types.intern_string("missing")
+    ));
 }
 
 #[test]

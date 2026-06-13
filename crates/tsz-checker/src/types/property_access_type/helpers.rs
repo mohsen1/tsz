@@ -565,6 +565,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        let property_atom = self.ctx.types.intern_string(property_name);
         let mut restricted = None;
         for member in members {
             let member = self.evaluate_application_type(member);
@@ -575,7 +576,7 @@ impl<'a> CheckerState<'a> {
             if crate::query_boundaries::property_access::receiver_property_visibility(
                 self.ctx.types,
                 member,
-                property_name,
+                property_atom,
             )
             .is_some_and(|visibility| visibility == tsz_solver::Visibility::Public)
             {

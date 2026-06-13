@@ -54,7 +54,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         match crate::query_boundaries::property_access::resolve_property_access(
             self.ctx.types,
             base_type,
-            &property_name,
+            self.ctx.types.intern_string(&property_name),
         ) {
             tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. }
             | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
@@ -285,7 +285,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             current_type = match crate::query_boundaries::property_access::resolve_property_access(
                 self.ctx.types,
                 current_type,
-                segment,
+                self.ctx.types.intern_string(segment),
             ) {
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id,

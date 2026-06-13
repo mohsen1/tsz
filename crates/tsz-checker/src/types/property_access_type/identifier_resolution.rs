@@ -763,7 +763,7 @@ impl<'a> CheckerState<'a> {
                         crate::query_boundaries::property_access::resolve_property_access_raw_this(
                             self.ctx.types,
                             object_type_for_access,
-                            property_name,
+                            self.ctx.types.intern_string(property_name),
                         );
                     if let PropertyAccessResult::Success {
                         type_id: raw_type, ..

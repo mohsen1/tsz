@@ -418,7 +418,7 @@ impl<'a> CheckerState<'a> {
                 let lookup = crate::query_boundaries::property_access::resolve_property_access(
                     self.ctx.types,
                     base_type,
-                    &key,
+                    key_atom,
                 );
                 if matches!(
                     lookup,

@@ -583,7 +583,7 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::property_access::receiver_property_visibility(
             self.ctx.types,
             object_type,
-            property_name,
+            self.ctx.types.intern_string(property_name),
         )
     }
 
@@ -596,7 +596,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::property_access::protected_intersection_owner_type(
                 self.ctx.types,
                 object_type,
-                property_name,
+                self.ctx.types.intern_string(property_name),
             )?;
         Some(self.format_type_diagnostic(owner_type))
     }
