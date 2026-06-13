@@ -1842,22 +1842,26 @@ fn densify_bind_symbols(
     lib_symbol_ids: &FxHashSet<SymbolId>,
     retained_lib_symbols: &FxHashSet<SymbolId>,
 ) -> FxHashMap<SymbolId, SymbolId> {
-    let retained_count = binder
-        .symbols
-        .iter()
-        .filter(|sym| !lib_symbol_ids.contains(&sym.id) || retained_lib_symbols.contains(&sym.id))
-        .count();
+    let mut retained_count = 0;
+    for_each_densify_source_symbol(
+        &binder.symbols,
+        lib_symbol_ids,
+        retained_lib_symbols,
+        |_| retained_count += 1,
+    );
     let mut compacted_symbols = SymbolArena::with_capacity(retained_count);
     let mut id_remap = FxHashMap::with_capacity_and_hasher(retained_count, Default::default());
 
-    for sym in binder.symbols.iter() {
-        if lib_symbol_ids.contains(&sym.id) && !retained_lib_symbols.contains(&sym.id) {
-            continue;
-        }
-        let old_id = sym.id;
-        let new_id = compacted_symbols.alloc_from(sym);
-        id_remap.insert(old_id, new_id);
-    }
+    for_each_densify_source_symbol(
+        &binder.symbols,
+        lib_symbol_ids,
+        retained_lib_symbols,
+        |sym| {
+            let old_id = sym.id;
+            let new_id = compacted_symbols.alloc_from(sym);
+            id_remap.insert(old_id, new_id);
+        },
+    );
 
     for sym in compacted_symbols.iter_mut() {
         sym.parent = id_remap.get(&sym.parent).copied().unwrap_or(SymbolId::NONE);
