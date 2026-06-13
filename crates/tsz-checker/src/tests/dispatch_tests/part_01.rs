@@ -590,6 +590,28 @@ const result: [string, number] = extractPrimitives({ primitive: "" }, { primitiv
 }
 
 #[test]
+fn reverse_mapped_variadic_tuple_tail_preserves_rest_positions() {
+    let diags = check_source_diagnostics(
+        r#"
+type Arrayify<T> = { [P in keyof T]: T[P][] };
+declare function inferTail<Tail extends unknown[]>(value: Arrayify<[string, number, ...Tail]>): Tail;
+const tail: [boolean, string] = inferTail([["abc"], [42], [true], ["def"]]);
+
+type Items<Row> = { [Slot in keyof Row]: Row[Slot][] };
+declare function inferMiddle<Rest extends unknown[]>(value: Items<[string, ...Rest, number]>): Rest;
+const middle: [boolean, string] = inferMiddle([["head"], [true], ["mid"], [99]]);
+"#,
+    );
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected reverse-mapped variadic tuple tail to infer [boolean, string], got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+}
+
+#[test]
 fn generic_tuple_rest_argument_infers_union_from_all_rest_elements() {
     let diags = check_source_diagnostics(
         r#"
