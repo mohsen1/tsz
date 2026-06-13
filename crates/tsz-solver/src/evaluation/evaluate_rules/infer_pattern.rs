@@ -101,7 +101,7 @@ impl InferPatternVisited {
     }
 
     #[inline]
-    fn checkpoint(&self) -> usize {
+    const fn checkpoint(&self) -> usize {
         self.insert_log.len()
     }
 
