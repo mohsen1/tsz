@@ -76,6 +76,22 @@ use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompletionProjectCacheKey {
+    pub(crate) files: Vec<(String, u64)>,
+    pub(crate) allow_importing_ts_extensions: bool,
+    pub(crate) auto_imports_allowed_without_tsconfig: bool,
+    pub(crate) import_module_specifier_ending: Option<String>,
+    pub(crate) import_module_specifier_preference: Option<String>,
+    pub(crate) auto_import_file_exclude_patterns: Vec<String>,
+    pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
+}
+
+pub(crate) struct CompletionProjectCache {
+    pub(crate) key: CompletionProjectCacheKey,
+    pub(crate) project: tsz::lsp::Project,
+}
+
 fn deserialize_target_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -572,6 +588,10 @@ pub(crate) struct Server {
     pub(crate) open_files: FxHashMap<String, String>,
     /// Files registered by each external project (`openExternalProject`).
     pub(crate) external_project_files: FxHashMap<String, Vec<String>>,
+    /// Project-wide completion state for the most recent identical request
+    /// inputs. Avoids rebuilding `tsz_lsp::Project` when completion/detail
+    /// requests repeat over the same server file snapshot and preferences.
+    pub(crate) completion_project_cache: Option<CompletionProjectCache>,
     /// Completion preference: import module specifier ending (e.g. "js")
     pub(crate) completion_import_module_specifier_ending: Option<String>,
     /// Completion/codefix preference: import module specifier preference.
@@ -684,6 +704,7 @@ impl Server {
             response_seq: 0,
             open_files: FxHashMap::default(),
             external_project_files: FxHashMap::default(),
+            completion_project_cache: None,
             completion_import_module_specifier_ending: None,
             import_module_specifier_preference: None,
             organize_imports_type_order: None,
@@ -735,6 +756,7 @@ impl Server {
     fn reset_session_state(&mut self) {
         self.open_files.clear();
         self.external_project_files.clear();
+        self.clear_completion_project_cache();
         self.completion_import_module_specifier_ending = None;
         self.import_module_specifier_preference = None;
         self.organize_imports_type_order = None;
@@ -751,6 +773,10 @@ impl Server {
         self.auto_imports_allowed_for_inferred_projects = true;
         self.inferred_module_is_none_for_projects = false;
         self.plugin_configs.clear();
+    }
+
+    pub(crate) fn clear_completion_project_cache(&mut self) {
+        self.completion_project_cache = None;
     }
 
     fn handle_reset(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {

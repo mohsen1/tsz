@@ -71,6 +71,7 @@ impl Server {
     pub(crate) fn handle_legacy_recycle(&mut self, id: u64) -> LegacyResponse {
         self.lib_cache.clear();
         self.unified_lib_cache = None;
+        self.clear_completion_project_cache();
         self.checks_completed = 0;
         LegacyResponse::Ok(OkResponse { id, ok: true })
     }
