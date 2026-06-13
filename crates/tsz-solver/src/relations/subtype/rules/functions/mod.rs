@@ -147,29 +147,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         type_id: TypeId,
         param_name: tsz_common::interner::Atom,
     ) -> bool {
-        crate::visitor::collect_all_types(self.interner, type_id)
-            .into_iter()
-            .any(|candidate| match self.interner.lookup(candidate) {
-                Some(TypeData::Mapped(mapped_id)) => {
-                    let mapped = self.interner.get_mapped(mapped_id);
-                    crate::visitor::contains_type_parameter_named(
-                        self.interner,
-                        mapped.constraint,
-                        param_name,
-                    ) || crate::visitor::contains_type_parameter_named(
-                        self.interner,
-                        mapped.template,
-                        param_name,
-                    ) || mapped.name_type.is_some_and(|name_type| {
-                        crate::visitor::contains_type_parameter_named(
-                            self.interner,
-                            name_type,
-                            param_name,
-                        )
-                    })
-                }
-                _ => false,
-            })
+        crate::visitors::visitor_predicates::mapped_context_references_type_param_named(
+            self.interner,
+            type_id,
+            param_name,
+        )
     }
 
     pub(crate) fn has_conflicting_contextual_param_candidates(

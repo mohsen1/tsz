@@ -161,18 +161,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //    usage (e.g., `<S extends {p:string}[]>(x: S)` vs `<T extends {p:string}>(x: T[])`).
         let signature_mentions_nonlocal_type_params =
             |shape: &crate::types::FunctionShape| -> bool {
-                let local_tp_ids: Vec<TypeId> = shape
+                let local_tp_ids: rustc_hash::FxHashSet<TypeId> = shape
                     .type_params
                     .iter()
                     .map(|tp| self.interner.type_param(*tp))
                     .collect();
                 let refs_nonlocal_type_param = |type_id: TypeId| {
-                    crate::visitor::collect_all_types(self.interner, type_id)
-                        .into_iter()
-                        .any(|ty| {
-                            type_param_info(self.interner, ty).is_some()
-                                && !local_tp_ids.contains(&ty)
-                        })
+                    crate::visitors::visitor_predicates::references_type_param_outside_id_set(
+                        self.interner,
+                        type_id,
+                        &local_tp_ids,
+                    )
                 };
 
                 shape
@@ -368,18 +367,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let source_mentions_nonlocal_type_params = {
-            let local_source_tp_ids: Vec<TypeId> = source_instantiated
+            let local_source_tp_ids: rustc_hash::FxHashSet<TypeId> = source_instantiated
                 .type_params
                 .iter()
                 .map(|tp| self.interner.type_param(*tp))
                 .collect();
             let refs_nonlocal_type_param = |type_id: TypeId| {
-                crate::visitor::collect_all_types(self.interner, type_id)
-                    .into_iter()
-                    .any(|ty| {
-                        type_param_info(self.interner, ty).is_some()
-                            && !local_source_tp_ids.contains(&ty)
-                    })
+                crate::visitors::visitor_predicates::references_type_param_outside_id_set(
+                    self.interner,
+                    type_id,
+                    &local_source_tp_ids,
+                )
             };
             source_instantiated
                 .params

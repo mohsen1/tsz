@@ -244,6 +244,60 @@ pub fn references_any_type_param_named(
     )
 }
 
+/// Check if a type's full structural surface references any `TypeParameter`/
+/// `Infer` whose interned `TypeId` is *not* one of `local_param_ids`.
+///
+/// This is the short-circuiting, allocation-free replacement for the former
+/// `collect_all_types(..).into_iter().any(..)` pattern in the generic
+/// function-subtype rules: it answers "does this signature position mention a
+/// type parameter outside its own locally-bound set?". The reachability is the
+/// same `ChildPolicy::EVERYTHING` surface `collect_all_types` walks (generic
+/// signature bodies, type-parameter constraints, and defaults all included),
+/// and the positive match is the same `TypeData::TypeParameter | Infer` test
+/// the old code applied via `type_param_info`, so the boolean answer is
+/// identical — but the worklist stops at the first non-local occurrence and
+/// reuses pooled buffers instead of materializing the full reachable set into a
+/// fresh `FxHashSet` per query.
+pub fn references_type_param_outside_id_set(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    local_param_ids: &rustc_hash::FxHashSet<TypeId>,
+) -> bool {
+    worklist_contains_matching(types, type_id, &ChildPolicy::EVERYTHING, |id, data| {
+        matches!(data, Some(TypeData::TypeParameter(_) | TypeData::Infer(_)))
+            && !local_param_ids.contains(&id)
+    })
+}
+
+/// Check whether any `Mapped` node in `type_id`'s full structural surface has a
+/// `constraint`, `template`, or `name_type` that references the type parameter
+/// named `param_name`.
+///
+/// Short-circuiting, allocation-free replacement for the former
+/// `collect_all_types(..).into_iter().any(|c| matches Mapped && ..)` pattern in
+/// the generic function-subtype rules. The reachability is the same
+/// `ChildPolicy::EVERYTHING` surface `collect_all_types` walked, and the
+/// per-`Mapped` predicate is identical, so the boolean answer matches; the
+/// worklist stops at the first qualifying mapped node and reuses pooled buffers
+/// rather than materializing the full reachable set.
+pub fn mapped_context_references_type_param_named(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    param_name: Atom,
+) -> bool {
+    worklist_contains_matching(types, type_id, &ChildPolicy::EVERYTHING, |_, data| {
+        let Some(TypeData::Mapped(mapped_id)) = data else {
+            return false;
+        };
+        let mapped = types.get_mapped(*mapped_id);
+        contains_type_parameter_named(types, mapped.constraint, param_name)
+            || contains_type_parameter_named(types, mapped.template, param_name)
+            || mapped.name_type.is_some_and(|name_type| {
+                contains_type_parameter_named(types, name_type, param_name)
+            })
+    })
+}
+
 /// Check if a constraint type references a type parameter along the base-constraint
 /// resolution path. This mimics tsc's `getBaseConstraint` recursion, which only
 /// follows certain structural paths:
