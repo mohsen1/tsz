@@ -1201,6 +1201,49 @@ fn format_application_two_args() {
 }
 
 #[test]
+fn long_property_receiver_application_display_bounds_deep_arg_formatting() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let wrapper_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Wrap"),
+        vec![type_param],
+        TypeId::UNKNOWN,
+    ));
+
+    let terminal_prop_name = db.intern_string("deepTerminal");
+    let mut ty = db.object(vec![PropertyInfo::new(terminal_prop_name, TypeId::STRING)]);
+    for _ in 0..48 {
+        ty = db.application(db.lazy(wrapper_def), vec![ty]);
+    }
+
+    let mut fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_long_property_receiver_display()
+        .with_long_property_receiver_object_elision_end_depth(0);
+    let result = fmt.format(ty);
+
+    assert!(
+        result.contains("Wrap<Wrap<"),
+        "Expected long property receiver display to keep outer generic context, got: {result}"
+    );
+    assert!(
+        result.contains("..."),
+        "Expected deep application argument tail to be elided, got: {result}"
+    );
+    assert!(
+        !fmt.atom_cache.contains_key(&terminal_prop_name),
+        "Expected deep elided application argument not to format terminal object properties, got result {result}"
+    );
+}
+
+#[test]
 fn display_alias_does_not_repaint_preexisting_structural_type() {
     let db = TypeInterner::new();
     let prop = PropertyInfo::new(db.intern_string("p"), TypeId::NUMBER);
