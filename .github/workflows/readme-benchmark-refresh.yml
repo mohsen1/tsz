@@ -1,0 +1,126 @@
+name: Refresh README benchmark image
+
+# The README benchmark image and stats are committed assets that otherwise only
+# update when someone runs scripts/refresh-readme.py by hand, so they drift
+# stale. This regenerates them from the latest published benchmark data and
+# opens a PR (main is protected by the merge queue, so a direct push is not
+# possible). The website itself always renders fresh data; this only keeps the
+# committed README asset in sync.
+
+on:
+  schedule:
+    # Daily at 07:00 UTC, after gh-pages (06:00) republishes the benchmark data.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Render and diff but do not open a PR"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: readme-benchmark-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh README benchmark image
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install website deps (sharp renders the PNGs)
+        working-directory: crates/tsz-website
+        run: npm install --no-audit --no-fund
+
+      - name: Refresh README from latest published benchmark data
+        run: python3 scripts/refresh-readme.py --write
+
+      - name: Detect changes
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- README.md crates/tsz-website/static/benchmark-data; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "README benchmark image and stats already current; nothing to refresh."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git --no-pager diff --stat -- README.md crates/tsz-website/static/benchmark-data
+          fi
+
+      - name: Open refresh PR
+        if: steps.diff.outputs.changed == 'true' && (inputs.dry_run != true)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "tsz-readme-bot"
+          git config user.email "tsz-readme-bot@users.noreply.github.com"
+
+          stamp="$(date -u +%Y%m%d)"
+          branch="automation/readme-benchmark-refresh-${stamp}"
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "Branch ${branch} already exists on origin; today's refresh is already open."
+            exit 0
+          fi
+
+          git checkout -b "${branch}"
+          git add README.md crates/tsz-website/static/benchmark-data
+          git commit -m "chore(readme): refresh benchmark image and stats"
+          git push -u origin "${branch}"
+
+          body=$(cat <<'EOF'
+          Automated refresh of the README benchmark image and progress stats from
+          the latest published benchmark data
+          (https://tsz.dev/benchmark-data/latest.json).
+
+          ## Goal
+          Goal: hold
+
+          ## Invariant
+          The committed README benchmark image and stats track the latest
+          published benchmark run instead of drifting stale between manual
+          `scripts/refresh-readme.py` runs. The merge queue lands it.
+
+          ## Scope
+          Generated assets only:
+          - `README.md` progress/benchmark blocks.
+          - Light/dark benchmark PNGs under
+            `crates/tsz-website/static/benchmark-data/`.
+
+          No source, build, or script changes.
+
+          ## Verification
+          - `python3 scripts/refresh-readme.py --write` reproduces these files
+            from the published benchmark artifact.
+          - `node scripts/bench/test-readme-perf-svg.mjs` covers the renderer.
+
+          ## Provenance
+          Machine: cloud
+          Assistant: bot
+          Model: github-actions
+          Effort: low
+          EOF
+          )
+
+          gh pr create \
+            --base main \
+            --head "${branch}" \
+            --title "chore(readme): refresh benchmark image and stats" \
+            --body "${body}" \
+            --label chore

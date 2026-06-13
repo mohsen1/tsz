@@ -534,8 +534,6 @@ function normalizedFixtureSources(compatibility) {
     .slice(0, 4);
 }
 
-const TINY_BENCHMARK_MAX_LINES = 200;
-
 function withExpectedProjectRows(results) {
   const rows = Array.isArray(results) ? results.slice() : [];
   const existingNames = new Set(rows.map((row) => row?.name).filter(Boolean));
@@ -863,11 +861,6 @@ function loadBenchmarks() {
   return null;
 }
 
-function isTinyBenchmark(lines) {
-  const size = Number(lines);
-  return Number.isFinite(size) && size < TINY_BENCHMARK_MAX_LINES;
-}
-
 function categoryFor(name, lines) {
   if (name === "large-ts-repo" || name === "nextjs") return "Projects: large repositories";
   const projectRow = PROJECT_ROWS_BY_NAME[name];
@@ -879,7 +872,6 @@ function categoryFor(name, lines) {
   if (name.startsWith("utility-types/")) return "Single file: utility-types";
   if (name.startsWith("ts-toolbelt/")) return "Single file: ts-toolbelt";
   if (name.startsWith("ts-essentials/")) return "Single file: ts-essentials";
-  if (isTinyBenchmark(lines)) return "Tiny File Benchmarks";
   if (/Recursive utility aliases|Indexed access hotspot|Remapped accessor hotspot|Conditional infer hotspot|Object spread hotspot|Contextual callback hotspot/i.test(name)) {
     return "Project Hotspot Microbenchmarks";
   }
@@ -950,10 +942,6 @@ function categoryMeta(category) {
       description: "Real-world ts-essentials file-level benchmark set from pinned snapshot.",
       repo: "https://github.com/ts-essentials/ts-essentials",
       repoLabel: "ts-essentials/ts-essentials",
-    },
-    "Tiny File Benchmarks": {
-      title: "Tiny files",
-      description: "Small fixture files moved below the fold.",
     },
     "General Benchmarks": {
       title: "Compiler scenarios",
@@ -1035,7 +1023,6 @@ function benchmarkUrl(row) {
 function benchmarkKind(category) {
   if (isProjectCategory(category)) return "project";
   if (isExternalLibraryCategory(category)) return "library file";
-  if (category === "Tiny File Benchmarks") return "startup";
   if (category === "Project Hotspot Microbenchmarks") return "hotspot";
   if (category === "Solver Stress Tests") return "solver stress";
   if (category === "Synthetic Type Workloads") return "synthetic";
@@ -1445,7 +1432,6 @@ function buildGroupedBenchmarks(data) {
     "Synthetic Type Workloads",
     "Project Hotspot Microbenchmarks",
     "Solver Stress Tests",
-    "Tiny File Benchmarks",
   ];
 
   const categories = [...grouped.keys()].sort((a, b) => {
@@ -1505,8 +1491,8 @@ function categoryTitle(category) {
 
 function categoryBelongsToMode(category, mode) {
   if (mode === "projects") return isProjectCategory(category);
-  if (mode === "micro") return !isProjectCategory(category) && category !== "Tiny File Benchmarks";
-  return category !== "Tiny File Benchmarks";
+  if (mode === "micro") return !isProjectCategory(category);
+  return true;
 }
 
 function failedBelongsToMode(row, mode) {
