@@ -778,14 +778,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// additional required properties (e.g., `TemplateStringsArray.raw`), the
     /// mere element-type compatibility is not sufficient for assignability.
     fn target_has_extra_required_properties(
-        &self,
+        &mut self,
         instantiated_array: TypeId,
         target: TypeId,
     ) -> bool {
         use crate::visitor::{object_shape_id, object_with_index_shape_id};
 
-        // Evaluate target to resolve Lazy(DefId) / Application types.
-        let target_eval = crate::evaluation::evaluate::evaluate_type(self.interner, target);
+        // Evaluate through the subtype checker so this fallback reuses the same
+        // resolver-aware, per-relation evaluation cache as the surrounding array
+        // interface check instead of spinning up a fresh `NoopResolver`
+        // evaluator for every required-property probe.
+        let target_eval = self.evaluate_type(target);
 
         // Get the target's object shape
         let target_shape_id = object_shape_id(self.interner, target_eval)
@@ -798,8 +801,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let internal_iter = self.interner.intern_string("__@iterator");
 
         // Get the source array's object shape
-        let source_eval =
-            crate::evaluation::evaluate::evaluate_type(self.interner, instantiated_array);
+        let source_eval = self.evaluate_type(instantiated_array);
         let source_shape_id = object_shape_id(self.interner, source_eval)
             .or_else(|| object_with_index_shape_id(self.interner, source_eval));
         let source_shape = source_shape_id.map(|id| self.interner.object_shape(id));
