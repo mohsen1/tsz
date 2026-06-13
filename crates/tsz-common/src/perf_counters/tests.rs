@@ -2,10 +2,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_nine() {
+    fn schema_version_is_ten() {
         // Bumping schema_version is a breaking change for the bench harness;
-        // make the intent explicit. v9 added #13242 materialization counters.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 9);
+        // make the intent explicit. v10 added #13240 shared-cache counters.
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 10);
     }
 
     #[test]
@@ -25,6 +25,7 @@ mod json_tests {
             "resolver",
             "interner",
             "relation_limit_cache",
+            "shared_instantiation_cache",
             "evaluator_memo",
             "solver_materialization",
             "by_reason",
@@ -61,7 +62,7 @@ mod json_tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 9);
+        assert_eq!(json["schema_version"], 10);
     }
 
     #[test]
@@ -455,6 +456,24 @@ mod json_tests {
                 "read_dir_calls",
                 "package_json_reads",
                 "candidate_paths_total",
+            ],
+        );
+    }
+
+    #[test]
+    fn shared_instantiation_cache_section_field_shape() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert_section_keys(
+            &json,
+            "shared_instantiation_cache",
+            &[
+                "application_eval_shared_hits",
+                "application_eval_shared_misses",
+                "application_eval_shared_inserts",
+                "instantiation_shared_hits",
+                "instantiation_shared_misses",
+                "instantiation_shared_inserts",
             ],
         );
     }

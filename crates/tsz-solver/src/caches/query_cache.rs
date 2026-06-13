@@ -616,9 +616,11 @@ impl<'a> QueryCache<'a> {
                 self.application_eval_cache.borrow_mut().insert(key, result);
                 self.application_eval_cache_stats.record_hit();
                 self.application_eval_cache_stats.record_shared_hit();
+                tsz_common::perf_counters::record_shared_application_eval_cache_hit();
                 return Some(result);
             }
             self.application_eval_cache_stats.record_shared_miss();
+            tsz_common::perf_counters::record_shared_application_eval_cache_miss();
         }
         self.application_eval_cache_stats.record_miss();
         None
@@ -630,6 +632,7 @@ impl<'a> QueryCache<'a> {
         {
             shared.application_eval_cache.insert(key.clone(), result);
             self.application_eval_cache_stats.record_shared_insert();
+            tsz_common::perf_counters::record_shared_application_eval_cache_insert();
         }
         self.application_eval_cache.borrow_mut().insert(key, result);
     }
@@ -1643,9 +1646,11 @@ impl QueryDatabase for QueryCache<'_> {
                         self.instantiation_cache.insert(key.clone(), result);
                         self.instantiation_cache_stats.record_hit();
                         self.instantiation_cache_stats.record_shared_hit();
+                        tsz_common::perf_counters::record_shared_instantiation_cache_hit();
                         return Some(result);
                     }
                     self.instantiation_cache_stats.record_shared_miss();
+                    tsz_common::perf_counters::record_shared_instantiation_cache_miss();
                 }
                 self.instantiation_cache_stats.record_miss();
                 None
@@ -1660,6 +1665,7 @@ impl QueryDatabase for QueryCache<'_> {
         {
             shared.instantiation_cache.insert(key.clone(), result);
             self.instantiation_cache_stats.record_shared_insert();
+            tsz_common::perf_counters::record_shared_instantiation_cache_insert();
         }
         self.instantiation_cache.insert(key, result);
     }

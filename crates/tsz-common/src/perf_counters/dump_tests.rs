@@ -124,6 +124,18 @@ mod dump_tests {
             .fetch_add(17, Ordering::Relaxed);
         c.relation_maybe_promotions
             .fetch_add(19, Ordering::Relaxed);
+        c.shared_application_eval_cache_hits
+            .fetch_add(20, Ordering::Relaxed);
+        c.shared_application_eval_cache_misses
+            .fetch_add(21, Ordering::Relaxed);
+        c.shared_application_eval_cache_inserts
+            .fetch_add(22, Ordering::Relaxed);
+        c.shared_instantiation_cache_hits
+            .fetch_add(24, Ordering::Relaxed);
+        c.shared_instantiation_cache_misses
+            .fetch_add(25, Ordering::Relaxed);
+        c.shared_instantiation_cache_inserts
+            .fetch_add(26, Ordering::Relaxed);
         c.eval_evaluator_constructions
             .fetch_add(23, Ordering::Relaxed);
         c.eval_local_memo_hits.fetch_add(29, Ordering::Relaxed);
@@ -150,6 +162,13 @@ mod dump_tests {
             "Relation limit-result cache",
             "limit cache hits",
             "maybe promotions",
+            "Opt-in shared instantiation caches",
+            "application eval shared hits",
+            "application eval shared misses",
+            "application eval shared inserts",
+            "instantiation shared hits",
+            "instantiation shared misses",
+            "instantiation shared inserts",
             "Evaluator memo lifecycle",
             "constructions",
             "local memo hits",
