@@ -37,6 +37,22 @@ assert.match(
 );
 
 assert.match(
+  benchReadinessMessages(null, {
+    two_x_target: {
+      eligible_green_rows: 4,
+      rows_below_target: 0,
+      missing_attribution_rows: [],
+      project_rows_aggregate: {
+        rows: 3,
+        tsz_speedup_vs_tsgo: 1.42,
+        target_met: false,
+      },
+    },
+  }).join(" "),
+  /project-row aggregate is 1\.42x across 3 project row\(s\), below the 2x tsgo target/,
+);
+
+assert.match(
   benchReadinessMessages({ artifact_absent: true }).join(" "),
   /No recent benchmark artifact/,
 );
