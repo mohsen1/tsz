@@ -985,25 +985,14 @@ impl DefinitionStore {
             // `publication_census`): classify this publication against the
             // guarded pre-write entry state with caller attribution.
             if publication_census::census_enabled() {
-                let caller = std::panic::Location::caller();
-                let params_changed = params
-                    .as_ref()
-                    .is_some_and(|new_params| *new_params != entry.type_params);
-                let outcome = if suppressed {
-                    publication_census::PublicationOutcome::SuppressedDifferentBody
-                } else if deferred {
-                    publication_census::PublicationOutcome::DeferredDifferentBody
-                } else {
-                    publication_census::classify(entry.body, body, params_changed, true)
-                };
-                publication_census::record_publication(
+                publication_census::record_existing_publication(
                     id,
-                    Some(entry.kind),
-                    entry.name,
-                    entry.file_id,
+                    &entry,
                     body,
-                    outcome,
-                    caller,
+                    params.as_deref(),
+                    suppressed,
+                    deferred,
+                    std::panic::Location::caller(),
                 );
             }
             if suppressed || deferred {
@@ -1039,15 +1028,10 @@ impl DefinitionStore {
             self.bump_generation();
         } else {
             if publication_census::census_enabled() {
-                let caller = std::panic::Location::caller();
-                publication_census::record_publication(
+                publication_census::record_minted_minimal_publication(
                     id,
-                    None,
-                    Atom::NONE,
-                    None,
                     body,
-                    publication_census::classify(None, body, false, false),
-                    caller,
+                    std::panic::Location::caller(),
                 );
             }
             // Create a minimal entry for DefIds created via get_or_create_def_id
