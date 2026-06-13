@@ -58,11 +58,11 @@ impl<'a> CheckerState<'a> {
         if alias.flags & symbol_flags::ALIAS == 0 {
             return None;
         }
-        let module_specifier = alias.import_module.as_deref()?;
+        let module_specifier = alias.import_module()?;
         // Namespace / `export=` imports (`import * as ns`) bind the module
         // object, not a single named value export, so there is no value-space
         // target to recover here.
-        let import_name = alias.import_name.as_deref()?;
+        let import_name = alias.import_name()?;
         if import_name == "*" {
             return None;
         }

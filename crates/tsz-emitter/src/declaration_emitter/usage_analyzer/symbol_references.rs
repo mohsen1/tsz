@@ -75,7 +75,8 @@ impl UsageAnalyzer<'_> {
     pub(super) fn type_query_value_dependency_symbol(&self, sym_id: SymbolId) -> Option<SymbolId> {
         let symbol = self.binder.symbols.get(sym_id)?;
 
-        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module.is_some() {
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module().is_some()
+        {
             let Some(resolved_sym_id) = self.resolve_import_alias_target_symbol(sym_id) else {
                 // If the module graph is unavailable, preserve the source import.
                 return Some(sym_id);
@@ -95,11 +96,8 @@ impl UsageAnalyzer<'_> {
         }
 
         let symbol = self.binder.symbols.get(sym_id)?;
-        let module_specifier = symbol.import_module.as_deref()?;
-        let export_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(symbol.escaped_name.as_str());
+        let module_specifier = symbol.import_module()?;
+        let export_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
 
         for module_key in self.relative_module_export_keys(module_specifier) {
             if let Some(exports) = self.binder.module_exports.get(&module_key)
@@ -263,7 +261,7 @@ impl UsageAnalyzer<'_> {
         let Some(symbol) = self.binder.symbols.get(sym_id) else {
             return false;
         };
-        if symbol.import_module.as_deref() != Some(module_specifier) {
+        if symbol.import_module() != Some(module_specifier) {
             return false;
         }
 
@@ -271,11 +269,7 @@ impl UsageAnalyzer<'_> {
         // inside `declare module "observable"` because the declaration body is
         // already scoped to that ambient module. Aliased imports still need to
         // count as usages because the alias is not introduced by the module body.
-        symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(&symbol.escaped_name)
-            == ident
+        symbol.import_name().unwrap_or(&symbol.escaped_name) == ident
             && symbol.escaped_name == ident
     }
 

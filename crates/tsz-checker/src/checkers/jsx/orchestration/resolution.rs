@@ -1578,8 +1578,8 @@ impl<'a> CheckerState<'a> {
                     return Some(sym_id);
                 }
                 (
-                    symbol.import_module.clone(),
-                    symbol.import_name.clone(),
+                    symbol.import_module().map(str::to_string),
+                    symbol.import_name().map(str::to_string),
                     symbol.escaped_name.clone(),
                     symbol.primary_declaration()?,
                 )
@@ -1590,8 +1590,8 @@ impl<'a> CheckerState<'a> {
                     return Some(sym_id);
                 }
                 (
-                    symbol.import_module.clone(),
-                    symbol.import_name.clone(),
+                    symbol.import_module().map(str::to_string),
+                    symbol.import_name().map(str::to_string),
                     symbol.escaped_name.clone(),
                     symbol.primary_declaration()?,
                 )

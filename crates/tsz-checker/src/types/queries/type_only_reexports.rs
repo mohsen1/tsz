@@ -61,9 +61,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if sym.has_any_flags(symbol_flags::ALIAS)
-                    && let Some(ref import_module) = sym.import_module
+                    && let Some(import_module) = sym.import_module()
                 {
-                    let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
+                    let import_name = sym.import_name().unwrap_or(sym.escaped_name.as_str());
                     if self.is_export_type_only_syntax_in_file(
                         target_file_idx,
                         import_module,

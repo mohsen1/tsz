@@ -243,7 +243,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // same-named symbol in the specific module this alias imports from.
                 // Restricting to `import_module` prevents false positives from
                 // same-named exports in unrelated modules.
-                let import_module = symbol.import_module.as_deref().unwrap_or("");
+                let import_module = symbol.import_module().unwrap_or("");
                 let mut found = None;
                 for (path, table) in binder.module_exports.iter() {
                     // Only search in modules whose path ends with the import specifier.
@@ -465,7 +465,7 @@ impl<'a> DeclarationEmitter<'a> {
                             if !candidate.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
                                 return None;
                             }
-                            let import_mod = candidate.import_module.as_deref()?;
+                            let import_mod = candidate.import_module()?;
                             // Only bare specifiers can point to nested node_modules.
                             if import_mod.is_empty()
                                 || import_mod.starts_with('.')
@@ -879,7 +879,7 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 if let Some(binder) = self.binder
                     && let Some(symbol) = binder.symbols.get(sym_id)
-                    && let Some(import_module) = symbol.import_module.as_deref()
+                    && let Some(import_module) = symbol.import_module()
                     && let Some(current_file_path) = self.current_file_path.as_deref()
                 {
                     let mut module_paths =

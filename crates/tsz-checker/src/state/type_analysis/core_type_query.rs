@@ -1167,7 +1167,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Must be an import-equals declaration (import a = X), not an ES import
-        if symbol.import_module.is_some() {
+        if symbol.import_module().is_some() {
             return false;
         }
 

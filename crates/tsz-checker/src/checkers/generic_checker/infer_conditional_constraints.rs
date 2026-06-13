@@ -375,8 +375,8 @@ impl<'a> CheckerState<'a> {
             if symbol.flags & tsz_binder::symbol_flags::ALIAS == 0 {
                 None
             } else {
-                let module_name = symbol.import_module.clone()?;
-                let import_name = symbol.import_name.clone()?;
+                let module_name = symbol.import_module()?.to_string();
+                let import_name = symbol.import_name()?.to_string();
                 let source_file_idx = (symbol.decl_file_idx != u32::MAX)
                     .then_some(symbol.decl_file_idx as usize)
                     .or_else(|| self.ctx.resolve_symbol_file_index(sym_id));

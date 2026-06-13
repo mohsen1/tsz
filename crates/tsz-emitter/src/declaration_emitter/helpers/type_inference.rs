@@ -1572,10 +1572,13 @@ impl<'a> DeclarationEmitter<'a> {
         sym_id: SymbolId,
         binder: &BinderState,
     ) -> Option<String> {
-        self.import_symbol_map
-            .get(&sym_id)
-            .cloned()
-            .or_else(|| binder.symbols.get(sym_id)?.import_module.clone())
+        self.import_symbol_map.get(&sym_id).cloned().or_else(|| {
+            binder
+                .symbols
+                .get(sym_id)?
+                .import_module()
+                .map(|s| s.to_string())
+        })
     }
 
     pub(in crate::declaration_emitter) fn imported_value_module_specifier_from_syntax(

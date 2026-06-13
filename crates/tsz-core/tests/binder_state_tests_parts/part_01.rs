@@ -803,13 +803,13 @@ const y = bar;
 
     // Verify import_module is set correctly
     assert_eq!(
-        foo_import_sym.import_module,
-        Some("./file1".to_string()),
+        foo_import_sym.import_module(),
+        Some("./file1"),
         "foo import should have import_module set"
     );
     assert_eq!(
-        bar_import_sym.import_module,
-        Some("./file1".to_string()),
+        bar_import_sym.import_module(),
+        Some("./file1"),
         "bar import should have import_module set"
     );
 }
@@ -881,13 +881,13 @@ const x = aliasedValue;
 
     // Verify import_module and import_name are set correctly
     assert_eq!(
-        import_sym.import_module,
-        Some("./file1".to_string()),
+        import_sym.import_module(),
+        Some("./file1"),
         "import should have import_module set"
     );
     assert_eq!(
-        import_sym.import_name,
-        Some("originalValue".to_string()),
+        import_sym.import_name(),
+        Some("originalValue"),
         "import should have import_name set to original name"
     );
     assert_eq!(
@@ -942,11 +942,11 @@ function localFunction() { return localValue; }
         .expect("localFunction symbol should exist");
 
     assert_eq!(
-        value_sym.import_module, None,
+        value_sym.import_module(), None,
         "localValue should not have import_module set"
     );
     assert_eq!(
-        func_sym.import_module, None,
+        func_sym.import_module(), None,
         "localFunction should not have import_module set"
     );
 

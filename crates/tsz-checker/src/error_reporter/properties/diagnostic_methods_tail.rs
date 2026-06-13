@@ -181,8 +181,8 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        let symbol_is_namespace_import = symbol.import_module.is_some()
-            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"));
+        let symbol_is_namespace_import = symbol.import_module().is_some()
+            && (symbol.import_name().is_none() || symbol.import_name() == Some("*"));
         if symbol_is_namespace_import {
             return true;
         }
@@ -191,9 +191,9 @@ impl<'a> CheckerState<'a> {
             if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
                 && let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id)
             {
-                let resolved_is_namespace_import = resolved_symbol.import_module.is_some()
-                    && (resolved_symbol.import_name.is_none()
-                        || resolved_symbol.import_name.as_deref() == Some("*"));
+                let resolved_is_namespace_import = resolved_symbol.import_module().is_some()
+                    && (resolved_symbol.import_name().is_none()
+                        || resolved_symbol.import_name() == Some("*"));
                 if resolved_is_namespace_import {
                     return true;
                 }

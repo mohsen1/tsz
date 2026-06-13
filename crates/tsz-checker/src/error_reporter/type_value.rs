@@ -666,7 +666,7 @@ impl<'a> CheckerState<'a> {
                 None => continue,
             };
 
-            if let Some(module_specifier) = symbol.import_module.as_deref() {
+            if let Some(module_specifier) = symbol.import_module() {
                 let Some((export_name, is_namespace_binding)) =
                     self.effective_import_binding_name(symbol)
                 else {
@@ -708,7 +708,7 @@ impl<'a> CheckerState<'a> {
                 Some(s) => s,
                 None => continue,
             };
-            if let Some(module_specifier) = symbol.import_module.as_deref()
+            if let Some(module_specifier) = symbol.import_module()
                 && let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
                 && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
             {
@@ -726,14 +726,12 @@ impl<'a> CheckerState<'a> {
                         // Also check if the export= symbol is an alias that
                         // resolves to a type-only import
                         if eq_sym.has_any_flags(symbol_flags::ALIAS)
-                            && let Some(ref eq_import_module) = eq_sym.import_module
+                            && let Some(eq_import_module) = eq_sym.import_module()
                         {
-                            let eq_name = eq_sym
-                                .import_name
-                                .as_deref()
-                                .unwrap_or(&eq_sym.escaped_name);
-                            let is_ns = eq_sym.import_name.is_none()
-                                || eq_sym.import_name.as_deref() == Some("*");
+                            let eq_name =
+                                eq_sym.import_name().unwrap_or(eq_sym.escaped_name.as_str());
+                            let is_ns =
+                                eq_sym.import_name().is_none() || eq_sym.import_name() == Some("*");
                             // For namespace imports, check the main binder's
                             // merged symbol for is_type_only
                             if is_ns {

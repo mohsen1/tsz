@@ -184,8 +184,8 @@ impl<'a> CheckerState<'a> {
                 .get_symbol(local_sym_id)
                 .is_some_and(|symbol| {
                     symbol.has_any_flags(symbol_flags::ALIAS)
-                        && symbol.import_module.is_some()
-                        && symbol.import_name.as_deref() != Some("*")
+                        && symbol.import_module().is_some()
+                        && symbol.import_name() != Some("*")
                 })
         {
             // `import { X } from ...` referenced in plain type position.
@@ -731,7 +731,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .binder
                             .get_symbol_with_libs(left_sym_id, &lib_binders)
-                            .and_then(|s| s.import_module.clone())
+                            .and_then(|s| s.import_module().map(str::to_string))
                     } else {
                         // Nested qualified name (e.g., ns.Root.Foo) — walk to
                         // root identifier to extract the module specifier.
@@ -770,12 +770,12 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
                         .and_then(|symbol| {
-                            symbol.import_module.as_ref().map(|module_specifier| {
+                            symbol.import_module().map(|module_specifier| {
                                 (
-                                    module_specifier.clone(),
+                                    module_specifier.to_string(),
                                     symbol
-                                        .import_name
-                                        .clone()
+                                        .import_name()
+                                        .map(str::to_string)
                                         .unwrap_or_else(|| symbol.escaped_name.clone()),
                                 )
                             })
@@ -1628,12 +1628,12 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
                         .and_then(|symbol| {
-                            symbol.import_module.as_ref().map(|module_specifier| {
+                            symbol.import_module().map(|module_specifier| {
                                 (
-                                    module_specifier.clone(),
+                                    module_specifier.to_string(),
                                     symbol
-                                        .import_name
-                                        .clone()
+                                        .import_name()
+                                        .map(str::to_string)
                                         .unwrap_or_else(|| symbol.escaped_name.clone()),
                                 )
                             })

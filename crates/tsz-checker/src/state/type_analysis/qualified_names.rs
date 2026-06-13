@@ -325,7 +325,7 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left) {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     left_sym_for_missing = Some(sym_id);
-                    left_module_specifier = symbol.import_module.clone();
+                    left_module_specifier = symbol.import_module().map(str::to_string);
                     let mut result = self.resolve_symbol_export_for(
                         Some(sym_id),
                         symbol,
@@ -351,7 +351,7 @@ impl<'a> CheckerState<'a> {
                                 .as_ref()
                                 .and_then(|exports| exports.get(&right_name));
                             if result.is_none()
-                                && let Some(module) = alias_sym.import_module.as_ref()
+                                && let Some(module) = alias_sym.import_module()
                             {
                                 // Resolve from ALIAS's source file, then
                                 // fall back to current-file resolution.
@@ -615,7 +615,7 @@ impl<'a> CheckerState<'a> {
             } else if node.kind == SyntaxKind::Identifier as u16 {
                 let sym_id = self.resolve_identifier_symbol_as_qualified_type_anchor(idx)?;
                 let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders)?;
-                return symbol.import_module.clone();
+                return symbol.import_module().map(str::to_string);
             } else {
                 return None;
             }
@@ -753,7 +753,7 @@ impl<'a> CheckerState<'a> {
 
         // If not found in direct exports, check for re-exports
         // The member might be re-exported from another module
-        if let Some(ref module_specifier) = symbol.import_module {
+        if let Some(module_specifier) = symbol.import_module() {
             if self
                 .ctx
                 .namespace_import_alias_has_local_namespace_conflict(symbol)

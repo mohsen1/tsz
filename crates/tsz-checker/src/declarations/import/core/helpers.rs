@@ -404,8 +404,8 @@ impl<'a> CheckerState<'a> {
         // module namespace, so treat them as module-like for TS2497 purposes.
         if !is_module_or_variable
             && target.has_any_flags(symbol_flags::ALIAS)
-            && target.import_module.is_some()
-            && target.import_name.as_deref() == Some("*")
+            && target.import_module().is_some()
+            && target.import_name() == Some("*")
         {
             return false;
         }

@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if root_symbol.has_any_flags(symbol_flags::ALIAS) && root_symbol.import_module.is_some() {
+        if root_symbol.has_any_flags(symbol_flags::ALIAS) && root_symbol.import_module().is_some() {
             return false;
         }
         if root_symbol.has_any_flags(symbol_flags::CLASS) {

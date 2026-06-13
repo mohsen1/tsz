@@ -130,7 +130,7 @@ impl<'a> DeclarationEmitter<'a> {
             .count();
         if nm_count_in_original >= 2
             && original_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && let Some(import_module) = original_symbol.import_module.as_deref()
+            && let Some(import_module) = original_symbol.import_module()
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
             && self
@@ -221,7 +221,7 @@ impl<'a> DeclarationEmitter<'a> {
         // The "from" path is "foo/node_modules/nested".
         if nm_positions.len() >= 2
             && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && let Some(import_module) = &symbol.import_module
+            && let Some(import_module) = symbol.import_module()
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
         {
@@ -780,7 +780,7 @@ impl<'a> DeclarationEmitter<'a> {
             for (_, &exported_sym_id) in exports.iter() {
                 if let Some(symbol) = binder.symbols.get(exported_sym_id)
                     && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-                    && let Some(import_module) = &symbol.import_module
+                    && let Some(import_module) = symbol.import_module()
                     && import_module.starts_with('.')
                 {
                     // Normalize the joined path to remove `.` components
@@ -1053,11 +1053,8 @@ impl<'a> DeclarationEmitter<'a> {
         binder: &BinderState,
     ) -> Option<SymbolId> {
         let symbol = binder.symbols.get(sym_id)?;
-        let module_specifier = symbol.import_module.as_deref()?;
-        let export_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(symbol.escaped_name.as_str());
+        let module_specifier = symbol.import_module()?;
+        let export_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
         let current_path = self.current_file_path.as_deref()?;
 
         for module_path in self.matching_module_export_paths(binder, current_path, module_specifier)
@@ -1089,11 +1086,8 @@ impl<'a> DeclarationEmitter<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             return None;
         }
-        let module_specifier = symbol.import_module.as_deref()?;
-        let export_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(symbol.escaped_name.as_str());
+        let module_specifier = symbol.import_module()?;
+        let export_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
 
         // Use the alias symbol's own source file as the resolution base.
         let source_path = self.get_symbol_source_path(sym_id, binder)?;
@@ -1170,7 +1164,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             return None;
         }
-        let import_module = symbol.import_module.as_deref()?;
+        let import_module = symbol.import_module()?;
         // Only bare specifiers can point to nested node_modules.
         if import_module.is_empty()
             || import_module.starts_with('.')

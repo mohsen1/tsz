@@ -1426,7 +1426,7 @@ impl<'a> CheckerState<'a> {
         if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
             return true;
         }
-        if sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_none() {
+        if sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_none() {
             let arena = self.ctx.get_arena_for_file(owner_file_idx as u32);
             if sym.all_declarations().into_iter().any(|decl_idx| {
                 arena.get(decl_idx).is_some_and(|node| {

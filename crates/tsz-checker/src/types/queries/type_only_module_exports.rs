@@ -45,9 +45,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if let Some(module_specifier) = symbol.import_module.as_deref() {
+        if let Some(module_specifier) = symbol.import_module() {
             let is_namespace_binding =
-                symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
+                symbol.import_name().is_none() || symbol.import_name() == Some("*");
             if is_namespace_binding
                 && self
                     .classify_cross_file_type_only_kind(module_specifier, "module.exports")

@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, root_idx))
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
-            && symbol.import_module.is_some()
+            && symbol.import_module().is_some()
         {
             return true;
         }
@@ -1073,7 +1073,7 @@ impl<'a> CheckerState<'a> {
             && let Some(root_sym_id) = self.resolve_identifier_symbol(root_idx)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
             && root_symbol.has_any_flags(symbol_flags::ALIAS)
-            && root_symbol.import_module.is_some()
+            && root_symbol.import_module().is_some()
         {
             return false;
         }
@@ -1139,7 +1139,7 @@ impl<'a> CheckerState<'a> {
             && let Some(root_sym_id) = self.resolve_identifier_symbol(object_access.expression)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
             && root_symbol.has_any_flags(symbol_flags::ALIAS)
-            && root_symbol.import_module.is_some()
+            && root_symbol.import_module().is_some()
         {
             return false;
         }

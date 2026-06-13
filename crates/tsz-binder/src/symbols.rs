@@ -282,6 +282,32 @@ pub struct Symbol {
     /// This indicates which file's arena contains this symbol's declarations.
     /// Value of `u32::MAX` means single-file mode (use current arena).
     pub decl_file_idx: u32,
+    /// Out-of-lined import-alias payload.
+    ///
+    /// Fewer than ~5% of symbols are import aliases, yet the module specifier,
+    /// renamed export name, and explicit `resolution-mode` override are
+    /// per-import data. Storing them inline taxed every `Symbol` (millions per
+    /// large project) with ~50 unused bytes. They now live behind a heap
+    /// allocation that only import-alias symbols pay for (#13072 PR 2). Use the
+    /// [`Symbol::import_module`], [`Symbol::import_name`], and
+    /// [`Symbol::import_resolution_mode`] accessors to read, and
+    /// [`Symbol::set_import_module`], [`Symbol::set_import_name`], and
+    /// [`Symbol::set_import_resolution_mode`] to populate.
+    pub import_alias: Option<Box<ImportAliasData>>,
+    /// Whether this symbol is a UMD namespace export (`export as namespace Foo`).
+    /// UMD exports are ALIAS symbols that should be globally visible across files,
+    /// unlike regular import aliases which are file-local.
+    pub is_umd_export: bool,
+}
+
+/// Out-of-lined import-alias payload for [`Symbol`].
+///
+/// Only import-alias symbols allocate this box, so the common `Symbol` stays
+/// small (#13072). The checker and LSP read these through the accessors on
+/// [`Symbol`]; nothing constructs an `ImportAliasData` directly outside the
+/// `Symbol` setters.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ImportAliasData {
     /// Import module specifier for ES6 imports (e.g., './file' for `import { X } from './file'`)
     /// This enables resolving imported symbols to their actual exports from other files.
     pub import_module: Option<String>,
@@ -296,10 +322,6 @@ pub struct Symbol {
     /// inferred module mode. The checker maps this onto the resolution request
     /// so package `exports`/`imports` conditions pick the right target file.
     pub import_resolution_mode: Option<tsz_common::ImportResolutionMode>,
-    /// Whether this symbol is a UMD namespace export (`export as namespace Foo`).
-    /// UMD exports are ALIAS symbols that should be globally visible across files,
-    /// unlike regular import aliases which are file-local.
-    pub is_umd_export: bool,
 }
 
 impl Symbol {
@@ -320,11 +342,89 @@ impl Symbol {
             is_exported: false,
             is_type_only: false,
             decl_file_idx: u32::MAX,
-            import_module: None,
-            import_name: None,
-            import_resolution_mode: None,
+            import_alias: None,
             is_umd_export: false,
         }
+    }
+
+    /// Import module specifier for ES6 imports (e.g., `./file` for
+    /// `import { X } from './file'`), if this symbol is an import alias.
+    ///
+    /// Reads through the out-of-lined [`Self::import_alias`] payload (#13072).
+    #[inline]
+    #[must_use]
+    pub fn import_module(&self) -> Option<&str> {
+        self.import_alias
+            .as_ref()
+            .and_then(|data| data.import_module.as_deref())
+    }
+
+    /// Original export name for renamed imports (e.g., `foo` for
+    /// `import { foo as bar }`), if this symbol is an import alias.
+    ///
+    /// `None` means the import name matches [`Self::escaped_name`]. Reads
+    /// through the out-of-lined [`Self::import_alias`] payload (#13072).
+    #[inline]
+    #[must_use]
+    pub fn import_name(&self) -> Option<&str> {
+        self.import_alias
+            .as_ref()
+            .and_then(|data| data.import_name.as_deref())
+    }
+
+    /// Explicit `resolution-mode` override declared on this import alias, if any.
+    ///
+    /// Reads through the out-of-lined [`Self::import_alias`] payload (#13072).
+    #[inline]
+    #[must_use]
+    pub fn import_resolution_mode(&self) -> Option<tsz_common::ImportResolutionMode> {
+        self.import_alias
+            .as_ref()
+            .and_then(|data| data.import_resolution_mode)
+    }
+
+    /// True when this symbol carries an import module specifier.
+    #[inline]
+    #[must_use]
+    pub fn has_import_module(&self) -> bool {
+        self.import_module().is_some()
+    }
+
+    /// Mutable handle to the out-of-lined import-alias payload, allocating it
+    /// on first use. Only import-alias symbols ever allocate the box (#13072).
+    #[inline]
+    fn import_alias_mut(&mut self) -> &mut ImportAliasData {
+        self.import_alias.get_or_insert_with(Box::default)
+    }
+
+    /// Set the import module specifier, allocating the import-alias payload if
+    /// needed.
+    #[inline]
+    pub fn set_import_module(&mut self, module: Option<String>) {
+        if module.is_none() && self.import_alias.is_none() {
+            return;
+        }
+        self.import_alias_mut().import_module = module;
+    }
+
+    /// Set the renamed-import original name, allocating the import-alias payload
+    /// if needed.
+    #[inline]
+    pub fn set_import_name(&mut self, name: Option<String>) {
+        if name.is_none() && self.import_alias.is_none() {
+            return;
+        }
+        self.import_alias_mut().import_name = name;
+    }
+
+    /// Set the explicit `resolution-mode` override, allocating the import-alias
+    /// payload if needed.
+    #[inline]
+    pub fn set_import_resolution_mode(&mut self, mode: Option<tsz_common::ImportResolutionMode>) {
+        if mode.is_none() && self.import_alias.is_none() {
+            return;
+        }
+        self.import_alias_mut().import_resolution_mode = mode;
     }
 
     /// Estimate the heap bytes owned by this symbol beyond
@@ -343,11 +443,14 @@ impl Symbol {
         if let Some(members) = &self.members {
             size += std::mem::size_of::<SymbolTable>() + members.estimated_size_bytes();
         }
-        if let Some(module) = &self.import_module {
-            size += module.capacity();
-        }
-        if let Some(name) = &self.import_name {
-            size += name.capacity();
+        if let Some(alias) = &self.import_alias {
+            size += std::mem::size_of::<ImportAliasData>();
+            if let Some(module) = &alias.import_module {
+                size += module.capacity();
+            }
+            if let Some(name) = &alias.import_name {
+                size += name.capacity();
+            }
         }
         size
     }
@@ -1194,12 +1297,15 @@ mod tests {
     }
 
     /// Pin the size of `Symbol` so accidental field growth is caught in
-    /// review. Dropping the redundant `first_declaration_span` /
-    /// `value_declaration_span` fields (#13072) brought this from 200 to
-    /// 176 bytes; every interned symbol pays this footprint.
+    /// review; every interned symbol pays this footprint. Dropping the
+    /// redundant span fields (#13072 PR 1) brought this from 200 to 176 bytes;
+    /// out-of-lining the import-alias payload behind `Option<Box<ImportAliasData>>`
+    /// (#13072 PR 2) brought it from 176 to 136 bytes, since only the
+    /// fewer-than-5% import-alias symbols now pay for the module specifier,
+    /// renamed name, and resolution-mode fields.
     #[test]
     fn symbol_size_is_pinned() {
-        assert_eq!(std::mem::size_of::<Symbol>(), 176);
+        assert_eq!(std::mem::size_of::<Symbol>(), 136);
     }
 
     /// The derived span accessors must reproduce the semantics of the

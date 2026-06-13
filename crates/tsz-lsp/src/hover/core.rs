@@ -753,7 +753,7 @@ impl<'a> HoverProvider<'a> {
                     symbol.escaped_name
                 );
             }
-            if let Some(module_name) = symbol.import_module.as_deref() {
+            if let Some(module_name) = symbol.import_module() {
                 if decl_node_idx.is_some()
                     && let Some(decl_node) = self.arena.get(decl_node_idx)
                     && decl_node.kind == tsz_parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION

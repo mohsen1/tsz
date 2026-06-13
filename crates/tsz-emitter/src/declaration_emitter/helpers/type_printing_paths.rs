@@ -36,7 +36,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(symbol) = binder.symbols.get(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
-            && let Some(import_module) = symbol.import_module.as_deref()
+            && let Some(import_module) = symbol.import_module()
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
         {
@@ -80,7 +80,11 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(module_specifier.clone());
         }
 
-        binder.symbols.get(sym_id)?.import_module.clone()
+        binder
+            .symbols
+            .get(sym_id)?
+            .import_module()
+            .map(|s| s.to_string())
     }
 
     fn resolve_public_export_module_path(
@@ -219,10 +223,9 @@ impl<'a> DeclarationEmitter<'a> {
             // link them (e.g. cross-file merges).
             if let Some(alias_symbol) = binder.symbols.get(alias_sym_id) {
                 let alias_import_name = alias_symbol
-                    .import_name
-                    .as_deref()
+                    .import_name()
                     .unwrap_or(&alias_symbol.escaped_name);
-                if alias_import_name == target_name && alias_symbol.import_module.is_some() {
+                if alias_import_name == target_name && alias_symbol.import_module().is_some() {
                     // Verify the alias points to the same foreign module.
                     if let Some(current_path) = &self.current_file_path
                         && let Some(source_arena) = binder.symbol_arenas.get(&original_sym_id)
@@ -231,9 +234,8 @@ impl<'a> DeclarationEmitter<'a> {
                         if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
                             let rel = self.calculate_relative_path(current_path, source_path);
                             let stripped = self.strip_module_path_extension(&rel);
-                            if alias_symbol.import_module.as_deref() == Some(&stripped)
-                                || alias_symbol.import_module.as_deref()
-                                    == Some(source_path.as_str())
+                            if alias_symbol.import_module() == Some(&stripped)
+                                || alias_symbol.import_module() == Some(source_path.as_str())
                             {
                                 return true;
                             }
@@ -266,7 +268,8 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Import aliases are never "global" in this sense.
-        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module.is_some() {
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) && symbol.import_module().is_some()
+        {
             return false;
         }
 
@@ -443,8 +446,8 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && symbol.import_module.is_some()
-            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
+            && symbol.import_module().is_some()
+            && (symbol.import_name().is_none() || symbol.import_name() == Some("*"))
     }
 
     /// When `sym_id` is the resolved target of a single in-scope
@@ -577,7 +580,7 @@ impl<'a> DeclarationEmitter<'a> {
             if !self.is_namespace_import_alias_symbol(import_sym_id) {
                 continue;
             }
-            if symbol.import_module.as_deref() == Some(module_path.as_str()) {
+            if symbol.import_module() == Some(module_path.as_str()) {
                 return Some(symbol.escaped_name.clone());
             }
         }

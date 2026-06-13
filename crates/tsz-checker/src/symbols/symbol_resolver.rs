@@ -1181,13 +1181,12 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(alias_symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                && let Some(module_name) = alias_symbol.import_module.as_ref()
-                && alias_symbol.import_name.is_some()
+                && let Some(module_name) = alias_symbol.import_module()
+                && alias_symbol.import_name().is_some()
             {
                 let expected_name = alias_symbol
-                    .import_name
-                    .as_deref()
-                    .unwrap_or(&alias_symbol.escaped_name);
+                    .import_name()
+                    .unwrap_or(alias_symbol.escaped_name.as_str());
                 let source_file_idx = self
                     .ctx
                     .resolve_symbol_file_index(sym_id)
@@ -1246,12 +1245,11 @@ impl<'a> CheckerState<'a> {
                 .map(|target_sym_id| {
                     if let Some(alias_symbol) =
                         self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        && let Some(module_name) = alias_symbol.import_module.as_ref()
+                        && let Some(module_name) = alias_symbol.import_module()
                     {
                         let expected_name = alias_symbol
-                            .import_name
-                            .as_deref()
-                            .unwrap_or(&alias_symbol.escaped_name);
+                            .import_name()
+                            .unwrap_or(alias_symbol.escaped_name.as_str());
                         self.record_cross_file_symbol_if_needed(
                             target_sym_id,
                             expected_name,
@@ -1271,8 +1269,8 @@ impl<'a> CheckerState<'a> {
             }
 
             let has_local_type_meaning = self.symbol_has_declared_type_meaning(sym_id);
-            let is_namespace_import_alias = symbol.import_module.is_some()
-                && matches!(symbol.import_name.as_deref(), Some("*"));
+            let is_namespace_import_alias =
+                symbol.import_module().is_some() && matches!(symbol.import_name(), Some("*"));
 
             has_local_type_meaning || is_namespace_import_alias
         };
@@ -1663,7 +1661,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if let Some(ref module_specifier) = symbol.import_module {
+            if let Some(module_specifier) = symbol.import_module() {
                 let mut visited_aliases = AliasCycleTracker::new();
                 if let Some(member_sym) = self.resolve_reexported_member_symbol(
                     module_specifier,
@@ -1798,8 +1796,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     && alias_symbol.has_any_flags(symbol_flags::ALIAS)
                     && alias_symbol.is_type_only
-                    && let Some(module_name) = alias_symbol.import_module.as_ref()
-                    && let Some(import_name) = alias_symbol.import_name.as_deref()
+                    && let Some(module_name) = alias_symbol.import_module()
+                    && let Some(import_name) = alias_symbol.import_name()
                 {
                     let source_file_idx = self
                         .ctx

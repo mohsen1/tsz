@@ -833,7 +833,7 @@ impl<'a> TypePrinter<'a> {
         symbol.declarations.is_empty()
             && !symbol.parent.is_some()
             && self.resolve_symbol_module_path(sym_id).is_none()
-            && !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some())
+            && !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module().is_some())
     }
 
     pub(crate) fn intersection_member_priority(&self, type_id: TypeId) -> u8 {

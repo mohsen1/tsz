@@ -221,7 +221,7 @@ impl<'a> CheckerState<'a> {
             if candidate.escaped_name != type_symbol.escaped_name
                 || (candidate.flags & tsz_binder::symbol_flags::VALUE) == 0
                 || (candidate.flags & tsz_binder::symbol_flags::ALIAS) != 0
-                || candidate.import_module.is_some()
+                || candidate.import_module().is_some()
                 || !candidate.value_declaration.is_some()
             {
                 continue;
@@ -661,12 +661,12 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(sym_id))
                     .and_then(|symbol| {
-                        symbol.import_module.as_ref().map(|module_spec| {
+                        symbol.import_module().map(|module_spec| {
                             (
-                                module_spec.clone(),
+                                module_spec.to_string(),
                                 symbol
-                                    .import_name
-                                    .clone()
+                                    .import_name()
+                                    .map(str::to_string)
                                     .unwrap_or_else(|| name.to_string()),
                             )
                         })
@@ -896,8 +896,8 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(sym_id))
                     .and_then(|symbol| {
-                        (symbol.import_name.as_deref() == Some("default"))
-                            .then(|| symbol.import_module.clone())
+                        (symbol.import_name() == Some("default"))
+                            .then(|| symbol.import_module().map(str::to_string))
                             .flatten()
                     })
                     .or_else(|| self.source_file_default_import_module_named(idx, name))
@@ -942,9 +942,8 @@ impl<'a> CheckerState<'a> {
                         let lib_binders = self.get_lib_binders();
                         if let Some(symbol) =
                             self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                            && symbol.import_module.is_some()
-                            && (symbol.import_name.is_none()
-                                || symbol.import_name.as_deref() == Some("*"))
+                            && symbol.import_module().is_some()
+                            && (symbol.import_name().is_none() || symbol.import_name() == Some("*"))
                         {
                             return self.get_type_of_symbol(sym_id);
                         }
@@ -1213,9 +1212,9 @@ impl<'a> CheckerState<'a> {
                         // binder to reach the underlying merged symbol.
                         if let Some(target) = self.get_symbol_globally(target_sym_id)
                             && (target.flags & tsz_binder::symbol_flags::ALIAS) != 0
-                            && target.import_module.is_none()
+                            && target.import_module().is_none()
                             && (target.escaped_name == "default"
-                                || target.import_name.as_deref() == Some("default"))
+                                || target.import_name() == Some("default"))
                             && let Some(decl_idx) = target.primary_declaration()
                             && let Some(target_file_idx) =
                                 self.ctx.resolve_symbol_file_index(target_sym_id)
@@ -1241,7 +1240,7 @@ impl<'a> CheckerState<'a> {
                             != 0
                             && (tflags & tsz_binder::symbol_flags::VALUE) != 0
                             && (tflags & tsz_binder::symbol_flags::ALIAS) == 0
-                            && target.import_module.is_none()
+                            && target.import_module().is_none()
                             && target.value_declaration.is_some()
                         {
                             let target_value_decl = target.value_declaration;
@@ -1505,8 +1504,8 @@ impl<'a> CheckerState<'a> {
                     self.get_cross_file_symbol(sym_id)
                         .or_else(|| self.ctx.binder.get_symbol(sym_id))
                         .and_then(|symbol| {
-                            (symbol.import_name.as_deref() == Some("default"))
-                                .then(|| symbol.import_module.clone())
+                            (symbol.import_name() == Some("default"))
+                                .then(|| symbol.import_module().map(str::to_string))
                                 .flatten()
                         })
                 })

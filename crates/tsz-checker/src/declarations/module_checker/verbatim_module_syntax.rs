@@ -224,9 +224,9 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if sym.has_any_flags(symbol_flags::ALIAS)
-                && let Some(ref module_spec) = sym.import_module
+                && let Some(module_spec) = sym.import_module()
             {
-                let import_name = sym.import_name.as_deref().unwrap_or(name);
+                let import_name = sym.import_name().unwrap_or(name);
                 return self.is_export_type_only_across_binders(module_spec, import_name);
             }
         }
@@ -248,9 +248,9 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if sym.has_any_flags(symbol_flags::ALIAS)
-                && let Some(ref module_spec) = sym.import_module
+                && let Some(module_spec) = sym.import_module()
             {
-                let import_name = sym.import_name.as_deref().unwrap_or(name);
+                let import_name = sym.import_name().unwrap_or(name);
                 return self.is_export_type_only_syntax_across_binders(module_spec, import_name);
             }
         }
@@ -311,9 +311,9 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             if sym.has_any_flags(symbol_flags::ALIAS)
-                && let Some(ref module_spec) = sym.import_module
+                && let Some(module_spec) = sym.import_module()
             {
-                let import_name = sym.import_name.as_deref().unwrap_or(name);
+                let import_name = sym.import_name().unwrap_or(name);
                 return self.is_import_specifier_type_only(module_spec, import_name);
             }
         }
@@ -476,14 +476,10 @@ impl<'a> CheckerState<'a> {
                 // current file, suppressing TS1292.
                 return;
             }
-            let Some(ref module_spec) = alias_sym.import_module else {
+            let Some(module_spec) = alias_sym.import_module() else {
                 return;
             };
-            let import_name = alias_sym
-                .import_name
-                .as_deref()
-                .unwrap_or(name.as_str())
-                .to_string();
+            let import_name = alias_sym.import_name().unwrap_or(name.as_str()).to_string();
 
             // Resolve the imported target's flags. If the target is type-only
             // (Type but not Value), TS1292 applies.

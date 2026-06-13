@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
         let is_reexport_alias = |sym_id: tsz_binder::SymbolId| {
             target_binder
                 .get_symbol(sym_id)
-                .is_some_and(|symbol| symbol.import_module.is_some())
+                .is_some_and(|symbol| symbol.import_module().is_some())
         };
 
         if let Some(exports_table) = self

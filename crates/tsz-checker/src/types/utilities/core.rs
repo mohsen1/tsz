@@ -951,10 +951,7 @@ impl<'a> CheckerState<'a> {
 
         // symbol_is_value_only already checks TYPE flags and declarations
         // No need for redundant declaration check here
-        let target_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(symbol.escaped_name.as_str());
+        let target_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
         self.symbol_is_value_only(target, Some(target_name))
     }
 

@@ -957,13 +957,13 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .binder
                         .get_symbol(alias_sym_id)
-                        .and_then(|alias_sym| alias_sym.import_module.as_ref())
+                        .and_then(|alias_sym| alias_sym.import_module())
                         .is_some_and(|module_spec| {
                             let import_name = self
                                 .ctx
                                 .binder
                                 .get_symbol(alias_sym_id)
-                                .and_then(|s| s.import_name.clone())
+                                .and_then(|s| s.import_name().map(str::to_string))
                                 .unwrap_or_else(|| base_name.clone());
                             self.module_augmentation_has_type_params(module_spec, &import_name)
                         })

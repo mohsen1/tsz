@@ -606,19 +606,19 @@ impl BinderState {
     pub(crate) fn resolve_import_if_needed(&self, sym_id: SymbolId) -> Option<SymbolId> {
         // Get the symbol to check if it's an import
         let sym = self.symbols.get(sym_id)?;
-        let module_specifier = sym.import_module.as_ref()?;
+        let module_specifier = sym.import_module()?;
 
         // For namespace/require imports (`import * as X from "m"` or
         // `import X = require("m")`), import_name is None. These resolve to the
         // module namespace, NOT to a specific named export. Only try `export=`.
-        if sym.import_name.is_none() {
+        if sym.import_name().is_none() {
             return self.resolve_import_with_reexports(module_specifier, "export=");
         }
 
         // Determine the export name:
         // - If import_name is set, use it (for renamed imports like `import { foo as bar }`)
         // - Otherwise use the symbol's escaped_name
-        let export_name = sym.import_name.as_ref().unwrap_or(&sym.escaped_name);
+        let export_name = sym.import_name().unwrap_or(&sym.escaped_name);
 
         // Try to resolve the import, following re-export chains
         if let Some(resolved) = self.resolve_import_with_reexports(module_specifier, export_name) {

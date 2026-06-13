@@ -912,7 +912,7 @@ impl<'a> CheckerState<'a> {
         // The parent package is between the FIRST node_modules and the second.
         if nm_positions.len() >= 2
             && symbol.has_any_flags(symbol_flags::ALIAS)
-            && let Some(import_module) = &symbol.import_module
+            && let Some(import_module) = symbol.import_module()
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
         {

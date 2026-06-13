@@ -213,17 +213,17 @@ impl<'a> CheckerState<'a> {
                 .get_binder_for_file(actual_file)
                 .and_then(|binder| binder.get_symbol(sym_id))
                 .and_then(|sym| {
-                    sym.import_module.as_ref().map(|m| {
+                    sym.import_module().map(|m| {
                         let next_name = sym
-                            .import_name
-                            .clone()
+                            .import_name()
+                            .map(str::to_string)
                             .unwrap_or_else(|| current_name.clone());
                         let decl_file = if sym.decl_file_idx == u32::MAX {
                             actual_file
                         } else {
                             sym.decl_file_idx as usize
                         };
-                        (m.clone(), next_name, decl_file)
+                        (m.to_string(), next_name, decl_file)
                     })
                 });
             match next_hop {

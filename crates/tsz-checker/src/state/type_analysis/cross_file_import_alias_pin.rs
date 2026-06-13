@@ -22,6 +22,7 @@ impl<'a> CheckerState<'a> {
     /// Local import alias (`ALIAS` + `import_module`) at `sym_id`, if any.
     pub(crate) fn local_import_alias(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
         let local = self.ctx.binder.get_symbol(sym_id)?;
-        (local.has_any_flags(symbol_flags::ALIAS) && local.import_module.is_some()).then_some(local)
+        (local.has_any_flags(symbol_flags::ALIAS) && local.import_module().is_some())
+            .then_some(local)
     }
 }

@@ -431,11 +431,11 @@ impl ProjectFile {
             if let Some(ref members) = sym.members {
                 size += members.len() * (32 + std::mem::size_of::<SymbolId>());
             }
-            if let Some(ref s) = sym.import_module {
-                size += s.capacity();
+            if let Some(s) = sym.import_module() {
+                size += s.len();
             }
-            if let Some(ref s) = sym.import_name {
-                size += s.capacity();
+            if let Some(s) = sym.import_name() {
+                size += s.len();
             }
         }
 

@@ -860,8 +860,8 @@ const x = value;
         "Import symbol should be ALIAS"
     );
     assert_eq!(
-        import_sym.import_module,
-        Some("./file1".to_string()),
+        import_sym.import_module(),
+        Some("./file1"),
         "Import symbol should have import_module set"
     );
 }

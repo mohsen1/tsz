@@ -37,7 +37,7 @@ impl UsageAnalyzer<'_> {
             return false;
         };
         let resolved_sym_id = if source_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && source_symbol.import_module.is_some()
+            && source_symbol.import_module().is_some()
         {
             self.resolve_import_alias_target_symbol(sym_id)
                 .unwrap_or(sym_id)
@@ -65,8 +65,8 @@ impl UsageAnalyzer<'_> {
         };
 
         symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && symbol.import_module.is_some()
-            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
+            && symbol.import_module().is_some()
+            && (symbol.import_name().is_none() || symbol.import_name() == Some("*"))
     }
 
     fn entity_access_root_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {

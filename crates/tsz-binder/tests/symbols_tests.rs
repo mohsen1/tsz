@@ -81,8 +81,9 @@ mod symbol_tests {
         assert!(symbol.members.is_none());
         assert!(!symbol.is_exported);
         assert!(!symbol.is_type_only);
-        assert!(symbol.import_module.is_none());
-        assert!(symbol.import_name.is_none());
+        assert!(symbol.import_module().is_none());
+        assert!(symbol.import_name().is_none());
+        assert!(symbol.import_alias.is_none());
         assert!(!symbol.is_umd_export);
     }
 

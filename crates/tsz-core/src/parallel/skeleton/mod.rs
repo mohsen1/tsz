@@ -300,7 +300,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
                 has_members: sym.members.is_some(),
                 is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
                 is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
-                import_module: sym.import_module.clone(),
+                import_module: sym.import_module().map(str::to_string),
                 heritage_fingerprint,
                 heritage_count,
             });
@@ -327,7 +327,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
                     has_members: sym.members.is_some(),
                     is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
                     is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
-                    import_module: sym.import_module.clone(),
+                    import_module: sym.import_module().map(str::to_string),
                     heritage_fingerprint,
                     heritage_count,
                 });

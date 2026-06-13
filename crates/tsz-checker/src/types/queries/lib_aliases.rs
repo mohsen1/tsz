@@ -103,11 +103,8 @@ impl<'a> CheckerState<'a> {
             // Prevent infinite loops in re-export chains
             if !visited_aliases.contains(&resolved_sym_id) {
                 let mut preferred_target = resolved_sym_id;
-                if let Some(module_name) = symbol.import_module.as_ref() {
-                    let export_name = symbol
-                        .import_name
-                        .as_deref()
-                        .unwrap_or(symbol.escaped_name.as_str());
+                if let Some(module_name) = symbol.import_module() {
+                    let export_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
                     if export_name != "*"
                         && self.symbol_is_namespace_only_tracked(resolved_sym_id, visited_aliases)
                         && let Some(member_sym_id) = self
@@ -127,17 +124,14 @@ impl<'a> CheckerState<'a> {
         // Fallback to direct module_exports lookup for backward compatibility
         // Handle ES6 imports: import { X } from 'module' or import X from 'module'
         // The binder sets import_module and import_name for these
-        if let Some(ref module_name) = symbol.import_module {
-            let export_name = symbol
-                .import_name
-                .as_deref()
-                .unwrap_or(&symbol.escaped_name);
+        if let Some(module_name) = symbol.import_module() {
+            let export_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
             // An explicit `resolution-mode` (from a JSDoc `@import ... with
             // { "resolution-mode": ... }` attribute) routes the specifier
             // through the requested package condition so members resolve from
             // the matching ESM/CJS declaration file, mirroring tsc.
             let resolution_mode_override: Option<crate::context::ResolutionModeOverride> =
-                symbol.import_resolution_mode.map(Into::into);
+                symbol.import_resolution_mode().map(Into::into);
             if export_name == "default"
                 && self.ctx.compiler_options.module.is_node_module()
                 && self.ctx.file_is_esm == Some(true)
@@ -159,7 +153,7 @@ impl<'a> CheckerState<'a> {
             // import_name is None and escaped_name could accidentally match
             // a specific export, resolving the alias to that export instead
             // of the module namespace.
-            if symbol.import_name.is_some() {
+            if symbol.import_name().is_some() {
                 let export_equals_member = self.resolve_named_export_via_export_equals_tracked(
                     module_name,
                     export_name,
@@ -241,7 +235,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if symbol.import_name.is_some()
+            if symbol.import_name().is_some()
                 && let Some(target_sym_id) = self.resolve_named_export_via_export_equals_tracked(
                     module_name,
                     export_name,
@@ -257,7 +251,7 @@ impl<'a> CheckerState<'a> {
             // module's `export =` value (key `"export="`), falling back to
             // `"module.exports"` for Node20/NodeNext CJS-of-ESM consumers —
             // see `export_equals_target_for_require_consumer`.
-            if symbol.import_name.is_none() {
+            if symbol.import_name().is_none() {
                 let lookup = |binder: &tsz_binder::BinderState| {
                     binder.module_exports.get(module_name).and_then(|exports| {
                         self.export_equals_target_for_require_consumer(exports, module_name)
@@ -306,7 +300,7 @@ impl<'a> CheckerState<'a> {
                     // The symbol itself acts as the namespace container; record
                     // all target exports for cross-file member resolution.
                     let is_namespace_import = export_name == "*"
-                        || (symbol.import_name.is_none() && symbol.escaped_name != "default");
+                        || (symbol.import_name().is_none() && symbol.escaped_name != "default");
                     if is_namespace_import {
                         if let Some(exports) =
                             self.ctx.module_exports_for_module(target_binder, file_name)
@@ -344,7 +338,7 @@ impl<'a> CheckerState<'a> {
                         // Node20/NodeNext CJS-of-ESM `"module.exports"` fallback
                         // when applicable (see
                         // `export_equals_target_for_require_consumer`).
-                        if symbol.import_name.is_none()
+                        if symbol.import_name().is_none()
                             && let Some(target_sym_id) =
                                 self.export_equals_target_for_require_consumer(exports, module_name)
                         {
@@ -437,7 +431,7 @@ impl<'a> CheckerState<'a> {
             return self
                 .resolve_require_call_symbol(import.module_specifier, Some(visited_aliases));
         }
-        if symbol.import_module.is_none() {
+        if symbol.import_module().is_none() {
             return Some(sym_id);
         }
         // For other alias symbols (not ES6 imports or import equals), return None

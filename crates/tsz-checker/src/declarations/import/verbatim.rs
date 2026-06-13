@@ -52,8 +52,8 @@ impl<'a> CheckerState<'a> {
         // empty. Follow `import_module` to check the target module's
         // top-level exports for any runtime value before short-circuiting.
         let is_namespace_style_alias = sym.has_any_flags(symbol_flags::ALIAS)
-            && sym.import_module.is_some()
-            && sym.import_name.as_deref() == Some("*");
+            && sym.import_module().is_some()
+            && sym.import_name() == Some("*");
         if !sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
             && !is_namespace_style_alias
         {
@@ -83,7 +83,7 @@ impl<'a> CheckerState<'a> {
         // exports/members are empty — the runtime exports live in the target
         // module. Follow the import_module pointer to check that module's
         // top-level exports for any runtime value.
-        if let Some(ref module_specifier) = sym.import_module
+        if let Some(module_specifier) = sym.import_module()
             && let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
             && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
         {
@@ -402,7 +402,7 @@ impl<'a> CheckerState<'a> {
                             && let Some(default_sym_id) = exports.get(candidate_name)
                             && let Some(default_sym) = target_binder.get_symbol(default_sym_id)
                             && default_sym.has_any_flags(symbol_flags::ALIAS)
-                            && default_sym.import_module.is_none()
+                            && default_sym.import_module().is_none()
                             && let Some(target_decl_idx) = default_sym.primary_declaration()
                             && let Some(target_decl_node) = target_arena.get(target_decl_idx)
                             && let Some(target_ident) =

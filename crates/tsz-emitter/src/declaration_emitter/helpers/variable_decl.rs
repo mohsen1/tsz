@@ -1477,12 +1477,9 @@ impl<'a> DeclarationEmitter<'a> {
             // produce a false positive.
             if let Some(symbol) = binder.symbols.get(sym_id)
                 && symbol.has_any_flags(symbol_flags::ALIAS)
-                && let Some(module_specifier) = symbol.import_module.as_deref()
+                && let Some(module_specifier) = symbol.import_module()
             {
-                let export_name = symbol
-                    .import_name
-                    .as_deref()
-                    .unwrap_or(symbol.escaped_name.as_str());
+                let export_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
                 if self.ambient_module_contains_class(module_specifier, export_name) {
                     return true;
                 }

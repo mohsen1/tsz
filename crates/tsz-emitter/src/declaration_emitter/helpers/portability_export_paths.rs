@@ -14,11 +14,8 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let module_specifier = symbol.import_module.as_deref()?;
-        let export_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(symbol.escaped_name.as_str());
+        let module_specifier = symbol.import_module()?;
+        let export_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
         let current_path = self.current_file_path.as_deref()?;
 
         for module_path in self.matching_module_export_paths(binder, current_path, module_specifier)
@@ -69,7 +66,7 @@ impl<'a> DeclarationEmitter<'a> {
         binder
             .symbols
             .get(sym_id)
-            .and_then(|symbol| symbol.import_name.as_deref())
+            .and_then(|symbol| symbol.import_name())
             .unwrap_or(fallback)
     }
 

@@ -1741,7 +1741,7 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                symbol.import_module.is_some() && symbol.has_any_flags(symbol_flags::ALIAS)
+                symbol.import_module().is_some() && symbol.has_any_flags(symbol_flags::ALIAS)
             })
         }) || self.current_file_import_binds_name(name)
     }

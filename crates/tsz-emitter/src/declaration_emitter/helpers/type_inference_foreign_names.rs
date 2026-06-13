@@ -138,7 +138,7 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     continue;
                 }
-                let Some(module_path) = symbol.import_module.as_deref() else {
+                let Some(module_path) = symbol.import_module() else {
                     continue;
                 };
                 let Some(module_specifier) =

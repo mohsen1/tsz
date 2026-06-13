@@ -1322,8 +1322,8 @@ impl<'a> DeclarationEmitter<'a> {
             .copied()
             .or_else(|| binder.file_locals.get(local_name))?;
         let symbol = binder.symbols.get(sym_id)?;
-        let import_module = symbol.import_module.as_deref()?;
-        let import_name = symbol.import_name.as_deref()?;
+        let import_module = symbol.import_module()?;
+        let import_name = symbol.import_name()?;
 
         if import_name == "*"
             || import_name == local_name
@@ -1339,7 +1339,7 @@ impl<'a> DeclarationEmitter<'a> {
         let canonical_sym_id = self.import_name_map.get(import_name).copied()?;
         let canonical_symbol = binder.symbols.get(canonical_sym_id)?;
         if canonical_symbol.escaped_name != import_name
-            || canonical_symbol.import_module.as_deref() != Some(import_module)
+            || canonical_symbol.import_module() != Some(import_module)
         {
             return None;
         }
@@ -1443,14 +1443,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return false;
         };
-        let Some(import_module) = symbol.import_module.as_deref() else {
+        let Some(import_module) = symbol.import_module() else {
             return false;
         };
         let local_name = symbol.escaped_name.as_str();
-        let import_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(&symbol.escaped_name);
+        let import_name = symbol.import_name().unwrap_or(&symbol.escaped_name);
 
         if local_name != import_name {
             return false;
@@ -1462,7 +1459,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             if used_symbol.escaped_name != import_name
-                && used_symbol.import_name.as_deref() != Some(import_name)
+                && used_symbol.import_name() != Some(import_name)
             {
                 return false;
             }
@@ -1471,7 +1468,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return false;
             }
 
-            used_symbol.import_module.as_deref() == Some(import_module)
+            used_symbol.import_module() == Some(import_module)
                 || self.resolve_symbol_module_path(used_sym_id).as_deref() == Some(import_module)
         })
     }

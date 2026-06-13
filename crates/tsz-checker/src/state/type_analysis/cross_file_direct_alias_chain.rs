@@ -1386,11 +1386,8 @@ impl<'a> CheckerState<'a> {
         if symbol.flags & symbol_flags::ALIAS == 0 {
             return None;
         }
-        let module_specifier = symbol.import_module.as_ref()?;
-        let import_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(symbol.escaped_name.as_str());
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
         if import_name == "*" {
             return None;
         }
@@ -1433,11 +1430,8 @@ impl<'a> CheckerState<'a> {
                 sym_id,
             });
         }
-        let module_specifier = symbol.import_module.as_ref()?;
-        let import_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(symbol.escaped_name.as_str());
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
         if import_name == "*" {
             return None;
         }

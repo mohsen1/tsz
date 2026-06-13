@@ -1429,7 +1429,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .binder
                     .get_symbol(sym_id)
-                    .is_some_and(|s| s.import_module.is_some());
+                    .is_some_and(|s| s.import_module().is_some());
                 if is_import {
                     continue;
                 }

@@ -955,8 +955,8 @@ fn direct_source_file_type_alias_lowers_same_binder_export_alias_symbol() {
         .alloc(symbol_flags::ALIAS, "Alias".to_string());
     {
         let alias_symbol = binder.symbols.get_mut(alias_sym).expect("Alias symbol");
-        alias_symbol.import_module = Some("./target".to_string());
-        alias_symbol.import_name = Some("Leaf".to_string());
+        alias_symbol.set_import_module(Some("./target".to_string()));
+        alias_symbol.set_import_name(Some("Leaf".to_string()));
         alias_symbol.is_type_only = true;
     }
     binder.file_locals.set("Alias".to_string(), alias_sym);
@@ -1004,8 +1004,8 @@ fn direct_source_file_type_alias_lowers_renamed_same_binder_alias_with_type_args
         .alloc(symbol_flags::ALIAS, "Renamed".to_string());
     {
         let alias_symbol = binder.symbols.get_mut(alias_sym).expect("Renamed symbol");
-        alias_symbol.import_module = Some("./target".to_string());
-        alias_symbol.import_name = Some("Wrap".to_string());
+        alias_symbol.set_import_module(Some("./target".to_string()));
+        alias_symbol.set_import_name(Some("Wrap".to_string()));
         alias_symbol.is_type_only = true;
     }
     binder.file_locals.set("Renamed".to_string(), alias_sym);
@@ -1054,8 +1054,8 @@ fn direct_source_file_type_alias_rejects_alias_symbol_to_typeof_body() {
         .alloc(symbol_flags::ALIAS, "Alias".to_string());
     {
         let alias_symbol = binder.symbols.get_mut(alias_sym).expect("Alias symbol");
-        alias_symbol.import_module = Some("./target".to_string());
-        alias_symbol.import_name = Some("Flow".to_string());
+        alias_symbol.set_import_module(Some("./target".to_string()));
+        alias_symbol.set_import_name(Some("Flow".to_string()));
         alias_symbol.is_type_only = true;
     }
     binder.file_locals.set("Alias".to_string(), alias_sym);

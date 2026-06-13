@@ -460,8 +460,8 @@ impl<'a> CheckerState<'a> {
             .get_cross_file_symbol(member_id)
             .or_else(|| self.ctx.binder.get_symbol(member_id))
             && member_symbol.has_any_flags(symbol_flags::ALIAS)
-            && member_symbol.import_name.is_none()
-            && let Some(module_specifier) = member_symbol.import_module.clone()
+            && member_symbol.import_name().is_none()
+            && let Some(module_specifier) = member_symbol.import_module().map(str::to_string)
         {
             let source_file_idx = if member_symbol.decl_file_idx == u32::MAX {
                 self.ctx.current_file_idx
@@ -479,8 +479,8 @@ impl<'a> CheckerState<'a> {
             .get_cross_file_symbol(member_id)
             .or_else(|| self.ctx.binder.get_symbol(member_id))
             && member_symbol.has_any_flags(symbol_flags::ALIAS)
-            && member_symbol.import_name.as_deref() == Some("default")
-            && let Some(module_specifier) = member_symbol.import_module.clone()
+            && member_symbol.import_name() == Some("default")
+            && let Some(module_specifier) = member_symbol.import_module().map(str::to_string)
             && let Some(namespace_type) =
                 self.node_esm_cjs_default_import_namespace_type(&module_specifier)
         {
@@ -541,10 +541,10 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = binder.file_locals.get(namespace_name)
                 && let Some(symbol) = binder.get_symbol(sym_id)
                 && symbol.is_umd_export
-                && let Some(module_spec) = symbol.import_module.as_ref()
+                && let Some(module_spec) = symbol.import_module()
                 && !module_specs.iter().any(|existing| existing == module_spec)
             {
-                module_specs.push(module_spec.clone());
+                module_specs.push(module_spec.to_string());
             }
         };
 
@@ -675,9 +675,8 @@ impl<'a> CheckerState<'a> {
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
         if !symbol.has_any_flags(symbol_flags::ALIAS)
-            || symbol.import_module.is_some()
-            || !(symbol.escaped_name == "default"
-                || symbol.import_name.as_deref() == Some("default"))
+            || symbol.import_module().is_some()
+            || !(symbol.escaped_name == "default" || symbol.import_name() == Some("default"))
         {
             return None;
         }
@@ -818,7 +817,7 @@ impl<'a> CheckerState<'a> {
                         symbol.escaped_name.clone(),
                         direct_member_id,
                         module_export_member_id,
-                        symbol.import_module.clone(),
+                        symbol.import_module().map(str::to_string),
                     )
                 };
 
@@ -960,12 +959,11 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let module_name = symbol
-                        .import_module
-                        .as_deref()
+                        .import_module()
                         .unwrap_or(symbol.escaped_name.as_str())
                         .to_string();
 
-                    let import_module = symbol.import_module.clone();
+                    let import_module = symbol.import_module().map(str::to_string);
 
                     let direct_member_id = symbol
                         .exports
@@ -1446,7 +1444,7 @@ impl<'a> CheckerState<'a> {
                 symbol.escaped_name.clone(),
                 direct_member_id,
                 module_export_member_id,
-                symbol.import_module.clone(),
+                symbol.import_module().map(str::to_string),
                 symbol.decl_file_idx as usize,
             )
         };

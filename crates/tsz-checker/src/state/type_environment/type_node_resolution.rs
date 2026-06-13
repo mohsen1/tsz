@@ -1137,12 +1137,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             // Must be a star namespace import: `import * as L from "..."`
-            if !ns_symbol.has_any_flags(symbol_flags::ALIAS)
-                || ns_symbol.import_name.as_deref() != Some("*")
+            if !ns_symbol.has_any_flags(symbol_flags::ALIAS) || ns_symbol.import_name() != Some("*")
             {
                 continue;
             }
-            let Some(module_name) = ns_symbol.import_module.as_deref() else {
+            let Some(module_name) = ns_symbol.import_module() else {
                 continue;
             };
 

@@ -123,7 +123,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         if !parts.is_empty()
             && root_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && let Some(module_specifier) = root_symbol.import_module.as_deref()
+            && let Some(module_specifier) = root_symbol.import_module()
             && let Some(current_path) = self.current_file_path.as_deref()
         {
             for module_path in
@@ -132,7 +132,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(exports) = binder.module_exports.get(module_path) else {
                     continue;
                 };
-                let export_name = root_symbol.import_name.as_deref();
+                let export_name = root_symbol.import_name();
                 let (mut current, start_index) = match export_name {
                     Some("*") | Some("export=") | None => {
                         let Some(current) = exports.get(&parts[0]) else {

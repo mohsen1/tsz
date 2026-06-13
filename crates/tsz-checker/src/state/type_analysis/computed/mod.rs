@@ -116,10 +116,10 @@ impl<'a> CheckerState<'a> {
             // (import_name = None) and `import * as X from M`
             // (import_name = "*"). Named and default imports flow through
             // their own type-resolution paths.
-            if !matches!(symbol.import_name.as_deref(), None | Some("*")) {
+            if !matches!(symbol.import_name(), None | Some("*")) {
                 return None;
             }
-            let module_name = symbol.import_module.as_deref()?;
+            let module_name = symbol.import_module()?;
             if !self.current_file_uses_module_exports_require_interop(module_name) {
                 return None;
             }
@@ -519,7 +519,7 @@ impl<'a> CheckerState<'a> {
             let should_try_default_reexport = self
                 .get_cross_file_symbol(export_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(export_sym_id))
-                .is_some_and(|symbol| symbol.import_module.is_some());
+                .is_some_and(|symbol| symbol.import_module().is_some());
             let default_reexport_type = if should_try_default_reexport {
                 self.namespace_default_reexport_property_type(
                     module_name,
@@ -830,8 +830,8 @@ impl<'a> CheckerState<'a> {
                     symbol.flags,
                     symbol.value_declaration,
                     symbol.declarations.clone(),
-                    symbol.import_module.clone(),
-                    symbol.import_name.clone(),
+                    symbol.import_module().map(str::to_string),
+                    symbol.import_name().map(str::to_string),
                     symbol.escaped_name.clone(),
                 )
             }
@@ -846,8 +846,8 @@ impl<'a> CheckerState<'a> {
                             symbol.flags,
                             symbol.value_declaration,
                             symbol.declarations.clone(),
-                            symbol.import_module.clone(),
-                            symbol.import_name.clone(),
+                            symbol.import_module().map(str::to_string),
+                            symbol.import_name().map(str::to_string),
                             symbol.escaped_name.clone(),
                         )
                     }

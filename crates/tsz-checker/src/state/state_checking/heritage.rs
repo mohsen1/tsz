@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let module_specifier = alias.import_module.as_deref()?;
+        let module_specifier = alias.import_module()?;
         let exports = self.resolve_effective_module_exports_from_file(
             module_specifier,
             Some(self.ctx.current_file_idx),
@@ -444,7 +444,7 @@ impl<'a> CheckerState<'a> {
                                 // The namespace object from an import is always usable as a value
                                 // reference, even if the module has no value exports or failed to resolve.
                                 let has_alias = symbol.has_any_flags(symbol_flags::ALIAS);
-                                if has_alias && symbol.import_module.is_some() {
+                                if has_alias && symbol.import_module().is_some() {
                                     // Skip TS2708 for import aliases - this handles cases like
                                     // `import * as A from ""` where the module fails to resolve.
                                     continue;
@@ -1663,7 +1663,7 @@ impl<'a> CheckerState<'a> {
 
         // Skip check for cross-file symbols (imported from another file).
         // Position comparison only makes sense within the same file.
-        if symbol.import_module.is_some() {
+        if symbol.import_module().is_some() {
             return;
         }
         // If decl_file_idx is set and differs from the current file, the declaration
