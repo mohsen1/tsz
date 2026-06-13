@@ -1328,10 +1328,7 @@ impl BinderState {
                 // Create a new symbol in the local binder to shadow the lib symbol.
                 let owned_name = name.to_string();
                 let sym_id = self.symbols.alloc(flags, owned_name.clone());
-                let container_sym = self
-                    .scope_chain
-                    .get(self.current_scope_idx)
-                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                let container_sym = self.current_container_symbol();
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = Self::declaration_span(arena, declaration);
                     sym.add_declaration(declaration, span);
@@ -1436,10 +1433,7 @@ impl BinderState {
                 let preserved = self.collect_preserved_lib_meaning(existing_id, flags);
 
                 let sym_id = self.symbols.alloc(flags, owned_name.clone());
-                let container_sym = self
-                    .scope_chain
-                    .get(self.current_scope_idx)
-                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                let container_sym = self.current_container_symbol();
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = Self::declaration_span(arena, declaration);
                     sym.add_declaration(declaration, span);
@@ -1485,9 +1479,8 @@ impl BinderState {
             // the exported member within that block's scope, without affecting the namespace's
             // exported type.
             let is_in_module_scope = self
-                .scope_chain
-                .get(self.current_scope_idx)
-                .is_some_and(|ctx| ctx.container_kind == ContainerKind::Module);
+                .current_persistent_scope()
+                .is_some_and(|scope| scope.kind == ContainerKind::Module);
             let existing_is_exported = self.symbols.get(existing_id).is_some_and(|s| s.is_exported);
             if is_in_module_scope
                 && existing_is_exported
@@ -1496,10 +1489,7 @@ impl BinderState {
             {
                 let owned_name = name.to_string();
                 let sym_id = self.symbols.alloc(flags, owned_name.clone());
-                let container_sym = self
-                    .scope_chain
-                    .get(self.current_scope_idx)
-                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                let container_sym = self.current_container_symbol();
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = Self::declaration_span(arena, declaration);
                     sym.add_declaration(declaration, span);
@@ -1532,10 +1522,7 @@ impl BinderState {
             {
                 let owned_name = name.to_string();
                 let sym_id = self.symbols.alloc(flags, owned_name.clone());
-                let container_sym = self
-                    .scope_chain
-                    .get(self.current_scope_idx)
-                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                let container_sym = self.current_container_symbol();
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = Self::declaration_span(arena, declaration);
                     sym.add_declaration(declaration, span);
@@ -1649,10 +1636,7 @@ impl BinderState {
         let owned_name = name.to_string();
         let sym_id = self.symbols.alloc(flags, owned_name.clone());
         // Set parent to the current container's symbol (namespace, class, etc.)
-        let container_sym = self
-            .scope_chain
-            .get(self.current_scope_idx)
-            .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+        let container_sym = self.current_container_symbol();
         if let Some(sym) = self.symbols.get_mut(sym_id) {
             let span = Self::declaration_span(arena, declaration);
             sym.add_declaration(declaration, span);

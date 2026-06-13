@@ -27,7 +27,7 @@ symbol_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reas
 symbol_instance_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 enum_namespace_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 var_decl_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-lib_type_resolution_cache = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+lib_type_resolution_caches = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "file-session lib type and lazy lib-member lookup caches; reset at file-session boundary" }
 lib_delegation_cache = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 namespace_member_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 export_equals_named_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

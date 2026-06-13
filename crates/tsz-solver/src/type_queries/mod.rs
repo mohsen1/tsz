@@ -32,6 +32,7 @@ pub mod classifiers;
 pub mod conditional_infer_alias;
 mod core;
 pub mod data;
+pub mod declaration_walks;
 pub mod extended;
 pub mod extended_constructors;
 pub mod flow;
@@ -95,6 +96,7 @@ pub use extended_constructors::{
 };
 
 pub use data::*;
+pub use declaration_walks::*;
 pub use flow::*;
 pub use global_interfaces::*;
 pub use iterable::*;

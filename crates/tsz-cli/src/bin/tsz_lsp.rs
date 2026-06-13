@@ -66,7 +66,8 @@ use tracing::{debug, info, trace};
 use tsz_common::limits;
 
 use tsz::lsp::{
-    CompletionItemData, CompletionItemKind, FormattingOptions, Position, Project, Range,
+    CompletionItemData, CompletionItemKind, DocumentDiagnosticReport, DocumentDiagnosticReportKind,
+    FormattingOptions, Position, Project, Range,
 };
 
 #[path = "tsz_lsp/tsz_lsp_dispatch.rs"]
@@ -1010,32 +1011,90 @@ impl LspServer {
     fn handle_document_diagnostic(&mut self, params: Option<Value>) -> Result<Value> {
         let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
         let file_name = Self::uri_to_file_name(&uri);
+        let previous_result_id = params
+            .as_ref()
+            .and_then(|p| p.get("previousResultId"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
 
-        let diagnostics = self.project.get_diagnostics(&file_name).unwrap_or_default();
-
-        let lsp_diags: Vec<Value> = diagnostics.iter().map(Self::diagnostic_to_json).collect();
-
-        Ok(serde_json::json!({
-            "kind": "full",
-            "items": lsp_diags,
-        }))
+        match self
+            .project
+            .get_document_diagnostics_pull(&file_name, previous_result_id.as_deref())
+        {
+            Some(DocumentDiagnosticReport::Unchanged(report)) => Ok(serde_json::json!({
+                "kind": "unchanged",
+                "resultId": report.result_id,
+            })),
+            Some(DocumentDiagnosticReport::Full(report)) => {
+                let lsp_diags: Vec<Value> =
+                    report.items.iter().map(Self::diagnostic_to_json).collect();
+                Ok(serde_json::json!({
+                    "kind": "full",
+                    "resultId": report.result_id,
+                    "items": lsp_diags,
+                }))
+            }
+            // Unknown file: preserve the previous behavior of an empty full
+            // report rather than a request error.
+            None => Ok(serde_json::json!({
+                "kind": "full",
+                "items": [],
+            })),
+        }
     }
 
-    fn handle_workspace_diagnostic(&mut self, _params: Option<Value>) -> Result<Value> {
-        let mut items = Vec::new();
+    fn handle_workspace_diagnostic(&mut self, params: Option<Value>) -> Result<Value> {
+        let previous_result_ids: Vec<(String, String)> = params
+            .as_ref()
+            .and_then(|p| p.get("previousResultIds"))
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let uri = entry.get("uri")?.as_str()?;
+                        let value = entry.get("value")?.as_str()?;
+                        Some((Self::uri_to_file_name(uri), value.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        let file_names: Vec<String> = self.project.file_names().map(|s| s.to_string()).collect();
-        for file_name in &file_names {
-            let diagnostics = self.project.get_diagnostics(file_name).unwrap_or_default();
+        let report = self
+            .project
+            .get_workspace_diagnostics_with_previous(&previous_result_ids);
 
-            let lsp_diags: Vec<Value> = diagnostics.iter().map(Self::diagnostic_to_json).collect();
-
-            items.push(serde_json::json!({
-                "kind": "full",
-                "uri": Self::file_name_to_uri(file_name),
-                "items": lsp_diags,
-            }));
-        }
+        let items: Vec<Value> = report
+            .items
+            .iter()
+            .map(|item| {
+                let uri = Self::file_name_to_uri(&item.uri);
+                match item.kind {
+                    DocumentDiagnosticReportKind::Unchanged => serde_json::json!({
+                        "kind": "unchanged",
+                        "uri": uri,
+                        "resultId": item.result_id,
+                        "version": Value::Null,
+                    }),
+                    DocumentDiagnosticReportKind::Full => {
+                        let lsp_diags: Vec<Value> = item
+                            .items
+                            .as_deref()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(Self::diagnostic_to_json)
+                            .collect();
+                        serde_json::json!({
+                            "kind": "full",
+                            "uri": uri,
+                            "resultId": item.result_id,
+                            "items": lsp_diags,
+                            "version": Value::Null,
+                        })
+                    }
+                }
+            })
+            .collect();
 
         Ok(serde_json::json!({
             "items": items,

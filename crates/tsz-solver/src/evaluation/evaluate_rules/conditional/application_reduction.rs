@@ -1,7 +1,8 @@
 use super::super::super::evaluate::TypeEvaluator;
+use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Cheap pre-check before `reduce_alias_body_to_application_form`: only
@@ -55,7 +56,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     let mut bindings = FxHashMap::default();
-                    let mut visited = FxHashSet::default();
+                    let mut visited = InferPatternVisited::default();
                     if !self.match_infer_pattern(
                         check_eval,
                         cond_extends,

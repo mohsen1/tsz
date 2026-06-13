@@ -352,6 +352,23 @@ pub struct Project {
     /// this to tie-break by file proximity. `None` when the editor has not
     /// yet announced any focus.
     pub(crate) focused_file: Option<String>,
+    /// Coarse cross-file invalidation barrier for cached pull-model
+    /// diagnostics.
+    ///
+    /// Bumped by every mutation that could change any file's diagnostics:
+    /// content change (`set_file`/`update_file`), file removal, and
+    /// compiler-option changes (`set_strict`). A `ProjectFile`'s
+    /// `cached_diagnostics` is only served while its stamped generation
+    /// matches this value, so a change in file A can never leave file B
+    /// serving stale diagnostics — even when the export-signature
+    /// fingerprint or the dependency graph would miss the edge.
+    pub(crate) diagnostics_generation: u64,
+    /// Monotonic sequence for pull-model diagnostic `resultId`s.
+    ///
+    /// Incremented on every per-file recompute; ids are never reused, so an
+    /// `Unchanged` report is only ever emitted against the exact recompute
+    /// that produced the client's `previousResultId`.
+    pub(crate) diagnostics_result_seq: u64,
 }
 
 /// Assigns stable `u32` file indices to file names.
@@ -543,6 +560,8 @@ impl Project {
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
             focused_file: None,
+            diagnostics_generation: 0,
+            diagnostics_result_seq: 0,
         }
     }
 
@@ -568,7 +587,23 @@ impl Project {
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
             focused_file: None,
+            diagnostics_generation: 0,
+            diagnostics_result_seq: 0,
         }
+    }
+
+    /// Invalidate every file's cached pull-model diagnostics.
+    ///
+    /// O(1): bumps the project generation instead of walking files; caches
+    /// stamped with an older generation are recomputed on next pull. Called
+    /// on every mutation that could change any file's diagnostics. This is
+    /// deliberately coarse — the dependency graph keys edges by raw import
+    /// specifiers while invalidation queries use file names, and the
+    /// export-signature fingerprint is type-blind (an
+    /// `export const x = 1` -> `export const x = "s"` edit does not change
+    /// it), so neither is a sound cross-file freshness gate on its own.
+    pub(crate) const fn invalidate_all_cached_diagnostics(&mut self) {
+        self.diagnostics_generation += 1;
     }
 
     /// Add a workspace root directory.
@@ -761,11 +796,21 @@ impl Project {
     }
 
     /// Set the strict mode directly.
+    ///
+    /// A strictness change alters the checker options for every file, so all
+    /// per-file analysis caches (type cache, scope cache, cached diagnostics)
+    /// are invalidated and the pull-model diagnostics generation is bumped.
     pub fn set_strict(&mut self, strict: bool) {
+        if self.strict == strict {
+            return;
+        }
         self.strict = strict;
-        // Update strict mode on all existing files
+        self.invalidate_all_cached_diagnostics();
+        // Update strict mode on all existing files and drop caches computed
+        // under the previous options.
         for file in self.files.values_mut() {
             file.set_strict(strict);
+            file.invalidate_caches();
         }
     }
 
@@ -963,6 +1008,12 @@ impl Project {
             return;
         }
 
+        // A new file can resolve a previously-missing import and a replaced
+        // file can change any dependent's diagnostics; the dependency graph
+        // cannot be trusted to enumerate those dependents (it keys edges by
+        // raw import specifiers), so invalidate coarsely.
+        self.invalidate_all_cached_diagnostics();
+
         // Allocate a stable file index. If the file already has one, reuse it
         // (the allocator returns the existing ID). This ensures that
         // invalidate_file + re-register uses the same ID.
@@ -1041,6 +1092,13 @@ impl Project {
             let sig = self.files.get(file_name)?.export_signature.0;
             return Some(InvalidationSummary::unchanged(file_name.to_string(), sig));
         }
+
+        // Content changed: any other file's diagnostics may be affected
+        // (inferred types of exports are not covered by the export-signature
+        // fingerprint), so coarsely invalidate all cached pull diagnostics.
+        // The signature-gated dependent invalidation below still drives the
+        // finer-grained `diagnostics_dirty` flag used by the push model.
+        self.invalidate_all_cached_diagnostics();
 
         // Capture old export signature before updating
         let old_signature = self.files.get(file_name)?.export_signature;
@@ -1137,6 +1195,10 @@ impl Project {
         let removed = self.files.remove(file_name);
 
         if removed.is_some() {
+            // Removal can introduce unresolved-import errors in any file that
+            // referenced this one; the dependency graph may miss those edges,
+            // so invalidate all cached pull diagnostics.
+            self.invalidate_all_cached_diagnostics();
             tracing::debug!(
                 file = %file_name,
                 freed_bytes,
@@ -1349,7 +1411,7 @@ impl Project {
         let resolved = importer_dir.join(specifier);
 
         // Normalize the path by resolving .. and . components
-        let normalized = self.normalize_path(&resolved);
+        let normalized = normalize_path_for_compare(&resolved);
 
         // Check exact match
         let target_str = target.to_string_lossy();
@@ -1365,7 +1427,7 @@ impl Project {
             && target_stem == resolved_stem
         {
             // Normalize target as well for comparison
-            let normalized_target = self.normalize_path(target);
+            let normalized_target = normalize_path_for_compare(target);
             let normalized_target_path = Path::new(&normalized_target);
             // Check if parent dirs match
             if normalized_path.parent() == normalized_target_path.parent() {
@@ -1374,32 +1436,6 @@ impl Project {
         }
 
         false
-    }
-
-    /// Simple path normalization that resolves . and .. components without filesystem access.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn normalize_path(&self, path: &Path) -> String {
-        let path_str = path.to_string_lossy();
-
-        // Split by / and process components
-        let components: Vec<&str> = path_str.split('/').collect();
-        let mut result = Vec::new();
-
-        for component in components {
-            if component == "." {
-                // Skip current directory component
-                continue;
-            } else if component == ".." {
-                // Pop from result if possible
-                if !result.is_empty() && result.last() != Some(&"") {
-                    result.pop();
-                }
-            } else {
-                result.push(component);
-            }
-        }
-
-        result.join("/")
     }
 
     /// Check if a path represents a directory (vs a file).
@@ -1493,6 +1529,23 @@ fn is_relative_specifier(spec: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 fn path_to_slash_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+/// Lexically resolve `.` and `..` components (no filesystem access) for
+/// comparing a joined `importer_dir + specifier` spelling against a rename
+/// target path.
+///
+/// Delegates to the canonical
+/// [`tsz_common::module_resolution::path_identity::normalize_segments`]:
+/// `..` clamps at the filesystem root (as the historical `split('/')` loop
+/// already did via its leading-`""` sentinel) and an unmatched `..` on a
+/// relative path is kept rather than dropped, so an importer escaping the
+/// project root can no longer alias an in-project target spelling.
+#[cfg(not(target_arch = "wasm32"))]
+fn normalize_path_for_compare(path: &Path) -> String {
+    tsz_common::module_resolution::path_identity::normalize_segments(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1620,4 +1673,43 @@ fn parse_tsconfig_file(path: &std::path::Path) -> Option<TsConfigSettings> {
     }
 
     Some(settings)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod normalize_path_for_compare_tests {
+    use super::normalize_path_for_compare;
+    use std::path::Path;
+
+    #[test]
+    fn collapses_join_artifacts_for_import_target_matching() {
+        // Pinned before routing through path_identity::normalize_segments:
+        // the call-site domain is `importer_dir.join(specifier)` spellings.
+        assert_eq!(
+            normalize_path_for_compare(Path::new("/src/./a/../b.ts")),
+            "/src/b.ts"
+        );
+        assert_eq!(
+            normalize_path_for_compare(Path::new("/src/utils/../types.ts")),
+            "/src/types.ts"
+        );
+    }
+
+    #[test]
+    fn clamps_excess_parent_segments_at_root() {
+        // Both the historical split('/') loop (via its leading-"" sentinel)
+        // and the canonical helper clamp `..` at the filesystem root.
+        assert_eq!(
+            normalize_path_for_compare(Path::new("/a/../../b.ts")),
+            "/b.ts"
+        );
+    }
+
+    #[test]
+    fn keeps_unmatched_parent_on_relative_importer() {
+        // Canonical semantics (changed from the historical loop, which
+        // dropped the unmatched `..` and produced `x.ts`): an importer
+        // escaping the project root can no longer alias an in-project
+        // target spelling.
+        assert_eq!(normalize_path_for_compare(Path::new("../x.ts")), "../x.ts");
+    }
 }
