@@ -1044,9 +1044,7 @@ impl BinderState {
         // Pre-populate the root scope with lib symbols if they were merged before
         // binding. This ensures symbols like console, Array, Promise are available
         // during binding.
-        if has_lib_symbols
-            && let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut()
-        {
+        if has_lib_symbols && let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut() {
             for (name, sym_id) in &lib_symbols {
                 if !root_scope.table.has(name) {
                     root_scope.table.set(name.clone(), *sym_id);
