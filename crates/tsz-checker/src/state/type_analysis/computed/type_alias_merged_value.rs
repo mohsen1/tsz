@@ -30,6 +30,13 @@ impl<'a> CheckerState<'a> {
 
         if var_decl.type_annotation.is_some() {
             let ann_type = self.get_type_from_type_node(var_decl.type_annotation);
+            // A `const X: unique symbol` declaration carries a `unique symbol` value
+            // identity (`typeof X`), even when `X` is name-merged with a same-named
+            // type alias. Apply the same upgrade `get_type_of_variable_declaration`
+            // uses so the merged value type keeps the symbol's own identity instead
+            // of degrading to the general `symbol` type.
+            let ann_type =
+                self.const_unique_symbol_value_type(decl, var_decl.type_annotation, ann_type);
             if ann_type != TypeId::ERROR && ann_type != TypeId::ANY {
                 return Some(ann_type);
             }

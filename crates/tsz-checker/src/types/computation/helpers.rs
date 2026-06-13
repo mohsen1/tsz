@@ -867,6 +867,40 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Upgrade the annotation type of a `const X: unique symbol` declaration to a
+    /// proper `UniqueSymbol` type keyed on the variable's own binder symbol.
+    ///
+    /// A `unique symbol` annotation lowers to the general `symbol` type, but a
+    /// `const` declaration that owns it has the distinct value identity `typeof X`.
+    /// Centralizing the upgrade here keeps every value-typing path — direct
+    /// variable typing and the merged type-alias/value path — agreed on that
+    /// identity, so `[X]` keys minted from either side intern to the same member.
+    /// Returns `annotation_type` unchanged when the declaration does not own a
+    /// `unique symbol`.
+    pub(crate) fn const_unique_symbol_value_type(
+        &mut self,
+        decl_idx: NodeIndex,
+        annotation: NodeIndex,
+        annotation_type: TypeId,
+    ) -> TypeId {
+        if annotation_type == TypeId::SYMBOL
+            && self.is_const_variable_declaration(decl_idx)
+            && self.is_unique_symbol_type_annotation(annotation)
+            && let Some(var_decl) = self
+                .ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_variable_declaration(node))
+            && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name)
+        {
+            return self
+                .ctx
+                .types
+                .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+        }
+        annotation_type
+    }
+
     /// Get type of variable declaration.
     ///
     /// Computes the type of variable declarations like `let x: number = 5` or `const y = "hello"`.
@@ -885,17 +919,11 @@ impl<'a> CheckerState<'a> {
             let annotation_type = self.get_type_from_type_node(var_decl.type_annotation);
             // `const k: unique symbol = Symbol()` — create a proper UniqueSymbol type
             // using the variable's binder symbol as the identity.
-            if annotation_type == TypeId::SYMBOL
-                && self.is_const_variable_declaration(idx)
-                && self.is_unique_symbol_type_annotation(var_decl.type_annotation)
-                && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name)
-            {
-                return self
-                    .ctx
-                    .types
-                    .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
-            }
-            return annotation_type;
+            return self.const_unique_symbol_value_type(
+                idx,
+                var_decl.type_annotation,
+                annotation_type,
+            );
         }
 
         if self.is_catch_clause_variable_declaration(idx) {
