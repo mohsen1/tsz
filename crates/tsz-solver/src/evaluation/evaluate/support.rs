@@ -1192,10 +1192,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn visit_conditional(&mut self, cond_id: ConditionalTypeId) -> TypeId {
         let cond = self.interner.get_conditional(cond_id);
         // tsc propagates the error type through conditionals: when the check type
-        // resolves to an error (e.g. a failed indexed access `O[number]`), the whole
-        // conditional resolves to the error type so neither branch is selected and
-        // downstream diagnostics stay suppressed instead of cascading.
-        if crate::visitor::is_error_type(self.interner, self.evaluate(cond.check_type)) {
+        // resolves to a genuine error (e.g. a failed indexed access `O[number]`),
+        // the whole conditional resolves to the error type so neither branch is
+        // selected and downstream diagnostics stay suppressed instead of cascading.
+        //
+        // An `UnresolvedTypeName` is NOT a genuine error — it is a display-preserving
+        // reference the current resolver could not bind to a `DefId` (e.g. a cross-
+        // file interface member typed by a sibling type whose bare name is not in the
+        // consuming file's scope under a namespace import). The broad `is_error_type`
+        // folds `UnresolvedTypeName` into "error", so bailing on it would fabricate
+        // `error` for the whole conditional (and, through a homomorphic mapped body,
+        // mint `{ k: error }`). `is_genuine_error_type` excludes it, so the check side
+        // instead defers to `evaluate_conditional`. (Note: the *extends*-side
+        // unresolved-name handling still folds one layer down; the durable fix is the
+        // cross-arena member-type lowering campaign in #13044 / #13484.)
+        let evaluated_check = self.evaluate(cond.check_type);
+        if crate::visitor::is_genuine_error_type(self.interner, evaluated_check) {
             return TypeId::ERROR;
         }
         self.evaluate_conditional(&cond)

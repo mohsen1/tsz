@@ -869,6 +869,31 @@ pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// display-preserving unresolved type names, including applications whose base
 /// is an unresolved type name.
 pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    error_type_through_application_bases(types, type_id, true)
+}
+
+/// Like [`is_error_type`] but does NOT treat an `UnresolvedTypeName` as an error.
+///
+/// An `UnresolvedTypeName` is a display-preserving reference the current resolver
+/// could not bind to a `DefId` (cross-file / namespace-import lowering residue),
+/// not a definitive `error`. Callers that must distinguish a *deferrable*
+/// unresolved reference from a genuine failure — e.g. conditional branch
+/// selection, where a failed indexed access (`error`) suppresses the conditional
+/// but an unresolved reference must defer — use this variant.
+pub fn is_genuine_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    error_type_through_application_bases(types, type_id, false)
+}
+
+/// Shared `Application`-base walk for the error-type predicates: descend through
+/// `Application` bases (bounded) looking for `TypeId::ERROR` / `TypeData::Error`.
+/// `treat_unresolved_as_error` decides whether a reached `UnresolvedTypeName`
+/// counts as an error (`is_error_type`) or is a deferrable reference
+/// (`is_genuine_error_type`).
+fn error_type_through_application_bases(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    treat_unresolved_as_error: bool,
+) -> bool {
     let mut current = type_id;
 
     for _ in 0..16 {
@@ -877,7 +902,8 @@ pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         }
 
         match types.lookup(current) {
-            Some(TypeData::Error | TypeData::UnresolvedTypeName(_)) => return true,
+            Some(TypeData::Error) => return true,
+            Some(TypeData::UnresolvedTypeName(_)) => return treat_unresolved_as_error,
             Some(TypeData::Application(app_id)) => {
                 current = types.type_application(app_id).base;
             }
