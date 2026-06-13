@@ -1279,6 +1279,7 @@ impl<'a> FlowAnalyzer<'a> {
         let ant_flags = ant_flow.flags;
         let ant_is_targeting_assignment = (ant_flags & flow_flags::ASSIGNMENT) != 0
             && ant_flow.node.is_some()
+            && self.assignment_root_symbols_may_overlap(ant_flow.node, reference, symbol_id)
             && (symbol_id
                 .zip(self.reference_symbol(ant_flow.node))
                 .is_some_and(|(target, assignment)| target == assignment)
