@@ -59,6 +59,20 @@ pub struct MergedProgramResidencyStats {
     pub dep_graph_unresolved_count: usize,
 }
 
+impl MergedProgramResidencyStats {
+    /// Estimated retained per-file state considered by `ResidencyBudget`.
+    ///
+    /// `pre_merge_bind_total_bytes` is intentionally excluded because owned
+    /// merge paths release consumed `BindResult`s after moving their live data
+    /// into `MergedProgram`. Batch residency decisions must react to bytes that
+    /// remain after merge, not the transient merge-time double-residency window.
+    #[must_use]
+    pub const fn retained_file_state_bytes_est(&self) -> usize {
+        self.total_bound_file_bytes
+            .saturating_add(self.unique_arena_estimated_bytes)
+    }
+}
+
 impl MergedProgram {
     /// Collect every unique `NodeArena` retained by the merged program,
     /// deduplicated by pointer identity. `include_lib_binders` additionally
@@ -263,9 +277,7 @@ impl MergedProgram {
         }
 
         let retained_stats = self.residency_stats();
-        let retained_file_state_bytes_est = retained_stats
-            .total_bound_file_bytes
-            .saturating_add(retained_stats.unique_arena_estimated_bytes);
+        let retained_file_state_bytes_est = retained_stats.retained_file_state_bytes_est();
         let retained_file_state_pressure = match ResidencyBudget::default().assess(&retained_stats)
         {
             MemoryPressure::Low => pc::ResidencyPressureLevel::Low,
@@ -359,9 +371,7 @@ impl ResidencyBudget {
         // been copied into `MergedProgram`. Residency pressure must therefore
         // use retained file state only; otherwise future eviction wiring would
         // react to bytes that no longer exist after merge.
-        let total = stats
-            .total_bound_file_bytes
-            .saturating_add(stats.unique_arena_estimated_bytes);
+        let total = stats.retained_file_state_bytes_est();
         if total >= self.high_watermark_bytes {
             MemoryPressure::High
         } else if total >= self.low_watermark_bytes {

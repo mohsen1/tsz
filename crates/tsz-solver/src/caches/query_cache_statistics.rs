@@ -26,6 +26,12 @@ pub struct QueryCacheStatistics {
     pub application_eval_cache_hits: u64,
     /// Number of times the application eval cache was probed and missed.
     pub application_eval_cache_misses: u64,
+    /// Number of local misses satisfied by the opt-in shared application eval cache.
+    pub application_eval_cache_shared_hits: u64,
+    /// Number of opt-in shared application eval cache probes that missed.
+    pub application_eval_cache_shared_misses: u64,
+    /// Number of application eval entries promoted into the opt-in shared cache.
+    pub application_eval_cache_shared_inserts: u64,
     /// Number of memoized element access results.
     pub element_access_cache_entries: usize,
     /// Number of memoized object spread property lists.
@@ -48,6 +54,12 @@ pub struct QueryCacheStatistics {
     pub instantiation_cache_hits: u64,
     /// Number of times the instantiation cache was probed and missed.
     pub instantiation_cache_misses: u64,
+    /// Number of local misses satisfied by the opt-in shared instantiation cache.
+    pub instantiation_cache_shared_hits: u64,
+    /// Number of opt-in shared instantiation cache probes that missed.
+    pub instantiation_cache_shared_misses: u64,
+    /// Number of instantiation entries promoted into the opt-in shared cache.
+    pub instantiation_cache_shared_inserts: u64,
     /// Number of memoized `remove_subtypes_for_bct` results.
     pub subtype_reduction_cache_entries: usize,
     /// Number of times the subtype-reduction cache returned a hit.
@@ -66,6 +78,9 @@ impl QueryCacheStatistics {
         self.application_eval_cache_entries += other.application_eval_cache_entries;
         self.application_eval_cache_hits += other.application_eval_cache_hits;
         self.application_eval_cache_misses += other.application_eval_cache_misses;
+        self.application_eval_cache_shared_hits += other.application_eval_cache_shared_hits;
+        self.application_eval_cache_shared_misses += other.application_eval_cache_shared_misses;
+        self.application_eval_cache_shared_inserts += other.application_eval_cache_shared_inserts;
         self.element_access_cache_entries += other.element_access_cache_entries;
         self.object_spread_cache_entries += other.object_spread_cache_entries;
         self.property_cache_entries += other.property_cache_entries;
@@ -77,6 +92,9 @@ impl QueryCacheStatistics {
         self.instantiation_cache_entries += other.instantiation_cache_entries;
         self.instantiation_cache_hits += other.instantiation_cache_hits;
         self.instantiation_cache_misses += other.instantiation_cache_misses;
+        self.instantiation_cache_shared_hits += other.instantiation_cache_shared_hits;
+        self.instantiation_cache_shared_misses += other.instantiation_cache_shared_misses;
+        self.instantiation_cache_shared_inserts += other.instantiation_cache_shared_inserts;
         self.subtype_reduction_cache_entries += other.subtype_reduction_cache_entries;
         self.subtype_reduction_cache_hits += other.subtype_reduction_cache_hits;
         self.subtype_reduction_cache_misses += other.subtype_reduction_cache_misses;
@@ -136,10 +154,13 @@ impl std::fmt::Display for QueryCacheStatistics {
         )?;
         writeln!(
             f,
-            "  application_eval_cache: {} entries ({} hits, {} misses)",
+            "  application_eval_cache: {} entries ({} hits, {} misses; shared {} hits, {} misses, {} inserts)",
             self.application_eval_cache_entries,
             self.application_eval_cache_hits,
             self.application_eval_cache_misses,
+            self.application_eval_cache_shared_hits,
+            self.application_eval_cache_shared_misses,
+            self.application_eval_cache_shared_inserts,
         )?;
         writeln!(
             f,
@@ -187,10 +208,13 @@ impl std::fmt::Display for QueryCacheStatistics {
         )?;
         writeln!(
             f,
-            "  instantiation_cache:    {} entries ({} hits, {} misses)",
+            "  instantiation_cache:    {} entries ({} hits, {} misses; shared {} hits, {} misses, {} inserts)",
             self.instantiation_cache_entries,
             self.instantiation_cache_hits,
             self.instantiation_cache_misses,
+            self.instantiation_cache_shared_hits,
+            self.instantiation_cache_shared_misses,
+            self.instantiation_cache_shared_inserts,
         )?;
         writeln!(
             f,

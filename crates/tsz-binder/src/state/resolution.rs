@@ -100,8 +100,8 @@ impl BinderState {
 
         let result = 'resolve: {
             // Get the identifier text
-            let (name, name_atom) = if let Some(ident) = arena.get_identifier_at(node_idx) {
-                (&ident.escaped_text, ident.atom)
+            let name = if let Some(ident) = arena.get_identifier_at(node_idx) {
+                &ident.escaped_text
             } else {
                 break 'resolve None;
             };
@@ -113,7 +113,7 @@ impl BinderState {
                 let mut scope_depth = 0;
                 while scope_id.is_some() {
                     if let Some(scope) = self.scopes.get(scope_id.0 as usize) {
-                        if let Some(sym_id) = scope.table.get_by_atom_or_name(name_atom, name) {
+                        if let Some(sym_id) = scope.table.get(name) {
                             debug!(
                                 "[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
                                 name, scope_depth, sym_id.0
@@ -146,7 +146,7 @@ impl BinderState {
             }
 
             // Finally check file locals / globals
-            if let Some(sym_id) = self.file_locals.get_by_atom_or_name(name_atom, name) {
+            if let Some(sym_id) = self.file_locals.get(name) {
                 debug!(
                     "[RESOLVE] '{}' FOUND in file_locals (id={})",
                     name, sym_id.0
@@ -169,7 +169,7 @@ impl BinderState {
             // Chained lookup: check lib binders for global symbols
             // This enables resolving console, Array, Object, etc. from lib.d.ts
             for (i, lib_binder) in self.lib_binders.iter().enumerate() {
-                if let Some(sym_id) = lib_binder.file_locals.get_by_atom_or_name(name_atom, name) {
+                if let Some(sym_id) = lib_binder.file_locals.get(name) {
                     debug!(
                         "[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
                         name, i, sym_id.0
@@ -280,9 +280,7 @@ impl BinderState {
         F: FnMut(SymbolId) -> bool,
     {
         let node = arena.get(node_idx)?;
-        let ident = arena.get_identifier(node)?;
-        let name = ident.escaped_text.as_str();
-        let name_atom = ident.atom;
+        let name = arena.get_identifier(node)?.escaped_text.as_str();
 
         let mut consider =
             |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then_some(sym_id) };
@@ -302,7 +300,7 @@ impl BinderState {
                     break;
                 };
 
-                if let Some(sym_id) = scope.table.get_by_atom_or_name(name_atom, name)
+                if let Some(sym_id) = scope.table.get(name)
                     && let Some(found) = consider(sym_id)
                 {
                     return Some(found);
@@ -323,7 +321,7 @@ impl BinderState {
             }
         }
 
-        if let Some(sym_id) = self.file_locals.get_by_atom_or_name(name_atom, name)
+        if let Some(sym_id) = self.file_locals.get(name)
             && let Some(found) = consider(sym_id)
         {
             return Some(found);
@@ -348,7 +346,7 @@ impl BinderState {
         // `resolve_identifier_symbol` and `resolve_type_symbol` fallbacks.
         if !self.lib_symbols_merged {
             for lib_binder in lib_binders {
-                if let Some(sym_id) = lib_binder.file_locals.get_by_atom_or_name(name_atom, name)
+                if let Some(sym_id) = lib_binder.file_locals.get(name)
                     && let Some(found) = consider(sym_id)
                 {
                     return Some(found);
@@ -634,12 +632,12 @@ impl BinderState {
         export_name: &str,
     ) -> Option<SymbolId> {
         // Check cache first for fast path
+        let cache_key = (module_specifier.to_string(), export_name.to_string());
         if let Some(&cached) = self
             .resolved_export_cache
             .read()
             .expect("RwLock not poisoned")
-            .get(module_specifier)
-            .and_then(|module_cache| module_cache.get(export_name))
+            .get(&cache_key)
         {
             return cached;
         }
@@ -658,9 +656,7 @@ impl BinderState {
         self.resolved_export_cache
             .write()
             .expect("resolved_export_cache RwLock poisoned")
-            .entry(module_specifier.to_string())
-            .or_default()
-            .insert(export_name.to_string(), result);
+            .insert(cache_key, result);
         result
     }
 
@@ -692,12 +688,12 @@ impl BinderState {
             );
         }
 
+        let cache_key = (module_specifier.to_string(), export_name.to_string());
         if let Some(&cached) = self
             .resolved_export_type_only_cache
             .read()
             .expect("resolved_export_type_only_cache RwLock poisoned")
-            .get(module_specifier)
-            .and_then(|module_cache| module_cache.get(export_name))
+            .get(&cache_key)
         {
             return cached;
         }
@@ -713,9 +709,7 @@ impl BinderState {
         self.resolved_export_type_only_cache
             .write()
             .expect("resolved_export_type_only_cache RwLock poisoned")
-            .entry(module_specifier.to_string())
-            .or_default()
-            .insert(export_name.to_string(), result);
+            .insert(cache_key, result);
         result
     }
 

@@ -1,70 +1,77 @@
 use serde::Deserialize;
+use tsz_common::options::strict_family::{StrictFamilyOverrides, apply_strict_family};
 use wasm_bindgen::prelude::JsValue;
 
 /// Compiler options passed from JavaScript/WASM.
 /// Maps to TypeScript compiler options.
+///
+/// This is the single owner of WASM option -> `CheckerOptions` resolution:
+/// every WASM program surface (the website `WasmProgram` here and the npm
+/// wrapper's `TsProgram` in `tsz-wasm`) derives `CheckerOptions` through
+/// [`CompilerOptions::to_checker_options`], so strict-family implication
+/// semantics cannot drift per surface (#13117).
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct CompilerOptions {
+pub struct CompilerOptions {
     /// Enable all strict type checking options.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict: Option<bool>,
+    pub strict: Option<bool>,
 
     /// Raise error on expressions and declarations with an implied 'any' type.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_implicit_any: Option<bool>,
+    pub no_implicit_any: Option<bool>,
 
     /// Enable strict null checks.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_null_checks: Option<bool>,
+    pub strict_null_checks: Option<bool>,
 
     /// Enable strict checking of function types.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_function_types: Option<bool>,
+    pub strict_function_types: Option<bool>,
 
     /// Enable strict checking of `bind`, `call`, and `apply` methods.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_bind_call_apply: Option<bool>,
+    pub strict_bind_call_apply: Option<bool>,
 
     /// Enable strict property initialization checks in classes.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_property_initialization: Option<bool>,
+    pub strict_property_initialization: Option<bool>,
 
     /// Report error when not all code paths in function return a value.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_implicit_returns: Option<bool>,
+    pub no_implicit_returns: Option<bool>,
 
     /// Raise error on 'this' expressions with an implied 'any' type.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_implicit_this: Option<bool>,
+    pub no_implicit_this: Option<bool>,
 
     /// Default catch clause variables as `unknown` instead of `any`.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    use_unknown_in_catch_variables: Option<bool>,
+    pub use_unknown_in_catch_variables: Option<bool>,
 
     /// Enable strict built-in iterator return types.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    strict_builtin_iterator_return: Option<bool>,
+    pub strict_builtin_iterator_return: Option<bool>,
 
     /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
     #[serde(default, deserialize_with = "deserialize_target")]
-    target: Option<u32>,
+    pub target: Option<u32>,
 
     /// Specify module code generation mode (accepts string like `ESNext` or numeric).
     #[serde(default, deserialize_with = "deserialize_module")]
-    module: Option<u32>,
+    pub module: Option<u32>,
 
     /// Enable full iterator support when targeting ES5/ES3.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    downlevel_iteration: Option<bool>,
+    pub downlevel_iteration: Option<bool>,
 
     /// Interpret optional property types as written, rather than adding 'undefined'.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    exact_optional_property_types: Option<bool>,
+    pub exact_optional_property_types: Option<bool>,
 
     /// When true, do not include any library files.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_lib: Option<bool>,
+    pub no_lib: Option<bool>,
 
     /// Add 'undefined' to a type when accessed using an index.
     #[serde(
@@ -72,11 +79,11 @@ pub(crate) struct CompilerOptions {
         alias = "noUncheckedIndexedAccess",
         deserialize_with = "deserialize_bool_option"
     )]
-    no_unchecked_indexed_access: Option<bool>,
+    pub no_unchecked_indexed_access: Option<bool>,
 
     /// Enable Sound Mode for stricter type checking beyond TypeScript's defaults.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
-    sound_mode: Option<bool>,
+    pub sound_mode: Option<bool>,
 }
 
 /// Deserialize an optional boolean option.
@@ -190,67 +197,35 @@ impl CompilerOptions {
             .unwrap_or(crate::common::ModuleKind::None)
     }
 
-    const fn apply_strict_option(
-        options: &mut crate::checker::context::CheckerOptions,
-        strict: bool,
-    ) {
-        options.strict = strict;
-        if strict {
-            options.no_implicit_any = true;
-            options.strict_null_checks = true;
-            options.strict_function_types = true;
-            options.strict_bind_call_apply = true;
-            options.strict_property_initialization = true;
-            options.no_implicit_this = true;
-            options.use_unknown_in_catch_variables = true;
-            options.always_strict = true;
-            options.strict_builtin_iterator_return = true;
-        } else {
-            options.no_implicit_any = false;
-            options.strict_null_checks = false;
-            options.strict_function_types = false;
-            options.strict_bind_call_apply = false;
-            options.strict_property_initialization = false;
-            options.no_implicit_this = false;
-            options.use_unknown_in_catch_variables = false;
-            options.strict_builtin_iterator_return = false;
-        }
-    }
-
     /// Convert to `CheckerOptions` for type checking.
-    pub(crate) fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
+    ///
+    /// Resolution starts from the shared `CheckerOptions::default()`, routes
+    /// the strict family through the shared `strict_family` table (umbrella
+    /// expansion first, then explicit member overrides — tsc 6.0
+    /// `getStrictOptionValue`, issue #3861 ordering), and finally applies the
+    /// non-family flag overrides. Options left `None` keep the shared
+    /// defaults.
+    #[must_use]
+    pub fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
         let mut options = crate::checker::context::CheckerOptions::default();
 
-        if let Some(strict) = self.strict {
-            Self::apply_strict_option(&mut options, strict);
-        }
+        apply_strict_family(
+            &mut options,
+            &StrictFamilyOverrides {
+                strict: self.strict,
+                no_implicit_any: self.no_implicit_any,
+                no_implicit_this: self.no_implicit_this,
+                strict_null_checks: self.strict_null_checks,
+                strict_function_types: self.strict_function_types,
+                strict_bind_call_apply: self.strict_bind_call_apply,
+                strict_property_initialization: self.strict_property_initialization,
+                strict_builtin_iterator_return: self.strict_builtin_iterator_return,
+                use_unknown_in_catch_variables: self.use_unknown_in_catch_variables,
+            },
+        );
 
-        if let Some(v) = self.no_implicit_any {
-            options.no_implicit_any = v;
-        }
         if let Some(v) = self.no_implicit_returns {
             options.no_implicit_returns = v;
-        }
-        if let Some(v) = self.strict_null_checks {
-            options.strict_null_checks = v;
-        }
-        if let Some(v) = self.strict_function_types {
-            options.strict_function_types = v;
-        }
-        if let Some(v) = self.strict_bind_call_apply {
-            options.strict_bind_call_apply = v;
-        }
-        if let Some(v) = self.strict_property_initialization {
-            options.strict_property_initialization = v;
-        }
-        if let Some(v) = self.no_implicit_this {
-            options.no_implicit_this = v;
-        }
-        if let Some(v) = self.use_unknown_in_catch_variables {
-            options.use_unknown_in_catch_variables = v;
-        }
-        if let Some(v) = self.strict_builtin_iterator_return {
-            options.strict_builtin_iterator_return = v;
         }
         if let Some(v) = self.no_unchecked_indexed_access {
             options.no_unchecked_indexed_access = v;
@@ -354,8 +329,23 @@ mod tests {
         assert!(!options.strict_builtin_iterator_return);
         assert!(
             options.always_strict,
-            "strict:false should not clobber the shared alwaysStrict default"
+            "strict:false should not clobber the shared alwaysStrict default \
+             (tsc 6.0: alwaysStrict is not a strict-family member)"
         );
+    }
+
+    /// Issue #3861 ordering through the WASM lane: an explicit member wins
+    /// over the `strict: false` umbrella contraction.
+    #[test]
+    fn to_checker_options_strict_false_with_explicit_member_true() {
+        let options = parse_compiler_options_json(r#"{"strict":false,"strictNullChecks":true}"#)
+            .unwrap()
+            .to_checker_options();
+
+        assert!(!options.strict);
+        assert!(options.strict_null_checks, "explicit member wins (#3861)");
+        assert!(!options.no_implicit_any);
+        assert!(!options.strict_function_types);
     }
 
     #[test]

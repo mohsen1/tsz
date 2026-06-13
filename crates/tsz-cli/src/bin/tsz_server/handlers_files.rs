@@ -19,6 +19,7 @@ impl Server {
                 std::fs::read_to_string(file_path).unwrap_or_default()
             };
             self.open_files.insert(file_path.to_string(), text);
+            self.clear_completion_project_cache();
         }
 
         self.success_response(seq, request, None)
@@ -28,6 +29,7 @@ impl Server {
         let file = request.arguments.get("file").and_then(|v| v.as_str());
         if let Some(file_path) = file {
             self.open_files.remove(file_path);
+            self.clear_completion_project_cache();
         }
 
         self.success_response(seq, request, None)
@@ -95,6 +97,7 @@ impl Server {
                 let new_content =
                     Self::apply_change(&content, line, offset, end_line, end_offset, insert_string);
                 self.open_files.insert(file_path.to_string(), new_content);
+                self.clear_completion_project_cache();
             }
         }
 
@@ -205,6 +208,7 @@ impl Server {
                 };
                 let updated = Self::apply_span_changes(&content, changes);
                 self.open_files.insert(file.to_string(), updated);
+                self.clear_completion_project_cache();
             }
         }
         if let Some(opened) = request
@@ -219,6 +223,7 @@ impl Server {
                 ) {
                     self.open_files
                         .insert(file.to_string(), content.to_string());
+                    self.clear_completion_project_cache();
                 }
             }
         }
@@ -230,6 +235,7 @@ impl Server {
             for entry in closed {
                 if let Some(file) = entry.as_str() {
                     self.open_files.remove(file);
+                    self.clear_completion_project_cache();
                 }
             }
         }
@@ -299,6 +305,7 @@ impl Server {
                 ) {
                     self.open_files
                         .insert(file.to_string(), content.to_string());
+                    self.clear_completion_project_cache();
                 }
             }
         }
@@ -347,6 +354,7 @@ impl Server {
                 }
 
                 self.open_files.insert(file.to_string(), content);
+                self.clear_completion_project_cache();
             }
         }
         if let Some(closed) = request
@@ -357,6 +365,7 @@ impl Server {
             for entry in closed {
                 if let Some(file) = entry.as_str() {
                     self.open_files.remove(file);
+                    self.clear_completion_project_cache();
                 }
             }
         }
