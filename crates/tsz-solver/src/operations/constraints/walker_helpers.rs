@@ -316,12 +316,7 @@ mod tests {
     fn compute_application_variances_reuses_query_cache() {
         let interner = TypeInterner::new();
         let cache = QueryCache::new(&interner);
-        let t_param = TypeParamInfo {
-            name: interner.intern_string("T"),
-            constraint: None,
-            default: None,
-            is_const: false,
-        };
+        let t_param = TypeParamInfo::simple(interner.intern_string("T"));
         let t_type = interner.type_param(t_param);
         let body = interner.object(vec![PropertyInfo::new(
             interner.intern_string("value"),
