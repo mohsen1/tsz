@@ -61,45 +61,46 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             if let Some(canonical) = known_compiler_option(&key_lower) {
                 if key.as_str() != canonical {
                     // Miscased option — emit TS5025 and schedule rename
-                    let start = find_key_offset_in_source(&stripped, key);
                     let msg = format_message(
                         diagnostic_messages::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
                         &[key, canonical],
                     );
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        start,
-                        key.len() as u32 + 2, // include quotes
+                        &stripped,
+                        key,
                         msg,
                         diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
-                    ));
+                    );
                     renames.push((key.clone(), canonical.to_string()));
                 }
                 // else: exact match, no diagnostic needed
             } else {
                 // Truly unknown option — emit TS5023
-                let start = find_key_offset_in_source(&stripped, key);
                 if let Some(suggestion) = unknown_compiler_option_suggestion(&key_lower) {
                     let msg = format_message(
                         diagnostic_messages::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
                         &[key, suggestion],
                     );
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        start,
-                        key.len() as u32 + 2,
+                        &stripped,
+                        key,
                         msg,
                         diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
-                    ));
+                    );
                 } else {
                     let msg = format_message(diagnostic_messages::UNKNOWN_COMPILER_OPTION, &[key]);
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        start,
-                        key.len() as u32 + 2,
+                        &stripped,
+                        key,
                         msg,
                         diagnostic_codes::UNKNOWN_COMPILER_OPTION,
-                    ));
+                    );
                 }
                 unknown_keys.push(key.clone());
             }
@@ -124,18 +125,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         let mut cli_only_keys: Vec<String> = Vec::new();
         for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
             if cli_only_options.contains(&key.as_str()) {
-                let start = find_key_offset_in_source(&stripped, &key);
                 let msg = format_message(
                     diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
                     &[&key],
                 );
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start,
-                    key.len() as u32 + 2,
+                    &stripped,
+                    &key,
                     msg,
                     diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
-                ));
+                );
                 cli_only_keys.push(key);
             }
         }
@@ -160,18 +161,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     Some(_) => true,
                 };
                 if is_set {
-                    let start = find_key_offset_in_source(&stripped, &key);
                     let msg = format_message(
                         diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
                         &[&key],
                     );
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        start,
-                        key.len() as u32 + 2, // include quotes
+                        &stripped,
+                        &key,
                         msg,
                         diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                    ));
+                    );
                 }
                 removed_keys.push(key);
             }
@@ -440,19 +441,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         let command_line_only_options = ["listFilesOnly"];
         for key in &command_line_only_options {
             if compiler_opts.contains_key(*key) {
-                let start = find_key_offset_in_source(&stripped, key);
-                let key_len = key.len() as u32 + 2; // include quotes
                 let msg = format_message(
                     diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
                     &[key],
                 );
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start,
-                    key_len,
+                    &stripped,
+                    key,
                     msg,
                     diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_ON_COMMAND_LINE,
-                ));
+                );
                 // Remove the option so it doesn't affect compilation
                 compiler_opts.remove(*key);
             }
@@ -670,25 +670,23 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     &["outFile"],
                 );
                 // Emit at the "module" key (matching tsc behavior)
-                let start_module = find_key_offset_in_source(&stripped, "module");
-                let module_key_len = "module".len() as u32 + 2; // include quotes
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start_module,
-                    module_key_len,
+                    &stripped,
+                    "module",
                     msg.clone(),
                     diagnostic_codes::ONLY_AMD_AND_SYSTEM_MODULES_ARE_SUPPORTED_ALONGSIDE,
-                ));
+                );
                 // Emit at the "outFile" key (matching tsc behavior)
-                let start_outfile = find_key_offset_in_source(&stripped, "outFile");
-                let outfile_key_len = "outFile".len() as u32 + 2;
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start_outfile,
-                    outfile_key_len,
+                    &stripped,
+                    "outFile",
                     msg,
                     diagnostic_codes::ONLY_AMD_AND_SYSTEM_MODULES_ARE_SUPPORTED_ALONGSIDE,
-                ));
+                );
             }
         }
 
@@ -704,15 +702,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 false
             };
             if module_bad {
-                let start = find_key_offset_in_source(&stripped, "verbatimModuleSyntax");
-                let key_len = "verbatimModuleSyntax".len() as u32 + 2;
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start,
-                    key_len,
-                    diagnostic_messages::OPTION_VERBATIMMODULESYNTAX_CANNOT_BE_USED_WHEN_MODULE_IS_SET_TO_UMD_AMD_OR_SYST.to_string(),
+                    &stripped,
+                    "verbatimModuleSyntax",
+                    diagnostic_messages::OPTION_VERBATIMMODULESYNTAX_CANNOT_BE_USED_WHEN_MODULE_IS_SET_TO_UMD_AMD_OR_SYST,
                     diagnostic_codes::OPTION_VERBATIMMODULESYNTAX_CANNOT_BE_USED_WHEN_MODULE_IS_SET_TO_UMD_AMD_OR_SYST,
-                ));
+                );
             }
         }
 
@@ -746,15 +743,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     related_keys.push("composite");
                 }
                 for key in related_keys {
-                    let start = find_key_offset_in_source(&stripped, key);
-                    let key_len = key.len() as u32 + 2; // include quotes
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        start,
-                        key_len,
+                        &stripped,
+                        key,
                         msg.clone(),
                         code,
-                    ));
+                    );
                 }
             }
         }
@@ -789,19 +785,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "sourceMap")
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "declarationMap")
         {
-            let start = find_key_offset_in_source(&stripped, "mapRoot");
-            let key_len = "mapRoot".len() as u32 + 2;
             let msg = format_message(
                 diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
                 &["mapRoot", "sourceMap", "declarationMap"],
             );
-            diagnostics.push(Diagnostic::error(
+            push_key_diagnostic(
+                &mut diagnostics,
                 file_path,
-                start,
-                key_len,
+                &stripped,
+                "mapRoot",
                 msg,
                 diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
-            ));
+            );
         }
 
         // TS5091: preserveConstEnums cannot be disabled when isolatedModules is enabled.
@@ -813,29 +808,27 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             let enablers: &[&str] = &["isolatedModules", "isolatedDeclarations"];
             for enabler in enablers {
                 if option_is_effectively_enabled(compiler_opts, &ts5024_keys, enabler) {
-                    let start = find_key_offset_in_source(&stripped, "preserveConstEnums");
-                    let key_len = "preserveConstEnums".len() as u32 + 2;
                     let msg = format_message(
                         diagnostic_messages::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
                         &[enabler],
                     );
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        start,
-                        key_len,
+                        &stripped,
+                        "preserveConstEnums",
                         msg.clone(),
                         diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
-                    ));
+                    );
                     // tsc also emits at the enabler key position
-                    let enabler_start = find_key_offset_in_source(&stripped, enabler);
-                    let enabler_key_len = enabler.len() as u32 + 2;
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        enabler_start,
-                        enabler_key_len,
+                        &stripped,
+                        enabler,
                         msg,
                         diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
-                    ));
+                    );
                 }
             }
         }
@@ -848,16 +841,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 Some(serde_json::Value::Bool(false))
             )
         {
-            let start = find_key_offset_in_source(&stripped, "declaration");
-            let key_len = "declaration".len() as u32 + 2;
-            diagnostics.push(Diagnostic::error(
+            push_key_diagnostic(
+                &mut diagnostics,
                 file_path,
-                start,
-                key_len,
-                diagnostic_messages::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_DECLARATION_EMIT
-                    .to_string(),
+                &stripped,
+                "declaration",
+                diagnostic_messages::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_DECLARATION_EMIT,
                 diagnostic_codes::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_DECLARATION_EMIT,
-            ));
+            );
         }
 
         // TS6379: Composite projects may not disable incremental compilation.
@@ -896,27 +887,25 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             );
 
             // Always emit at the checkJs key.
-            let check_js_start = find_key_offset_in_source(&stripped, "checkJs");
-            let check_js_len = "checkJs".len() as u32 + 2;
-            diagnostics.push(Diagnostic::error(
+            push_key_diagnostic(
+                &mut diagnostics,
                 file_path,
-                check_js_start,
-                check_js_len,
+                &stripped,
+                "checkJs",
                 msg.clone(),
                 diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-            ));
+            );
 
             // If allowJs is explicitly present, emit at allowJs too (tsc parity).
             if compiler_opts.contains_key("allowJs") {
-                let allow_js_start = find_key_offset_in_source(&stripped, "allowJs");
-                let allow_js_len = "allowJs".len() as u32 + 2;
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    allow_js_start,
-                    allow_js_len,
+                    &stripped,
+                    "allowJs",
                     msg,
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-                ));
+                );
             }
         }
 
@@ -924,19 +913,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         if option_is_truthy(compiler_opts.get("emitDecoratorMetadata"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "experimentalDecorators")
         {
-            let start = find_key_offset_in_source(&stripped, "emitDecoratorMetadata");
-            let key_len = "emitDecoratorMetadata".len() as u32 + 2;
             let msg = format_message(
                 diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
                 &["emitDecoratorMetadata", "experimentalDecorators"],
             );
-            diagnostics.push(Diagnostic::error(
+            push_key_diagnostic(
+                &mut diagnostics,
                 file_path,
-                start,
-                key_len,
+                &stripped,
+                "emitDecoratorMetadata",
                 msg,
                 diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-            ));
+            );
         }
 
         // TS5053: Option '{0}' cannot be specified with option '{1}'.
@@ -977,29 +965,27 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let key_b = resolve(opt_b);
                 // Emit at the resolved-key position (issue #3732 anchors at
                 // `checkJs` when allowJs is implied).
-                let start = find_key_offset_in_source(&stripped, key_a);
-                let key_len = key_a.len() as u32 + 2;
                 let msg = format_message(
                     diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
                     &[opt_a, opt_b],
                 );
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start,
-                    key_len,
+                    &stripped,
+                    key_a,
                     msg.clone(),
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
-                ));
+                );
                 // Emit at opt_b's position (same message, different location)
-                let start_b = find_key_offset_in_source(&stripped, key_b);
-                let key_len_b = key_b.len() as u32 + 2;
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start_b,
-                    key_len_b,
+                    &stripped,
+                    key_b,
                     msg,
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
-                ));
+                );
             }
         }
 
@@ -1079,15 +1065,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             };
 
             if resolve_json_explicit && effective_mr == "classic" {
-                let start = find_key_offset_in_source(&stripped, "resolveJsonModule");
-                let key_len = "resolveJsonModule".len() as u32 + 2;
-                diagnostics.push(Diagnostic::error(
+                push_key_diagnostic(
+                    &mut diagnostics,
                     file_path,
-                    start,
-                    key_len,
-                    diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA.to_string(),
+                    &stripped,
+                    "resolveJsonModule",
+                    diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA,
                     diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA,
-                ));
+                );
             }
 
             // TS5071: fires when module=none/system/umd but ONLY when effective_mr is NOT
@@ -1099,27 +1084,26 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let mod_normalized =
                     normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
                 if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
-                    let emit_ts5071 = |diagnostics: &mut Vec<Diagnostic>,
-                                       error_key: &str,
-                                       key_len: u32| {
-                        let start = find_key_offset_in_source(&stripped, error_key);
-                        diagnostics.push(Diagnostic::error(
-                            file_path,
-                            start,
-                            key_len,
-                            diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O.to_string(),
-                            diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O,
-                        ));
-                    };
-
+                    let msg = diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O;
+                    let code = diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O;
                     // tsc reports the invalid pairing on both participating options when
                     // resolveJsonModule is explicitly present in the config.
-                    emit_ts5071(&mut diagnostics, "module", "module".len() as u32 + 2);
+                    push_key_diagnostic(
+                        &mut diagnostics,
+                        file_path,
+                        &stripped,
+                        "module",
+                        msg,
+                        code,
+                    );
                     if resolve_json_explicit {
-                        emit_ts5071(
+                        push_key_diagnostic(
                             &mut diagnostics,
+                            file_path,
+                            &stripped,
                             "resolveJsonModule",
-                            "resolveJsonModule".len() as u32 + 2,
+                            msg,
+                            code,
                         );
                     }
                 }
@@ -1176,19 +1160,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         if !mr_is_modern {
             for &opt in requires_modern_mr {
                 if option_is_truthy(compiler_opts.get(opt)) {
-                    let start = find_key_offset_in_source(&stripped, opt);
-                    let key_len = opt.len() as u32 + 2;
                     let msg = format_message(
                         diagnostic_messages::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL,
                         &[opt],
                     );
-                    diagnostics.push(Diagnostic::error(
+                    push_key_diagnostic(
+                        &mut diagnostics,
                         file_path,
-                        start,
-                        key_len,
+                        &stripped,
+                        opt,
                         msg,
                         diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL,
-                    ));
+                    );
                 }
             }
         }

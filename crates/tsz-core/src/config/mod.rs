@@ -518,6 +518,25 @@ fn find_key_offset_in_source(source: &str, key: &str) -> u32 {
     }
 }
 
+/// Push an error diagnostic anchored at a tsconfig key, spanning the key text
+/// plus its surrounding quotes.
+///
+/// Centralizes the `find_key_offset_in_source` + `key.len() + 2` quote-width
+/// anchoring that config validation repeats at every key-anchored diagnostic
+/// site, so an anchoring or off-by-one correction is a single-place change.
+fn push_key_diagnostic(
+    diagnostics: &mut Vec<Diagnostic>,
+    file_path: &str,
+    stripped: &str,
+    key: &str,
+    message: impl Into<String>,
+    code: u32,
+) {
+    let start = find_key_offset_in_source(stripped, key);
+    let length = key.len() as u32 + 2; // include surrounding quotes
+    diagnostics.push(Diagnostic::error(file_path, start, length, message, code));
+}
+
 /// Find the byte offset of a JSON value within the source text.
 /// Searches for `"key":` after `compilerOptions`, then finds the value start.
 fn find_value_offset_in_source(source: &str, key: &str) -> u32 {

@@ -306,6 +306,17 @@ impl ResolvedCompilerOptions {
     }
 }
 
+/// Trim a configured string-list entry, dropping it when nothing remains.
+///
+/// Shared by the `types` / `typeRoots` / `rootDirs` normalizers, which differ
+/// only in the final `String` vs `PathBuf` constructor applied to the trimmed
+/// slice (`trimmed_non_empty(v).map(String::from)` /
+/// `trimmed_non_empty(v).map(PathBuf::from)`).
+fn trimmed_non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
 pub fn resolve_compiler_options(
     options: Option<&CompilerOptions>,
 ) -> Result<ResolvedCompilerOptions> {
@@ -438,14 +449,7 @@ pub fn resolve_compiler_options(
     if let Some(types) = options.types.as_ref() {
         let list: Vec<String> = types
             .iter()
-            .filter_map(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            })
+            .filter_map(|value| trimmed_non_empty(value).map(String::from))
             .collect();
         resolved.types = Some(list);
         resolved.checker.types_explicitly_set = true;
@@ -454,14 +458,7 @@ pub fn resolve_compiler_options(
     if let Some(type_roots) = options.type_roots.as_ref() {
         let roots: Vec<PathBuf> = type_roots
             .iter()
-            .filter_map(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(PathBuf::from(trimmed))
-                }
-            })
+            .filter_map(|value| trimmed_non_empty(value).map(PathBuf::from))
             .collect();
         resolved.type_roots = Some(roots);
     }
@@ -552,14 +549,7 @@ pub fn resolve_compiler_options(
     if let Some(root_dirs) = options.root_dirs.as_ref() {
         resolved.root_dirs = root_dirs
             .iter()
-            .filter_map(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(PathBuf::from(trimmed))
-                }
-            })
+            .filter_map(|value| trimmed_non_empty(value).map(PathBuf::from))
             .collect();
     }
 
