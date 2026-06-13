@@ -397,7 +397,7 @@ impl BinderState {
                     // resulting duplicate identifier is reported as TS2300 by
                     // the JSDoc duplicate-import check in the checker.
                     let already_aliased =
-                        self.current_scope.get(&local_name).is_some_and(|existing| {
+                        self.current_scope().get(&local_name).is_some_and(|existing| {
                             self.symbols
                                 .get(existing)
                                 .is_some_and(|sym| (sym.flags & symbol_flags::ALIAS) != 0)

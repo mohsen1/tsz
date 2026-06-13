@@ -1204,7 +1204,7 @@ impl BinderState {
 
         if let Some(name) = Self::get_identifier_name(arena, expression) {
             return self
-                .current_scope
+                .current_scope()
                 .get(name)
                 .or_else(|| self.file_locals.get(name));
         }
@@ -1229,7 +1229,7 @@ impl BinderState {
         }
 
         let mut current_sym_id = self
-            .current_scope
+            .current_scope()
             .get(parts[0].as_str())
             .or_else(|| self.file_locals.get(parts[0].as_str()))?;
 
@@ -1323,7 +1323,7 @@ impl BinderState {
             (ident.atom != tsz_common::interner::AstAtom::NONE)
                 .then_some((arena.atom_owner_key(), ident.atom))
         });
-        if let Some(existing_id) = self.current_scope.get(name) {
+        if let Some(existing_id) = self.current_scope().get(name) {
             // Check if the existing symbol is in the local symbol table.
             // If not (e.g., it's from a lib binder), we should create a new local symbol
             // to shadow the lib symbol with the local declaration.
@@ -1344,9 +1344,7 @@ impl BinderState {
                         sym.parent = parent_id;
                     }
                 }
-                // Update current_scope to point to the local symbol (shadowing)
-                self.current_scope
-                    .set_with_atom(owned_name.clone(), name_atom_key, sym_id);
+                // Point the current scope at the local symbol (shadowing).
                 // CRITICAL: Also update file_locals to shadow lib symbol in file-level scope
                 // This ensures symbol resolution finds the local symbol instead of the lib one
                 self.file_locals
@@ -1472,8 +1470,6 @@ impl BinderState {
                             .or_insert_with(|| lib_arenas.clone());
                     }
                 }
-                self.current_scope
-                    .set_with_atom(owned_name.clone(), name_atom_key, sym_id);
                 self.file_locals
                     .set_with_atom(owned_name.clone(), name_atom_key, sym_id);
                 Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
@@ -1509,8 +1505,6 @@ impl BinderState {
                         sym.parent = parent_id;
                     }
                 }
-                self.current_scope
-                    .set_with_atom(owned_name.clone(), name_atom_key, sym_id);
                 Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
                 self.declare_in_persistent_scope_with_atom(owned_name, name_atom_key, sym_id);
                 return sym_id;
@@ -1543,8 +1537,6 @@ impl BinderState {
                         sym.parent = parent_id;
                     }
                 }
-                self.current_scope
-                    .set_with_atom(owned_name.clone(), name_atom_key, sym_id);
                 Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
                 self.declare_in_persistent_scope_with_atom(owned_name, name_atom_key, sym_id);
                 return sym_id;
@@ -1666,9 +1658,6 @@ impl BinderState {
                 sym.parent = parent_id;
             }
         }
-        self.current_scope
-            .set_with_atom(owned_name.clone(), name_atom_key, sym_id);
-
         // Keep source-file declarations visible through file_locals.
         // This is required for nested module scopes resolving references to
         // top-level ambient symbols (e.g. `import alias = demoNS` inside `declare module`).

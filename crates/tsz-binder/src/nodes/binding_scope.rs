@@ -20,16 +20,10 @@ impl BinderState {
         node: NodeIndex,
         capacity: usize,
     ) {
-        if capacity > 0 {
-            // Take the current scope, push it, and create a pre-sized one
-            let old_scope = std::mem::take(&mut self.current_scope);
-            self.scope_stack.push(old_scope);
-            self.current_scope = SymbolTable::with_capacity(capacity);
-        } else {
-            self.push_scope();
-        }
-
-        // Persistent scope management (for stateless checking)
+        // The persistent scope arena owns scope identity AND contents: pushing a
+        // child scope (pre-sized) makes `scopes[current_scope_id].table` the new
+        // live declaration table. The parent is reachable via the scope's parent
+        // link, so no separate save/restore stack is needed.
         self.enter_persistent_scope_with_capacity(kind, node, capacity);
     }
 
@@ -71,16 +65,23 @@ impl BinderState {
                                         )
                                 });
 
-                        // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag
+                        // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag.
+                        // Snapshot the (name, id) pairs first so the table borrow drops
+                        // before the mutable `self.symbols` accesses below.
+                        let scope_entries: Vec<(String, crate::SymbolId)> = self
+                            .current_scope()
+                            .iter()
+                            .map(|(name, &child_id)| (name.clone(), child_id))
+                            .collect();
                         let mut exports = SymbolTable::new();
-                        for (name, &child_id) in self.current_scope.iter() {
+                        for (name, child_id) in scope_entries {
                             if let Some(child) = self.symbols.get(child_id) {
                                 // Check explicit export flag OR if it's an EXPORT_VALUE (from export {})
                                 if export_all
                                     || child.is_exported
                                     || (child.flags & symbol_flags::EXPORT_VALUE) != 0
                                 {
-                                    exports.set(name.clone(), child_id);
+                                    exports.set(name, child_id);
                                 }
                             }
                         }
@@ -99,10 +100,12 @@ impl BinderState {
                 }
                 ContainerKind::Class => {
                     // Find the symbol for this class
-                    if let Some(sym_id) = self.node_symbols.get(&container_node.0) {
-                        // Persist the current scope as the class's members
-                        if let Some(symbol) = self.symbols.get_mut(*sym_id) {
-                            symbol.members = Some(Box::new(self.current_scope.clone()));
+                    if let Some(sym_id) = self.node_symbols.get(&container_node.0).copied() {
+                        // Persist the current scope as the class's members.
+                        // Clone the table before the mutable `self.symbols` borrow.
+                        let members = self.current_scope().clone();
+                        if let Some(symbol) = self.symbols.get_mut(sym_id) {
+                            symbol.members = Some(Box::new(members));
                         }
                     }
                 }
@@ -110,24 +113,7 @@ impl BinderState {
             }
         }
 
-        // Copy current scope to persistent scope before popping
-        self.sync_current_scope_to_persistent();
-
-        self.pop_scope();
-
-        // Exit persistent scope
+        // Pop back to the parent scope via the persistent arena's parent link.
         self.exit_persistent_scope();
-    }
-
-    pub(crate) fn push_scope(&mut self) {
-        let old_scope = std::mem::take(&mut self.current_scope);
-        self.scope_stack.push(old_scope);
-        self.current_scope = SymbolTable::new();
-    }
-
-    pub(crate) fn pop_scope(&mut self) {
-        if let Some(parent_scope) = self.scope_stack.pop() {
-            self.current_scope = parent_scope;
-        }
     }
 }

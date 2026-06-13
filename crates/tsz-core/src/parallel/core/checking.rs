@@ -1055,8 +1055,7 @@ pub fn create_binder_from_bound_file(
             binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
     }
-    if let Some(root_scope) = binder.scopes.first() {
-        binder.current_scope = root_scope.table.clone();
+    if !binder.scopes.is_empty() {
         binder.current_scope_id = crate::binder::ScopeId(0);
     }
 
@@ -1142,8 +1141,7 @@ pub fn create_binder_from_bound_file_with_shared(
             binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
     }
-    if let Some(root_scope) = binder.scopes.first() {
-        binder.current_scope = root_scope.table.clone();
+    if !binder.scopes.is_empty() {
         binder.current_scope_id = crate::binder::ScopeId(0);
     }
 

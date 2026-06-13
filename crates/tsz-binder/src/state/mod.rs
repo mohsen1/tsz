@@ -300,10 +300,6 @@ pub struct BinderState {
     pub options: BinderOptions,
     /// Arena for symbol storage
     pub symbols: SymbolArena,
-    /// Current symbol table (local scope)
-    pub current_scope: SymbolTable,
-    /// Stack of parent scopes
-    pub(crate) scope_stack: Vec<SymbolTable>,
     /// File-level locals (for module resolution)
     pub file_locals: SymbolTable,
     /// Lib-origin global symbols of the program, shared across reconstructed

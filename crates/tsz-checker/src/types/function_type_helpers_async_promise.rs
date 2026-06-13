@@ -343,7 +343,7 @@ impl<'a> CheckerState<'a> {
         for sym_id in self
             .ctx
             .binder
-            .current_scope
+            .current_scope()
             .get("Promise")
             .into_iter()
             .chain(self.ctx.binder.file_locals.get("Promise"))

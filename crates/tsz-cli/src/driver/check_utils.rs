@@ -797,8 +797,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     // benchmark, multiplied across rayon worker threads). Cross-file lookup
     // binders only read this map (post-construction), so sharing is safe.
     binder.semantic_defs = Arc::clone(&file.semantic_defs);
-    if let Some(root_scope) = binder.scopes.first() {
-        binder.current_scope = root_scope.table.clone();
+    if !binder.scopes.is_empty() {
         binder.current_scope_id = tsz::binder::ScopeId(0);
     }
     // Reconstructed program binders already contain lib symbols remapped into the
@@ -916,8 +915,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     // benchmark, multiplied across rayon worker threads). Cross-file lookup
     // binders only read this map (post-construction), so sharing is safe.
     binder.semantic_defs = Arc::clone(&file.semantic_defs);
-    if let Some(root_scope) = binder.scopes.first() {
-        binder.current_scope = root_scope.table.clone();
+    if !binder.scopes.is_empty() {
         binder.current_scope_id = tsz::binder::ScopeId(0);
     }
     binder.set_lib_symbols_merged(true);

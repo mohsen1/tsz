@@ -624,7 +624,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder
             .file_locals
             .get(name)
-            .or_else(|| binder.current_scope.get(name))
+            .or_else(|| binder.current_scope().get(name))
         else {
             return false;
         };

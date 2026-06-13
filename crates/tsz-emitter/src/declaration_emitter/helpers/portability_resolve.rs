@@ -131,7 +131,7 @@ impl<'a> DeclarationEmitter<'a> {
             let accessible_symbol = binder
                 .file_locals
                 .get(&symbol_expr)
-                .or_else(|| binder.current_scope.get(&symbol_expr));
+                .or_else(|| binder.current_scope().get(&symbol_expr));
 
             let Some(accessible_symbol) = accessible_symbol else {
                 return Some(format!("[{symbol_expr}]"));
