@@ -230,6 +230,7 @@ withTempDir((dir) => {
     rows_with_attribution: 1,
     missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
     rows_with_attribution_command: 2,
+    attribution_attempts: {},
     missing_attribution_plan: [
       {
         name: "vite-vanilla-ts-app",
@@ -242,6 +243,10 @@ withTempDir((dir) => {
         attribution_command: report.target_gaps[1].loss_closure.attribution_command,
         timing_command: report.target_gaps[1].loss_closure.command,
         attribution_warning: "attribution artifact missing",
+        attribution_attempt_status: null,
+        attribution_attempt_reason: null,
+        attribution_attempt_exit_code: null,
+        attribution_attempt_signal: null,
       },
       {
         name: "single-file-loss",
@@ -254,6 +259,10 @@ withTempDir((dir) => {
         attribution_command: null,
         timing_command: null,
         attribution_warning: "attribution artifact missing",
+        attribution_attempt_status: null,
+        attribution_attempt_reason: null,
+        attribution_attempt_exit_code: null,
+        attribution_attempt_signal: null,
       },
     ],
     worst_gap: report.target_gaps[0],
@@ -1077,6 +1086,108 @@ withTempDir((dir) => {
     dominant_subsystem: null,
     warning: "sidecar perf snapshot mode is not attribution",
   });
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  const attributionPlan = path.join(dir, "missing-attribution.md");
+  const manifest = path.join(dir, "bench-attribution-manifest.json");
+  const perfPath = path.join(dir, "bench.ts-essentials-project.perf.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        winner: "tsgo",
+        factor: 1.2,
+        tsz_ms: 120,
+        tsgo_ms: 100,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "utility types plus recursive JSON shapes",
+        },
+      },
+      {
+        name: "vite-vanilla-ts-app",
+        winner: "tsgo",
+        factor: 1.5,
+        tsz_ms: 150,
+        tsgo_ms: 100,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "generated app dependency/config sanity",
+        },
+      },
+    ],
+  });
+  writeJson(perfPath, {
+    mode: "attribution",
+    checker: { with_parent_cache_constructed: 0 },
+    delegate: { misses: 0 },
+    slow_check_file_timings: [],
+  });
+  writeJson(manifest, {
+    schema_version: 1,
+    rows: [
+      {
+        name: "ts-essentials-project",
+        status: "failed",
+        exit_code: 1,
+        signal: null,
+        perf_path: perfPath,
+      },
+      {
+        name: "vite-vanilla-ts-app",
+        status: "skipped",
+        reason: "unresolved placeholder <generated-vite>",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output, attributionPlan], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps with attribution: 1\/2/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.deepEqual(report.two_x_target.attribution_attempts, {
+    failed: 1,
+    skipped: 1,
+  });
+  assert.equal(report.two_x_target.rows_with_attribution, 1);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["vite-vanilla-ts-app"]);
+  assert.deepEqual(report.two_x_target.missing_attribution_plan.map((row) => row.name), [
+    "vite-vanilla-ts-app",
+  ]);
+
+  const tsEssentials = report.target_gaps.find((row) => row.name === "ts-essentials-project");
+  assert.equal(tsEssentials.attribution_status.present, true);
+  assert.equal(tsEssentials.attribution_status.mode, "attribution");
+  assert.equal(tsEssentials.attribution_status.attempt_status, "failed");
+  assert.equal(tsEssentials.attribution_status.attempt_exit_code, 1);
+  assert.equal(tsEssentials.attribution_status.warning, "attribution command failed: exit 1");
+
+  const vite = report.target_gaps.find((row) => row.name === "vite-vanilla-ts-app");
+  assert.equal(vite.attribution_status.present, false);
+  assert.equal(vite.attribution_status.attempt_status, "skipped");
+  assert.equal(
+    vite.attribution_status.warning,
+    "attribution attempt skipped: unresolved placeholder <generated-vite>",
+  );
+
+  const planMarkdown = fs.readFileSync(attributionPlan, "utf8");
+  assert.doesNotMatch(planMarkdown, /Attribution attempt: failed/);
+  assert.match(planMarkdown, /Attribution attempt: skipped/);
 });
 
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
