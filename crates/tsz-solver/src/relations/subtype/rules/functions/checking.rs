@@ -15,6 +15,7 @@ use crate::visitor::callable_shape_id;
 use super::super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use super::erase_type_params_to_constraints;
 
+mod context_instantiation;
 mod generic_constraints;
 mod overloads;
 mod params;
@@ -29,7 +30,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         let allow_constructor_bivariance =
             !Self::constructor_signatures_need_strict_params(source, target);
-        self.check_function_subtype_impl(source, target, allow_constructor_bivariance)
+        let result = self.check_function_subtype_impl(source, target, allow_constructor_bivariance);
+        if result.is_true() {
+            return result;
+        }
+        if let Some(retry) =
+            self.retry_generic_signature_with_context_instantiation(source, target, result)
+        {
+            return retry;
+        }
+        result
     }
 
     /// True when any of `candidate_tp_ids` occurs *free* in `shape`'s parameter
