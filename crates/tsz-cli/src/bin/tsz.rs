@@ -297,6 +297,12 @@ fn extract_batch_residency_budget_arg(
     (normalized, residency_budget)
 }
 
+fn clear_batch_iteration_state() {
+    tsz_solver::construction::clear_thread_local_cache();
+    tsz_solver::relations::subtype::reset_subtype_thread_local_state();
+    tsz::checker::clear_all_thread_local_state();
+}
+
 /// Batch compilation mode: read project directory paths from stdin (one per line),
 /// compile each with `--project <path> --noEmit --pretty false`, print diagnostics,
 /// then print a sentinel line so the caller can demarcate output boundaries.
@@ -334,9 +340,7 @@ fn run_batch_mode(residency_budget: bool) -> Result<()> {
         // same TypeId values would get stale TypeData from the old interner.
         // The checker thread-locals hold NodeIndex-keyed caches that similarly get
         // stale when a new AST arena reuses the same indices.
-        tsz_solver::construction::clear_thread_local_cache();
-        tsz_solver::relations::subtype::reset_subtype_thread_local_state();
-        tsz::checker::clear_all_thread_local_state();
+        clear_batch_iteration_state();
 
         let project_path = std::path::Path::new(project_dir);
 
@@ -365,7 +369,8 @@ fn run_batch_mode(residency_budget: bool) -> Result<()> {
                 project_path.display()
             )
         })?;
-        match driver::compile(&batch_args, project_path) {
+        let compile_result = driver::compile(&batch_args, project_path);
+        match compile_result {
             Ok(result) => {
                 if !result.diagnostics.is_empty() {
                     let mut reporter = Reporter::new(false);
@@ -375,10 +380,17 @@ fn run_batch_mode(residency_budget: bool) -> Result<()> {
                         write!(stdout, "{output}")?;
                     }
                 }
+                if residency_budget {
+                    drop(result);
+                    clear_batch_iteration_state();
+                }
             }
             Err(e) => {
                 // Print the error so the runner can see it, but don't exit
                 writeln!(stdout, "error: {e}")?;
+                if residency_budget {
+                    clear_batch_iteration_state();
+                }
             }
         }
         std::env::set_current_dir(previous_cwd).context("failed to restore batch cwd")?;
