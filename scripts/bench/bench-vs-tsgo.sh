@@ -89,6 +89,26 @@ DRIZZLE_ORM_DIR="$EXTERNAL_BENCH_DIR/drizzle-orm"
 TS_REST_DIR="$EXTERNAL_BENCH_DIR/ts-rest"
 OFETCH_DIR="$EXTERNAL_BENCH_DIR/ofetch"
 TS_PATTERN_DIR="$EXTERNAL_BENCH_DIR/ts-pattern"
+TRPC_DIR="$EXTERNAL_BENCH_DIR/trpc"
+TANSTACK_QUERY_DIR="$EXTERNAL_BENCH_DIR/tanstack-query"
+TANSTACK_ROUTER_DIR="$EXTERNAL_BENCH_DIR/tanstack-router"
+ZUSTAND_DIR="$EXTERNAL_BENCH_DIR/zustand"
+JOTAI_DIR="$EXTERNAL_BENCH_DIR/jotai"
+FP_TS_DIR="$EXTERNAL_BENCH_DIR/fp-ts"
+IO_TS_DIR="$EXTERNAL_BENCH_DIR/io-ts"
+IMMER_DIR="$EXTERNAL_BENCH_DIR/immer"
+REMEDA_DIR="$EXTERNAL_BENCH_DIR/remeda"
+TS_MORPH_DIR="$EXTERNAL_BENCH_DIR/ts-morph"
+ARKTYPE_DIR="$EXTERNAL_BENCH_DIR/arktype"
+SUPERSTRUCT_DIR="$EXTERNAL_BENCH_DIR/superstruct"
+RUNTYPES_DIR="$EXTERNAL_BENCH_DIR/runtypes"
+HOTSCRIPT_DIR="$EXTERNAL_BENCH_DIR/hotscript"
+TYPEBOX_DIR="$EXTERNAL_BENCH_DIR/typebox"
+CLASS_TRANSFORMER_DIR="$EXTERNAL_BENCH_DIR/class-transformer"
+TYPE_GRAPHQL_DIR="$EXTERNAL_BENCH_DIR/type-graphql"
+NEVERTHROW_DIR="$EXTERNAL_BENCH_DIR/neverthrow"
+XSTATE_DIR="$EXTERNAL_BENCH_DIR/xstate"
+MOBX_DIR="$EXTERNAL_BENCH_DIR/mobx"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 # The local fallback was previously implicit, which silently contaminated
 # PR-quality numbers on any developer machine that happened to have a
@@ -406,6 +426,106 @@ ensure_ofetch_fixture() {
 ensure_ts_pattern_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
     tsz_ensure_git_fixture "ts-pattern" "$TS_PATTERN_REPO" "$TS_PATTERN_REF" "$TS_PATTERN_DIR" 1
+}
+
+ensure_trpc_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "trpc" "$TRPC_REPO" "$TRPC_REF" "$TRPC_DIR" 1
+}
+
+ensure_tanstack_query_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "tanstack-query" "$TANSTACK_QUERY_REPO" "$TANSTACK_QUERY_REF" "$TANSTACK_QUERY_DIR" 1
+}
+
+ensure_tanstack_router_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "tanstack-router" "$TANSTACK_ROUTER_REPO" "$TANSTACK_ROUTER_REF" "$TANSTACK_ROUTER_DIR" 1
+}
+
+ensure_zustand_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "zustand" "$ZUSTAND_REPO" "$ZUSTAND_REF" "$ZUSTAND_DIR" 1
+}
+
+ensure_jotai_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "jotai" "$JOTAI_REPO" "$JOTAI_REF" "$JOTAI_DIR" 1
+}
+
+ensure_fp_ts_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "fp-ts" "$FP_TS_REPO" "$FP_TS_REF" "$FP_TS_DIR" 1
+}
+
+ensure_io_ts_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "io-ts" "$IO_TS_REPO" "$IO_TS_REF" "$IO_TS_DIR" 1
+}
+
+ensure_immer_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "immer" "$IMMER_REPO" "$IMMER_REF" "$IMMER_DIR" 1
+}
+
+ensure_remeda_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "remeda" "$REMEDA_REPO" "$REMEDA_REF" "$REMEDA_DIR" 1
+}
+
+ensure_ts_morph_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-morph" "$TS_MORPH_REPO" "$TS_MORPH_REF" "$TS_MORPH_DIR" 1
+}
+
+ensure_arktype_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "arktype" "$ARKTYPE_REPO" "$ARKTYPE_REF" "$ARKTYPE_DIR" 1
+}
+
+ensure_superstruct_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "superstruct" "$SUPERSTRUCT_REPO" "$SUPERSTRUCT_REF" "$SUPERSTRUCT_DIR" 1
+}
+
+ensure_runtypes_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "runtypes" "$RUNTYPES_REPO" "$RUNTYPES_REF" "$RUNTYPES_DIR" 1
+}
+
+ensure_hotscript_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "hotscript" "$HOTSCRIPT_REPO" "$HOTSCRIPT_REF" "$HOTSCRIPT_DIR" 1
+}
+
+ensure_typebox_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "typebox" "$TYPEBOX_REPO" "$TYPEBOX_REF" "$TYPEBOX_DIR" 1
+}
+
+ensure_class_transformer_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "class-transformer" "$CLASS_TRANSFORMER_REPO" "$CLASS_TRANSFORMER_REF" "$CLASS_TRANSFORMER_DIR" 1
+}
+
+ensure_type_graphql_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "type-graphql" "$TYPE_GRAPHQL_REPO" "$TYPE_GRAPHQL_REF" "$TYPE_GRAPHQL_DIR" 1
+}
+
+ensure_neverthrow_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "neverthrow" "$NEVERTHROW_REPO" "$NEVERTHROW_REF" "$NEVERTHROW_DIR" 1
+}
+
+ensure_xstate_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "xstate" "$XSTATE_REPO" "$XSTATE_REF" "$XSTATE_DIR" 1
+}
+
+ensure_mobx_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "mobx" "$MOBX_REPO" "$MOBX_REF" "$MOBX_DIR" 1
 }
 
 run_utility_types_benchmarks() {
@@ -841,6 +961,306 @@ run_ts_pattern_project_benchmarks() {
     echo
 }
 
+run_trpc_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "trpc-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - trpc"
+    ensure_trpc_fixture
+    local tsconfig="$TRPC_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TRPC_DIR/packages/server/src"
+    tsz_write_trpc_config "$tsconfig"
+    run_project_benchmark "trpc-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_tanstack_query_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "tanstack-query-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - tanstack-query"
+    ensure_tanstack_query_fixture
+    local tsconfig="$TANSTACK_QUERY_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TANSTACK_QUERY_DIR/packages/query-core/src"
+    tsz_write_tanstack_query_config "$tsconfig"
+    run_project_benchmark "tanstack-query-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_tanstack_router_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "tanstack-router-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - tanstack-router"
+    ensure_tanstack_router_fixture
+    local tsconfig="$TANSTACK_ROUTER_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TANSTACK_ROUTER_DIR/packages/router-core/src"
+    tsz_write_tanstack_router_config "$tsconfig"
+    run_project_benchmark "tanstack-router-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_zustand_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "zustand-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - zustand"
+    ensure_zustand_fixture
+    local tsconfig="$ZUSTAND_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$ZUSTAND_DIR/src"
+    tsz_write_zustand_config "$tsconfig"
+    run_project_benchmark "zustand-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_jotai_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "jotai-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - jotai"
+    ensure_jotai_fixture
+    local tsconfig="$JOTAI_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$JOTAI_DIR/src"
+    tsz_write_jotai_config "$tsconfig"
+    run_project_benchmark "jotai-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_fp_ts_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "fp-ts-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - fp-ts"
+    ensure_fp_ts_fixture
+    local tsconfig="$FP_TS_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$FP_TS_DIR/src"
+    tsz_write_fp_ts_config "$tsconfig"
+    run_project_benchmark "fp-ts-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_io_ts_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "io-ts-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - io-ts"
+    ensure_io_ts_fixture
+    local tsconfig="$IO_TS_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$IO_TS_DIR/src"
+    tsz_write_io_ts_config "$tsconfig"
+    run_project_benchmark "io-ts-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_immer_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "immer-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - immer"
+    ensure_immer_fixture
+    local tsconfig="$IMMER_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$IMMER_DIR/src"
+    tsz_write_immer_config "$tsconfig"
+    run_project_benchmark "immer-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_remeda_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "remeda-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - remeda"
+    ensure_remeda_fixture
+    local tsconfig="$REMEDA_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$REMEDA_DIR/packages/remeda/src"
+    tsz_write_remeda_config "$tsconfig"
+    run_project_benchmark "remeda-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_morph_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ts-morph-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-morph"
+    ensure_ts_morph_fixture
+    local tsconfig="$TS_MORPH_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TS_MORPH_DIR/packages/ts-morph/src"
+    tsz_write_ts_morph_config "$tsconfig"
+    run_project_benchmark "ts-morph-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_arktype_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "arktype-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - arktype"
+    ensure_arktype_fixture
+    local tsconfig="$ARKTYPE_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$ARKTYPE_DIR/ark/type"
+    tsz_write_arktype_config "$tsconfig"
+    run_project_benchmark "arktype-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_superstruct_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "superstruct-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - superstruct"
+    ensure_superstruct_fixture
+    local tsconfig="$SUPERSTRUCT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$SUPERSTRUCT_DIR/src"
+    tsz_write_superstruct_config "$tsconfig"
+    run_project_benchmark "superstruct-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_runtypes_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "runtypes-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - runtypes"
+    ensure_runtypes_fixture
+    local tsconfig="$RUNTYPES_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$RUNTYPES_DIR/src"
+    tsz_write_runtypes_config "$tsconfig"
+    run_project_benchmark "runtypes-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_hotscript_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "hotscript-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - hotscript"
+    ensure_hotscript_fixture
+    local tsconfig="$HOTSCRIPT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$HOTSCRIPT_DIR/src"
+    tsz_write_hotscript_config "$tsconfig"
+    run_project_benchmark "hotscript-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_typebox_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "typebox-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - typebox"
+    ensure_typebox_fixture
+    local tsconfig="$TYPEBOX_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TYPEBOX_DIR/src"
+    tsz_write_typebox_config "$tsconfig"
+    run_project_benchmark "typebox-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_class_transformer_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "class-transformer-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - class-transformer"
+    ensure_class_transformer_fixture
+    local tsconfig="$CLASS_TRANSFORMER_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$CLASS_TRANSFORMER_DIR/src"
+    tsz_write_class_transformer_config "$tsconfig"
+    run_project_benchmark "class-transformer-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_type_graphql_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "type-graphql-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - type-graphql"
+    ensure_type_graphql_fixture
+    local tsconfig="$TYPE_GRAPHQL_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TYPE_GRAPHQL_DIR/src"
+    tsz_write_type_graphql_config "$tsconfig"
+    run_project_benchmark "type-graphql-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_neverthrow_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "neverthrow-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - neverthrow"
+    ensure_neverthrow_fixture
+    local tsconfig="$NEVERTHROW_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$NEVERTHROW_DIR/src"
+    tsz_write_neverthrow_config "$tsconfig"
+    run_project_benchmark "neverthrow-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_xstate_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "xstate-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - xstate"
+    ensure_xstate_fixture
+    local tsconfig="$XSTATE_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$XSTATE_DIR/packages/core/src"
+    tsz_write_xstate_config "$tsconfig"
+    run_project_benchmark "xstate-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_mobx_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "mobx-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - mobx"
+    ensure_mobx_fixture
+    local tsconfig="$MOBX_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$MOBX_DIR/packages/mobx/src"
+    tsz_write_mobx_config "$tsconfig"
+    run_project_benchmark "mobx-project" "$tsconfig" "$src_dir"
+    echo
+}
+
 run_nextjs_benchmarks() {
     if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
         return
@@ -1146,6 +1566,26 @@ main() {
     run_isolated "ts-rest-project"        run_ts_rest_project_benchmarks
     run_isolated "ofetch-project"         run_ofetch_project_benchmarks
     run_isolated "ts-pattern-project"     run_ts_pattern_project_benchmarks
+    run_isolated "trpc-project"                      run_trpc_project_benchmarks
+    run_isolated "tanstack-query-project"            run_tanstack_query_project_benchmarks
+    run_isolated "tanstack-router-project"           run_tanstack_router_project_benchmarks
+    run_isolated "zustand-project"                   run_zustand_project_benchmarks
+    run_isolated "jotai-project"                     run_jotai_project_benchmarks
+    run_isolated "fp-ts-project"                     run_fp_ts_project_benchmarks
+    run_isolated "io-ts-project"                     run_io_ts_project_benchmarks
+    run_isolated "immer-project"                     run_immer_project_benchmarks
+    run_isolated "remeda-project"                    run_remeda_project_benchmarks
+    run_isolated "ts-morph-project"                  run_ts_morph_project_benchmarks
+    run_isolated "arktype-project"                   run_arktype_project_benchmarks
+    run_isolated "superstruct-project"               run_superstruct_project_benchmarks
+    run_isolated "runtypes-project"                  run_runtypes_project_benchmarks
+    run_isolated "hotscript-project"                 run_hotscript_project_benchmarks
+    run_isolated "typebox-project"                   run_typebox_project_benchmarks
+    run_isolated "class-transformer-project"         run_class_transformer_project_benchmarks
+    run_isolated "type-graphql-project"              run_type_graphql_project_benchmarks
+    run_isolated "neverthrow-project"                run_neverthrow_project_benchmarks
+    run_isolated "xstate-project"                    run_xstate_project_benchmarks
+    run_isolated "mobx-project"                      run_mobx_project_benchmarks
     run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
     run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks

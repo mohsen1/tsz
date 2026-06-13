@@ -41,6 +41,26 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "ts-rest-project"
   "ofetch-project"
   "ts-pattern-project"
+  "trpc-project"
+  "tanstack-query-project"
+  "tanstack-router-project"
+  "zustand-project"
+  "jotai-project"
+  "fp-ts-project"
+  "io-ts-project"
+  "immer-project"
+  "remeda-project"
+  "ts-morph-project"
+  "arktype-project"
+  "superstruct-project"
+  "runtypes-project"
+  "hotscript-project"
+  "typebox-project"
+  "class-transformer-project"
+  "type-graphql-project"
+  "neverthrow-project"
+  "xstate-project"
+  "mobx-project"
 )
 
 # Row metadata pre-loaded by tsz_load_fixture_pins_from_rows (pipe-delimited).
@@ -286,6 +306,66 @@ tsz_project_fixture_sources() {
       ;;
     ts-pattern-project)
       printf 'ts-pattern|%s|%s\n' "$TS_PATTERN_REPO" "$TS_PATTERN_REF"
+      ;;
+    trpc-project)
+      printf 'trpc|%s|%s\n' "$TRPC_REPO" "$TRPC_REF"
+      ;;
+    tanstack-query-project)
+      printf 'tanstack-query|%s|%s\n' "$TANSTACK_QUERY_REPO" "$TANSTACK_QUERY_REF"
+      ;;
+    tanstack-router-project)
+      printf 'tanstack-router|%s|%s\n' "$TANSTACK_ROUTER_REPO" "$TANSTACK_ROUTER_REF"
+      ;;
+    zustand-project)
+      printf 'zustand|%s|%s\n' "$ZUSTAND_REPO" "$ZUSTAND_REF"
+      ;;
+    jotai-project)
+      printf 'jotai|%s|%s\n' "$JOTAI_REPO" "$JOTAI_REF"
+      ;;
+    fp-ts-project)
+      printf 'fp-ts|%s|%s\n' "$FP_TS_REPO" "$FP_TS_REF"
+      ;;
+    io-ts-project)
+      printf 'io-ts|%s|%s\n' "$IO_TS_REPO" "$IO_TS_REF"
+      ;;
+    immer-project)
+      printf 'immer|%s|%s\n' "$IMMER_REPO" "$IMMER_REF"
+      ;;
+    remeda-project)
+      printf 'remeda|%s|%s\n' "$REMEDA_REPO" "$REMEDA_REF"
+      ;;
+    ts-morph-project)
+      printf 'ts-morph|%s|%s\n' "$TS_MORPH_REPO" "$TS_MORPH_REF"
+      ;;
+    arktype-project)
+      printf 'arktype|%s|%s\n' "$ARKTYPE_REPO" "$ARKTYPE_REF"
+      ;;
+    superstruct-project)
+      printf 'superstruct|%s|%s\n' "$SUPERSTRUCT_REPO" "$SUPERSTRUCT_REF"
+      ;;
+    runtypes-project)
+      printf 'runtypes|%s|%s\n' "$RUNTYPES_REPO" "$RUNTYPES_REF"
+      ;;
+    hotscript-project)
+      printf 'hotscript|%s|%s\n' "$HOTSCRIPT_REPO" "$HOTSCRIPT_REF"
+      ;;
+    typebox-project)
+      printf 'typebox|%s|%s\n' "$TYPEBOX_REPO" "$TYPEBOX_REF"
+      ;;
+    class-transformer-project)
+      printf 'class-transformer|%s|%s\n' "$CLASS_TRANSFORMER_REPO" "$CLASS_TRANSFORMER_REF"
+      ;;
+    type-graphql-project)
+      printf 'type-graphql|%s|%s\n' "$TYPE_GRAPHQL_REPO" "$TYPE_GRAPHQL_REF"
+      ;;
+    neverthrow-project)
+      printf 'neverthrow|%s|%s\n' "$NEVERTHROW_REPO" "$NEVERTHROW_REF"
+      ;;
+    xstate-project)
+      printf 'xstate|%s|%s\n' "$XSTATE_REPO" "$XSTATE_REF"
+      ;;
+    mobx-project)
+      printf 'mobx|%s|%s\n' "$MOBX_REPO" "$MOBX_REF"
       ;;
     vite-vanilla-ts-app)
       local fixture_dir="${VITE_APP_BENCH_DIR:-}"
@@ -640,6 +720,67 @@ tsz_write_ofetch_config() {
 
 tsz_write_ts_pattern_config() {
   tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_trpc_config() {
+  tsz_write_basic_external_project_config "$1" "packages/server/src"
+}
+tsz_write_tanstack_query_config() {
+  tsz_write_basic_external_project_config "$1" "packages/query-core/src"
+}
+tsz_write_tanstack_router_config() {
+  tsz_write_basic_external_project_config "$1" "packages/router-core/src"
+}
+tsz_write_zustand_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_jotai_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_fp_ts_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_io_ts_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_immer_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_remeda_config() {
+  tsz_write_basic_external_project_config "$1" "packages/remeda/src"
+}
+tsz_write_ts_morph_config() {
+  tsz_write_basic_external_project_config "$1" "packages/ts-morph/src"
+}
+tsz_write_arktype_config() {
+  tsz_write_basic_external_project_config "$1" "ark/type"
+}
+tsz_write_superstruct_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_runtypes_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_hotscript_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_typebox_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_class_transformer_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_type_graphql_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_neverthrow_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+tsz_write_xstate_config() {
+  tsz_write_basic_external_project_config "$1" "packages/core/src"
+}
+tsz_write_mobx_config() {
+  tsz_write_basic_external_project_config "$1" "packages/mobx/src"
 }
 
 # The full Next.js row uses a sparse source checkout, not an installed Next.js
