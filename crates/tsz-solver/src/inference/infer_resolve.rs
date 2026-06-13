@@ -22,10 +22,11 @@ impl<'a> InferenceContext<'a> {
     fn discard_self_referential_candidates(
         &mut self,
         root: InferenceVar,
-        candidates: Vec<InferenceCandidate>,
+        candidates: &[InferenceCandidate],
     ) -> Vec<InferenceCandidate> {
         candidates
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|candidate| !self.occurs_in(root, candidate.type_id))
             .collect()
     }
@@ -437,9 +438,9 @@ impl<'a> InferenceContext<'a> {
         let mut upper_bounds = Vec::new();
         let mut self_referential_bounds = Vec::new();
         let mut seen_upper_bounds = FxHashSet::default();
-        let mut candidates = self.discard_self_referential_candidates(root, info.candidates);
+        let mut candidates = self.discard_self_referential_candidates(root, &info.candidates);
         let contra_candidates =
-            self.discard_self_referential_candidates(root, info.contra_candidates);
+            self.discard_self_referential_candidates(root, &info.contra_candidates);
         for bound in info.upper_bounds {
             if self.occurs_in(root, bound) {
                 self_referential_bounds.push(bound);
@@ -1757,8 +1758,7 @@ impl<'a> InferenceContext<'a> {
             let dc = self.declared_constraints.get(&root).copied();
             let dc_preserves_literals =
                 self.literal_preserving_declared_constraints.contains(&root);
-            let mut candidates =
-                self.discard_self_referential_candidates(root, info.candidates.clone());
+            let mut candidates = self.discard_self_referential_candidates(root, &info.candidates);
             if !info.upper_bounds.is_empty() {
                 let has_informative_upper_bound = info
                     .upper_bounds
@@ -1774,7 +1774,7 @@ impl<'a> InferenceContext<'a> {
                 });
             }
             let mut concrete_contra_candidates: Vec<_> = self
-                .discard_self_referential_candidates(root, info.contra_candidates.clone())
+                .discard_self_referential_candidates(root, &info.contra_candidates)
                 .into_iter()
                 .filter(|c| self.is_concrete_contra_candidate(c.type_id))
                 .collect();
@@ -1903,9 +1903,9 @@ impl<'a> InferenceContext<'a> {
                     );
 
                     let candidates =
-                        self.discard_self_referential_candidates(root, info.candidates.clone());
-                    let contra_candidates = self
-                        .discard_self_referential_candidates(root, info.contra_candidates.clone());
+                        self.discard_self_referential_candidates(root, &info.candidates);
+                    let contra_candidates =
+                        self.discard_self_referential_candidates(root, &info.contra_candidates);
 
                     if !candidates.is_empty() {
                         let is_const = self.is_var_const(root);
