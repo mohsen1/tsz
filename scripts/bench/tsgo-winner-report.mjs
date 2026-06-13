@@ -906,8 +906,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
     `2x target gaps with attribution: ${report.two_x_target.rows_with_attribution}/${report.two_x_target.rows_below_target}`,
     `2x target gaps with attribution commands: ${report.two_x_target.rows_with_attribution_command}/${report.two_x_target.rows_below_target}`,
-    `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
   ];
+  const projectAggregate = report.two_x_target.project_rows_aggregate;
+  if (projectAggregate?.rows > 0) {
+    const targetState = projectAggregate.target_met ? "meets" : "below";
+    outputLines.push(
+      `project-row aggregate speedup: ${formatNumber(projectAggregate.tsz_speedup_vs_tsgo)}x (${targetState} 2x target; ${projectAggregate.rows} row(s))`,
+    );
+  }
+  outputLines.push(`report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`);
   if (attributionPlanPath) {
     outputLines.push(
       `missing attribution plan: ${path.relative(process.cwd(), attributionPlanPath).split(path.sep).join("/")}`,
