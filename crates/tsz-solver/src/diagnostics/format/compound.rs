@@ -23,6 +23,113 @@ pub(super) struct SignatureFormatOpts<'a> {
 }
 
 impl<'a> TypeFormatter<'a> {
+    fn object_display_tail_index(&self, props: &[&PropertyInfo]) -> usize {
+        props
+            .iter()
+            .rposition(|prop| {
+                self.interner
+                    .resolve_atom_ref(prop.name)
+                    .as_ref()
+                    .starts_with("[Symbol.")
+            })
+            .filter(|&idx| idx > 0)
+            .unwrap_or(props.len() - 1)
+    }
+
+    fn format_large_object(&mut self, display_props: &[&PropertyInfo]) -> String {
+        debug_assert!(display_props.len() >= 22);
+
+        let is_string_apparent_member_list = display_props
+            .first()
+            .is_some_and(|prop| self.interner.resolve_atom_ref(prop.name).as_ref() == "toString")
+            && display_props.iter().any(|prop| {
+                self.interner.resolve_atom_ref(prop.name).as_ref() == "[Symbol.iterator]"
+            });
+        let max_head_parts = if is_string_apparent_member_list {
+            1
+        } else {
+            17
+        };
+        self.format_large_object_with_prefix(Vec::new(), display_props, max_head_parts)
+    }
+
+    pub(super) fn format_large_object_with_prefix(
+        &mut self,
+        prefix_parts: Vec<String>,
+        display_props: &[&PropertyInfo],
+        max_head_parts: usize,
+    ) -> String {
+        let total = prefix_parts.len() + display_props.len();
+        debug_assert!(total >= 22);
+
+        const MAX_HEAD_CHARS: usize = 380;
+
+        let tail_prop_index = self.object_display_tail_index(display_props);
+        let tail_part_index = prefix_parts.len() + tail_prop_index;
+        let tail = Self::collapse_truncated_tail_part(
+            &self.format_property(display_props[tail_prop_index]),
+        );
+        let max_head_chars = if tail_part_index == total - 1 {
+            MAX_HEAD_CHARS
+        } else {
+            255
+        };
+        let mut head_parts = Vec::new();
+        let mut used_chars = 0usize;
+
+        for idx in 0..tail_part_index {
+            if head_parts.len() >= max_head_parts {
+                break;
+            }
+
+            let part = if let Some(prefix_part) = prefix_parts.get(idx) {
+                prefix_part.clone()
+            } else {
+                self.format_property(display_props[idx - prefix_parts.len()])
+            };
+            let part_cost = if head_parts.is_empty() {
+                part.len()
+            } else {
+                part.len() + 2
+            };
+            let next_used = used_chars + part_cost;
+            let remaining_after = total - (idx + 1) - 1;
+            let omitted_digits = remaining_after.max(1).to_string().len();
+            let reserve_for_marker = 2 + 4 + omitted_digits + 9;
+            let reserve_for_tail = 2 + tail.len();
+
+            if head_parts.len() >= 2
+                && next_used + reserve_for_marker + reserve_for_tail > max_head_chars
+            {
+                break;
+            }
+
+            used_chars = next_used;
+            head_parts.push(part);
+        }
+
+        if head_parts.is_empty() && tail_part_index > 0 {
+            if let Some(prefix_part) = prefix_parts.first() {
+                head_parts.push(prefix_part.clone());
+            } else {
+                head_parts.push(self.format_property(display_props[0]));
+            }
+        }
+
+        let omitted = total.saturating_sub(head_parts.len() + 1);
+        if omitted == 0 {
+            let mut formatted = prefix_parts;
+            formatted.extend(display_props.iter().map(|prop| self.format_property(prop)));
+            return self.format_object_parts(formatted);
+        }
+
+        let mut parts = Vec::with_capacity(head_parts.len() + 2);
+        parts.extend(head_parts);
+        parts.push(format!("... {omitted} more ..."));
+        parts.push(tail);
+        format!("{{ {}; }}", parts.join("; "))
+    }
+
     fn visible_object_properties<'b>(&self, props: &'b [PropertyInfo]) -> Vec<&'b PropertyInfo> {
         let default_name = self.interner.intern_string("default");
         let internal_default_name = self.interner.intern_string("_default");
@@ -108,6 +215,10 @@ impl<'a> TypeFormatter<'a> {
                 (Err(_), Err(_)) => std::cmp::Ordering::Equal,
             }
         });
+        if display_props.len() >= 22 {
+            return self.format_large_object(&display_props);
+        }
+
         let formatted: Vec<String> = display_props
             .iter()
             .map(|p| self.format_property(p))

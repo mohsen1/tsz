@@ -40,6 +40,10 @@ impl<'a> TypeFormatter<'a> {
             display_props.sort_by_key(|p| p.declaration_order);
         }
 
+        if !use_array_to_locale_display && parts.len() + display_props.len() >= 22 {
+            return self.format_large_object_with_prefix(parts, &display_props, 17);
+        }
+
         for prop in display_props {
             if use_array_to_locale_display && self.atom(prop.name).as_ref() == "toLocaleString" {
                 parts.push(
