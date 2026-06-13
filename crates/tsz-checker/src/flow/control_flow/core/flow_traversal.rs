@@ -170,6 +170,7 @@ impl<'a> FlowAnalyzer<'a> {
                 },
                 visited,
                 results,
+                &mut antecedent_defer_memo,
                 &mut passthrough_run,
             );
             // If the chase spliced out the entry `flow_id` itself, remember the node
@@ -1208,6 +1209,7 @@ impl<'a> FlowAnalyzer<'a> {
         gate: PassthroughGate,
         visited: &FxHashSet<FlowNodeId>,
         results: &FxHashMap<FlowNodeId, TypeId>,
+        antecedent_defer_memo: &mut FxHashMap<FlowNodeId, bool>,
         run: &mut Vec<FlowNodeId>,
     ) -> FlowNodeId {
         let PassthroughGate {
@@ -1309,8 +1311,12 @@ impl<'a> FlowAnalyzer<'a> {
             // Never skip past an antecedent that carries pending narrowing, and
             // never skip one already finalized/cached (let the worklist reuse the
             // existing answer for it).
-            if self.antecedent_requires_defer(ant, reference, symbol_id)
-                || visited.contains(&ant)
+            if self.antecedent_requires_defer_cached(
+                ant,
+                reference,
+                symbol_id,
+                antecedent_defer_memo,
+            ) || visited.contains(&ant)
                 || results.contains_key(&ant)
             {
                 return current;
