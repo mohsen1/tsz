@@ -9,7 +9,9 @@ on:
 permissions:
   contents: read
   actions: read
-  issues: read
+  # main-red-sentinel files/updates/closes a single tracking issue when main's
+  # post-merge CI breaches the conformance/parity floor.
+  issues: write
   pull-requests: read
 
 env:
@@ -40,6 +42,26 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/ci/check-stale-ci-runs.mjs --advisory --stale-minutes 45 --max-runs 100 \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  main-red-sentinel:
+    name: main-red-sentinel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Detect and track red main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Advisory by design: a monitoring job must not fail the health
+          # workflow. --file-issue opens/updates/closes one deduplicated
+          # tracking issue keyed on a hidden marker in the issue body.
+          node scripts/ci/check-main-red.mjs --file-issue --max-runs 60 \
             | tee -a "${GITHUB_STEP_SUMMARY}"
 
   health:
