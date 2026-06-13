@@ -535,6 +535,15 @@ impl Symbol {
 pub struct SymbolTable {
     /// Symbols indexed by their escaped name (using `FxHashMap` for faster hashing)
     symbols: Arc<FxHashMap<String, SymbolId>>,
+    /// Symbols indexed by `(NodeArena identity, parsed identifier AstAtom)`.
+    ///
+    /// `AstAtom` values are per-arena. The arena key is part of the side-index
+    /// key so tables shared across files can never resolve a same-number atom
+    /// from another arena. String keys remain authoritative and are used as the
+    /// fallback for cross-arena lookups, synthetic names, and deserialized
+    /// tables with an empty runtime-only atom index.
+    #[serde(skip)]
+    atom_symbols: Arc<FxHashMap<(usize, tsz_common::interner::AstAtom), SymbolId>>,
 }
 
 impl SymbolTable {
@@ -542,6 +551,7 @@ impl SymbolTable {
     pub fn new() -> Self {
         Self {
             symbols: Arc::new(FxHashMap::default()),
+            atom_symbols: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -555,6 +565,10 @@ impl SymbolTable {
                 capacity,
                 Default::default(),
             )),
+            atom_symbols: Arc::new(FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            )),
         }
     }
 
@@ -564,14 +578,57 @@ impl SymbolTable {
         self.symbols.get(name).copied()
     }
 
+    /// Get a symbol by parsed identifier atom when the atom owner matches.
+    #[must_use]
+    pub fn get_by_atom(
+        &self,
+        atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
+    ) -> Option<SymbolId> {
+        let (owner_key, atom) = atom_key?;
+        if owner_key == 0 || atom == tsz_common::interner::AstAtom::NONE {
+            return None;
+        }
+        self.atom_symbols.get(&(owner_key, atom)).copied()
+    }
+
+    /// Get a symbol by same-arena atom when present, falling back to escaped text.
+    #[must_use]
+    pub fn get_by_atom_or_name(
+        &self,
+        atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
+        name: &str,
+    ) -> Option<SymbolId> {
+        self.get_by_atom(atom_key).or_else(|| self.get(name))
+    }
+
     /// Set a symbol by name.
     pub fn set(&mut self, name: String, symbol: SymbolId) {
         Arc::make_mut(&mut self.symbols).insert(name, symbol);
     }
 
+    /// Set a symbol by name and by same-arena parsed identifier atom.
+    pub fn set_with_atom(
+        &mut self,
+        name: String,
+        atom_key: Option<(usize, tsz_common::interner::AstAtom)>,
+        symbol: SymbolId,
+    ) {
+        self.set(name, symbol);
+        if let Some((owner_key, atom)) = atom_key
+            && owner_key != 0
+            && atom != tsz_common::interner::AstAtom::NONE
+        {
+            Arc::make_mut(&mut self.atom_symbols).insert((owner_key, atom), symbol);
+        }
+    }
+
     /// Remove a symbol by name.
     pub fn remove(&mut self, name: &str) -> Option<SymbolId> {
-        Arc::make_mut(&mut self.symbols).remove(name)
+        let removed = Arc::make_mut(&mut self.symbols).remove(name);
+        if let Some(symbol) = removed {
+            Arc::make_mut(&mut self.atom_symbols).retain(|_, id| *id != symbol);
+        }
+        removed
     }
 
     /// Check if a name exists in the table.
@@ -595,6 +652,7 @@ impl SymbolTable {
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
         Arc::make_mut(&mut self.symbols).clear();
+        Arc::make_mut(&mut self.atom_symbols).clear();
     }
 
     /// Iterate over symbols.
@@ -611,6 +669,10 @@ impl SymbolTable {
         const BUCKET_OVERHEAD: usize = 16;
         let mut size = self.symbols.capacity()
             * (BUCKET_OVERHEAD + std::mem::size_of::<String>() + std::mem::size_of::<SymbolId>());
+        size += self.atom_symbols.capacity()
+            * (BUCKET_OVERHEAD
+                + std::mem::size_of::<(usize, tsz_common::interner::AstAtom)>()
+                + std::mem::size_of::<SymbolId>());
         for name in self.symbols.keys() {
             size += name.capacity();
         }
@@ -1060,6 +1122,7 @@ impl SymbolArena {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tsz_common::interner::AstAtom;
 
     fn sym() -> Symbol {
         Symbol::new(SymbolId(0), 0, String::new())
@@ -1214,6 +1277,31 @@ mod tests {
         s.set_value_declaration(NodeIndex(3), Some((42, 50)));
         s.set_value_declaration(NodeIndex::NONE, None);
         assert_eq!(s.value_declaration_span(), None);
+    }
+
+    #[test]
+    fn symbol_table_atom_lookup_ignores_foreign_arena_atoms() {
+        let lib_owner = 11;
+        let user_owner = 22;
+        let mut table = SymbolTable::new();
+
+        table.set_with_atom(
+            "captureEvents".to_string(),
+            Some((lib_owner, AstAtom(7))),
+            SymbolId(1),
+        );
+        table.set("globalThis".to_string(), SymbolId(2));
+
+        assert_eq!(
+            table.get_by_atom_or_name(Some((lib_owner, AstAtom(7))), "missing"),
+            Some(SymbolId(1)),
+            "same-arena atom lookups may use the side index"
+        );
+        assert_eq!(
+            table.get_by_atom_or_name(Some((user_owner, AstAtom(7))), "globalThis"),
+            Some(SymbolId(2)),
+            "foreign atoms must not hit the same raw atom id in this table"
+        );
     }
 
     #[test]

@@ -1130,6 +1130,17 @@ impl NodeArena {
         }
     }
 
+    /// Stable identity key for `AstAtom`s minted by this arena's interner.
+    ///
+    /// `AstAtom` raw values are only meaningful within one `NodeArena`.
+    /// Callers that build atom-keyed side indexes must include this owner key
+    /// with the atom so a same-number atom from another file cannot collide.
+    #[inline]
+    #[must_use]
+    pub fn atom_owner_key(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+
     /// Construct an arena with pool capacity pre-reserved for `capacity` nodes.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
