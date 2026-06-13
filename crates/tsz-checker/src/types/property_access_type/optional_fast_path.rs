@@ -66,6 +66,7 @@ impl<'a> CheckerState<'a> {
         if skip_result_flow_for_result
             && let Some(&cached) = self
                 .ctx
+                .flow_shared
                 .narrowing_cache
                 .optional_chain_cache
                 .borrow()
@@ -114,6 +115,7 @@ impl<'a> CheckerState<'a> {
 
         let cached_property_type = self
             .ctx
+            .flow_shared
             .narrowing_cache
             .property_cache
             .borrow()
@@ -134,6 +136,7 @@ impl<'a> CheckerState<'a> {
             }
             if skip_result_flow_for_result {
                 self.ctx
+                    .flow_shared
                     .narrowing_cache
                     .optional_chain_cache
                     .borrow_mut()
@@ -195,13 +198,18 @@ impl<'a> CheckerState<'a> {
 
                 let refined_type_id =
                     self.refine_expando_property_read_type(idx, expression, property_name, type_id);
-                self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
-                    cache_key(resolved_base, prop_atom),
-                    Some(CachedPropertyType::new(
-                        refined_type_id,
-                        from_index_signature,
-                    )),
-                );
+                self.ctx
+                    .flow_shared
+                    .narrowing_cache
+                    .property_cache
+                    .borrow_mut()
+                    .insert(
+                        cache_key(resolved_base, prop_atom),
+                        Some(CachedPropertyType::new(
+                            refined_type_id,
+                            from_index_signature,
+                        )),
+                    );
                 let mut result_type = effective_write_result(refined_type_id, write_type);
                 if base_nullish.is_some() {
                     result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
@@ -211,6 +219,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if skip_result_flow_for_result {
                     self.ctx
+                        .flow_shared
                         .narrowing_cache
                         .optional_chain_cache
                         .borrow_mut()
@@ -218,6 +227,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(key) = optional_property_chain_cache_key {
                     self.ctx
+                        .flow_shared
                         .narrowing_cache
                         .optional_property_chain_cache
                         .borrow_mut()
@@ -231,10 +241,15 @@ impl<'a> CheckerState<'a> {
                 ))
             }
             PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
-                    cache_key(resolved_base, prop_atom),
-                    property_type.map(CachedPropertyType::explicit),
-                );
+                self.ctx
+                    .flow_shared
+                    .narrowing_cache
+                    .property_cache
+                    .borrow_mut()
+                    .insert(
+                        cache_key(resolved_base, prop_atom),
+                        property_type.map(CachedPropertyType::explicit),
+                    );
                 let mut result_type = property_type.unwrap_or(TypeId::ERROR);
                 if base_nullish.is_some() {
                     result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
@@ -251,6 +266,7 @@ impl<'a> CheckerState<'a> {
             }
             PropertyAccessResult::PropertyNotFound { .. } => {
                 self.ctx
+                    .flow_shared
                     .narrowing_cache
                     .property_cache
                     .borrow_mut()

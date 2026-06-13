@@ -1055,6 +1055,7 @@ function getResults2(value: Results | { data: Results }): Results {
 
     let formatted_predicates: Vec<_> = checker
         .ctx
+        .flow_shared
         .call_type_predicates
         .iter()
         .map(|(node, (predicate, params))| {
@@ -1083,7 +1084,7 @@ function getResults2(value: Results | { data: Results }): Results {
     {
         panic!(
             "Found erroneous false-branch collapse to never for generic predicate: {relevant:?}; formatted_predicates={formatted_predicates:?}; call_type_predicates={:?}",
-            checker.ctx.call_type_predicates,
+            checker.ctx.flow_shared.call_type_predicates,
         );
     }
 }

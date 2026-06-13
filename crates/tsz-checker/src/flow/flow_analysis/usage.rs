@@ -1373,7 +1373,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Create a flow analyzer and check definite assignment
-        let analyzer = FlowAnalyzer::from_context(&self.ctx);
+        let analyzer = FlowAnalyzer::from_ctx(&self.ctx);
 
         // Pre-seed the reference symbol cache when the checker has already
         // resolved the symbol for this reference. This handles cases where
@@ -1393,6 +1393,7 @@ impl<'a> CheckerState<'a> {
             // symbol. With the correct symbol now available, those cached results
             // are invalid and must be recomputed.
             self.ctx
+                .flow_shared
                 .flow_reference_match_cache
                 .borrow_mut()
                 .retain(|&(a, b), _| a != idx.0 && b != idx.0);

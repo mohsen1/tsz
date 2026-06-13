@@ -47,6 +47,7 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(idx.0, Some(sym_id));
         self.ctx
+            .flow_shared
             .flow_reference_match_cache
             .borrow_mut()
             .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -62,6 +63,7 @@ impl<'a> CheckerState<'a> {
 
         let last_assign_pos = if let Some(&pos) = self
             .ctx
+            .flow_shared
             .symbol_flow_memo
             .last_assignment_pos
             .borrow()
@@ -75,6 +77,7 @@ impl<'a> CheckerState<'a> {
                 .borrow_mut()
                 .insert(idx.0, Some(sym_id));
             self.ctx
+                .flow_shared
                 .flow_reference_match_cache
                 .borrow_mut()
                 .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -107,6 +110,7 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx
+                .flow_shared
                 .symbol_flow_memo
                 .last_assignment_pos
                 .borrow_mut()
@@ -394,6 +398,7 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(idx.0, Some(sym_id));
         self.ctx
+            .flow_shared
             .flow_reference_match_cache
             .borrow_mut()
             .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -478,6 +483,7 @@ impl<'a> CheckerState<'a> {
         // turning N references into an O(N · flow_nodes) cost.
         if let Some(&cached) = self
             .ctx
+            .flow_shared
             .symbol_flow_memo
             .has_non_initializer_assignment
             .borrow()
@@ -489,6 +495,7 @@ impl<'a> CheckerState<'a> {
         let result = self.compute_has_non_initializer_assignment_for_reference(idx, sym_id);
 
         self.ctx
+            .flow_shared
             .symbol_flow_memo
             .has_non_initializer_assignment
             .borrow_mut()
@@ -508,6 +515,7 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(idx.0, Some(sym_id));
         self.ctx
+            .flow_shared
             .flow_reference_match_cache
             .borrow_mut()
             .retain(|&(a, b), _| a != idx.0 && b != idx.0);
@@ -592,6 +600,6 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn flow_analyzer(&self) -> FlowAnalyzer<'_> {
-        FlowAnalyzer::from_context(&self.ctx)
+        FlowAnalyzer::from_ctx(&self.ctx)
     }
 }

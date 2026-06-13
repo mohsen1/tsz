@@ -263,7 +263,7 @@ impl<'a> FlowAnalyzer<'a> {
         reference: NodeIndex,
     ) -> u32 {
         // Check shared cache first
-        if let Some(cache) = &self.shared_symbol_last_assignment_pos
+        if let Some(cache) = &self.shared_symbol_last_assignment_pos()
             && let Some(&pos) = cache.borrow().get(&symbol_id)
         {
             return pos;
@@ -272,7 +272,7 @@ impl<'a> FlowAnalyzer<'a> {
         let result = self.compute_last_assignment_pos(symbol_id, reference);
 
         // Store in shared cache
-        if let Some(cache) = &self.shared_symbol_last_assignment_pos {
+        if let Some(cache) = &self.shared_symbol_last_assignment_pos() {
             cache.borrow_mut().insert(symbol_id, result);
         }
 
@@ -353,7 +353,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Memoize per symbol so this full flow-node scan runs once per symbol
         // instead of once per reference — otherwise N captured references in a
         // large function body each pay an O(flow_nodes) scan, i.e. O(n²).
-        if let Some(cache) = &self.shared_symbol_nested_closure_assignment
+        if let Some(cache) = &self.shared_symbol_nested_closure_assignment()
             && let Some(&cached) = cache.borrow().get(&symbol_id)
         {
             return cached;
@@ -361,7 +361,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         let result = self.compute_has_assignment_in_nested_closure(symbol_id, decl_id, reference);
 
-        if let Some(cache) = &self.shared_symbol_nested_closure_assignment {
+        if let Some(cache) = &self.shared_symbol_nested_closure_assignment() {
             cache.borrow_mut().insert(symbol_id, result);
         }
 
@@ -754,7 +754,7 @@ impl<'a> FlowAnalyzer<'a> {
         // 1. Check for optional chaining on the call
         let is_optional = self.is_optional_call(condition, call);
         if self
-            .call_type_predicates
+            .call_type_predicates()
             .is_some_and(|calls| calls.is_invalid_assertion_call(condition.0))
         {
             return None;
@@ -763,7 +763,7 @@ impl<'a> FlowAnalyzer<'a> {
         // 2. Check for instantiated predicate from generic call resolution first.
         // Generic functions like `isDefined<T>(value: T | undefined): value is T` need
         // their predicates instantiated with inferred type args (e.g., T -> string).
-        if let Some(predicates) = self.call_type_predicates
+        if let Some(predicates) = self.call_type_predicates()
             && let Some((predicate, params)) = predicates.get(&condition.0)
         {
             let node_types = self.node_types?;

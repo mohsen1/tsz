@@ -58,6 +58,7 @@ use tsz_common::interner::{AstAtom, Interner};
 use tsz_scanner::SyntaxKind;
 
 include!("core/parse_and_libs.rs");
+include!("core/premerged_lib_compaction.rs");
 include!("core/merge_support.rs");
 include!("core/bind_result_reducer.rs");
 include!("core/checking.rs");

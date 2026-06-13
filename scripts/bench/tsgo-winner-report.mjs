@@ -455,6 +455,38 @@ function sidecarAttribution(rows, inputPath) {
   return attributions;
 }
 
+function attributionManifestPath(inputPath) {
+  if (typeof inputPath !== "string" || !inputPath.endsWith(".json")) return null;
+  const parsed = path.parse(inputPath);
+  return path.join(parsed.dir, `${parsed.name}-attribution-manifest${parsed.ext}`);
+}
+
+function attributionAttempts(inputPath) {
+  const manifestPath = attributionManifestPath(inputPath);
+  if (!manifestPath || !fs.existsSync(manifestPath)) return new Map();
+
+  let manifest;
+  try {
+    manifest = readJson(manifestPath);
+  } catch {
+    return new Map();
+  }
+
+  const attempts = new Map();
+  const rows = Array.isArray(manifest?.rows) ? manifest.rows : [];
+  for (const row of rows) {
+    if (typeof row?.name !== "string" || row.name.length === 0) continue;
+    attempts.set(row.name, {
+      status: typeof row.status === "string" ? row.status : null,
+      reason: typeof row.reason === "string" ? row.reason : null,
+      exit_code: asNumber(row.exit_code),
+      signal: typeof row.signal === "string" ? row.signal : null,
+      perf_path: typeof row.perf_path === "string" ? toPortablePath(row.perf_path) : null,
+    });
+  }
+  return attempts;
+}
+
 function pickAttributionArtifact(row, fallbackArtifact = null) {
   return (
     row?.attribution_artifact ??
@@ -468,10 +500,37 @@ function pickAttributionArtifact(row, fallbackArtifact = null) {
   );
 }
 
-function attributionStatusForRow(row, fallbackArtifact = null) {
+function attributionAttemptWarning(attempt) {
+  if (!attempt?.status || attempt.status === "success") return null;
+  if (attempt.status === "failed") {
+    if (attempt.exit_code != null) return `attribution command failed: exit ${attempt.exit_code}`;
+    if (attempt.signal) return `attribution command failed: signal ${attempt.signal}`;
+    return "attribution command failed";
+  }
+  if (attempt.status === "skipped") {
+    return attempt.reason ? `attribution attempt skipped: ${attempt.reason}` : "attribution attempt skipped";
+  }
+  return `attribution attempt ${attempt.status}`;
+}
+
+function attachAttributionAttempt(status, attempt) {
+  if (!attempt) return status;
+  const warning = attributionAttemptWarning(attempt);
+  return {
+    ...status,
+    attempt_status: attempt.status,
+    attempt_reason: attempt.reason,
+    attempt_exit_code: attempt.exit_code,
+    attempt_signal: attempt.signal,
+    attempt_perf_path: attempt.perf_path,
+    warning: warning ?? status.warning,
+  };
+}
+
+function attributionStatusForRow(row, fallbackArtifact = null, attempt = null) {
   const artifact = pickAttributionArtifact(row, fallbackArtifact);
   if (!artifact) {
-    return {
+    return attachAttributionAttempt({
       present: false,
       path: null,
       url: null,
@@ -479,11 +538,11 @@ function attributionStatusForRow(row, fallbackArtifact = null) {
       mode: null,
       dominant_subsystem: null,
       warning: "attribution artifact missing",
-    };
+    }, attempt);
   }
 
   if (typeof artifact === "string") {
-    return {
+    return attachAttributionAttempt({
       present: true,
       path: artifact,
       url: null,
@@ -491,7 +550,7 @@ function attributionStatusForRow(row, fallbackArtifact = null) {
       mode: null,
       dominant_subsystem: null,
       warning: "attribution dominant_subsystem missing",
-    };
+    }, attempt);
   }
 
   const pathValue = artifact.path ?? artifact.file ?? artifact.artifact ?? null;
@@ -511,7 +570,7 @@ function attributionStatusForRow(row, fallbackArtifact = null) {
   if (dominantHotspot) {
     status.dominant_hotspot = dominantHotspot;
   }
-  return status;
+  return attachAttributionAttempt(status, attempt);
 }
 
 function hasCompleteAttribution(status) {
@@ -519,6 +578,16 @@ function hasCompleteAttribution(status) {
     status?.present &&
       (status.mode === "attribution" || (status.dominant_subsystem && !status.warning)),
   );
+}
+
+function attributionAttemptSummary(rows) {
+  const counts = {};
+  for (const row of rows) {
+    const status = row?.attribution_status?.attempt_status;
+    if (!status) continue;
+    counts[status] = (counts[status] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function missingAttributionPlanForRow(row) {
@@ -534,6 +603,10 @@ function missingAttributionPlanForRow(row) {
     attribution_command: closure?.attribution_command ?? null,
     timing_command: closure?.command ?? null,
     attribution_warning: row.attribution_status?.warning ?? null,
+    attribution_attempt_status: row.attribution_status?.attempt_status ?? null,
+    attribution_attempt_reason: row.attribution_status?.attempt_reason ?? null,
+    attribution_attempt_exit_code: row.attribution_status?.attempt_exit_code ?? null,
+    attribution_attempt_signal: row.attribution_status?.attempt_signal ?? null,
   };
 }
 
@@ -591,6 +664,7 @@ export function renderMissingAttributionPlanMarkdown(report) {
       `Owner: ${markdownValue(row.owner)}`,
       `Semantic family: ${markdownValue(row.semantic_owner_family)}`,
       `Attribution status: ${markdownValue(row.attribution_warning)}`,
+      `Attribution attempt: ${markdownValue(row.attribution_attempt_status)}`,
       "",
     );
     if (row.attribution_command) {
@@ -660,6 +734,7 @@ function duplicateProjectRows(rows) {
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
   const rowSidecarAttribution = sidecarAttribution(rows, inputPath);
+  const rowAttributionAttempts = attributionAttempts(inputPath);
   const duplicateRows = duplicateProjectRows(rows);
   const duplicateNames = new Set(duplicateRows.map((row) => row.name));
   const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
@@ -688,7 +763,11 @@ export function createTsgoWinnerReport(input, inputPath) {
         exit_class: row.compatibility?.exit_class ?? null,
         semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
         loss_closure: lossClosureForRow(row),
-        attribution_status: attributionStatusForRow(row, rowSidecarAttribution.get(row.name)),
+        attribution_status: attributionStatusForRow(
+          row,
+          rowSidecarAttribution.get(row.name),
+          rowAttributionAttempts.get(row.name),
+        ),
       };
     });
   const targetGapRows = eligibleRows
@@ -721,7 +800,11 @@ export function createTsgoWinnerReport(input, inputPath) {
       exit_class: row.compatibility?.exit_class ?? null,
       semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
       loss_closure: lossClosureForRow(row),
-      attribution_status: attributionStatusForRow(row, rowSidecarAttribution.get(row.name)),
+      attribution_status: attributionStatusForRow(
+        row,
+        rowSidecarAttribution.get(row.name),
+        rowAttributionAttempts.get(row.name),
+      ),
     }))
     .sort(compareWinnersByFactorDesc);
 
@@ -766,6 +849,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       missing_loss_closure_rows: missingLossClosureRows,
       green_tsgo_winners_with_attribution: winners.length - missingAttributionRows.length,
       missing_attribution_rows: missingAttributionRows,
+      attribution_attempts: attributionAttemptSummary(winners),
       incomplete_compat_excluded: incompleteCompatExcluded,
     },
     two_x_target: {
@@ -779,6 +863,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       rows_with_attribution: targetGapRows.length - missingTargetGapAttributionRows.length,
       missing_attribution_rows: missingTargetGapAttributionRows,
       rows_with_attribution_command: targetGapRowsWithAttributionCommand,
+      attribution_attempts: attributionAttemptSummary(targetGapRows),
       missing_attribution_plan: missingTargetGapAttributionPlan,
       worst_gap: targetGapRows[0] ?? null,
     },
