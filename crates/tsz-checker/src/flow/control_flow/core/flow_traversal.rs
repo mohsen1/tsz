@@ -6,6 +6,18 @@ use tsz_binder::{FlowNodeId, SymbolId, flow_flags};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+/// Immutable per-walk parameters for [`FlowAnalyzer::chase_linear_passthrough`],
+/// bundled so the chase helper stays within the argument-count budget.
+#[derive(Clone, Copy)]
+struct PassthroughGate {
+    reference: NodeIndex,
+    symbol_id: Option<SymbolId>,
+    initial_type: TypeId,
+    initial_has_type_params: bool,
+    skip_cache_for_control_flow_typed_any: bool,
+    cache_symbol: SymbolId,
+}
+
 impl<'a> FlowAnalyzer<'a> {
     /// Iterative flow graph traversal using a worklist algorithm.
     ///
@@ -148,12 +160,14 @@ impl<'a> FlowAnalyzer<'a> {
             passthrough_run.clear();
             let current_flow = self.chase_linear_passthrough(
                 entry_flow,
-                reference,
-                symbol_id,
-                initial_type,
-                initial_has_type_params,
-                skip_cache_for_control_flow_typed_any,
-                cache_symbol,
+                PassthroughGate {
+                    reference,
+                    symbol_id,
+                    initial_type,
+                    initial_has_type_params,
+                    skip_cache_for_control_flow_typed_any,
+                    cache_symbol,
+                },
                 visited,
                 results,
                 &mut passthrough_run,
@@ -1188,20 +1202,22 @@ impl<'a> FlowAnalyzer<'a> {
     /// initial types, mirroring the worklist's own cache-eligibility gate, so it
     /// cannot perturb loop fixed-point or generic-result caching. On any node that
     /// fails a gate the chase stops and returns that node for normal processing.
-    #[allow(clippy::too_many_arguments)]
     fn chase_linear_passthrough(
         &self,
         entry: FlowNodeId,
-        reference: NodeIndex,
-        symbol_id: Option<SymbolId>,
-        initial_type: TypeId,
-        initial_has_type_params: bool,
-        skip_cache_for_control_flow_typed_any: bool,
-        cache_symbol: SymbolId,
+        gate: PassthroughGate,
         visited: &FxHashSet<FlowNodeId>,
         results: &FxHashMap<FlowNodeId, TypeId>,
         run: &mut Vec<FlowNodeId>,
     ) -> FlowNodeId {
+        let PassthroughGate {
+            reference,
+            symbol_id,
+            initial_type,
+            initial_has_type_params,
+            skip_cache_for_control_flow_typed_any,
+            cache_symbol,
+        } = gate;
         // Gate: only collapse when the worklist treats this walk as
         // cacheable/concrete. Generic or control-flow-`any` walks keep the full
         // per-node path so loop fixed-point and generic-result invariants are
