@@ -82,12 +82,10 @@ impl<'a> CheckerState<'a> {
             if type_arg == TypeId::UNKNOWN || type_arg == TypeId::ANY || type_arg == TypeId::ERROR {
                 continue;
             }
-            if crate::query_boundaries::common::contains_infer_types(self.ctx.types, type_arg)
-                || crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    type_arg,
-                )
-            {
+            if crate::query_boundaries::common::contains_current_infer_placeholder(
+                self.ctx.types,
+                type_arg,
+            ) {
                 continue;
             }
             if let Some(constraint) = type_param.constraint {

@@ -1180,6 +1180,43 @@ var p = new MyProxy(t, {});
 }
 
 #[test]
+fn generic_construct_signature_preserves_outer_target_type_param_return() {
+    let diags = check_source_diagnostics(
+        r#"
+interface MyHandler<T extends object> {
+    get?(target: T, p: string): any;
+}
+interface MyConstructor {
+    new <T extends object>(target: T, handler: MyHandler<T>): T;
+}
+declare var MyProxy: MyConstructor;
+
+type Box = { value: string };
+
+function clone<Row extends Box>(item: Row): Row {
+    return new MyProxy(item, {});
+}
+
+function cloneRenamed<Entity extends Box>(source: Entity): Entity {
+    const handler: MyHandler<Entity> = {};
+    return new MyProxy(source, handler);
+}
+
+function stillRejects<Row extends Box>(item: Row): number {
+    return new MyProxy(item, {});
+}
+"#,
+    );
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the bad number return to emit TS2322; generic construct returns should preserve outer type params. Got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+}
+
+#[test]
 fn no_false_ts2339_on_generic_class_self_referencing_parameter() {
     // Regression test: property access on a generic class type used as a
     // parameter type within the same class's method should not produce false

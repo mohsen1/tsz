@@ -462,6 +462,10 @@ pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::type_queries::contains_infer_types_db(db, type_id)
 }
 
+pub(crate) fn contains_current_infer_placeholder(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_current_infer_placeholder_db(db, type_id)
+}
+
 pub(crate) fn type_param_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
