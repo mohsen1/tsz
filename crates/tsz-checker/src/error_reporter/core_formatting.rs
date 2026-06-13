@@ -1525,37 +1525,13 @@ impl<'a> CheckerState<'a> {
             vec![]
         };
 
-        // Use tsc's getSpellingSuggestion algorithm with weighted Levenshtein.
-        // tsc uses substitution cost 2.0 (0.1 for case-only diffs), which means
-        // short strings like "baz" vs "bar" won't trigger a suggestion.
-        let name_len = source_str.chars().count();
-        let maximum_length_difference = 2usize.max((name_len as f64 * 0.34).floor() as usize);
-        let mut best_distance = (name_len as f64 * 0.4).floor() + 1.0;
-        let mut best_candidate: Option<String> = None;
-
-        for candidate in &target_literals {
-            if candidate == &source_str {
-                continue;
-            }
-            let candidate_len = candidate.chars().count();
-            let len_diff = candidate_len.abs_diff(name_len);
-            if len_diff > maximum_length_difference {
-                continue;
-            }
-            // Skip short candidates unless they match by case
-            if candidate_len < 3 && candidate.to_lowercase() != source_str.to_lowercase() {
-                continue;
-            }
-            if let Some(distance) =
-                Self::levenshtein_with_max(&source_str, candidate, best_distance - 0.1)
-            {
-                best_distance = distance;
-                best_candidate = Some(candidate.clone());
-            }
-        }
-
-        // TSC wraps the suggestion in double quotes (it's a string literal type name)
-        best_candidate.map(|s| format!("\"{s}\""))
+        // Use tsc's getSpellingSuggestion algorithm with weighted Levenshtein
+        // via the shared candidate scan. tsc uses substitution cost 2.0 (0.1 for
+        // case-only diffs), which means short strings like "baz" vs "bar" won't
+        // trigger a suggestion.
+        Self::best_spelling_suggestion(&source_str, target_literals.iter().map(String::as_str))
+            // TSC wraps the suggestion in double quotes (it's a string literal type name)
+            .map(|s| format!("\"{s}\""))
     }
 
     pub(in crate::error_reporter) fn format_ts2820_target_display(
