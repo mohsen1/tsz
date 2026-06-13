@@ -349,3 +349,235 @@ export function read() {
         "import.meta.value member access must narrow, got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Linear pass-through short-circuit (`chase_linear_passthrough`).
+//
+// A straight-line run of `const`/assignment statements that do not target or
+// affect a reference is spliced out of the backward flow walk in O(1) per node.
+// These witnesses pin that the splice is narrowing-exact: it must NOT fire (or
+// must land correctly) whenever a node between the declaration and the use
+// carries narrowing — type guards, mid-chain reassignment, discriminant
+// branches, captured/aliased roots, and optional-chain roots all still narrow.
+// Binder names are deliberately varied from the usual `x`/`y` so the short
+// circuit cannot be keyed on identifier text.
+// ---------------------------------------------------------------------------
+
+/// A narrowed `const` with a type guard between its declaration and use must
+/// still narrow: the CONDITION node is not a pure pass-through, so the chase
+/// stops there. Many unrelated leading `const` statements (the spliced run) must
+/// not swallow the guard. `payload` narrows to the `"text"` arm, so reading
+/// `.body` as a `string` is fine and reading it as a `number` trips TS2322.
+#[test]
+fn type_guard_between_decl_and_use_still_narrows_after_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+type Message =
+  | { channel: "text"; body: string }
+  | { channel: "code"; body: number };
+function handle(payload: Message) {
+  const alpha = 1;
+  const bravo = 2;
+  const charlie = 3;
+  const delta = 4;
+  if (payload.channel === "text") {
+    const ok: string = payload.body;
+    const bad: number = payload.body;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "type-guard narrowing after a pass-through run must hold (TS2322 on number), got: {codes:?}"
+    );
+}
+
+/// A reference reassigned mid-chain is NOT a pure pass-through at the reassigning
+/// node, so the chase stops and the killing definition wins. `subject` starts as
+/// a `string` union, is narrowed to `"a"`, then reassigned to a number — the
+/// later read must see `number`, so annotating it `string` trips TS2322.
+#[test]
+fn reassigned_mid_chain_reference_stops_passthrough_chase() {
+    let codes = check_source_strict_codes(
+        r#"
+function process(subject: string | number) {
+  const lead1 = 10;
+  const lead2 = 20;
+  if (typeof subject === "string") {
+    subject = 99;
+    const wrong: string = subject;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "mid-chain reassignment must stop the pass-through chase (TS2322), got: {codes:?}"
+    );
+}
+
+/// An aliased/captured reference still narrows across a long pass-through run:
+/// the alias binding is itself a pass-through, but the guard on the alias must
+/// survive the splice. `clone.detail` narrows to present, so `.value` is a
+/// `number` and no diagnostic is expected.
+#[test]
+fn aliased_captured_reference_narrows_through_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+function inspect(origin: { detail?: { value: number } }) {
+  const noise1 = "a";
+  const noise2 = "b";
+  const noise3 = "c";
+  const clone = origin;
+  const noise4 = "d";
+  if (clone.detail) {
+    const v: number = clone.detail.value;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "aliased reference must keep narrowing through a pass-through run, got: {codes:?}"
+    );
+}
+
+/// An optional-chain member reference (root resolves to `Unknown`) still narrows
+/// after a long pass-through run; the chase falls back to the full walk for the
+/// guard node. No diagnostic expected.
+#[test]
+fn optional_chain_reference_narrows_after_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+function read(box?: { inner?: { count: number } }) {
+  const s1 = 0;
+  const s2 = 0;
+  const s3 = 0;
+  const s4 = 0;
+  if (box?.inner) {
+    const c: number = box.inner.count;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "optional-chain narrowing must survive a pass-through run, got: {codes:?}"
+    );
+}
+
+/// A discriminated union narrowed inside a branch, with the discriminant check
+/// preceded by a pass-through run, must still expose the branch-only member.
+/// `node.kind === "leaf"` narrows to the leaf arm; reading `.weight` (leaf only)
+/// is fine, and reading `.children` (branch only) trips TS2339.
+#[test]
+fn discriminated_union_branch_narrows_after_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+type Tree =
+  | { kind: "leaf"; weight: number }
+  | { kind: "branch"; children: number };
+function walk(node: Tree) {
+  const pre1 = 1;
+  const pre2 = 2;
+  const pre3 = 3;
+  if (node.kind === "leaf") {
+    const w: number = node.weight;
+    const oops = node.children;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "discriminated-union branch narrowing after a pass-through run must hold (TS2339), got: {codes:?}"
+    );
+}
+
+/// Many independent top-level-style `const` member reads in sequence (the exact
+/// `Σ O(i)` hotspot shape) must each see their own value and not leak narrowing
+/// from a sibling — the splice must not alias distinct references. None of these
+/// reads is illegal, so no diagnostic is expected; this pins that the spliced
+/// run finalizes each reference correctly rather than collapsing them.
+#[test]
+fn sequential_member_reads_do_not_cross_contaminate_under_passthrough() {
+    let codes = check_source_strict_codes(
+        r#"
+declare const recA: { v: number };
+declare const recB: { v: string };
+declare const recC: { v: boolean };
+const useA: number = recA.v;
+const useB: string = recB.v;
+const useC: boolean = recC.v;
+const useA2: number = recA.v;
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "sequential distinct member reads must not cross-contaminate, got: {codes:?}"
+    );
+}
+
+/// Destructuring binding after a type guard, with intervening pass-through
+/// `const` reads between the destructuring and the use. The destructuring
+/// `const { nested: { b: text } } = src` is never spliced (it has dedicated
+/// worklist handling), and the intervening reads that the chase DOES splice
+/// must not orphan the guarded property read: `src.nested.b` is narrowed to
+/// `string` by the guard, so `text` (and direct `src.member` reads) stay
+/// narrowed. Mirrors `destructuringTypeGuardFlow`; binder names varied.
+#[test]
+fn destructuring_after_guard_with_intervening_passthrough_keeps_narrowing() {
+    let codes = check_source_strict_codes(
+        r#"
+type Holder = {
+  count: number | null;
+  label: string;
+  inner: { idx: number; tag: string | null };
+};
+const src: Holder = { count: 3, label: "b", inner: { idx: 1, tag: "y" } };
+if (src.count && src.inner.tag) {
+  const { count, label, inner: { idx, tag: text } } = src;
+  const okCount: number = src.count;
+  const okIdx: number = idx;
+  const okLabel: string = label;
+  const okText: string = text;
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "guarded narrowing must survive a destructuring + intervening pass-through run, got: {codes:?}"
+    );
+}
+
+/// A `switch` over an `unknown` reference narrows each case body, with leading
+/// pass-through `const` statements that the chase must NOT splice (UNKNOWN
+/// initial types are excluded from the chase because the worklist gives them
+/// dedicated switch/typeof handling). Mirrors the `switchTestCollectEnum`
+/// family of `unknownType2`; binder names varied.
+#[test]
+fn unknown_switch_case_narrowing_survives_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+enum Hue { Red = "red", Green = "green", Blue = "blue" }
+function classify(token: unknown) {
+  const lead1 = 0;
+  const lead2 = 0;
+  const lead3 = 0;
+  switch (token) {
+    case Hue.Red:
+      const r: Hue.Red = token;
+      break;
+    case Hue.Green:
+      const g: Hue.Green = token;
+      break;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "unknown switch-case narrowing must survive a pass-through run, got: {codes:?}"
+    );
+}
