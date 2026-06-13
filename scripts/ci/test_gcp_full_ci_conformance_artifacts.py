@@ -57,6 +57,15 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         failure_write_block = body[failure_write:upload_block]
         self.assertIn("XFAIL", failure_write_block)
 
+    def test_weighted_shards_use_checked_in_weights_not_latest_gcs(self):
+        body = self.function_body("run_conformance", "\nrun_conformance_aggregate() {")
+        self.assertIn(
+            'cp scripts/conformance/conformance-shard-weights.json "$shard_weights_file"',
+            body,
+        )
+        self.assertIn("Using checked-in conformance shard weights.", body)
+        self.assertNotIn("metrics/latest/conformance-timings.json", body)
+
     def test_aggregate_prefers_artifact_failure_lists_before_gcs(self):
         aggregate = self.function_body(
             "run_conformance_aggregate",
