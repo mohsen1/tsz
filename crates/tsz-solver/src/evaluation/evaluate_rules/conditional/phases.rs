@@ -75,14 +75,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 && !type_params.is_empty()
                 && type_params.len() == app.args.len()
             {
-                let args = app.args.clone();
-                let expanded_args = self.expand_type_args(&args);
+                let expanded_args = self.expand_type_args(&app.args);
                 let instantiated = instantiate_generic_cached(
                     self.interner(),
                     self.query_db(),
                     resolved_base,
                     &type_params,
-                    &expanded_args,
+                    expanded_args.as_ref(),
                 );
                 let resolved = self.evaluate(instantiated);
                 if resolved != check_type {
