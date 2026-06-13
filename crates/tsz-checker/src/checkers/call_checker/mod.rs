@@ -144,7 +144,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
     }
 
     fn expand_type_alias_application(&mut self, type_id: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type_preserving_meta};
         use crate::query_boundaries::state::type_environment::application_info;
 
         let (base, args) = application_info(self.state.ctx.types, type_id)?;
@@ -178,7 +178,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
             return None;
         }
         let subst = TypeSubstitution::from_args(self.state.ctx.types, &type_params, &args);
-        let instantiated = instantiate_type(self.state.ctx.types, body, &subst);
+        let instantiated = instantiate_type_preserving_meta(self.state.ctx.types, body, &subst);
         if instantiated == type_id {
             None
         } else {

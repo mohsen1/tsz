@@ -16,11 +16,14 @@
 pub mod apparent;
 pub mod conditional;
 pub mod index_access;
+mod index_access_callable;
 mod index_access_keys;
+mod index_access_tuple_literal;
 pub mod infer_pattern;
 mod infer_pattern_helpers;
 mod infer_pattern_object_match;
 mod infer_pattern_template_match;
+mod infer_pattern_tuple_residual;
 pub mod infer_substitutor;
 pub mod keyof;
 pub mod mapped;

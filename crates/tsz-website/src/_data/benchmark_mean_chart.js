@@ -24,30 +24,17 @@ function hasSuccessfulTiming(row) {
   );
 }
 
-const TINY_BENCHMARK_MAX_LINES = 200;
 const PROJECT_BENCHMARK_NAMES = new Set(REQUIRED_PROJECT_ROWS);
-const SINGLE_FILE_BENCHMARK_PREFIXES = [
-  "utility-types/",
-  "ts-toolbelt/",
-  "ts-essentials/",
-];
-
-function isTinyBenchmark(row) {
-  const size = Number(row?.lines);
-  return Number.isFinite(size) && size < TINY_BENCHMARK_MAX_LINES;
-}
 
 function isProjectBenchmark(row) {
   return PROJECT_BENCHMARK_NAMES.has(String(row?.name || ""));
 }
 
-function isSingleFileBenchmark(row) {
-  const name = String(row?.name || "");
-  return SINGLE_FILE_BENCHMARK_PREFIXES.some((prefix) => name.startsWith(prefix));
-}
-
+// A micro benchmark is any timed case that is not a whole-project row. We do
+// not exclude short fixtures: every successful non-project case counts toward
+// the micro sum, so the homepage total matches the /benchmarks/micro/ page.
 function isMicroBenchmark(row) {
-  return !isProjectBenchmark(row) && (!isTinyBenchmark(row) || isSingleFileBenchmark(row));
+  return !isProjectBenchmark(row);
 }
 
 function loadBenchmarks() {

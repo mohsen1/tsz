@@ -135,6 +135,9 @@ path = "tests/array_element_naked_inference_tests.rs"
 name = "recursive_array_utility_inference_tests"
 path = "tests/recursive_array_utility_inference_tests.rs"
 [[test]]
+name = "recursive_tuple_mapped_index_tests"
+path = "tests/recursive_tuple_mapped_index_tests.rs"
+[[test]]
 name = "homomorphic_mapped_keyof_modifier_tests"
 path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
 [[test]]

@@ -146,7 +146,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> Option<TypeId> {
         match self.interner().lookup(inner) {
             Some(TypeData::Tuple(tuple_id)) => {
-                Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, true))
+                let resolved_source = self.interner().readonly_type(inner);
+                Some(self.evaluate_mapped_tuple_with_readonly_source(
+                    mapped,
+                    tuple_id,
+                    source,
+                    resolved_source,
+                    true,
+                ))
             }
             Some(TypeData::Array(element_type)) => {
                 if mapped.name_type.is_some()
@@ -185,7 +192,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source: TypeId,
         source_readonly: bool,
     ) -> TypeId {
-        let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id, source);
+        self.evaluate_mapped_tuple_with_readonly_source(
+            mapped,
+            tuple_id,
+            source,
+            source,
+            source_readonly,
+        )
+    }
+
+    pub(crate) fn evaluate_mapped_tuple_with_readonly_source(
+        &mut self,
+        mapped: &MappedType,
+        tuple_id: TupleListId,
+        original_source: TypeId,
+        mapped_source: TypeId,
+        source_readonly: bool,
+    ) -> TypeId {
+        let rebound_mapped;
+        let mapped = if original_source == mapped_source {
+            mapped
+        } else {
+            rebound_mapped = self.rebind_mapped_source(mapped, original_source, mapped_source);
+            &rebound_mapped
+        };
+        let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id, mapped_source);
         if mapped.resolve_readonly(source_readonly) {
             self.interner().readonly_type(mapped_tuple)
         } else {
@@ -217,6 +248,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         tuple_id: TupleListId,
         source: TypeId,
     ) -> TypeId {
+        use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
+
         let tuple_elements = self.interner().tuple_list(tuple_id);
         let mut mapped_elements = Vec::with_capacity(tuple_elements.len());
         let mut seen_rest = false;
@@ -230,8 +263,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if elem.rest {
                 seen_rest = true;
             }
-            mapped_elements
-                .push(self.evaluate_mapped_tuple_element(mapped, source, index, elem, is_suffix));
+            let mapped_element =
+                self.evaluate_mapped_tuple_element(mapped, source, index, elem, is_suffix);
+            if mapped_element.rest {
+                let mapped_rest = crate::type_queries::data::unwrap_readonly(
+                    self.interner(),
+                    mapped_element.type_id,
+                );
+                if let Some(TypeData::Tuple(inner_tuple_id)) = self.interner().lookup(mapped_rest) {
+                    let inner_elements = self.interner().tuple_list(inner_tuple_id);
+                    if mapped_elements.len().saturating_add(inner_elements.len())
+                        > MAX_REPRESENTABLE_TUPLE_LENGTH
+                    {
+                        self.interner().mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
+                    mapped_elements.extend(inner_elements.iter().copied());
+                    continue;
+                }
+            }
+            mapped_elements.push(mapped_element);
         }
 
         self.interner().tuple(mapped_elements)
@@ -257,17 +308,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         elem: TupleElement,
         is_suffix: bool,
     ) -> TupleElement {
-        let rest_inner_kind = elem.rest.then(|| self.interner().lookup(elem.type_id));
-
+        let evaluated_rest_type =
+            if elem.rest && self.mapped_tuple_rest_needs_evaluation(elem.type_id) {
+                self.evaluate(elem.type_id)
+            } else {
+                elem.type_id
+            };
+        let rest_inner =
+            crate::type_queries::data::unwrap_readonly(self.interner(), evaluated_rest_type);
+        let rest_inner_kind = elem.rest.then(|| self.interner().lookup(rest_inner));
         // Variadic spread of a tuple: rebind T -> the inner tuple across
         // template/constraint/name_type and recurse so the inner tuple's
         // elements are mapped position-by-position. The result is a tuple
         // in the rest's `type_id`; `expand_tuple_rest` flattens it
         // downstream.
         if let Some(Some(TypeData::Tuple(inner_tuple_id))) = rest_inner_kind {
-            let inner_mapped = self.rebind_mapped_source(mapped, source, elem.type_id);
+            let inner_mapped = self.rebind_mapped_source(mapped, source, evaluated_rest_type);
             let inner_result =
-                self.evaluate_mapped_tuple(&inner_mapped, inner_tuple_id, elem.type_id);
+                self.evaluate_mapped_tuple(&inner_mapped, inner_tuple_id, evaluated_rest_type);
             return TupleElement {
                 type_id: inner_result,
                 name: elem.name,
@@ -384,6 +442,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let instantiated =
             instantiate_type_cached(self.interner(), self.query_db(), rewritten, &subst);
         self.evaluate(instantiated)
+    }
+
+    fn mapped_tuple_rest_needs_evaluation(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        matches!(
+            self.interner().lookup(type_id),
+            Some(
+                TypeData::Application(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::IndexAccess(_, _)
+                    | TypeData::KeyOf(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::Mapped(_)
+                    | TypeData::ReadonlyType(_)
+                    | TypeData::StringIntrinsic { .. }
+                    | TypeData::TemplateLiteral(_)
+                    | TypeData::TypeQuery(_)
+            )
+        )
     }
 
     /// Build a new `MappedType` with `old_source` replaced by `new_source`

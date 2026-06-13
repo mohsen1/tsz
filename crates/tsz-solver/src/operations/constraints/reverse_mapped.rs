@@ -686,6 +686,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Case 1b: template is an array/readonly wrapper around the indexed
+        // access (e.g. `T[K][]`). Peel matching source wrappers and continue
+        // reversing through the element/template inner types.
+        if let Some(TypeData::Array(template_elem)) = self.interner.lookup(template) {
+            let source_inner =
+                crate::type_queries::data::unwrap_readonly(self.interner, source_value);
+            if let Some(TypeData::Array(source_elem)) = self.interner.lookup(source_inner) {
+                return self.reverse_infer_through_template(
+                    source_elem,
+                    template_elem,
+                    target_placeholder,
+                );
+            }
+            return None;
+        }
+
+        if let Some(TypeData::ReadonlyType(template_inner)) = self.interner.lookup(template) {
+            let source_inner =
+                crate::type_queries::data::unwrap_readonly(self.interner, source_value);
+            return self.reverse_infer_through_template(
+                source_inner,
+                template_inner,
+                target_placeholder,
+            );
+        }
+
         // Case 2: template is Application(F, args) and source is Application(F, args')
         // with same base → recurse into matching args to find the T[K] position
         if let Some(TypeData::Application(template_app_id)) = self.interner.lookup(template) {

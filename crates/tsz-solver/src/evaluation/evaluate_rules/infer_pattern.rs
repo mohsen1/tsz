@@ -1060,7 +1060,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // the canonical form tsc would produce, so identity probes such as
         // `Equal<RestOf<...>, T[]>` resolve to `true`.
         let residual_type = if residual.len() == 1 && residual[0].rest && !residual[0].optional {
-            residual[0].type_id
+            self.reify_application_over_tuple_index_residual(residual[0].type_id)
+                .unwrap_or(residual[0].type_id)
         } else {
             self.interner().tuple(residual.to_vec())
         };

@@ -1,9 +1,11 @@
 use super::*;
 use crate::caches::db::QueryDatabase;
+use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
 use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
 use crate::instantiation::result::InstantiationResult;
-use crate::types::FunctionShape;
-use rustc_hash::FxHashSet;
+use crate::types::{ConditionalType, FunctionShape, PropertyInfo};
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::cell::RefCell;
 
 thread_local! {
@@ -192,9 +194,538 @@ fn instantiate_with_options_cached(
     instantiate_with_request_cached(
         interner,
         query_db,
+        false,
         InstantiationRequest::new(type_id, substitution).with_options(options),
     )
     .into_type_id()
+}
+
+struct AlphaInstantiationCacheKey {
+    key: InstantiationCacheKey,
+    bindings: SmallVec<[TypeId; 4]>,
+}
+
+fn alpha_instantiation_cache_key(
+    interner: &dyn TypeDatabase,
+    request: InstantiationRequest<'_>,
+) -> Option<AlphaInstantiationCacheKey> {
+    if request.options().mode_bits() != 0 || request.this_type().is_some() {
+        return None;
+    }
+
+    let mut binders = FxHashMap::default();
+    let mut bindings = SmallVec::<[TypeId; 4]>::new();
+    let mut changed = false;
+    let mut alpha_pairs = SmallVec::<[(Atom, TypeId); 4]>::new();
+
+    for (name, type_id) in request.substitution().canonical_pairs() {
+        let mut visited = FxHashSet::default();
+        let alpha_type = alpha_canonicalize_type(
+            interner,
+            type_id,
+            &mut binders,
+            &mut bindings,
+            &mut changed,
+            &mut visited,
+        )?;
+        alpha_pairs.push((name, alpha_type));
+    }
+
+    changed.then(|| AlphaInstantiationCacheKey {
+        key: InstantiationCacheKey::new(
+            request.type_id(),
+            CanonicalSubst::from_pairs(alpha_pairs),
+            request.options().mode_bits(),
+            request.this_type(),
+        ),
+        bindings,
+    })
+}
+
+fn alpha_canonicalize_type(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    binders: &mut FxHashMap<Atom, u32>,
+    bindings: &mut SmallVec<[TypeId; 4]>,
+    changed: &mut bool,
+    visited: &mut FxHashSet<TypeId>,
+) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return Some(type_id);
+    }
+
+    let key = interner.lookup(type_id)?;
+    match key {
+        TypeData::TypeParameter(info)
+            if info.constraint.is_none() && info.default.is_none() && !info.is_const =>
+        {
+            let index = if let Some(index) = binders.get(&info.name).copied() {
+                index
+            } else {
+                let index = bindings.len() as u32;
+                binders.insert(info.name, index);
+                bindings.push(type_id);
+                index
+            };
+            *changed = true;
+            Some(interner.bound_parameter(index))
+        }
+        TypeData::TypeParameter(_) => Some(type_id),
+        TypeData::BoundParameter(_) => None,
+        _ if !visited.insert(type_id) => Some(type_id),
+        TypeData::Array(element) => {
+            let next =
+                alpha_canonicalize_type(interner, element, binders, bindings, changed, visited)?;
+            Some(if next == element {
+                type_id
+            } else {
+                interner.array(next)
+            })
+        }
+        TypeData::ReadonlyType(inner) => {
+            let next =
+                alpha_canonicalize_type(interner, inner, binders, bindings, changed, visited)?;
+            Some(if next == inner {
+                type_id
+            } else {
+                interner.readonly_type(next)
+            })
+        }
+        TypeData::NoInfer(inner) => {
+            let next =
+                alpha_canonicalize_type(interner, inner, binders, bindings, changed, visited)?;
+            Some(if next == inner {
+                type_id
+            } else {
+                interner.no_infer(next)
+            })
+        }
+        TypeData::Tuple(tuple_id) => {
+            let elements = interner.tuple_list(tuple_id);
+            let mut local_changed = false;
+            let mut next = Vec::with_capacity(elements.len());
+            for element in elements.iter() {
+                let type_id = alpha_canonicalize_type(
+                    interner,
+                    element.type_id,
+                    binders,
+                    bindings,
+                    changed,
+                    visited,
+                )?;
+                local_changed |= type_id != element.type_id;
+                next.push(TupleElement {
+                    type_id,
+                    ..*element
+                });
+            }
+            Some(if local_changed {
+                interner.tuple(next)
+            } else {
+                type_id
+            })
+        }
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            let members = interner.type_list(list_id);
+            let mut local_changed = false;
+            let mut next = Vec::with_capacity(members.len());
+            for &member in members.iter() {
+                let alpha =
+                    alpha_canonicalize_type(interner, member, binders, bindings, changed, visited)?;
+                local_changed |= alpha != member;
+                next.push(alpha);
+            }
+            Some(if !local_changed {
+                type_id
+            } else if matches!(key, TypeData::Union(_)) {
+                interner.union(next)
+            } else {
+                interner.intersection(next)
+            })
+        }
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            let mut local_changed = false;
+            let mut properties = Vec::with_capacity(shape.properties.len());
+            for prop in &shape.properties {
+                let read = alpha_canonicalize_type(
+                    interner,
+                    prop.type_id,
+                    binders,
+                    bindings,
+                    changed,
+                    visited,
+                )?;
+                let write = alpha_canonicalize_type(
+                    interner,
+                    prop.write_type,
+                    binders,
+                    bindings,
+                    changed,
+                    visited,
+                )?;
+                local_changed |= read != prop.type_id || write != prop.write_type;
+                properties.push(PropertyInfo {
+                    type_id: read,
+                    write_type: write,
+                    ..prop.clone()
+                });
+            }
+
+            let string_index = alpha_canonicalize_index_signature(
+                interner,
+                shape.string_index,
+                binders,
+                bindings,
+                changed,
+                visited,
+                &mut local_changed,
+            )?;
+            let number_index = alpha_canonicalize_index_signature(
+                interner,
+                shape.number_index,
+                binders,
+                bindings,
+                changed,
+                visited,
+                &mut local_changed,
+            )?;
+
+            if !local_changed {
+                return Some(type_id);
+            }
+
+            let shape = ObjectShape {
+                flags: shape.flags,
+                properties,
+                string_index,
+                number_index,
+                symbol: shape.symbol,
+            };
+            Some(if matches!(key, TypeData::ObjectWithIndex(_)) {
+                interner.object_with_index(shape)
+            } else {
+                interner.object_with_flags_and_symbol(shape.properties, shape.flags, shape.symbol)
+            })
+        }
+        TypeData::IndexAccess(object, index) => {
+            let object_next =
+                alpha_canonicalize_type(interner, object, binders, bindings, changed, visited)?;
+            let index_next =
+                alpha_canonicalize_type(interner, index, binders, bindings, changed, visited)?;
+            Some(if object_next == object && index_next == index {
+                type_id
+            } else {
+                interner.index_access(object_next, index_next)
+            })
+        }
+        TypeData::KeyOf(operand) => {
+            let next =
+                alpha_canonicalize_type(interner, operand, binders, bindings, changed, visited)?;
+            Some(if next == operand {
+                type_id
+            } else {
+                interner.keyof(next)
+            })
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = interner.get_conditional(cond_id);
+            let check_type = alpha_canonicalize_type(
+                interner,
+                cond.check_type,
+                binders,
+                bindings,
+                changed,
+                visited,
+            )?;
+            let extends_type = alpha_canonicalize_type(
+                interner,
+                cond.extends_type,
+                binders,
+                bindings,
+                changed,
+                visited,
+            )?;
+            let true_type = alpha_canonicalize_type(
+                interner,
+                cond.true_type,
+                binders,
+                bindings,
+                changed,
+                visited,
+            )?;
+            let false_type = alpha_canonicalize_type(
+                interner,
+                cond.false_type,
+                binders,
+                bindings,
+                changed,
+                visited,
+            )?;
+            Some(
+                if check_type == cond.check_type
+                    && extends_type == cond.extends_type
+                    && true_type == cond.true_type
+                    && false_type == cond.false_type
+                {
+                    type_id
+                } else {
+                    interner.conditional(ConditionalType {
+                        check_type,
+                        extends_type,
+                        true_type,
+                        false_type,
+                        is_distributive: cond.is_distributive,
+                    })
+                },
+            )
+        }
+        TypeData::Intrinsic(_)
+        | TypeData::Literal(_)
+        | TypeData::UnresolvedTypeName(_)
+        | TypeData::Error
+        | TypeData::Lazy(_)
+        | TypeData::Recursive(_)
+        | TypeData::TypeQuery(_)
+        | TypeData::UniqueSymbol(_)
+        | TypeData::ThisType
+        | TypeData::ModuleNamespace(_) => Some(type_id),
+        TypeData::Infer(_)
+        | TypeData::Enum(_, _)
+        | TypeData::Function(_)
+        | TypeData::Callable(_)
+        | TypeData::Mapped(_)
+        | TypeData::TemplateLiteral(_)
+        | TypeData::StringIntrinsic { .. }
+        | TypeData::Application(_) => None,
+    }
+}
+
+fn alpha_canonicalize_index_signature(
+    interner: &dyn TypeDatabase,
+    signature: Option<IndexSignature>,
+    binders: &mut FxHashMap<Atom, u32>,
+    bindings: &mut SmallVec<[TypeId; 4]>,
+    changed: &mut bool,
+    visited: &mut FxHashSet<TypeId>,
+    local_changed: &mut bool,
+) -> Option<Option<IndexSignature>> {
+    let Some(signature) = signature else {
+        return Some(None);
+    };
+    let key_type = alpha_canonicalize_type(
+        interner,
+        signature.key_type,
+        binders,
+        bindings,
+        changed,
+        visited,
+    )?;
+    let value_type = alpha_canonicalize_type(
+        interner,
+        signature.value_type,
+        binders,
+        bindings,
+        changed,
+        visited,
+    )?;
+    *local_changed |= key_type != signature.key_type || value_type != signature.value_type;
+    Some(Some(IndexSignature {
+        key_type,
+        value_type,
+        ..signature
+    }))
+}
+
+fn restore_alpha_result(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    bindings: &[TypeId],
+) -> Option<TypeId> {
+    let mut visited = FxHashSet::default();
+    restore_alpha_type(interner, type_id, bindings, &mut visited)
+}
+
+fn restore_alpha_type(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    bindings: &[TypeId],
+    visited: &mut FxHashSet<TypeId>,
+) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return Some(type_id);
+    }
+    let key = interner.lookup(type_id)?;
+    match key {
+        TypeData::BoundParameter(index) => bindings.get(index as usize).copied(),
+        _ if !visited.insert(type_id) => Some(type_id),
+        TypeData::Array(element) => {
+            let next = restore_alpha_type(interner, element, bindings, visited)?;
+            Some(if next == element {
+                type_id
+            } else {
+                interner.array(next)
+            })
+        }
+        TypeData::ReadonlyType(inner) => {
+            let next = restore_alpha_type(interner, inner, bindings, visited)?;
+            Some(if next == inner {
+                type_id
+            } else {
+                interner.readonly_type(next)
+            })
+        }
+        TypeData::NoInfer(inner) => {
+            let next = restore_alpha_type(interner, inner, bindings, visited)?;
+            Some(if next == inner {
+                type_id
+            } else {
+                interner.no_infer(next)
+            })
+        }
+        TypeData::Tuple(tuple_id) => {
+            let elements = interner.tuple_list(tuple_id);
+            let mut changed = false;
+            let mut next = Vec::with_capacity(elements.len());
+            for element in elements.iter() {
+                let restored = restore_alpha_type(interner, element.type_id, bindings, visited)?;
+                changed |= restored != element.type_id;
+                next.push(TupleElement {
+                    type_id: restored,
+                    ..*element
+                });
+            }
+            Some(if changed {
+                interner.tuple(next)
+            } else {
+                type_id
+            })
+        }
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            let members = interner.type_list(list_id);
+            let mut changed = false;
+            let mut next = Vec::with_capacity(members.len());
+            for &member in members.iter() {
+                let restored = restore_alpha_type(interner, member, bindings, visited)?;
+                changed |= restored != member;
+                next.push(restored);
+            }
+            Some(if !changed {
+                type_id
+            } else if matches!(key, TypeData::Union(_)) {
+                interner.union(next)
+            } else {
+                interner.intersection(next)
+            })
+        }
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            let mut changed = false;
+            let mut properties = Vec::with_capacity(shape.properties.len());
+            for prop in &shape.properties {
+                let read = restore_alpha_type(interner, prop.type_id, bindings, visited)?;
+                let write = restore_alpha_type(interner, prop.write_type, bindings, visited)?;
+                changed |= read != prop.type_id || write != prop.write_type;
+                properties.push(PropertyInfo {
+                    type_id: read,
+                    write_type: write,
+                    ..prop.clone()
+                });
+            }
+            let string_index = restore_alpha_index_signature(
+                interner,
+                shape.string_index,
+                bindings,
+                visited,
+                &mut changed,
+            )?;
+            let number_index = restore_alpha_index_signature(
+                interner,
+                shape.number_index,
+                bindings,
+                visited,
+                &mut changed,
+            )?;
+            if !changed {
+                return Some(type_id);
+            }
+            let shape = ObjectShape {
+                flags: shape.flags,
+                properties,
+                string_index,
+                number_index,
+                symbol: shape.symbol,
+            };
+            Some(if matches!(key, TypeData::ObjectWithIndex(_)) {
+                interner.object_with_index(shape)
+            } else {
+                interner.object_with_flags_and_symbol(shape.properties, shape.flags, shape.symbol)
+            })
+        }
+        TypeData::IndexAccess(object, index) => {
+            let object_next = restore_alpha_type(interner, object, bindings, visited)?;
+            let index_next = restore_alpha_type(interner, index, bindings, visited)?;
+            Some(if object_next == object && index_next == index {
+                type_id
+            } else {
+                interner.index_access(object_next, index_next)
+            })
+        }
+        TypeData::KeyOf(operand) => {
+            let next = restore_alpha_type(interner, operand, bindings, visited)?;
+            Some(if next == operand {
+                type_id
+            } else {
+                interner.keyof(next)
+            })
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = interner.get_conditional(cond_id);
+            let check_type = restore_alpha_type(interner, cond.check_type, bindings, visited)?;
+            let extends_type = restore_alpha_type(interner, cond.extends_type, bindings, visited)?;
+            let true_type = restore_alpha_type(interner, cond.true_type, bindings, visited)?;
+            let false_type = restore_alpha_type(interner, cond.false_type, bindings, visited)?;
+            Some(
+                if check_type == cond.check_type
+                    && extends_type == cond.extends_type
+                    && true_type == cond.true_type
+                    && false_type == cond.false_type
+                {
+                    type_id
+                } else {
+                    interner.conditional(ConditionalType {
+                        check_type,
+                        extends_type,
+                        true_type,
+                        false_type,
+                        is_distributive: cond.is_distributive,
+                    })
+                },
+            )
+        }
+        TypeData::Application(_) => None,
+        _ => Some(type_id),
+    }
+}
+
+fn restore_alpha_index_signature(
+    interner: &dyn TypeDatabase,
+    signature: Option<IndexSignature>,
+    bindings: &[TypeId],
+    visited: &mut FxHashSet<TypeId>,
+    changed: &mut bool,
+) -> Option<Option<IndexSignature>> {
+    let Some(signature) = signature else {
+        return Some(None);
+    };
+    let key_type = restore_alpha_type(interner, signature.key_type, bindings, visited)?;
+    let value_type = restore_alpha_type(interner, signature.value_type, bindings, visited)?;
+    *changed |= key_type != signature.key_type || value_type != signature.value_type;
+    Some(Some(IndexSignature {
+        key_type,
+        value_type,
+        ..signature
+    }))
 }
 
 /// Apply the instantiator walk that `request` describes, with optional
@@ -214,6 +745,7 @@ fn instantiate_with_options_cached(
 pub(crate) fn instantiate_with_request_cached(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
+    allow_alpha_cache: bool,
     request: InstantiationRequest<'_>,
 ) -> InstantiationResult {
     if let Some(db) = query_db {
@@ -221,13 +753,61 @@ pub(crate) fn instantiate_with_request_cached(
         if let Some(cached) = db.lookup_instantiation_cache(&key) {
             return InstantiationResult::ok(cached);
         }
+        let alpha_key = if allow_alpha_cache {
+            alpha_instantiation_cache_key(interner, request)
+        } else {
+            None
+        };
+        if let Some(alpha_key) = &alpha_key
+            && alpha_key.key != key
+            && let Some(cached) = db.lookup_instantiation_cache(&alpha_key.key)
+            && let Some(restored) = restore_alpha_result(interner, cached, &alpha_key.bindings)
+        {
+            db.insert_instantiation_cache(key, restored);
+            return InstantiationResult::ok(restored);
+        }
         let result = run_instantiator(interner, request);
         if !result.depth_exceeded() {
             db.insert_instantiation_cache(key, result.type_id());
+            if let Some(alpha_key) = alpha_key
+                && let Some(alpha_result) = alpha_canonicalize_cached_result(
+                    interner,
+                    result.type_id(),
+                    &alpha_key.bindings,
+                )
+            {
+                db.insert_instantiation_cache(alpha_key.key, alpha_result);
+            }
         }
         return result;
     }
     run_instantiator(interner, request)
+}
+
+fn alpha_canonicalize_cached_result(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    bindings: &[TypeId],
+) -> Option<TypeId> {
+    let mut binders = FxHashMap::default();
+    let mut alpha_bindings = SmallVec::<[TypeId; 4]>::new();
+    for (index, binding) in bindings.iter().copied().enumerate() {
+        let TypeData::TypeParameter(info) = interner.lookup(binding)? else {
+            return None;
+        };
+        binders.insert(info.name, index as u32);
+        alpha_bindings.push(binding);
+    }
+    let mut changed = false;
+    let mut visited = FxHashSet::default();
+    alpha_canonicalize_type(
+        interner,
+        type_id,
+        &mut binders,
+        &mut alpha_bindings,
+        &mut changed,
+        &mut visited,
+    )
 }
 
 /// Drive a single `TypeInstantiator` configured from `request`, without
@@ -278,7 +858,7 @@ pub fn instantiate_type_with_request(
     interner: &dyn TypeDatabase,
     request: InstantiationRequest<'_>,
 ) -> InstantiationResult {
-    instantiate_with_request_cached(interner, None, request)
+    instantiate_with_request_cached(interner, None, false, request)
 }
 
 /// Like [`instantiate_type`], but treats `shadowed_params` as locally bound.
@@ -392,6 +972,7 @@ pub fn instantiate_type_cached(
     instantiate_with_request_cached(
         interner,
         query_db,
+        false,
         InstantiationRequest::new(type_id, substitution),
     )
     .into_type_id()
@@ -655,6 +1236,7 @@ pub fn instantiate_generic_cached(
     instantiate_with_request_cached(
         interner,
         query_db,
+        true,
         InstantiationRequest::new(type_id, &substitution),
     )
     .into_type_id()
@@ -701,6 +1283,7 @@ pub fn substitute_this_type_cached(
     instantiate_with_request_cached(
         interner,
         query_db,
+        false,
         InstantiationRequest::new(type_id, &empty_subst)
             .with_options(InstantiationOptions::new().with_preserve_unsubstituted_type_params(true))
             .with_this_type(this_type),
@@ -741,6 +1324,7 @@ pub fn substitute_this_type_at_return_position(
     instantiate_with_request_cached(
         interner,
         query_db,
+        false,
         InstantiationRequest::new(type_id, &empty_subst)
             .with_options(
                 InstantiationOptions::new()

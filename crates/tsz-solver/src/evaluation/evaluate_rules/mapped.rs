@@ -503,8 +503,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Tuple type: map each element. Source is mutable, so the
                 // result is readonly only if the modifier adds `+readonly`.
                 Some(TypeData::Tuple(tuple_id)) => {
-                    return self
-                        .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
+                    return self.evaluate_mapped_tuple_with_readonly_source(
+                        mapped, tuple_id, source, resolved, false,
+                    );
                 }
 
                 // `readonly` tuple/array source, delegated (`None` => object path).
