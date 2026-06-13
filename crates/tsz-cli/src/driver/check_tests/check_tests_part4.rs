@@ -246,3 +246,129 @@ export function tend(p: Plant) {
         );
     }
 
+    // ------------------------------------------------------------------
+    // A conditional whose check type is an unresolvable cross-file
+    // reference must DEFER, not fabricate `error` (#8432 /
+    // propTypeValidatorInference family).
+    //
+    // Under a namespace import, an imported generic interface member typed
+    // by a sibling type (`isRequired: Validator<NonNullable<T>>`) is read
+    // off an inferred `typeof` object. The member reference lowers to
+    // `Application(UnresolvedTypeName("Validator"), …)` because the bare
+    // name `Validator` is not in the consuming file's scope (it is
+    // `P.Validator` there). `is_error_type` folds `UnresolvedTypeName` into
+    // "error", so the homomorphic mapped body's conditional
+    // `V[K] extends P.Validator<any> ? K : never` used to collapse the
+    // property to `error`, minting `{ str: error }` and a false TS2322.
+    // The conditional now defers on an unresolved reference, matching the
+    // equivalent named-import behavior. Binder names vary across cases.
+    // ------------------------------------------------------------------
+
+    /// Library declaring a generic interface whose member is typed by a sibling
+    /// generic type (`isRequired: Validator<NonNullable<T>>`). Imported as a
+    /// namespace, the bare `Validator` reference is not in the consumer's scope.
+    const UNRESOLVED_MEMBER_VLIB: &str = r#"
+export interface Validator<T> {
+  (props: object): boolean;
+  brand?: T;
+}
+export interface Requireable<T> extends Validator<T> {
+  isRequired: Validator<NonNullable<T>>;
+}
+export declare const str: Requireable<string>;
+"#;
+
+    fn check_unresolved_member_conditional(vlib: &str, main: &str) -> Vec<Diagnostic> {
+        collect_test_diagnostics_with_options(
+            &[("/p/vlib.ts", vlib), ("/p/main.ts", main)],
+            &project_mode_es2015_strict_options(),
+            Path::new("/p"),
+        )
+    }
+
+    #[test]
+    fn program_mode_conditional_over_unresolved_namespace_member_defers_not_error() {
+        let diagnostics = check_unresolved_member_conditional(
+            UNRESOLVED_MEMBER_VLIB,
+            r#"
+import * as P from "./vlib";
+const lit = { str: P.str.isRequired };
+type V = typeof lit;
+type Mc = { [K in keyof V]: V[K] extends P.Validator<any> ? K : never };
+const ok: Mc = { str: "str" };
+"#,
+        );
+        // No diagnostic, and in particular nothing that rendered a property
+        // as the internal `error` type (which the false TS2322 did).
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diag| diag.code != 2322 && diag.code != 2741),
+            "valid assignment to the mapped type must not error; got: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diag| diag.message_text.contains("error")),
+            "no diagnostic may render a mapped property as the internal `error` type: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| d.message_text.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn program_mode_conditional_over_unresolved_namespace_member_still_reports_mismatch() {
+        let diagnostics = check_unresolved_member_conditional(
+            UNRESOLVED_MEMBER_VLIB,
+            r#"
+import * as P from "./vlib";
+const lit = { str: P.str.isRequired };
+type V = typeof lit;
+type Mc = { [K in keyof V]: V[K] extends P.Validator<any> ? K : never };
+const bad: Mc = { str: 123 };
+"#,
+        );
+        // The mapped type still resolves to a usable key type, so a genuine
+        // value mismatch is reported — proving the conditional deferred to a
+        // real type instead of collapsing to `error` (which would silently
+        // accept everything).
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2322),
+            "a genuine mismatch against the resolved mapped key type must error; got: {diagnostics:?}"
+        );
+    }
+
+    /// Same shape with different binder names (anti-hardcoding): the behavior
+    /// follows the structural pattern, not the spellings
+    /// `Validator`/`Requireable`/`str`/`P`.
+    #[test]
+    fn program_mode_conditional_over_unresolved_namespace_member_renamed_binders() {
+        let diagnostics = check_unresolved_member_conditional(
+            r#"
+export interface Checker<U> {
+  (value: object): boolean;
+  tag?: U;
+}
+export interface Mandatory<U> extends Checker<U> {
+  required: Checker<NonNullable<U>>;
+}
+export declare const field: Mandatory<string>;
+"#,
+            r#"
+import * as Lib from "./vlib";
+const shape = { field: Lib.field.required };
+type S = typeof shape;
+type Keys = { [K in keyof S]: S[K] extends Lib.Checker<any> ? K : never };
+const ok: Keys = { field: "field" };
+"#,
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diag| diag.code != 2322 && diag.code != 2741),
+            "renamed-binder witness must not fabricate `error`; got: {diagnostics:?}"
+        );
+    }
+
