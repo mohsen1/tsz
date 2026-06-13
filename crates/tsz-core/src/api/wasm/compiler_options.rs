@@ -250,6 +250,16 @@ impl CompilerOptions {
             options.downlevel_iteration = v;
         }
 
+        // Route the checker-semantic non-strict-family implications
+        // (`verbatimModuleSyntax -> isolatedModules`,
+        // `esModuleInterop -> allowSyntheticDefaultImports`) through the shared
+        // table so this lane never re-derives them by hand. The WASM
+        // `CompilerOptions` surface does not yet expose those source flags, so
+        // this is currently a no-op, but it keeps the single-owner contract
+        // intact for when they are added (idempotent monotonic set toward
+        // `true`, matching tsc's `computedOptions`).
+        tsz_common::options::checker_fanout::apply_checker_fanout(&mut options);
+
         options
     }
 }

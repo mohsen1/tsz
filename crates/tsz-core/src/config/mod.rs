@@ -29,9 +29,11 @@ pub use lib_resolution::{
     resolve_lib_files_from_embedded, resolve_lib_files_with_options,
     resolve_lib_files_with_options_transitive,
 };
+mod option_fanout;
 mod parse;
 mod resolved_options;
 
+pub use option_fanout::apply_non_strict_fanout;
 pub use parse::{ParsedTsConfig, parse_tsconfig, parse_tsconfig_with_diagnostics};
 pub use resolved_options::{
     JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions,
@@ -438,6 +440,12 @@ pub use crate::checker::context::CheckerOptions;
 // surface (CLI driver, tsconfig resolution, WASM, tsz-server) resolves the
 // `--strict` umbrella through the same owner.
 pub use tsz_common::options::strict_family;
+
+// Re-export the shared checker-only non-strict fan-out so the printer-less
+// surfaces (WASM, tsz-server) derive `verbatimModuleSyntax -> isolatedModules`
+// and `esModuleInterop -> allowSyntheticDefaultImports` from the same owner as
+// the emit-capable CLI/tsconfig lanes (which go through `apply_non_strict_fanout`).
+pub use tsz_common::options::checker_fanout;
 
 /// Check whether a JSON value represents a truthy compiler option.
 /// Returns true for `true` booleans, non-empty strings, and non-null values
