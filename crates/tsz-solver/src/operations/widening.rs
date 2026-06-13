@@ -789,6 +789,18 @@ pub(crate) fn widen_object_literal_properties(
         // Objects: recursively widen mutable property types
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
+            // Only fresh object literals carry tsc's widening flag
+            // (`ObjectFlags.ContainsWideningType`, `FRESH_LITERAL` here). A
+            // non-fresh object — a declared/annotated type, an alias instance,
+            // or an object-spread result (`{ ...node }`, which tsz interns
+            // non-fresh) — keeps its literal property types under
+            // `getWidenedType`. Widening such a source while inferring a bare
+            // type parameter would turn `{ kind: "X" }` into `{ kind: string }`
+            // and break identity downstream (false TS2322/TS2345 on builder
+            // factories like Kysely's `cloneWith`/`create`).
+            if !shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                return type_id;
+            }
             let mut new_props = Vec::with_capacity(shape.properties.len());
             let mut changed = false;
 
