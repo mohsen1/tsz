@@ -117,7 +117,7 @@ impl<'a> FlowAnalyzer<'a> {
         if symbol_id.is_none()
             && self.is_member_like_reference(reference)
             && self.reference_root_symbol(reference).is_none()
-            && !self.is_narrowable_member_reference(reference)
+            && self.reference_bottoms_at_call_result(reference)
         {
             return initial_type;
         }
