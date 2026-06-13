@@ -295,28 +295,18 @@ impl<'a> CheckerState<'a> {
         };
         let index_constraint_eval = self.evaluate_type_with_env(index_constraint);
 
-        // Collect keyof operands from each candidate. A candidate may be a direct
-        // `keyof X` or an intersection like `keyof X & string` — in the latter case
-        // we extract the `keyof X` members from the intersection so the index operand
-        // can still be matched against the mapped constraint's key space.
-        let mut keyof_operands: Vec<TypeId> = Vec::new();
-        for candidate in [index_constraint, index_constraint_eval] {
-            if let Some(operand) =
-                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
-            {
-                keyof_operands.push(operand);
-            } else if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
-            {
-                for m in members {
-                    if let Some(operand) =
-                        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, m)
-                    {
-                        keyof_operands.push(operand);
-                    }
-                }
-            }
-        }
+        // Collect keyof operands from each candidate, seeing through the
+        // `keyof X & string` intersection idiom so the index operand can still be
+        // matched against the mapped constraint's key space.
+        let keyof_operands: Vec<TypeId> = [index_constraint, index_constraint_eval]
+            .into_iter()
+            .flat_map(|candidate| {
+                crate::query_boundaries::state::checking::keyof_operands_through_filters(
+                    self.ctx.types,
+                    candidate,
+                )
+            })
+            .collect();
 
         keyof_operands.into_iter().any(|index_operand| {
             crate::query_boundaries::state::checking::keyof_target(

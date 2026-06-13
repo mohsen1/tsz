@@ -22,6 +22,35 @@ pub(crate) fn keyof_target(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Typ
     tsz_solver::type_queries::get_keyof_type(db, type_id)
 }
 
+/// Collect the operands of every `keyof X` denoted by `type_id`, seeing through
+/// the common `keyof X & string` (also `& number` / `& symbol` /
+/// `& PropertyKey`) intersection idiom.
+///
+/// A key-space constraint is frequently narrowed to string keys by writing
+/// `keyof X & string` instead of a bare `keyof X`. Both forms denote keys drawn
+/// from the same object `X`, so key-space reasoning must treat the `keyof X`
+/// member of such an intersection exactly like a bare `keyof X`; the other
+/// members (`string`/`number`/`symbol`) are key filters that do not change
+/// which object the keys come from. [`keyof_target`] alone returns `None` for
+/// the intersection form because the underlying `get_keyof_type` query matches
+/// only a bare `KeyOf`.
+pub(crate) fn keyof_operands_through_filters(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<TypeId> {
+    if let Some(operand) = keyof_target(db, type_id) {
+        return vec![operand];
+    }
+    intersection_members(db, type_id)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(|member| keyof_target(db, *member))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::unwrap_readonly_deep(db, type_id)
 }
