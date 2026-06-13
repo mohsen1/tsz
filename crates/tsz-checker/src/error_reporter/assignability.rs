@@ -1180,45 +1180,6 @@ impl<'a> CheckerState<'a> {
         (source_str, target_str)
     }
 
-    pub(in crate::error_reporter) fn unrelated_type_parameter_target_related_info(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        source_display: &str,
-        target_display: &str,
-        start: u32,
-        length: u32,
-    ) -> Option<DiagnosticRelatedInformation> {
-        if !self.target_is_bare_type_parameter(target) {
-            return None;
-        }
-        let constraint = crate::query_boundaries::diagnostics::type_parameter_constraint(
-            self.ctx.types,
-            target,
-        )?;
-        if constraint == TypeId::ANY
-            || constraint == TypeId::UNKNOWN
-            || self
-                .type_parameter_constraint_elaboration_relation_outcome(source, constraint)
-                .related
-        {
-            return None;
-        }
-        let message = format_message(
-            diagnostic_messages::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO,
-            &[target_display, source_display],
-        );
-        Some(DiagnosticRelatedInformation {
-            category: DiagnosticCategory::Message,
-            code: diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO,
-            file: self.ctx.file_name.clone(),
-            start,
-            length,
-            message_text: message,
-            depth: 0,
-        })
-    }
-
     /// Whether `ty` (or its assignability-evaluated form `evaluated`) carries
     /// fresh object-literal `display_properties` — the provenance marker that
     /// distinguishes a fresh expression literal (whose canonical shape is

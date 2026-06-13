@@ -426,6 +426,39 @@ impl<'a> FlowAnalyzer<'a> {
         self.reference_is_narrowable(leaf)
     }
 
+    /// True when a member-access reference's receiver chain bottoms out at a
+    /// `CallExpression` result (e.g. `readIndexed('p').a.b`). Such a reference
+    /// has no narrowable storage root — no flow node can `is_matching_reference`-
+    /// match it — so the backward flow walk provably returns the declared type
+    /// unchanged. This is the *positive* counterpart used to gate the
+    /// non-narrowable short-circuit: only call-rooted member paths are skipped,
+    /// so `this`/`super`/identifier/meta-property roots (which are narrowable and
+    /// participate in `typeof`-query and discriminant narrowing) always walk.
+    pub(crate) fn reference_bottoms_at_call_result(&self, idx: NodeIndex) -> bool {
+        let idx = self.skip_parenthesized(idx);
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+            return self
+                .arena
+                .get_unary_expr_ex(node)
+                .is_some_and(|u| self.reference_bottoms_at_call_result(u.expression));
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return self
+                .arena
+                .get_access_expr(node)
+                .is_some_and(|a| self.reference_bottoms_at_call_result(a.expression));
+        }
+        false
+    }
+
     fn reference_is_narrowable(&self, idx: NodeIndex) -> bool {
         let idx = self.skip_parenthesized(idx);
         let Some(node) = self.arena.get(idx) else {
@@ -861,7 +894,7 @@ impl<'a> FlowAnalyzer<'a> {
         assignment_root == reference_root
     }
 
-    fn reference_root_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+    pub(crate) fn reference_root_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;
 

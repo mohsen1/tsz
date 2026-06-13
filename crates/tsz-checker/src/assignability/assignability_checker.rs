@@ -725,6 +725,15 @@ impl<'a> CheckerState<'a> {
                         candidate,
                     )
                     || crate::query_boundaries::common::is_mapped_type(self.ctx.types, candidate)
+                    // A deferred `keyof T` target is a structural key-space
+                    // relation the solver decides directly (contravariantly:
+                    // `keyof S <: keyof T` iff `T <: S`), and a concrete-key
+                    // `keyof` target is already handled by the literal-membership
+                    // suppression above. Either way it must not take the
+                    // complex-generic suppression, which would hide a legitimate
+                    // TS2322 (e.g. `keyof X` assigned to `keyof A` for distinct
+                    // type parameters, which `tsc` reports).
+                    || crate::query_boundaries::common::is_keyof_type(self.ctx.types, candidate)
                     || crate::query_boundaries::common::intersection_members(
                         self.ctx.types,
                         candidate,
