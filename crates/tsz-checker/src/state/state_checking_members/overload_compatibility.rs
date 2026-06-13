@@ -11,11 +11,14 @@ use crate::query_boundaries::assignability::{
     erase_function_type_params_to_any, get_function_return_type, replace_function_return_type,
     rewrite_function_error_slots_to_any, strip_function_type_predicate,
 };
+use crate::query_boundaries::construct_signatures::{
+    construct_only_callable_type, function_type_from_call_signature,
+};
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{CallableShape, FunctionShape, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn required_parameter_count_for_overload_compatibility(
@@ -235,15 +238,7 @@ impl<'a> CheckerState<'a> {
                 param.optional = jsdoc_optional;
             }
 
-            let overload_type = self.ctx.types.factory().callable(CallableShape {
-                call_signatures: Vec::new(),
-                construct_signatures: vec![signature],
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            });
+            let overload_type = construct_only_callable_type(self.ctx.types, vec![signature]);
 
             let (error_pos, error_len) = self
                 .jsdoc_overload_tag_span(&comment, &sf.text)
@@ -288,15 +283,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        Some(self.ctx.types.factory().function(FunctionShape {
-            type_params: sig.type_params,
-            params: sig.params,
-            this_type: sig.this_type,
-            return_type: sig.return_type,
-            type_predicate: sig.type_predicate,
-            is_constructor: true,
-            is_method: false,
-        }))
+        Some(function_type_from_call_signature(
+            self.ctx.types,
+            &sig,
+            /* is_constructor */ true,
+        ))
     }
 
     /// Lower a type node with type parameter bindings.
