@@ -282,6 +282,104 @@ export function aliasValueRenamed<Row extends Table | View>(subject: Row, keyTex
     );
 }
 
+#[test]
+fn imported_required_update_alias_preserves_class_instance_members() {
+    let owner = r#"
+export class Owner {
+  readonly name: string = 'owner'
+}
+"#;
+    let builder = r#"
+export type DataKind = 'text' | 'number'
+export interface BuilderBaseConfig<TDataKind extends DataKind, TKind extends string> {
+  name: string
+  dataKind: TDataKind
+  kind: TKind
+  data: unknown
+  driverData: unknown
+}
+export type RuntimeConfig<TData, TRuntimeConfig extends object> = {
+  name: string
+  runtime: TRuntimeConfig
+  data?: TData
+}
+"#;
+    let shapes = r#"
+import type { BuilderBaseConfig, DataKind, RuntimeConfig } from './builder'
+import type { Owner } from './owner'
+
+type Replace<T, TUpdate> = Omit<T, keyof TUpdate> & TUpdate
+interface BaseConfig<TDataKind extends DataKind, TKind extends string> extends BuilderBaseConfig<TDataKind, TKind> {
+  ownerName: string
+  notNull: boolean
+}
+export interface Item<
+  T extends BaseConfig<DataKind, string> = BaseConfig<DataKind, string>,
+  TRuntimeConfig extends object = object,
+  TTypeConfig extends object = object,
+> {
+  readonly meta: T & TTypeConfig
+}
+export abstract class Item<
+  T extends BaseConfig<DataKind, string> = BaseConfig<DataKind, string>,
+  TRuntimeConfig extends object = object,
+  TTypeConfig extends object = object,
+> {
+  declare readonly meta: T & TTypeConfig
+  constructor(readonly owner: Owner) {}
+  protected config!: RuntimeConfig<T['data'], TRuntimeConfig>
+}
+export type AnyItem<TPartial extends Partial<BaseConfig<DataKind, string>> = {}> = Item<
+  Required<Replace<BaseConfig<DataKind, string>, TPartial>>
+>
+"#;
+    let main = r#"
+import type { AnyItem } from './shapes'
+
+declare function useOwner(owner: { name: string }): void
+
+export function readItem<Candidate extends AnyItem>(candidate: Candidate) {
+  return candidate.owner.name
+}
+
+export function readRenamed<Subject extends AnyItem<{ ownerName: 'renamed' }>>(subject: Subject) {
+  return subject.owner.name
+}
+
+export function retargetItem<Candidate extends AnyItem>(candidate: Candidate): Candidate {
+  useOwner(candidate.owner)
+  return candidate
+}
+
+export function missingStillFails<Candidate extends AnyItem>(candidate: Candidate) {
+  return candidate.missingOwner
+}
+"#;
+    let diagnostics = check_files(
+        &[
+            ("owner.ts", owner),
+            ("builder.ts", builder),
+            ("shapes.ts", shapes),
+            ("main.ts", main),
+        ],
+        "main.ts",
+    );
+    let missing_members: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("owner"))
+        .collect();
+    assert!(
+        missing_members.is_empty(),
+        "generic Required<Update<...>> alias application must preserve class instance members; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("missingOwner")),
+        "unrelated members must still report TS2339; got {diagnostics:#?}"
+    );
+}
+
 const RECORD_GUARDS_FILE: &str = r#"
 export type ShallowRecord<K extends keyof any, T> = {
   [P in K]: T

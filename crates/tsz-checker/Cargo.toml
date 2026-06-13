@@ -710,6 +710,9 @@ path = "tests/contextual_ts2345_conformance_tests.rs"
 name = "co_contra_inference_tests"
 path = "tests/co_contra_inference_tests.rs"
 [[test]]
+name = "keyof_type_param_target_diagnostic_tests"
+path = "tests/keyof_type_param_target_diagnostic_tests.rs"
+[[test]]
 name = "keyof_naked_priority_tests"
 path = "tests/keyof_naked_priority_tests.rs"
 [[test]]
