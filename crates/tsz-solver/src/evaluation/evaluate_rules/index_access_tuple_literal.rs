@@ -10,26 +10,53 @@ pub(super) fn evaluate_tuple_literal_index<R: TypeResolver>(
     evaluator: &mut TypeEvaluator<'_, R>,
     elements: &[TupleElement],
     index_type: TypeId,
-    no_unchecked_indexed_access: bool,
 ) -> Option<TypeId> {
     let value = literal_number(evaluator.interner(), index_type)?;
     if !value.0.is_finite() || value.0.fract() != 0.0 || value.0 < 0.0 {
         return Some(TypeId::UNDEFINED);
     }
-    evaluate_tuple_literal_index_inner(
-        evaluator,
-        elements,
-        value.0 as usize,
-        no_unchecked_indexed_access,
-        0,
-    )
+    evaluate_tuple_literal_index_inner(evaluator, elements, value.0 as usize, 0)
+}
+
+pub(super) fn literal_index_needs_unchecked_undefined(
+    elements: &[TupleElement],
+    index_type: TypeId,
+    interner: &dyn crate::construction::TypeDatabase,
+) -> bool {
+    let Some(value) = literal_number(interner, index_type) else {
+        return false;
+    };
+    if !value.0.is_finite() || value.0.fract() != 0.0 || value.0 < 0.0 {
+        return false;
+    }
+
+    let fixed_prefix_len = elements
+        .iter()
+        .take_while(|element| !element.rest && element.is_required())
+        .count();
+    let index = value.0 as usize;
+    if index < fixed_prefix_len {
+        return false;
+    }
+
+    let Some(rest_position) = elements.iter().position(|element| element.rest) else {
+        return false;
+    };
+    let fixed_suffix_len = elements[rest_position + 1..]
+        .iter()
+        .filter(|element| !element.rest && element.is_required())
+        .count();
+    if fixed_suffix_len > 0 {
+        index == fixed_prefix_len.saturating_add(fixed_suffix_len)
+    } else {
+        true
+    }
 }
 
 fn evaluate_tuple_literal_index_inner<R: TypeResolver>(
     evaluator: &mut TypeEvaluator<'_, R>,
     elements: &[TupleElement],
     index: usize,
-    no_unchecked_indexed_access: bool,
     depth: usize,
 ) -> Option<TypeId> {
     const MAX_TUPLE_SPREAD_DEPTH: usize = 64;
@@ -45,7 +72,6 @@ fn evaluate_tuple_literal_index_inner<R: TypeResolver>(
                 evaluator,
                 element.type_id,
                 rest_index,
-                no_unchecked_indexed_access,
                 depth,
             );
         }
@@ -67,7 +93,6 @@ fn evaluate_rest_tuple_literal_index<R: TypeResolver>(
     evaluator: &mut TypeEvaluator<'_, R>,
     rest_type: TypeId,
     index: usize,
-    no_unchecked_indexed_access: bool,
     depth: usize,
 ) -> Option<TypeId> {
     if rest_type.is_intrinsic() {
@@ -79,21 +104,9 @@ fn evaluate_rest_tuple_literal_index<R: TypeResolver>(
     match evaluator.interner().lookup(evaluated) {
         Some(TypeData::Tuple(tuple_id)) => {
             let elements = evaluator.interner().tuple_list(tuple_id);
-            evaluate_tuple_literal_index_inner(
-                evaluator,
-                &elements,
-                index,
-                no_unchecked_indexed_access,
-                depth + 1,
-            )
+            evaluate_tuple_literal_index_inner(evaluator, &elements, index, depth + 1)
         }
-        Some(TypeData::Array(element_type)) => {
-            if no_unchecked_indexed_access {
-                Some(evaluator.interner().union2(element_type, TypeId::UNDEFINED))
-            } else {
-                Some(element_type)
-            }
-        }
+        Some(TypeData::Array(element_type)) => Some(element_type),
         Some(TypeData::Union(list_id)) => {
             let members: Vec<_> = evaluator
                 .interner()
@@ -103,13 +116,10 @@ fn evaluate_rest_tuple_literal_index<R: TypeResolver>(
                 .collect();
             let mut results = Vec::new();
             for member in members {
-                if let Some(result) = evaluate_rest_tuple_literal_index(
-                    evaluator,
-                    member,
-                    index,
-                    no_unchecked_indexed_access,
-                    depth + 1,
-                ) {
+                if let Some(result) =
+                    evaluate_rest_tuple_literal_index(evaluator, member, index, depth + 1)
+                    && result != TypeId::UNDEFINED
+                {
                     results.push(result);
                 }
             }
