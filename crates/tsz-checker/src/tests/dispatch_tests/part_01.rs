@@ -1211,6 +1211,10 @@ function cloneWithHandlerClass<Item extends Box>(source: Item): Item {
     return new MyProxy(source, new MyHandlerImpl<Item>());
 }
 
+function cloneWithSameName<T extends Box>(source: T): T {
+    return new MyProxy(source, {});
+}
+
 function stillRejects<Row extends Box>(item: Row): number {
     return new MyProxy(item, {});
 }

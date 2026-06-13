@@ -114,6 +114,17 @@ impl<'a> CheckerState<'a> {
         has_concrete_arg
     }
 
+    pub(super) fn new_type_args_preserve_outer_type_params(&self, type_args: &[TypeId]) -> bool {
+        type_args.iter().copied().any(|type_arg| {
+            crate::query_boundaries::common::collect_all_types(self.ctx.types, type_arg)
+                .into_iter()
+                .any(|part| {
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, part)
+                        .is_some_and(|info| !info.is_current_infer_placeholder())
+                })
+        })
+    }
+
     pub(super) fn default_current_infer_placeholders_to_unknown(&self, type_id: TypeId) -> TypeId {
         let mut substitution = TypeSubstitution::new();
         for ty in crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id) {
