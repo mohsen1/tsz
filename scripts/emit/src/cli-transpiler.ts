@@ -78,6 +78,23 @@ interface CompilerFlagOptions {
   rootDir?: string;
 }
 
+// Longest common directory of a set of POSIX-style relative file paths,
+// returned as a slash-joined prefix without a trailing slash (empty when the
+// files share no directory beyond the root). Mirrors tsc's
+// `getCommonSourceDirectory` component-wise comparison.
+function longestCommonSourceDir(relPaths: string[]): string {
+  if (relPaths.length === 0) return '';
+  const dirComponents = relPaths.map(p => p.split('/').slice(0, -1));
+  let common = dirComponents[0];
+  for (const comps of dirComponents.slice(1)) {
+    let i = 0;
+    while (i < common.length && i < comps.length && common[i] === comps[i]) i++;
+    common = common.slice(0, i);
+    if (common.length === 0) break;
+  }
+  return common.join('/');
+}
+
 // Append shared compiler-option flags onto a tsz CLI args array. Used by both
 // the primary emit invocation and the declaration-emit retry path so that the
 // two stay in lockstep — previously the retry path silently dropped
@@ -348,6 +365,28 @@ export class CliTranspiler {
     const inputFiles: string[] = [];
     const expectedOutputs: OutputPaths[] = [];
 
+    // When `rootDir` is unset, tsz (like tsc) lays output out relative to the
+    // common source directory of the emittable inputs, not the test root. So a
+    // test whose files all live under `src/` emits to `<outDir>/a.js`, not
+    // `<outDir>/src/a.js`. Compute that common directory (over non-declaration,
+    // non-node_modules sources) so the stripped output path is offered as an
+    // output-location candidate below.
+    const emittableRelNames = files
+      .map(f => f.name.replace(/^\/+/, '').replace(/\\/g, '/'))
+      .filter(
+        rel =>
+          !rel.endsWith('package.json') &&
+          !rel.endsWith('tsconfig.json') &&
+          !rel.endsWith('.d.ts') &&
+          !rel.split('/').includes('node_modules'),
+      );
+    const commonSourceDir = rootDir ? '' : longestCommonSourceDir(emittableRelNames);
+    const stripCommonSourceDir = (relStem: string): string =>
+      commonSourceDir &&
+      (relStem === commonSourceDir || relStem.startsWith(`${commonSourceDir}/`))
+        ? relStem.slice(commonSourceDir.length).replace(/^\/+/, '')
+        : relStem;
+
     for (const file of files) {
       const relName = file.name.replace(/^\/+/, '');
       const normalizedRelName = relName.replace(/\\/g, '/');
@@ -379,6 +418,15 @@ export class CliTranspiler {
         }
         return path.join(testDir, outDir.replace(/^[/\\]+/, ''), relStem);
       })();
+      // Same path with the implicit common source directory stripped (the
+      // layout tsz actually emits when `rootDir` is unset).
+      const outputRelStemCommon = (() => {
+        if (!outDir || rootDir) return null;
+        const relStem = stripCommonSourceDir(
+          relName.replace(/\\/g, '/').replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, ''),
+        );
+        return path.join(testDir, outDir.replace(/^[/\\]+/, ''), relStem);
+      })();
       const declarationRelStem = (() => {
         const declarationOutputDir = declarationDir ?? outDir;
         if (!declarationOutputDir) return null;
@@ -387,6 +435,14 @@ export class CliTranspiler {
         if (normalizedRoot && (relStem === normalizedRoot || relStem.startsWith(`${normalizedRoot}/`))) {
           relStem = relStem.slice(normalizedRoot.length).replace(/^\/+/, '');
         }
+        return path.join(testDir, declarationOutputDir.replace(/^[/\\]+/, ''), relStem);
+      })();
+      const declarationRelStemCommon = (() => {
+        const declarationOutputDir = declarationDir ?? outDir;
+        if (!declarationOutputDir || rootDir) return null;
+        const relStem = stripCommonSourceDir(
+          relName.replace(/\\/g, '/').replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, ''),
+        );
         return path.join(testDir, declarationOutputDir.replace(/^[/\\]+/, ''), relStem);
       })();
       // For TS→JS: .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs
@@ -401,12 +457,14 @@ export class CliTranspiler {
         jsPath: sourceDefaultJsPath,
         jsCandidates: [
           ...(outputFilePath ? [outputFilePath] : []),
-          ...(outputRelStem ? [
-            ext === '.tsx' || ext === '.jsx' ? `${outputRelStem}.jsx` :
-            ext === '.mts' || ext === '.mjs' ? `${outputRelStem}.mjs` :
-            ext === '.cts' || ext === '.cjs' ? `${outputRelStem}.cjs` :
-            `${outputRelStem}.js`,
-          ] : []),
+          ...([outputRelStem, outputRelStemCommon]
+            .filter((stem): stem is string => stem !== null)
+            .map(stem =>
+              ext === '.tsx' || ext === '.jsx' ? `${stem}.jsx` :
+              ext === '.mts' || ext === '.mjs' ? `${stem}.mjs` :
+              ext === '.cts' || ext === '.cjs' ? `${stem}.cjs` :
+              `${stem}.js`,
+            )),
           sourceDefaultJsPath,
           `${stem}.js`,
           `${stem}.jsx`,
@@ -416,11 +474,13 @@ export class CliTranspiler {
         dtsPath: `${stem}.d.ts`,
         dtsCandidates: [
           ...(outputDtsPath ? [outputDtsPath] : []),
-          ...(declarationRelStem ? [
-            `${declarationRelStem}.d.ts`,
-            `${declarationRelStem}.d.mts`,
-            `${declarationRelStem}.d.cts`,
-          ] : []),
+          ...([declarationRelStem, declarationRelStemCommon]
+            .filter((relStem): relStem is string => relStem !== null)
+            .flatMap(relStem => [
+              `${relStem}.d.ts`,
+              `${relStem}.d.mts`,
+              `${relStem}.d.cts`,
+            ])),
           `${stem}.d.ts`,
           `${stem}.d.mts`,
           `${stem}.d.cts`,
