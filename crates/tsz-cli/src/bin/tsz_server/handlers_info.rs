@@ -670,7 +670,7 @@ impl Server {
                 "references": references,
             }]))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     fn build_quoted_alias_referenced_symbols(
@@ -1793,7 +1793,7 @@ impl Server {
             }
             Some(serde_json::json!(nav_items))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn collect_navto_items(
@@ -1865,7 +1865,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_file_references(

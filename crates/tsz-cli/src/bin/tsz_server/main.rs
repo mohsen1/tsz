@@ -1207,6 +1207,21 @@ impl Server {
         self.build_response(seq, request, true, None, body)
     }
 
+    /// Success response for the common handler shape where a fallible
+    /// `(|| -> Option<serde_json::Value>)()` body answers with an empty JSON
+    /// array on a miss. Collapses the repeated
+    /// `success_response(seq, request, Some(result.unwrap_or(json!([]))))`
+    /// closer into one named helper; the resulting `TsServerResponse` is
+    /// byte-for-byte identical to the open-coded form.
+    pub(crate) fn success_or_empty_array(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        result: Option<serde_json::Value>,
+    ) -> TsServerResponse {
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
     /// Async-acknowledged: the real payload was already enqueued as
     /// protocol events; the response carries only the ack.
     pub(crate) fn acknowledge_response(
