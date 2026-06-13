@@ -141,6 +141,7 @@ def print_summary(snap: dict) -> None:
     overlay = snap["overlay"]
     interner = snap["interner"]
     materialization = snap.get("solver_materialization", {})
+    shared_instantiation = snap.get("shared_instantiation_cache", {})
     resolver = snap["resolver"]
     print(f"schema_version = {snap['schema_version']}")
     print(f"mode           = {snap['mode']}")
@@ -282,6 +283,19 @@ def print_summary(snap: dict) -> None:
             f"properties_total={fmt_int(materialization['property_instantiation_properties_total'])}  "
             f"properties_max={fmt_int(materialization['property_instantiation_properties_max'])}  "
             f"changed={fmt_int(materialization['property_instantiation_changed'])}"
+        )
+    if shared_instantiation:
+        print()
+        print("opt-in shared instantiation caches:")
+        print(
+            f"  application_eval hits={fmt_int(shared_instantiation['application_eval_shared_hits'])}  "
+            f"misses={fmt_int(shared_instantiation['application_eval_shared_misses'])}  "
+            f"inserts={fmt_int(shared_instantiation['application_eval_shared_inserts'])}"
+        )
+        print(
+            f"  instantiation    hits={fmt_int(shared_instantiation['instantiation_shared_hits'])}  "
+            f"misses={fmt_int(shared_instantiation['instantiation_shared_misses'])}  "
+            f"inserts={fmt_int(shared_instantiation['instantiation_shared_inserts'])}"
         )
 
 
@@ -458,6 +472,20 @@ def print_diff(post: dict, base: dict) -> None:
             "property_instantiation_changed",
         ):
             print(f"  {delta(post_mat, base_mat, k)}")
+        print()
+    if post.get("shared_instantiation_cache") or base.get("shared_instantiation_cache"):
+        print("opt-in shared instantiation caches:")
+        post_shared = post.get("shared_instantiation_cache", {})
+        base_shared = base.get("shared_instantiation_cache", {})
+        for k in (
+            "application_eval_shared_hits",
+            "application_eval_shared_misses",
+            "application_eval_shared_inserts",
+            "instantiation_shared_hits",
+            "instantiation_shared_misses",
+            "instantiation_shared_inserts",
+        ):
+            print(f"  {delta(post_shared, base_shared, k)}")
         print()
     post_rows = {r["reason"]: r for r in by_reason_rows(post, optional=True)}
     base_rows = {r["reason"]: r for r in by_reason_rows(base, optional=True)}

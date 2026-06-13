@@ -162,6 +162,7 @@ impl PerfCounters {
             snap.resolver.candidate_paths_total,
             snap.identity.type_environment_raw_symbol_lazy_fallbacks,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
+            + &Self::dump_shared_instantiation_cache(&snap)
             + &Self::dump_relation_limit_cache(&snap)
             + &Self::dump_evaluator_memo(&snap)
             + &Self::dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
@@ -841,6 +842,34 @@ impl PerfCounters {
             ));
         }
         out
+    }
+
+    fn dump_shared_instantiation_cache(snap: &PerfCounterSnapshot) -> String {
+        let counters = &snap.shared_instantiation_cache;
+        if counters.application_eval_shared_hits == 0
+            && counters.application_eval_shared_misses == 0
+            && counters.application_eval_shared_inserts == 0
+            && counters.instantiation_shared_hits == 0
+            && counters.instantiation_shared_misses == 0
+            && counters.instantiation_shared_inserts == 0
+        {
+            return String::new();
+        }
+        format!(
+            "\nOpt-in shared instantiation caches:\n  \
+             application eval shared hits     {:>12}\n  \
+             application eval shared misses   {:>12}\n  \
+             application eval shared inserts  {:>12}\n  \
+             instantiation shared hits        {:>12}\n  \
+             instantiation shared misses      {:>12}\n  \
+             instantiation shared inserts     {:>12}\n",
+            counters.application_eval_shared_hits,
+            counters.application_eval_shared_misses,
+            counters.application_eval_shared_inserts,
+            counters.instantiation_shared_hits,
+            counters.instantiation_shared_misses,
+            counters.instantiation_shared_inserts,
+        )
     }
 
     fn dump_relation_limit_cache(snap: &PerfCounterSnapshot) -> String {

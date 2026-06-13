@@ -22,6 +22,66 @@ pub fn record_relation_maybe_promotion() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn record_shared_application_eval_cache_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_application_eval_cache_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_shared_application_eval_cache_miss() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_application_eval_cache_misses
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_shared_application_eval_cache_insert() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_application_eval_cache_inserts
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_shared_instantiation_cache_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_instantiation_cache_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_shared_instantiation_cache_miss() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_instantiation_cache_misses
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_shared_instantiation_cache_insert() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .shared_instantiation_cache_inserts
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record one failure-reason walk over a failing reason-collecting
 /// assignability relation (issue #13243).
 #[inline]

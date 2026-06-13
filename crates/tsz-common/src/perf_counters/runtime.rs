@@ -158,6 +158,14 @@ pub struct PerfCounters {
     /// band-conditional `LimitTrue` entries.
     pub relation_maybe_promotions: AtomicU64,
 
+    // ─── opt-in shared instantiation/application caches (#13240) ─────────
+    pub shared_application_eval_cache_hits: AtomicU64,
+    pub shared_application_eval_cache_misses: AtomicU64,
+    pub shared_application_eval_cache_inserts: AtomicU64,
+    pub shared_instantiation_cache_hits: AtomicU64,
+    pub shared_instantiation_cache_misses: AtomicU64,
+    pub shared_instantiation_cache_inserts: AtomicU64,
+
     // ─── relation failure-reason single pass (issue #13243) ─────────────
     /// Failure-reason walks executed after a failing reason-collecting
     /// assignability relation (`is_weak_union_violation` plus
@@ -362,6 +370,12 @@ impl PerfCounters {
                 CHECKER_CREATION_REASON_COUNT],
             relation_limit_cache_hits: AtomicU64::new(0),
             relation_maybe_promotions: AtomicU64::new(0),
+            shared_application_eval_cache_hits: AtomicU64::new(0),
+            shared_application_eval_cache_misses: AtomicU64::new(0),
+            shared_application_eval_cache_inserts: AtomicU64::new(0),
+            shared_instantiation_cache_hits: AtomicU64::new(0),
+            shared_instantiation_cache_misses: AtomicU64::new(0),
+            shared_instantiation_cache_inserts: AtomicU64::new(0),
             relation_failure_reason_walks: AtomicU64::new(0),
             relation_failure_memo_hits: AtomicU64::new(0),
             union_subtype_reduction_calls: AtomicU64::new(0),

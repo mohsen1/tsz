@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 9;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 10;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -32,6 +32,8 @@ pub struct PerfCounterSnapshot {
     pub interner: InternerCounters,
     /// Solver relation limit-result cache (issue #13241).
     pub relation_limit_cache: RelationLimitCacheCounters,
+    /// Opt-in shared application/instantiation cache witness path (#13240).
+    pub shared_instantiation_cache: SharedInstantiationCacheCounters,
     /// Relation failure-reason single-pass campaign (issue #13243).
     pub relation_failure: RelationFailureCounters,
     /// Solver concrete-form materialization counters (issue #13242).
@@ -509,6 +511,20 @@ pub struct RelationFailureCounters {
     pub memo_hits: u64,
 }
 
+/// Opt-in shared application-eval and instantiation cache counters (#13240).
+///
+/// These counters are only incremented when `TSZ_SHARE_INSTANTIATION_CACHES`
+/// enables the experimental witness path. Defaults remain per-file.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SharedInstantiationCacheCounters {
+    pub application_eval_shared_hits: u64,
+    pub application_eval_shared_misses: u64,
+    pub application_eval_shared_inserts: u64,
+    pub instantiation_shared_hits: u64,
+    pub instantiation_shared_misses: u64,
+    pub instantiation_shared_inserts: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SolverMaterializationCounters {
     pub union_subtype_reduction_calls: u64,
@@ -736,6 +752,14 @@ impl PerfCounters {
             relation_limit_cache: RelationLimitCacheCounters {
                 limit_cache_hits: load(&c.relation_limit_cache_hits),
                 maybe_promotions: load(&c.relation_maybe_promotions),
+            },
+            shared_instantiation_cache: SharedInstantiationCacheCounters {
+                application_eval_shared_hits: load(&c.shared_application_eval_cache_hits),
+                application_eval_shared_misses: load(&c.shared_application_eval_cache_misses),
+                application_eval_shared_inserts: load(&c.shared_application_eval_cache_inserts),
+                instantiation_shared_hits: load(&c.shared_instantiation_cache_hits),
+                instantiation_shared_misses: load(&c.shared_instantiation_cache_misses),
+                instantiation_shared_inserts: load(&c.shared_instantiation_cache_inserts),
             },
             relation_failure: RelationFailureCounters {
                 reason_walks: load(&c.relation_failure_reason_walks),
