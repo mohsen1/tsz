@@ -2,10 +2,32 @@
 
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{IntrinsicKind, LiteralValue, TemplateSpan, TypeData, TypeId, TypeParamInfo};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct TemplateStringMatchState {
+    pos: usize,
+    index: usize,
+    bindings: Vec<(u32, u32)>,
+}
+
+impl TemplateStringMatchState {
+    fn new(pos: usize, index: usize, bindings: &FxHashMap<Atom, TypeId>) -> Self {
+        let mut bindings: Vec<_> = bindings
+            .iter()
+            .map(|(name, type_id)| (name.0, type_id.0))
+            .collect();
+        bindings.sort_unstable();
+        Self {
+            pos,
+            index,
+            bindings,
+        }
+    }
+}
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn parse_template_number_capture(&self, captured: &str) -> Option<TypeId> {
@@ -118,7 +140,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
-        self.match_template_literal_string_from(source, pattern, 0, 0, bindings, checker)
+        let mut failed_states = FxHashSet::default();
+        self.match_template_literal_string_from(
+            source,
+            pattern,
+            0,
+            0,
+            bindings,
+            checker,
+            &mut failed_states,
+        )
     }
 
     fn match_template_segment_prefix(
@@ -246,6 +277,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         type_id: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
+        failed_states: &mut FxHashSet<TemplateStringMatchState>,
     ) -> Option<bool> {
         use crate::relations::subtype::rules::literals::{
             find_integer_length, find_number_length, is_valid_number,
@@ -271,6 +303,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 index + 1,
                                 bindings,
                                 checker,
+                                failed_states,
                             )
                         {
                             return Some(true);
@@ -292,6 +325,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             bindings,
                             checker,
+                            failed_states,
                         ) {
                             return Some(true);
                         }
@@ -307,6 +341,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             bindings,
                             checker,
+                            failed_states,
                         )
                     {
                         return Some(true);
@@ -319,6 +354,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             bindings,
                             checker,
+                            failed_states,
                         )
                     {
                         return Some(true);
@@ -334,6 +370,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             bindings,
                             checker,
+                            failed_states,
                         )
                     {
                         Some(true)
@@ -350,6 +387,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             bindings,
                             checker,
+                            failed_states,
                         )
                     {
                         Some(true)
@@ -372,26 +410,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         index: usize,
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
+        failed_states: &mut FxHashSet<TemplateStringMatchState>,
     ) -> bool {
         if index == pattern.len() {
             return pos == source.len();
         }
 
-        match pattern[index] {
+        let state = TemplateStringMatchState::new(pos, index, bindings);
+        if failed_states.contains(&state) {
+            return false;
+        }
+
+        let matched = match pattern[index] {
             TemplateSpan::Text(text) => {
                 let text_value = self.interner().resolve_atom_ref(text);
                 let text_value = text_value.as_ref();
                 if !source[pos..].starts_with(text_value) {
-                    return false;
+                    false
+                } else {
+                    self.match_template_literal_string_from(
+                        source,
+                        pattern,
+                        pos + text_value.len(),
+                        index + 1,
+                        bindings,
+                        checker,
+                        failed_states,
+                    )
                 }
-                self.match_template_literal_string_from(
-                    source,
-                    pattern,
-                    pos + text_value.len(),
-                    index + 1,
-                    bindings,
-                    checker,
-                )
             }
             TemplateSpan::Type(type_id) => {
                 if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
@@ -413,11 +459,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             &mut next_bindings,
                             checker,
+                            failed_states,
                         ) {
                             *bindings = next_bindings;
                             return true;
                         }
                     }
+                    failed_states.insert(state);
                     return false;
                 }
 
@@ -429,12 +477,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         index + 1,
                         bindings,
                         checker,
+                        failed_states,
                     );
                 }
 
                 if let Some(result) = self.match_intrinsic_span_from(
-                    source, pattern, pos, index, type_id, bindings, checker,
+                    source,
+                    pattern,
+                    pos,
+                    index,
+                    type_id,
+                    bindings,
+                    checker,
+                    failed_states,
                 ) {
+                    if !result {
+                        failed_states.insert(state);
+                    }
                     return result;
                 }
 
@@ -451,6 +510,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             index + 1,
                             bindings,
                             checker,
+                            failed_states,
                         )
                     {
                         return true;
@@ -458,7 +518,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 false
             }
+        };
+        if !matched {
+            failed_states.insert(state);
         }
+        matched
     }
 
     /// Capture value for a bare single-placeholder `` `${infer V}` `` pattern
