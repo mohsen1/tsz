@@ -1162,6 +1162,11 @@ fn interface_with_construct_signature_no_ts2351() {
 interface MyHandler<T extends object> {
     get?(target: T, p: string): any;
 }
+class MyHandlerImpl<T extends object> implements MyHandler<T> {
+    get(target: T, p: string): any {
+        return target;
+    }
+}
 interface MyConstructor {
     new <T extends object>(target: T, handler: MyHandler<T>): T;
 }
@@ -1200,6 +1205,10 @@ function clone<Row extends Box>(item: Row): Row {
 function cloneRenamed<Entity extends Box>(source: Entity): Entity {
     const handler: MyHandler<Entity> = {};
     return new MyProxy(source, handler);
+}
+
+function cloneWithHandlerClass<Item extends Box>(source: Item): Item {
+    return new MyProxy(source, new MyHandlerImpl<Item>());
 }
 
 function stillRejects<Row extends Box>(item: Row): number {
