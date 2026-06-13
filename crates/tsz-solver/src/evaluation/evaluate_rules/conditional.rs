@@ -1625,17 +1625,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // the substitution walk's children (it also descends `Mapped` and
         // type-parameter internals), so a `false` answer here is always safe
         // to skip on.
-        let branch_references_check = |evaluator: &Self, branch: TypeId| {
-            branch == original_check_type
-                || crate::visitor::contains_type_by_id(
-                    evaluator.interner(),
-                    branch,
-                    original_check_type,
-                )
-        };
-        let extends_needs_subst = branch_references_check(self, extends_type);
-        let true_needs_subst = branch_references_check(self, true_type);
-        let false_needs_subst = branch_references_check(self, false_type);
+        let branch_references_check = |branch: TypeId| branch == original_check_type;
+        let extends_needs_subst = branch_references_check(extends_type)
+            || self.cached_contains_type_by_id(extends_type, original_check_type);
+        let true_needs_subst = branch_references_check(true_type)
+            || self.cached_contains_type_by_id(true_type, original_check_type);
+        let false_needs_subst = branch_references_check(false_type)
+            || self.cached_contains_type_by_id(false_type, original_check_type);
 
         for &member in members {
             // Check if depth was exceeded during previous iterations
