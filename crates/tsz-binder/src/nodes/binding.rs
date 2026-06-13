@@ -82,7 +82,7 @@ impl BinderState {
         let lib_sym = self.symbols.get(existing_id)?;
         let lib_flags = lib_sym.flags;
         let lib_value_decl = lib_sym.value_declaration;
-        let lib_value_span = lib_sym.value_declaration_span;
+        let lib_value_span = lib_sym.value_declaration_span();
         let lib_decls: Vec<PreservedDecl> = lib_sym
             .declarations
             .iter()

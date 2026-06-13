@@ -165,7 +165,7 @@ fn def_id_fallback_prefers_symbol_stable_declaration_span() {
         .get(def_id)
         .expect("fallback should register DefinitionInfo");
 
-    assert_eq!(info.span, symbol.first_declaration_span);
+    assert_eq!(info.span, symbol.first_declaration_span());
     assert_eq!(ctx.def_fallback_count.get(), 1);
 }
 

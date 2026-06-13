@@ -63,8 +63,8 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.get_cross_file_symbol(sym_id))
                     .and_then(|symbol| {
                         symbol
-                            .first_declaration_span
-                            .or(symbol.value_declaration_span)
+                            .first_declaration_span()
+                            .or_else(|| symbol.value_declaration_span())
                     });
                 (name.as_str(), sym_id, span)
             })

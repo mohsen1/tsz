@@ -235,8 +235,10 @@ impl BinderState {
                                         if !aug_nodes.contains(&decl) {
                                             continue;
                                         }
-                                        existing_mut
-                                            .add_declaration(decl, lib_sym.first_declaration_span);
+                                        existing_mut.add_declaration(
+                                            decl,
+                                            lib_sym.first_declaration_span(),
+                                        );
                                         let arenas = Arc::make_mut(&mut self.declaration_arenas)
                                             .entry((existing_id, decl))
                                             .or_default();
@@ -259,8 +261,10 @@ impl BinderState {
                                 } else {
                                     existing_mut.flags |= lib_sym.flags;
                                     for &decl in &lib_sym.declarations {
-                                        existing_mut
-                                            .add_declaration(decl, lib_sym.first_declaration_span);
+                                        existing_mut.add_declaration(
+                                            decl,
+                                            lib_sym.first_declaration_span(),
+                                        );
                                         let arenas = Arc::make_mut(&mut self.declaration_arenas)
                                             .entry((existing_id, decl))
                                             .or_default();
@@ -286,7 +290,7 @@ impl BinderState {
                                                 {
                                                     existing_mut.set_value_declaration(
                                                         aug.node,
-                                                        lib_sym.first_declaration_span,
+                                                        lib_sym.first_declaration_span(),
                                                     );
                                                     break;
                                                 }
@@ -295,7 +299,7 @@ impl BinderState {
                                     } else if lib_sym.value_declaration.is_some() {
                                         existing_mut.set_value_declaration(
                                             lib_sym.value_declaration,
-                                            lib_sym.value_declaration_span,
+                                            lib_sym.value_declaration_span(),
                                         );
                                     }
                                 }

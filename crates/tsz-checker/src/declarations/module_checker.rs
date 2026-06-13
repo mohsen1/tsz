@@ -1688,20 +1688,11 @@ impl<'a> CheckerState<'a> {
                 let Some(decl_idx) = sym.primary_declaration() else {
                     continue;
                 };
-                let fallback_span = sym
-                    .first_declaration_span
-                    .or_else(|| {
-                        sym.stable_value_declaration.is_known().then_some((
-                            sym.stable_value_declaration.pos,
-                            sym.stable_value_declaration.end,
-                        ))
-                    })
-                    .or_else(|| {
-                        sym.stable_declarations
-                            .iter()
-                            .find(|stable| stable.is_known())
-                            .map(|stable| (stable.pos, stable.end))
-                    });
+                // `Symbol::first_declaration_span` already derives from the
+                // first known `stable_declarations` entry with a
+                // `stable_value_declaration` fallback, subsuming the previous
+                // hand-rolled chain over the same data.
+                let fallback_span = sym.first_declaration_span();
 
                 let mut error_node_idx = decl_idx;
 
