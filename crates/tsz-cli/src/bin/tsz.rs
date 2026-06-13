@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::io::IsTerminal;
 
+use tsz::parallel::residency::{MemoryPressure, ResidencyBudget};
 use tsz_cli::args::CliArgs;
 use tsz_cli::help::{self, TSC_VERSION};
 use tsz_cli::{driver, locale, reporter::Reporter, watch};
@@ -303,6 +304,24 @@ fn clear_batch_iteration_state() {
     tsz::checker::clear_all_thread_local_state();
 }
 
+fn write_batch_residency_report(
+    stdout: &mut impl std::io::Write,
+    result: &driver::CompilationResult,
+) -> Result<()> {
+    let Some(stats) = result.residency_stats.as_ref() else {
+        return Ok(());
+    };
+    let retained_kb = stats.retained_file_state_bytes_est() as f64 / 1024.0;
+    let pressure = match ResidencyBudget::default().assess(stats) {
+        MemoryPressure::Low => "low",
+        MemoryPressure::Medium => "medium",
+        MemoryPressure::High => "high",
+    };
+    writeln!(stdout, "Batch retained file state:     {retained_kb:.1}K")?;
+    writeln!(stdout, "Batch retained residency pressure: {pressure}")?;
+    Ok(())
+}
+
 /// Batch compilation mode: read project directory paths from stdin (one per line),
 /// compile each with `--project <path> --noEmit --pretty false`, print diagnostics,
 /// then print a sentinel line so the caller can demarcate output boundaries.
@@ -381,6 +400,7 @@ fn run_batch_mode(residency_budget: bool) -> Result<()> {
                     }
                 }
                 if residency_budget {
+                    write_batch_residency_report(&mut stdout, &result)?;
                     drop(result);
                     clear_batch_iteration_state();
                 }
