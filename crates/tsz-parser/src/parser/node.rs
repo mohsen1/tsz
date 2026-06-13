@@ -1033,6 +1033,27 @@ for_each_node_pool!(declare_pool_lengths);
 // Thin Node Arena
 // =============================================================================
 
+/// A class-body member that parser error recovery dropped after it matched
+/// tsc's `var <name>() { }` statement-level recovery shape: a `var` keyword
+/// treated as an invalid member modifier, a plain identifier name, an empty
+/// parameter list, no type parameters or return type, and an empty `{ }`
+/// body.
+///
+/// tsc parses this construct as trailing statements (`var <name>;` plus an
+/// arrow function recovered from `() { }`), so the class emitters append the
+/// equivalent tail after the class output. The parser records the recovery
+/// here so emit consumes parser-owned AST data instead of re-scanning raw
+/// source text.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClassBodyVarFnRecovery {
+    /// Start position of the dropped member (the `var` keyword, or the first
+    /// modifier when other modifiers precede it). Always inside the span of
+    /// the class whose body the member appeared in.
+    pub pos: u32,
+    /// Recovered declaration name, preserving any original escape spelling.
+    pub name: String,
+}
+
 /// Generate [`NodeArenaInner`] with one `Vec<ElementType>` field per entry of
 /// the canonical pool registry in [`super::node_pools`].
 ///
@@ -1062,7 +1083,7 @@ macro_rules! declare_node_arena_inner {
             pub interner: Interner,
 
             // Typed data pools — generated from `node_pools::for_each_node_pool!`.
-            $(pub $pool: Vec<$elem>,)+
+            $(#[serde(default)] pub $pool: Vec<$elem>,)+
 
             /// Extended node info (for nodes that need parent, id, full flags)
             pub extended_info: Vec<ExtendedNodeInfo>,
