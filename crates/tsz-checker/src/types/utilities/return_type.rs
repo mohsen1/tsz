@@ -19,10 +19,22 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
     ) -> Option<TypeId> {
         let return_context = return_context?;
+        // Only suppress the contextual return type when it is still genuinely
+        // uninstantiated, i.e. it carries *free* type parameters or `infer`
+        // placeholders (e.g. the bare `T` of `<T>() => T`, where contextual
+        // typing carries no useful information). A type parameter *bound* by a
+        // generic member inside an otherwise concrete context — such as the `K`
+        // of `addEventListener<K extends keyof M>(...)` reachable through a
+        // concrete type argument like `MessagePort` — is fully resolved and must
+        // not block contextual typing. The broad `contains_type_parameters`
+        // predicate counts those bound members and wrongly widened a concrete
+        // contextual return such as `[MessagePort, number]` to a plain array; the
+        // free-variable predicate keeps it flowing into block-body return
+        // literals so they type as tuples.
         if return_context == TypeId::ANY
             || return_context == TypeId::UNKNOWN
-            || self.type_has_unresolved_inference_holes(return_context)
-            || return_type_queries::contains_type_parameters(self.ctx.types, return_context)
+            || return_type_queries::contains_free_type_parameters(self.ctx.types, return_context)
+            || return_type_queries::contains_infer_types(self.ctx.types, return_context)
         {
             return None;
         }
