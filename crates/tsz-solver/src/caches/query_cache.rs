@@ -131,11 +131,11 @@ impl CacheCounter {
         self.misses.set(0);
     }
 
-    fn hits(&self) -> u64 {
+    const fn hits(&self) -> u64 {
         self.hits.get()
     }
 
-    fn misses(&self) -> u64 {
+    const fn misses(&self) -> u64 {
         self.misses.get()
     }
 }
@@ -190,23 +190,23 @@ impl SharedCacheCounter {
         self.shared_inserts.set(0);
     }
 
-    fn hits(&self) -> u64 {
+    const fn hits(&self) -> u64 {
         self.local.hits()
     }
 
-    fn misses(&self) -> u64 {
+    const fn misses(&self) -> u64 {
         self.local.misses()
     }
 
-    fn shared_hits(&self) -> u64 {
+    const fn shared_hits(&self) -> u64 {
         self.shared_hits.get()
     }
 
-    fn shared_misses(&self) -> u64 {
+    const fn shared_misses(&self) -> u64 {
         self.shared_misses.get()
     }
 
-    fn shared_inserts(&self) -> u64 {
+    const fn shared_inserts(&self) -> u64 {
         self.shared_inserts.get()
     }
 }
