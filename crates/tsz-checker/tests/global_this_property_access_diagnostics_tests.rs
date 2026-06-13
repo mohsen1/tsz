@@ -111,6 +111,87 @@ type Missing = (typeof globalThis)["\"ambientModule\""];
     );
 }
 
+/// A string-literal ambient module (`declare module "x"`) is not part of the
+/// global scope: `tsc` records it in a separate ambient-module table, so it
+/// never becomes a property of `typeof globalThis`. Indexing the surface by the
+/// module name — even though the name *is* bound in the file's locals — must
+/// still report TS2339 against the canonical `typeof globalThis` receiver.
+/// Before the fix the module surfaced as a `typeof <module>` property, so the
+/// access resolved instead of erroring.
+#[test]
+fn typeof_globalthis_indexed_access_declared_ambient_module_reports_ts2339() {
+    let source = r#"
+declare module "ambientModule" {
+    export const x: number;
+}
+type Bad = (typeof globalThis)["ambientModule"];
+"#;
+    let diags = check_with_no_implicit_any(source);
+    let ts2339: Vec<_> = diags.iter().filter(|diag| diag.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "indexing typeof globalThis by a declared ambient module name should emit one TS2339; got: {diags:#?}"
+    );
+    assert!(
+        ts2339[0]
+            .message_text
+            .contains("Property 'ambientModule' does not exist on type 'typeof globalThis'"),
+        "TS2339 must use the canonical typeof globalThis receiver; got: {}",
+        ts2339[0].message_text
+    );
+}
+
+/// `tsc` keys ambient modules under their quoted name, so the conformance
+/// witness indexes `typeof globalThis` by the *quoted* form `"ambientModule"`.
+/// That key must also miss the surface. Renamed module binder to prove the
+/// rule is structural, not keyed to a specific module name.
+#[test]
+fn typeof_globalthis_indexed_access_quoted_declared_module_name_reports_ts2339() {
+    let source = r#"
+declare module "renamedAmbientMod" {
+    export type typ = 1;
+    export var val: typ;
+}
+type Bad = (typeof globalThis)["\"renamedAmbientMod\""];
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        diags.iter().any(|d| d.code == 2339
+            && d.message_text
+                .contains("does not exist on type 'typeof globalThis'")),
+        "quoted ambient module name must miss the typeof globalThis surface; got: {diags:#?}"
+    );
+}
+
+/// Companion: a string-literal ambient module and an identifier value
+/// namespace declared side by side. The ambient module is excluded; the value
+/// namespace stays a genuine global and indexes cleanly. Guards against the
+/// exclusion over-reaching to identifier namespaces.
+#[test]
+fn typeof_globalthis_surface_excludes_ambient_module_but_keeps_value_namespace() {
+    let source = r#"
+declare module "someAmbientMod" {
+    export const x: number;
+}
+namespace keptValueNs { export var v = 1; }
+type Bad = (typeof globalThis)["someAmbientMod"];
+type Ok = (typeof globalThis)["keptValueNs"];
+"#;
+    let diags = check_with_no_implicit_any(source);
+    let ts2339: Vec<_> = diags.iter().filter(|diag| diag.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "only the ambient module key should miss the surface; the value namespace stays; got: {diags:#?}"
+    );
+    assert!(
+        ts2339[0].message_text.contains("someAmbientMod"),
+        "the surviving TS2339 must be the ambient module, not the value namespace; got: {}",
+        ts2339[0].message_text
+    );
+}
+
 #[test]
 fn typeof_globalthis_indexed_access_keeps_declared_namespace_keys_valid() {
     let source = r#"
