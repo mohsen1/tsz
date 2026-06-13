@@ -3,7 +3,7 @@
 use crate::construction::TypeDatabase;
 use crate::objects::ApparentMemberKind;
 use crate::objects::apparent::is_member;
-use crate::types::{IntrinsicKind, LiteralValue, TupleElement, TypeId, TypeListId};
+use crate::types::{IntrinsicKind, LiteralValue, TupleElement, TypeData, TypeId, TypeListId};
 use crate::utils;
 use crate::visitor::{TypeVisitor, array_element_type, literal_number, tuple_list_id};
 
@@ -226,6 +226,27 @@ impl<'a> TupleKeyVisitor<'a> {
                     // Recursively search in rest elements.
                     let inner_visitor = TupleKeyVisitor::new(self.db, &rest_elements);
                     return inner_visitor.tuple_index_literal(inner_idx);
+                }
+                if let Some(TypeData::Union(list_id)) = self.db.lookup(element.type_id) {
+                    let inner_idx = idx.saturating_sub(logical_idx);
+                    let mut results = Vec::new();
+                    for &member in self.db.type_list(list_id).iter() {
+                        let member = crate::type_queries::data::unwrap_readonly(self.db, member);
+                        if let Some(member_elements_id) = tuple_list_id(self.db, member) {
+                            let member_elements = self.db.tuple_list(member_elements_id);
+                            let inner_visitor = TupleKeyVisitor::new(self.db, &member_elements);
+                            if let Some(result) = inner_visitor.tuple_index_literal(inner_idx)
+                                && result != TypeId::UNDEFINED
+                            {
+                                results.push(result);
+                            }
+                        }
+                    }
+                    return match results.as_slice() {
+                        [] => Some(TypeId::UNDEFINED),
+                        [only] => Some(*only),
+                        _ => Some(self.db.union(results)),
+                    };
                 }
                 return Some(self.tuple_element_type(element));
             }
