@@ -43,6 +43,95 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
+/// Outcome of the shared per-argument Application-variance loop.
+///
+/// This is the single source of truth for how a same-base/same-arity
+/// `Application`-vs-`Application` pair is walked against its declared
+/// per-parameter [`Variance`]. Both Application-variance fast paths
+/// (`relation_queries::check_application_variance` at the relation-query
+/// boundary, and `SubtypeChecker::try_variance_fast_path` in the engine)
+/// run this exact loop so they cannot drift on which argument orientation a
+/// given variance position checks. Each caller still owns the *relation* used
+/// to relate two argument types (the boundary uses the lawyer
+/// `CompatChecker::is_assignable`; the engine uses the raw judge
+/// `check_subtype`) and the mapping from this outcome to its own
+/// accept/reject/fall-through verdict — only the variance walk itself is
+/// shared.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VarianceArgLoopOutcome {
+    /// At least one argument was in a variance-relevant (non-independent)
+    /// position and was therefore relation-checked.
+    pub any_checked: bool,
+    /// Every relation check performed so far succeeded (no mismatch).
+    pub all_ok: bool,
+    /// A *forward* (source-relates-to-target) check failed. Set for covariant
+    /// and invariant positions; never set by the contravariant orientation
+    /// (which only performs a reverse check). Used by the engine's
+    /// recursive-mapped-alias rejection refinement.
+    pub forward_rejected: bool,
+}
+
+/// Walk an `Application`-vs-`Application` argument list against its declared
+/// per-parameter variances, relating argument types through the supplied
+/// `arg_related` relation, and report the [`VarianceArgLoopOutcome`].
+///
+/// `arg_related(a, b)` must answer "is `a` related to `b`" under the caller's
+/// chosen relation. The loop relates arguments per position:
+/// - invariant: `arg_related(s, t)` then `arg_related(t, s)` (forward first);
+/// - covariant: `arg_related(s, t)` (forward);
+/// - contravariant: `arg_related(t, s)` (reverse only);
+/// - independent: skipped.
+///
+/// The loop stops at the first mismatch, matching the historical
+/// short-circuit behavior of both fast paths.
+pub(crate) fn run_application_variance_arg_loop(
+    variances: &[Variance],
+    source_args: &[TypeId],
+    target_args: &[TypeId],
+    mut arg_related: impl FnMut(TypeId, TypeId) -> bool,
+) -> VarianceArgLoopOutcome {
+    let mut any_checked = false;
+    let mut all_ok = true;
+    let mut forward_rejected = false;
+
+    for (i, variance) in variances.iter().enumerate() {
+        let s_arg = source_args[i];
+        let t_arg = target_args[i];
+
+        if variance.is_invariant() {
+            any_checked = true;
+            if !arg_related(s_arg, t_arg) {
+                forward_rejected = true;
+                all_ok = false;
+                break;
+            }
+            if !arg_related(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_covariant() {
+            any_checked = true;
+            if !arg_related(s_arg, t_arg) {
+                forward_rejected = true;
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_contravariant() {
+            any_checked = true;
+            if !arg_related(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        }
+    }
+
+    VarianceArgLoopOutcome {
+        any_checked,
+        all_ok,
+        forward_rejected,
+    }
+}
+
 /// Compute the variance of a type parameter within a type.
 ///
 /// This is the main entry point for variance calculation. It analyzes how
