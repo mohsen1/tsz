@@ -40,6 +40,7 @@ jobs:
       perf_tool_only: ${{ steps.gate.outputs.perf_tool_only }}
       arch_tool_only: ${{ steps.gate.outputs.arch_tool_only }}
       metadata_only_skip: ${{ steps.gate.outputs.metadata_only_skip }}
+      metadata_active_suite_found: ${{ steps.gate.outputs.metadata_active_suite_found }}
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
@@ -424,6 +425,7 @@ jobs:
           echo "perf_tool_only=${perf_tool_only}" >> "$GITHUB_OUTPUT"
           echo "arch_tool_only=${arch_tool_only}" >> "$GITHUB_OUTPUT"
           echo "metadata_only_skip=${metadata_only_skip}" >> "$GITHUB_OUTPUT"
+          echo "metadata_active_suite_found=${METADATA_ACTIVE_SUITE_FOUND:-false}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
@@ -1322,6 +1324,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           CI_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          CI_METADATA_ACTIVE_SUITE_FOUND: ${{ needs.gate.outputs.metadata_active_suite_found }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           python3 - <<'PY'
@@ -1339,6 +1342,7 @@ jobs:
           perf_tool_only = gate.get("outputs", {}).get("perf_tool_only") == "true"
           arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
           metadata_only_skip = gate.get("outputs", {}).get("metadata_only_skip") == "true"
+          metadata_active_suite_found = os.environ.get("CI_METADATA_ACTIVE_SUITE_FOUND") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
           required_summary = gate.get("outputs", {}).get("required_summary") == "true"
 
@@ -1417,6 +1421,12 @@ jobs:
                       return
                   print(f"Previous {summary_name} for this head was {conclusion or 'missing'} in run {run['id']} with suite failures {suite_failures}: {url}")
                   sys.exit(1)
+              if not required_summary and metadata_active_suite_found:
+                  print(
+                      "Metadata-only CI found an active exact-head CI suite but no completed prior summary yet; "
+                      "CI Light Summary passes and the real suite remains authoritative."
+                  )
+                  return
               print(f"Metadata-only CI could not find a previous {accepted_summary_label} for head {head_sha}.")
               sys.exit(1)
 

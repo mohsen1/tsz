@@ -1774,3 +1774,7 @@ path = "tests/arch_source_scans.rs"
 [[test]]
 name = "checker_constructor_matrix_tests"
 path = "tests/checker_constructor_matrix_tests.rs"
+
+[[test]]
+name = "construct_signature_boundary_matrix_tests"
+path = "tests/construct_signature_boundary_matrix_tests.rs"

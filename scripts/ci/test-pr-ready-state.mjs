@@ -156,6 +156,11 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
+  /metadata_active_suite_found: \$\{\{ steps\.gate\.outputs\.metadata_active_suite_found \}\}[\s\S]+?echo "metadata_active_suite_found=\$\{METADATA_ACTIVE_SUITE_FOUND:-false\}" >> "\$GITHUB_OUTPUT"[\s\S]+?CI_METADATA_ACTIVE_SUITE_FOUND: \$\{\{ needs\.gate\.outputs\.metadata_active_suite_found \}\}[\s\S]+?metadata_active_suite_found = os\.environ\.get\("CI_METADATA_ACTIVE_SUITE_FOUND"\) == "true"[\s\S]+?if not required_summary and metadata_active_suite_found:[\s\S]+?active exact-head CI suite[\s\S]+?return/,
+  "metadata-only edited runs should pass CI Light Summary when an active exact-head suite has not published its summary yet",
+);
+assert.match(
+  ciWorkflow,
   /accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"[\s\S]+?previous \{accepted_summary_label\}/,
   "metadata-only edited runs should report the accepted prior summary class when no mirror exists",
 );

@@ -1201,6 +1201,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let r = self.resolver().resolve_lazy(def_id, self.interner())?;
                 (Some(def_id), r, false)
             }
+            TypeData::UnresolvedTypeName(atom) => {
+                let name = self.interner().resolve_atom(atom);
+                let def_id = self.resolver().resolve_unresolved_type_name(&name)?;
+                let r = self.resolver().resolve_lazy(def_id, self.interner())?;
+                (Some(def_id), r, false)
+            }
             TypeData::TypeQuery(sym_ref) => {
                 let def_id_opt = self.resolver().symbol_to_def_id(sym_ref);
                 let r = self

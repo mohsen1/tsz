@@ -350,106 +350,60 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
     ) -> Option<tsz_solver::FunctionShape> {
+        use crate::query_boundaries::construct_signatures::{
+            FunctionShapeTypeSlot, map_function_shape_types,
+        };
+
         let own_tp_names: Vec<_> = shape.type_params.iter().map(|tp| tp.name).collect();
 
-        let mut changed = false;
-        let params = shape
-            .params
-            .iter()
-            .map(|param| {
-                let skip = !own_tp_names.is_empty()
-                    && own_tp_names.iter().any(|&name| {
-                        crate::query_boundaries::common::contains_type_parameter_named(
-                            self.ctx.types,
-                            param.type_id,
-                            name,
-                        )
-                    });
-                let evaluated = if skip {
-                    param.type_id
-                } else {
-                    self.normalize_nested_type_for_assignability(param.type_id)
-                };
-                if evaluated != param.type_id {
-                    changed = true;
-                }
-                tsz_solver::ParamInfo {
-                    name: param.name,
-                    type_id: evaluated,
-                    optional: param.optional,
-                    rest: param.rest,
-                }
-            })
-            .collect();
-        let this_type = shape.this_type.map(|this_type| {
-            let evaluated = self.normalize_nested_type_for_assignability(this_type);
-            if evaluated != this_type {
-                changed = true;
-            }
-            evaluated
-        });
-        let return_type = {
-            let skip_for_type_params = !own_tp_names.is_empty()
+        map_function_shape_types(shape, |slot, type_id| {
+            // Component types that mention the shape's own type parameters
+            // must stay as declared so inference can still bind them; type
+            // queries and conditionals in return position are deferred forms
+            // whose normalization is owned elsewhere.
+            let references_own_tp = !own_tp_names.is_empty()
                 && own_tp_names.iter().any(|&name| {
                     crate::query_boundaries::common::contains_type_parameter_named(
                         self.ctx.types,
-                        shape.return_type,
+                        type_id,
                         name,
                     )
                 });
-            let skip_for_type_query = crate::query_boundaries::common::is_type_query_type(
-                self.ctx.types,
-                shape.return_type,
-            );
-            let skip_for_conditional = crate::query_boundaries::common::is_conditional_type(
-                self.ctx.types,
-                shape.return_type,
-            );
-            let skip = skip_for_type_params || skip_for_type_query || skip_for_conditional;
-            let evaluated = if skip {
-                shape.return_type
-            } else {
-                self.normalize_nested_type_for_assignability(shape.return_type)
-            };
-            if evaluated != shape.return_type {
-                changed = true;
-            }
-            evaluated
-        };
-        let type_predicate = shape.type_predicate.as_ref().map(|predicate| {
-            let type_id = predicate.type_id.map(|type_id| {
-                let evaluated = self.normalize_nested_type_for_assignability(type_id);
-                if evaluated != type_id {
-                    changed = true;
+            let skip = match slot {
+                FunctionShapeTypeSlot::Param => references_own_tp,
+                FunctionShapeTypeSlot::Return => {
+                    references_own_tp
+                        || crate::query_boundaries::common::is_type_query_type(
+                            self.ctx.types,
+                            type_id,
+                        )
+                        || crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            type_id,
+                        )
                 }
-                evaluated
-            });
-            tsz_solver::TypePredicate {
-                asserts: predicate.asserts,
-                target: predicate.target,
-                type_id,
-                parameter_index: predicate.parameter_index,
+                FunctionShapeTypeSlot::This | FunctionShapeTypeSlot::PredicateTarget => false,
+            };
+            if skip {
+                type_id
+            } else {
+                self.normalize_nested_type_for_assignability(type_id)
             }
-        });
-
-        changed.then_some(tsz_solver::FunctionShape {
-            type_params: shape.type_params.clone(),
-            params,
-            this_type,
-            return_type,
-            type_predicate,
-            is_constructor: shape.is_constructor,
-            is_method: shape.is_method,
         })
     }
 
     fn normalize_callable_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::construct_signatures::{
+            call_signature_from_function_shape, callable_with_signatures_replaced,
+            function_shape_from_call_signature, function_type_from_shape,
+        };
+
         if let Some(shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
         {
             let result = self
                 .normalize_function_shape_for_assignability(&shape)
-                .map(|shape| self.ctx.types.factory().function(shape))
+                .map(|shape| function_type_from_shape(self.ctx.types, shape))
                 .unwrap_or(type_id);
             return result;
         }
@@ -457,82 +411,37 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
         {
             let mut changed = false;
-            let call_signatures: Vec<_> = shape
-                .call_signatures
-                .iter()
-                .map(|sig| {
-                    let normalized = self.normalize_function_shape_for_assignability(
-                        &tsz_solver::FunctionShape {
-                            type_params: sig.type_params.clone(),
-                            params: sig.params.clone(),
-                            this_type: sig.this_type,
-                            return_type: sig.return_type,
-                            type_predicate: sig.type_predicate,
-                            is_constructor: false,
-                            is_method: false,
-                        },
+            let mut normalize_signature =
+                |checker: &mut Self, sig: &tsz_solver::CallSignature, is_constructor: bool| {
+                    let normalized = checker.normalize_function_shape_for_assignability(
+                        &function_shape_from_call_signature(sig, is_constructor),
                     );
                     if normalized.is_some() {
                         changed = true;
                     }
                     normalized.map_or_else(
                         || sig.clone(),
-                        |shape| tsz_solver::CallSignature {
-                            type_params: shape.type_params,
-                            params: shape.params,
-                            this_type: shape.this_type,
-                            return_type: shape.return_type,
-                            type_predicate: shape.type_predicate,
-                            is_method: sig.is_method,
-                        },
+                        |shape| call_signature_from_function_shape(shape, sig.is_method),
                     )
-                })
+                };
+            let call_signatures: Vec<_> = shape
+                .call_signatures
+                .iter()
+                .map(|sig| normalize_signature(self, sig, false))
                 .collect();
             let construct_signatures: Vec<_> = shape
                 .construct_signatures
                 .iter()
-                .map(|sig| {
-                    let normalized = self.normalize_function_shape_for_assignability(
-                        &tsz_solver::FunctionShape {
-                            type_params: sig.type_params.clone(),
-                            params: sig.params.clone(),
-                            this_type: sig.this_type,
-                            return_type: sig.return_type,
-                            type_predicate: sig.type_predicate,
-                            is_constructor: true,
-                            is_method: false,
-                        },
-                    );
-                    if normalized.is_some() {
-                        changed = true;
-                    }
-                    normalized.map_or_else(
-                        || sig.clone(),
-                        |shape| tsz_solver::CallSignature {
-                            type_params: shape.type_params,
-                            params: shape.params,
-                            this_type: shape.this_type,
-                            return_type: shape.return_type,
-                            type_predicate: shape.type_predicate,
-                            is_method: sig.is_method,
-                        },
-                    )
-                })
+                .map(|sig| normalize_signature(self, sig, true))
                 .collect();
 
             if changed {
-                self.ctx
-                    .types
-                    .factory()
-                    .callable(tsz_solver::CallableShape {
-                        call_signatures,
-                        construct_signatures,
-                        properties: shape.properties.clone(),
-                        string_index: shape.string_index,
-                        number_index: shape.number_index,
-                        symbol: shape.symbol,
-                        is_abstract: shape.is_abstract,
-                    })
+                callable_with_signatures_replaced(
+                    self.ctx.types,
+                    &shape,
+                    call_signatures,
+                    construct_signatures,
+                )
             } else {
                 type_id
             }
