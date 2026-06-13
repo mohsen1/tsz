@@ -446,6 +446,10 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
                         {
                             has_late_bound_members = true;
+                            tracing::debug!(
+                                member = member_idx.0,
+                                "class member computed name unresolved -> late-bound"
+                            );
                         }
                         continue;
                     };
@@ -655,6 +659,10 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
                         {
                             has_late_bound_members = true;
+                            tracing::debug!(
+                                member = member_idx.0,
+                                "class member computed name unresolved -> late-bound"
+                            );
                         }
                         continue;
                     };
@@ -1124,6 +1132,10 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
                     {
                         has_late_bound_members = true;
+                        tracing::debug!(
+                            member = member_idx.0,
+                            "class method computed name unresolved -> late-bound"
+                        );
                         self.merge_index_signature_from_unresolved_computed_name(
                             method.name,
                             callable_or_undefined,

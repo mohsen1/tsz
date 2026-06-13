@@ -202,6 +202,16 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         }
 
         if type_params.is_empty() {
+            if !args.is_empty()
+                && let Some(def_id) = type_queries::get_lazy_def_id(self.interner, base)
+            {
+                tracing::debug!(
+                    def_id = def_id.0,
+                    body_type = body_type.0,
+                    args = args.len(),
+                    "application base def observed with EMPTY type params; returning body unsubstituted"
+                );
+            }
             return ApplicationResult::Resolved(body_type);
         }
 

@@ -638,7 +638,23 @@ impl<'a> CheckerState<'a> {
                             // Use file binder's sym_id for correct ID space after lib merge.
                             // Never return lib-context SymbolIds directly: they may collide with
                             // unrelated symbols in the current binder ID space.
-                            let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
+                            //
+                            // Cross-file lookup binders (cross-arena delegation) keep
+                            // `file_locals` per-file and carry the hoisted lib-origin
+                            // globals separately in `program_globals` (see
+                            // `create_cross_file_lookup_binder_with_augmentations`).
+                            // Consult it as the same program-ID-space mapping; otherwise a
+                            // lib global (e.g. `Symbol` in a computed member name) silently
+                            // fails to resolve during delegation and derived types depend
+                            // on file check order. `program_globals` is empty on primary
+                            // (lib-merged) binders, so this changes nothing there.
+                            let Some(file_sym_id) = self
+                                .ctx
+                                .binder
+                                .file_locals
+                                .get(name)
+                                .or_else(|| self.ctx.binder.program_globals.get(name))
+                            else {
                                 continue;
                             };
                             // Filter out string-literal ambient module symbols (e.g., `declare module "foobar"`)
@@ -954,7 +970,20 @@ impl<'a> CheckerState<'a> {
                     // After lib merge, the file binder has the same symbols with
                     // potentially different IDs. Use file binder's ID for returns,
                     // and skip symbols not present in current binder ID space.
-                    let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+                    //
+                    // Cross-file lookup binders (cross-arena delegation) keep
+                    // `file_locals` per-file and carry the hoisted lib-origin globals
+                    // separately in `program_globals`; consult it as the same
+                    // program-ID-space mapping so type-position lib globals resolve
+                    // independently of file check order (twin of the value-position
+                    // fallback in `resolve_identifier_symbol`).
+                    let Some(sym_id) = self
+                        .ctx
+                        .binder
+                        .file_locals
+                        .get(name)
+                        .or_else(|| self.ctx.binder.program_globals.get(name))
+                    else {
                         continue;
                     };
                     if !should_skip_lib_symbol(sym_id) {
@@ -1941,57 +1970,5 @@ impl<'a> CheckerState<'a> {
         }
 
         None
-    }
-
-    /// Resolve a `DefId` from a node index for type lowering.
-    ///
-    /// This is the canonical stable-identity helper for `def_id_resolver` closures.
-    /// It encapsulates the common pattern:
-    ///   `resolve_type_symbol_for_lowering(node_idx) → SymbolId → get_or_create_def_id`
-    ///
-    /// Use this instead of inlining the SymbolId wrapping + DefId creation at each
-    /// lowering call site.
-    pub(crate) fn resolve_def_id_for_lowering(
-        &self,
-        node_idx: NodeIndex,
-    ) -> Option<tsz_solver::def::DefId> {
-        self.resolve_type_symbol_for_lowering(node_idx)
-            .map(|sym_id| {
-                let sym_id = tsz_binder::SymbolId(sym_id);
-                if let Some(node) = self.ctx.arena.get(node_idx)
-                    && let Some(ident) = self.ctx.arena.get_identifier(node)
-                {
-                    // A same-arena NodeIndex may resolve to a namespace-local type
-                    // whose bare name collides with a lib global (`Promise`, etc.).
-                    // Only canonicalize to the lib DefId when the resolved symbol
-                    // itself is from a lib context.
-                    if !self
-                        .ctx
-                        .file_local_type_shadow_for_lib_name(&ident.escaped_text)
-                        && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                            || self.ctx.symbol_is_from_lib(sym_id))
-                        && let Some(def_id) =
-                            self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
-                    {
-                        return def_id;
-                    }
-                    let expected_name = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
-                        symbol.escaped_name.clone()
-                    } else {
-                        let lib_binders = self.get_lib_binders();
-                        self.ctx
-                            .binder
-                            .get_symbol_with_libs(sym_id, &lib_binders)
-                            .map_or_else(
-                                || ident.escaped_text.clone(),
-                                |symbol| symbol.escaped_name.clone(),
-                            )
-                    };
-                    return self
-                        .ctx
-                        .get_or_create_def_id_for_symbol_name(sym_id, expected_name.as_str());
-                }
-                self.ctx.get_or_create_def_id(sym_id)
-            })
     }
 }
