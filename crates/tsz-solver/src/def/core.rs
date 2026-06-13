@@ -960,60 +960,56 @@ impl DefinitionStore {
         params: Option<Vec<TypeParamInfo>>,
         finalize: bool,
     ) {
-        // Mutation-isolation: defs frozen after their finalized
-        // materialization keep that body; a later attempt to overwrite it
-        // with a *different* body form is dropped (the shared store stays
-        // immutable for that def). Identical republication is allowed
-        // through (it is a no-op write).
-        let prev_body = self.definitions.get(&id).and_then(|entry| entry.body);
-        let is_different_overwrite = prev_body.is_some_and(|prev| prev != body);
-        let suppressed = is_different_overwrite
-            && !self.publish_once_defs.is_empty()
-            && self.publish_once_defs.contains(&id);
-        // Deferred-publication experiment: pre-finalize different-body
-        // overwrites of marked defs are dropped; only the finalize entry
-        // point may replace the first published form.
-        let deferred = !suppressed
-            && !finalize
-            && is_different_overwrite
-            && !self.deferred_publish_defs.is_empty()
-            && self.deferred_publish_defs.contains(&id);
-        // Mutation-isolation campaign census (env-gated, see
-        // `publication_census`): classify this publication against the
-        // pre-write entry state with caller attribution.
-        if publication_census::census_enabled() {
-            let caller = std::panic::Location::caller();
-            let (outcome, kind, name, file_id) = match self.definitions.get(&id) {
-                Some(entry) => {
-                    let params_changed = params
-                        .as_ref()
-                        .is_some_and(|new_params| *new_params != entry.type_params);
-                    (
-                        if suppressed {
-                            publication_census::PublicationOutcome::SuppressedDifferentBody
-                        } else if deferred {
-                            publication_census::PublicationOutcome::DeferredDifferentBody
-                        } else {
-                            publication_census::classify(entry.body, body, params_changed, true)
-                        },
-                        Some(entry.kind),
-                        entry.name,
-                        entry.file_id,
-                    )
-                }
-                None => (
-                    publication_census::classify(None, body, false, false),
-                    None,
-                    Atom::NONE,
-                    None,
-                ),
-            };
-            publication_census::record_publication(id, kind, name, file_id, body, outcome, caller);
-        }
-        if suppressed || deferred {
-            return;
-        }
         if let Some(mut entry) = self.definitions.get_mut(&id) {
+            // Mutation-isolation: defs frozen after their finalized
+            // materialization keep that body; a later attempt to overwrite it
+            // with a *different* body form is dropped (the shared store stays
+            // immutable for that def). Compute this under the same entry guard
+            // that owns the write: a pre-lock body probe can race with a
+            // sibling checker publication and turn a stale "no body yet"
+            // observation into a different-body overwrite.
+            let is_different_overwrite = entry.body.is_some_and(|prev| prev != body);
+            let suppressed = is_different_overwrite
+                && !self.publish_once_defs.is_empty()
+                && self.publish_once_defs.contains(&id);
+            // Deferred-publication experiment: pre-finalize different-body
+            // overwrites of marked defs are dropped; only the finalize entry
+            // point may replace the first published form.
+            let deferred = !suppressed
+                && !finalize
+                && is_different_overwrite
+                && !self.deferred_publish_defs.is_empty()
+                && self.deferred_publish_defs.contains(&id);
+
+            // Mutation-isolation campaign census (env-gated, see
+            // `publication_census`): classify this publication against the
+            // guarded pre-write entry state with caller attribution.
+            if publication_census::census_enabled() {
+                let caller = std::panic::Location::caller();
+                let params_changed = params
+                    .as_ref()
+                    .is_some_and(|new_params| *new_params != entry.type_params);
+                let outcome = if suppressed {
+                    publication_census::PublicationOutcome::SuppressedDifferentBody
+                } else if deferred {
+                    publication_census::PublicationOutcome::DeferredDifferentBody
+                } else {
+                    publication_census::classify(entry.body, body, params_changed, true)
+                };
+                publication_census::record_publication(
+                    id,
+                    Some(entry.kind),
+                    entry.name,
+                    entry.file_id,
+                    body,
+                    outcome,
+                    caller,
+                );
+            }
+            if suppressed || deferred {
+                return;
+            }
+
             // Identical republication is a no-op: nothing a reader can
             // observe changes, so consumers keyed on `generation()` must not
             // see a bump for it.
@@ -1042,6 +1038,18 @@ impl DefinitionStore {
             }
             self.bump_generation();
         } else {
+            if publication_census::census_enabled() {
+                let caller = std::panic::Location::caller();
+                publication_census::record_publication(
+                    id,
+                    None,
+                    Atom::NONE,
+                    None,
+                    body,
+                    publication_census::classify(None, body, false, false),
+                    caller,
+                );
+            }
             // Create a minimal entry for DefIds created via get_or_create_def_id
             // (which only populates symbol_to_def/def_to_symbol, not definitions).
             // This ensures cross-file delegation results survive child-checker
