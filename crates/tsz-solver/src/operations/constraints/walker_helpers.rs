@@ -3,7 +3,7 @@
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
-use crate::relations::variance::compute_type_param_variances_with_resolver;
+use crate::relations::variance::compute_type_param_variances_with_resolver_cached;
 use crate::types::{
     MappedType, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, Variance,
 };
@@ -132,9 +132,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .checker
             .type_resolver()
             .unwrap_or_else(|| self.interner.as_type_resolver());
-        compute_type_param_variances_with_resolver(
+        compute_type_param_variances_with_resolver_cached(
             self.interner.as_type_database(),
             resolver,
+            Some(self.interner),
             def_id,
         )
     }
@@ -285,5 +286,54 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 var_map.remove(&candidate);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::caches::query_cache::QueryCache;
+    use crate::def::DefId;
+    use crate::intern::TypeInterner;
+    use crate::relations::subtype::{TypeEnvironment, TypeResolver};
+    use crate::types::{PropertyInfo, TypeParamInfo};
+
+    struct ResolverBackedChecker<'a> {
+        resolver: &'a dyn TypeResolver,
+    }
+
+    impl AssignabilityChecker for ResolverBackedChecker<'_> {
+        fn is_assignable_to(&mut self, _source: TypeId, _target: TypeId) -> bool {
+            true
+        }
+
+        fn type_resolver(&self) -> Option<&dyn TypeResolver> {
+            Some(self.resolver)
+        }
+    }
+
+    #[test]
+    fn compute_application_variances_reuses_query_cache() {
+        let interner = TypeInterner::new();
+        let cache = QueryCache::new(&interner);
+        let t_param = TypeParamInfo::simple(interner.intern_string("T"));
+        let t_type = interner.type_param(t_param);
+        let body = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            t_type,
+        )]);
+        let def_id = DefId(91_001);
+        let base = interner.lazy(def_id);
+
+        let mut env = TypeEnvironment::new();
+        env.insert_def_with_params(def_id, body, vec![t_param]);
+        let mut checker = ResolverBackedChecker { resolver: &env };
+        let evaluator = CallEvaluator::new(&cache, &mut checker);
+
+        assert_eq!(cache.statistics().variance_cache_entries, 0);
+        assert!(evaluator.compute_application_variances(base).is_some());
+        assert_eq!(cache.statistics().variance_cache_entries, 1);
+        assert!(evaluator.compute_application_variances(base).is_some());
+        assert_eq!(cache.statistics().variance_cache_entries, 1);
     }
 }

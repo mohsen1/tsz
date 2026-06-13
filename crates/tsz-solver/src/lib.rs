@@ -397,6 +397,9 @@ mod conditional_readonly_array_relation_tests;
 #[path = "../tests/constraint_tests.rs"]
 mod constraint_tests;
 #[cfg(test)]
+#[path = "tests/evaluate_type_param_collection_tests.rs"]
+mod evaluate_type_param_collection_tests;
+#[cfg(test)]
 #[path = "../tests/function_comprehensive_tests.rs"]
 mod function_comprehensive_tests;
 #[cfg(test)]

@@ -10,11 +10,13 @@
 //! - Variance through conditional, mapped, union, intersection types
 
 use super::*;
+use crate::def::DefId;
 use crate::intern::TypeInterner;
-use crate::relations::variance::compute_variance;
+use crate::relations::subtype::TypeResolver;
+use crate::relations::variance::{compute_variance, compute_variance_with_resolver};
 use crate::types::{
     ConditionalType, FunctionShape, MappedModifier, MappedType, ObjectFlags, ObjectShape,
-    ParamInfo, PropertyInfo, TupleElement, TypeParamInfo, Variance,
+    ParamInfo, PropertyInfo, SymbolRef, TupleElement, TypeParamInfo, Variance,
 };
 
 fn create_interner() -> TypeInterner {
@@ -1714,5 +1716,72 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
     assert!(
         !variance.rejection_unreliable(),
         "Strict callback occurrences pin the variance signal — REJECTION_UNRELIABLE must be cleared"
+    );
+}
+
+#[test]
+fn test_variance_repeated_completed_subgraphs_do_not_exhaust_fuel_before_later_occurrence() {
+    use std::cell::Cell;
+
+    struct CountingResolver {
+        def_id: DefId,
+        body: TypeId,
+        resolve_count: Cell<usize>,
+    }
+
+    impl TypeResolver for CountingResolver {
+        fn resolve_ref(
+            &self,
+            _symbol: SymbolRef,
+            _interner: &dyn crate::construction::TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(
+            &self,
+            def_id: DefId,
+            _interner: &dyn crate::construction::TypeDatabase,
+        ) -> Option<TypeId> {
+            if def_id == self.def_id {
+                self.resolve_count.set(self.resolve_count.get() + 1);
+                Some(self.body)
+            } else {
+                None
+            }
+        }
+    }
+
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+    let repeated_def = DefId(77_001);
+    let repeated_leaf = interner.lazy(repeated_def);
+    let resolver = CountingResolver {
+        def_id: repeated_def,
+        body: interner.object(Vec::new()),
+        resolve_count: Cell::new(0),
+    };
+
+    let mut properties = Vec::with_capacity(33);
+    for i in 0..32 {
+        properties.push(PropertyInfo::new(
+            interner.intern_string(&format!("skip{i}")),
+            repeated_leaf,
+        ));
+    }
+    properties.push(PropertyInfo::new(interner.intern_string("value"), t_param));
+    let body = interner.object(properties);
+
+    let variance =
+        compute_variance_with_resolver(&interner, &resolver, body, interner.intern_string("T"));
+
+    assert!(
+        variance.is_covariant(),
+        "A later direct `T` occurrence must still be observed after repeated completed subgraphs (got {variance:?})"
+    );
+    assert_eq!(
+        resolver.resolve_count.get(),
+        1,
+        "A completed lazy subtree should be traversed once per variance context"
     );
 }

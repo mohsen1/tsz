@@ -1,5 +1,6 @@
 //! Keyof type-alias display recovery for assignability diagnostics.
 
+use crate::error_reporter::display_budget;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_parser::parser::NodeIndex;
@@ -115,6 +116,9 @@ impl<'a> CheckerState<'a> {
             .all_type_alias_defs()
             .into_iter()
             .find_map(|def_id| {
+                if !display_budget::try_consume_visit() {
+                    return None;
+                }
                 let def = self.ctx.definition_store.get(def_id)?;
                 if !def.type_params.is_empty() {
                     return None;
@@ -122,7 +126,10 @@ impl<'a> CheckerState<'a> {
                 let body = def.body?;
                 crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, body)?;
                 let evaluated = self.evaluate_type_for_assignability(body);
-                (evaluated == ty || self.are_mutually_assignable(evaluated, ty)).then_some(def_id)
+                if display_budget::is_exhausted() {
+                    return None;
+                }
+                (evaluated == ty).then_some(def_id)
             })
             .and_then(|def_id| self.keyof_type_alias_definition_display(def_id))
     }

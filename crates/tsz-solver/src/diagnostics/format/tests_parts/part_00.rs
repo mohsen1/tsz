@@ -896,6 +896,44 @@ fn format_object_many_properties_truncated() {
 }
 
 #[test]
+fn format_object_truncation_skips_omitted_property_formatting() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let omitted_nested_name = db.intern_string("omittedNested");
+    let omitted_nested_type = db.object(vec![PropertyInfo::new(
+        omitted_nested_name,
+        TypeId::STRING,
+    )]);
+    let props: Vec<PropertyInfo> = (1..=24)
+        .map(|i| {
+            let type_id = if i == 18 {
+                omitted_nested_type
+            } else {
+                TypeId::NUMBER
+            };
+            PropertyInfo::new(db.intern_string(&format!("p{i}")), type_id)
+        })
+        .collect();
+    let obj = db.object(props);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("... 6 more ..."),
+        "Expected omitted-count marker for large object, got: {result}"
+    );
+    assert!(
+        !result.contains("p18:"),
+        "Expected omitted middle properties to stay out of the display, got: {result}"
+    );
+    assert!(
+        !fmt.atom_cache.contains_key(&omitted_nested_name),
+        "Expected omitted property types not to be formatted, got result {result} and atom cache stats: {:?}",
+        fmt.cache_statistics(),
+    );
+}
+
+#[test]
 fn format_object_hides_duplicate_internal_default_alias() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
@@ -1148,6 +1186,57 @@ fn format_object_with_index_many_properties_truncated() {
     assert!(
         result.contains("readonly [Symbol.unscopables]:"),
         "Expected tail symbol property preservation in indexed-object truncation, got: {result}"
+    );
+}
+
+#[test]
+fn format_object_with_index_truncation_skips_omitted_property_formatting() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let omitted_nested_name = db.intern_string("omittedIndexedNested");
+    let omitted_nested_type = db.object(vec![PropertyInfo::new(
+        omitted_nested_name,
+        TypeId::STRING,
+    )]);
+    let props: Vec<PropertyInfo> = (1..=24)
+        .map(|i| {
+            let type_id = if i == 18 {
+                omitted_nested_type
+            } else {
+                TypeId::NUMBER
+            };
+            PropertyInfo::new(db.intern_string(&format!("p{i}")), type_id)
+        })
+        .collect();
+
+    let shape = crate::types::ObjectShape {
+        properties: props,
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("..."),
+        "Expected omitted-count marker for indexed object, got: {result}"
+    );
+    assert!(
+        !result.contains("p18:"),
+        "Expected omitted middle properties to stay out of indexed display, got: {result}"
+    );
+    assert!(
+        !fmt.atom_cache.contains_key(&omitted_nested_name),
+        "Expected omitted indexed property types not to be formatted, got result {result} and atom cache stats: {:?}",
+        fmt.cache_statistics(),
     );
 }
 
@@ -1806,4 +1895,3 @@ fn format_tuple_optional_element() {
     let result = fmt.format(tuple);
     assert_eq!(result, "[string, (number | undefined)?]");
 }
-
