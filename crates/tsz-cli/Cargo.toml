@@ -124,6 +124,10 @@ name = "generator_yield_star_dts_emit_tests"
 path = "tests/generator_yield_star_dts_emit_tests.rs"
 
 [[test]]
+name = "declaration_type_walk_boundary_dts_emit_tests"
+path = "tests/declaration_type_walk_boundary_dts_emit_tests.rs"
+
+[[test]]
 name = "lib_target_suggestion_ts2550_tests"
 path = "tests/lib_target_suggestion_ts2550_tests.rs"
 
