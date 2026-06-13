@@ -393,18 +393,17 @@ pub fn contains_type_by_id(types: &dyn TypeDatabase, root: TypeId, target: TypeI
     if root == target {
         return true;
     }
-    let mut visited = FxHashMap::default();
+    let mut visited = FxHashSet::default();
     let mut stack = vec![root];
     while let Some(current) = stack.pop() {
         if current == target {
             return true;
         }
-        if visited.contains_key(&current) {
+        if !visited.insert(current) {
             continue;
         }
-        visited.insert(current, true);
         crate::visitors::visitor::for_each_child_by_id(types, current, |child| {
-            if !visited.contains_key(&child) {
+            if !visited.contains(&child) {
                 stack.push(child);
             }
         });
