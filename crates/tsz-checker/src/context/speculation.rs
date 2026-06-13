@@ -297,6 +297,37 @@ impl<'a> CheckerContext<'a> {
                 .ptr_eq(&snap.no_overload_call_nodes)
     }
 
+    /// True when a full speculation snapshot has observed no writes that
+    /// rollback needs to undo.
+    ///
+    /// This keeps the guard intentionally stricter than equality: all COW
+    /// snapshots must still share their original backing storage. If a
+    /// speculative path cloned and wrote equal contents, the existing rollback
+    /// path still owns restoration.
+    fn full_snapshot_unchanged(&self, snap: &FullSnapshot) -> bool {
+        self.diagnostic_snapshot_unchanged(&snap.diag)
+            && self
+                .emitted_ts2454_errors
+                .ptr_eq(&snap.emitted_ts2454_errors)
+            && self
+                .modules_with_ts2307_emitted
+                .ptr_eq(&snap.modules_with_ts2307_emitted)
+            && self
+                .pending_implicit_any_vars
+                .ptr_eq(&snap.pending_implicit_any_vars)
+            && self
+                .reported_implicit_any_vars
+                .ptr_eq(&snap.reported_implicit_any_vars)
+            && self
+                .implicit_any_checked_closures
+                .ptr_eq(&snap.implicit_any_checked_closures)
+            && self
+                .type_reference_validation_caches
+                .type_node_scope_types
+                .ptr_eq(&snap.type_node_scope_types)
+            && self.request_node_types.ptr_eq(&snap.request_node_types)
+    }
+
     /// Roll back to a diagnostic-only snapshot, discarding all speculative
     /// diagnostics and restoring the dedup set.
     ///
@@ -341,6 +372,10 @@ impl<'a> CheckerContext<'a> {
     /// Roll back to a full snapshot, discarding speculative diagnostics and
     /// restoring all dedup/tracking state.
     pub(crate) fn rollback_full(&mut self, snap: &FullSnapshot) {
+        if self.full_snapshot_unchanged(snap) {
+            return;
+        }
+
         self.rollback_diagnostics(&snap.diag);
         self.emitted_ts2454_errors
             .clone_from(&snap.emitted_ts2454_errors);
