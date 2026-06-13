@@ -975,6 +975,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(&cached) = self
             .ctx
+            .flow_shared
             .narrowing_cache
             .resolve_cache
             .borrow()
@@ -992,6 +993,7 @@ impl<'a> CheckerState<'a> {
                 | query::PropertyAccessResolutionKind::FunctionLike
         ) {
             self.ctx
+                .flow_shared
                 .narrowing_cache
                 .resolve_cache
                 .borrow_mut()
@@ -1017,6 +1019,7 @@ impl<'a> CheckerState<'a> {
         // paths in sync with whatever evaluate_application_type pre-populated.
         *self
             .ctx
+            .flow_shared
             .narrowing_cache
             .resolve_cache
             .borrow_mut()

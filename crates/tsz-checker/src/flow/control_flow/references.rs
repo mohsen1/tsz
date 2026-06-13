@@ -143,7 +143,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check cache first to avoid O(N²) repeated comparisons
         let key = (a.0.min(b.0), a.0.max(b.0)); // Normalize order for symmetric lookup
-        if let Some(shared) = self.shared_reference_match_cache
+        if let Some(shared) = self.shared_reference_match_cache()
             && let Some(&cached) = shared.borrow().get(&key)
         {
             return cached;
@@ -156,7 +156,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         let result = self.is_matching_reference_uncached(a, b);
 
-        if let Some(shared) = self.shared_reference_match_cache {
+        if let Some(shared) = self.shared_reference_match_cache() {
             shared.borrow_mut().insert(key, result);
         }
         self.reference_match_cache.borrow_mut().insert(key, result);
@@ -325,7 +325,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn flow_reference_path_symbol(&self, reference: NodeIndex) -> Option<SymbolId> {
-        let interner = self.shared_flow_reference_keys?;
+        let interner = self.shared_flow_reference_keys()?;
         let mut key = Vec::new();
         if let Some((base, prop, optional)) = self.member_access_key_parts(reference) {
             // Property/element path (`a.b`, `this.x`, `o?.a`): walk base-first.
@@ -743,7 +743,7 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         // Check shared cache first
-        if let Some(shared) = self.shared_numeric_atom_cache
+        if let Some(shared) = self.shared_numeric_atom_cache()
             && let Ok(cache) = shared.try_borrow()
             && let Some(&cached) = cache.get(&normalized_bits)
         {
@@ -777,7 +777,7 @@ impl<'a> FlowAnalyzer<'a> {
             self.interner.intern_string(&value.to_string())
         };
 
-        if let Some(shared) = self.shared_numeric_atom_cache
+        if let Some(shared) = self.shared_numeric_atom_cache()
             && let Ok(mut cache) = shared.try_borrow_mut()
         {
             cache.insert(normalized_bits, atom);

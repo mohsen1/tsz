@@ -283,24 +283,11 @@ impl<'a> CheckerContext<'a> {
             pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(crate::context::CowCache::default()),
             jsdoc_generic_typedef_resolving: RefCell::new(crate::context::CowCache::default()),
-            flow_analysis_cache: RefCell::new(crate::context::CowCache::new(
-                FxHashMap::with_capacity_and_hasher(128, Default::default()),
-            )),
-            flow_reference_keys: RefCell::new(FxHashMap::default()),
+            flow_shared: crate::context::FlowSharedCaches::new(),
             narrowable_identifier_cache: RefCell::new(
                 crate::context::NarrowableIdentifierCache::with_capacity(arena.nodes.len()),
             ),
-            flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
-            flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
-            flow_worklist: RefCell::new(VecDeque::with_capacity(32)),
-            flow_in_worklist: RefCell::new(FxHashSet::default()),
-            flow_visited: RefCell::new(FxHashSet::default()),
-            flow_results: RefCell::new(FxHashMap::with_capacity_and_hasher(64, Default::default())),
-            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
-            symbol_flow_memo: crate::context::SymbolFlowMemoCaches::default(),
             symbol_flow_confirmed: RefCell::new(crate::context::CowCache::default()),
-            narrowing_cache: tsz_solver::narrowing::NarrowingCache::new(),
-            call_type_predicates: crate::control_flow::CallPredicateMap::default(),
             daa_error_nodes: crate::context::CowCache::default(),
             deferred_ts2454_errors: Vec::new(),
             flow_narrowed_nodes: crate::context::CowCache::new(
@@ -647,11 +634,11 @@ impl<'a> CheckerContext<'a> {
         // node_types is per-arena (keyed by raw node index u32), so it must NOT
         // be carried across files — indices from file A collide with file B.
         // We keep the fresh per-arena allocation from base().
-        self.flow_analysis_cache =
+        self.flow_shared.flow_analysis_cache =
             RefCell::new(crate::context::CowCache::new(cache.flow_analysis_cache));
         // Reset flow worklist/visited buffers since they had pre-allocated capacity
         // in base() but cache path historically used empty defaults.
-        self.flow_worklist = RefCell::new(VecDeque::new());
+        self.flow_shared.flow_worklist = RefCell::new(VecDeque::new());
         self.namespace_module_names = cache.namespace_module_names;
         self.class_instance_type_to_decl = cache.class_instance_type_to_decl;
         self.class_instance_type_cache = cache.class_instance_type_cache;

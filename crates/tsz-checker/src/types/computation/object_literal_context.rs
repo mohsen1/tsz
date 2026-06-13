@@ -1096,6 +1096,7 @@ impl<'a> CheckerState<'a> {
         // so caching saves O(properties-1) full resolution chains per literal.
         let contextual_type = if let Some(&cached) = self
             .ctx
+            .flow_shared
             .narrowing_cache
             .contextual_resolve_cache
             .borrow()
@@ -1109,6 +1110,7 @@ impl<'a> CheckerState<'a> {
             let ct = self.resolve_lazy_type(ct);
             let ct = self.evaluate_application_type(ct);
             self.ctx
+                .flow_shared
                 .narrowing_cache
                 .contextual_resolve_cache
                 .borrow_mut()

@@ -221,13 +221,11 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        if let Some(&cached) = self
-            .ctx
-            .narrowing_cache
-            .resolve_cache
-            .borrow()
-            .get(&type_id)
-        {
+        let cached = {
+            let cache = self.ctx.flow_shared.narrowing_cache.resolve_cache.borrow();
+            cache.get(&type_id).copied()
+        };
+        if let Some(cached) = cached {
             return cached;
         }
 
@@ -253,19 +251,13 @@ impl<'a> CheckerState<'a> {
             let key = self.ctx.types.application(base, canonical_args);
             if key != type_id {
                 canonical_key = Some(key);
-                let cached_opt = self
-                    .ctx
-                    .narrowing_cache
-                    .resolve_cache
-                    .borrow()
-                    .get(&key)
-                    .copied();
+                let cached_opt = {
+                    let cache = self.ctx.flow_shared.narrowing_cache.resolve_cache.borrow();
+                    cache.get(&key).copied()
+                };
                 if let Some(cached) = cached_opt {
-                    self.ctx
-                        .narrowing_cache
-                        .resolve_cache
-                        .borrow_mut()
-                        .insert(type_id, cached);
+                    let cache = &self.ctx.flow_shared.narrowing_cache.resolve_cache;
+                    cache.borrow_mut().insert(type_id, cached);
                     return cached;
                 }
             }
@@ -280,7 +272,8 @@ impl<'a> CheckerState<'a> {
         // `Awaited<...>` Application to fail assignability with a spurious
         // `TS2322`. See `fold_concrete_awaited_application`.
         if let Some(folded) = self.fold_concrete_awaited_application(type_id) {
-            let mut cache = self.ctx.narrowing_cache.resolve_cache.borrow_mut();
+            let cache = &self.ctx.flow_shared.narrowing_cache.resolve_cache;
+            let mut cache = cache.borrow_mut();
             cache.insert(type_id, folded);
             if let Some(key) = canonical_key {
                 cache.insert(key, folded);
@@ -325,7 +318,8 @@ impl<'a> CheckerState<'a> {
         self.ctx.eval_session.leave_instantiation();
         self.ctx.application_eval_set.remove(&type_id);
         {
-            let mut cache = self.ctx.narrowing_cache.resolve_cache.borrow_mut();
+            let cache = &self.ctx.flow_shared.narrowing_cache.resolve_cache;
+            let mut cache = cache.borrow_mut();
             cache.insert(type_id, result);
             if let Some(key) = canonical_key {
                 cache.insert(key, result);
@@ -810,14 +804,11 @@ impl<'a> CheckerState<'a> {
 
         let concrete_remapped_fallback =
             ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get());
-        if !concrete_remapped_fallback
-            && let Some(&cached) = self
-                .ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow()
-                .get(&type_id)
-        {
+        let cached = {
+            let cache = self.ctx.flow_shared.narrowing_cache.resolve_cache.borrow();
+            cache.get(&type_id).copied()
+        };
+        if !concrete_remapped_fallback && let Some(cached) = cached {
             return cached;
         }
 
@@ -847,11 +838,8 @@ impl<'a> CheckerState<'a> {
             .set(self.ctx.instantiation_depth.get() - 1);
         self.ctx.mapped_eval_set.remove(&type_id);
         if can_cache {
-            self.ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow_mut()
-                .insert(type_id, result);
+            let cache = &self.ctx.flow_shared.narrowing_cache.resolve_cache;
+            cache.borrow_mut().insert(type_id, result);
         }
         result
     }
