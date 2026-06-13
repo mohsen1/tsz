@@ -202,22 +202,31 @@ impl<'a> CheckerContext<'a> {
         // Flow-analysis state (`FlowNodeId` and `(u32, u32)` position
         // keyed). All file-local; carrying entries across files yields
         // wrong narrowing.
-        self.flow_analysis_cache.borrow_mut().clear();
-        self.flow_worklist.borrow_mut().clear();
-        self.flow_in_worklist.borrow_mut().clear();
-        self.flow_visited.borrow_mut().clear();
-        self.flow_results.borrow_mut().clear();
-        self.flow_switch_reference_cache.borrow_mut().clear();
-        self.flow_numeric_atom_cache.borrow_mut().clear();
-        self.flow_reference_match_cache.borrow_mut().clear();
-        self.symbol_flow_memo.clear();
+        self.flow_shared.flow_analysis_cache.borrow_mut().clear();
+        self.flow_shared.flow_worklist.borrow_mut().clear();
+        self.flow_shared.flow_in_worklist.borrow_mut().clear();
+        self.flow_shared.flow_visited.borrow_mut().clear();
+        self.flow_shared.flow_results.borrow_mut().clear();
+        self.flow_shared
+            .flow_switch_reference_cache
+            .borrow_mut()
+            .clear();
+        self.flow_shared
+            .flow_numeric_atom_cache
+            .borrow_mut()
+            .clear();
+        self.flow_shared
+            .flow_reference_match_cache
+            .borrow_mut()
+            .clear();
+        self.flow_shared.symbol_flow_memo.clear();
         self.symbol_flow_confirmed.borrow_mut().clear();
         self.emitted_ts2454_errors.clear();
         // `CallPredicateMap` has no `.clear()`; replace with default.
         // `NarrowableIdentifierCache` is a `Vec<u8>`-backed dense cache;
         // replace with an empty one to drop the stored data without
         // exposing an internal `.clear()` method through the public API.
-        self.call_type_predicates = crate::control_flow::CallPredicateMap::default();
+        self.flow_shared.call_type_predicates = crate::control_flow::CallPredicateMap::default();
         *self.narrowable_identifier_cache.borrow_mut() =
             crate::context::NarrowableIdentifierCache::new();
 
@@ -410,7 +419,7 @@ impl<'a> CheckerContext<'a> {
             .clear();
         self.lib_heritage_in_progress.clear();
         self.request_cache_counters = crate::context::RequestCacheCounters::default();
-        self.narrowing_cache = tsz_solver::narrowing::NarrowingCache::new();
+        self.flow_shared.narrowing_cache = tsz_solver::narrowing::NarrowingCache::new();
 
         // Module-scoped thread-local memoisations that key by file-
         // local `NodeIndex`.
@@ -704,7 +713,8 @@ mod tests {
         ctx.lib_heritage_in_progress
             .insert("HTMLElement".to_string());
         ctx.request_cache_counters.request_cache_hits = 1;
-        ctx.narrowing_cache
+        ctx.flow_shared
+            .narrowing_cache
             .resolve_cache
             .borrow_mut()
             .insert(tsz_solver::TypeId::STRING, tsz_solver::TypeId::NUMBER);
@@ -734,7 +744,13 @@ mod tests {
         );
         assert!(ctx.lib_heritage_in_progress.is_empty());
         assert_eq!(ctx.request_cache_counters.request_cache_hits, 0);
-        assert!(ctx.narrowing_cache.resolve_cache.borrow().is_empty());
+        assert!(
+            ctx.flow_shared
+                .narrowing_cache
+                .resolve_cache
+                .borrow()
+                .is_empty()
+        );
         assert!(!ctx.in_satisfies_operand);
     }
 

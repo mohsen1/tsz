@@ -143,13 +143,15 @@ impl<'a> CheckerContext<'a> {
         self.env_eval_cache.borrow_mut().retain(|&key, value| {
             !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value.result, def_id)
         });
-        self.narrowing_cache
+        self.flow_shared
+            .narrowing_cache
             .resolve_cache
             .borrow_mut()
             .retain(|&key, &mut value| {
                 !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value, def_id)
             });
-        self.narrowing_cache
+        self.flow_shared
+            .narrowing_cache
             .contextual_resolve_cache
             .borrow_mut()
             .retain(|&key, &mut value| {

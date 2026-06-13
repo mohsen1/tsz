@@ -149,6 +149,7 @@ impl<'a> CheckerState<'a> {
     /// inference rounds so that stale contextual type resolutions are not reused.
     pub(crate) fn clear_contextual_resolution_cache(&mut self) {
         self.ctx
+            .flow_shared
             .narrowing_cache
             .contextual_resolve_cache
             .borrow_mut()
