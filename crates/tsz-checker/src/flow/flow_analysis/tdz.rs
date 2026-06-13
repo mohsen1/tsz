@@ -299,7 +299,7 @@ impl<'a> CheckerState<'a> {
 
         // Skip check for cross-file symbols (imported from another file).
         // Position comparison only makes sense within the same file.
-        if symbol.import_module.is_some() {
+        if symbol.import_module().is_some() {
             return false;
         }
         let is_cross_file = symbol.decl_file_idx != u32::MAX

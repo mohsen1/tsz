@@ -82,7 +82,7 @@ impl<'a> CheckerState<'a> {
             if local_sym.flags & tsz_binder::symbol_flags::ALIAS == 0 {
                 continue;
             }
-            let Some(specifier) = local_sym.import_module.as_deref() else {
+            let Some(specifier) = local_sym.import_module() else {
                 continue;
             };
             if !tried.insert(specifier.to_string()) {

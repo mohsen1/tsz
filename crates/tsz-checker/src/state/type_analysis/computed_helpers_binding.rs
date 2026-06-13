@@ -103,8 +103,8 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))?;
 
         let is_namespace_import =
-            symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
-        if is_namespace_import && let Some(module_name) = symbol.import_module.as_deref() {
+            symbol.import_name().is_none() || symbol.import_name() == Some("*");
+        if is_namespace_import && let Some(module_name) = symbol.import_module() {
             return Some(self.imported_namespace_display_module_name(module_name));
         }
 
@@ -1216,7 +1216,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(local_sym_id) = self.ctx.binder.file_locals.get(ident_text)
                     && let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
                     && symbol.has_any_flags(symbol_flags::ALIAS)
-                    && let Some(ref import_module) = symbol.import_module
+                    && let Some(import_module) = symbol.import_module()
                 {
                     let last_segment = import_module.rsplit('/').next().unwrap_or(import_module);
                     if last_segment == file_stem {

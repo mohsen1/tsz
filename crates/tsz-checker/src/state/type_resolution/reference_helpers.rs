@@ -21,12 +21,8 @@ impl<'a> CheckerState<'a> {
         if !alias_symbol.has_any_flags(symbol_flags::ALIAS) || !alias_symbol.is_type_only {
             return None;
         }
-        let module_name = alias_symbol.import_module.clone()?;
-        let import_name = alias_symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(name)
-            .to_owned();
+        let module_name = alias_symbol.import_module().map(str::to_string)?;
+        let import_name = alias_symbol.import_name().unwrap_or(name).to_owned();
         let target_sym_id = self.resolve_cross_file_export_from_file(
             &module_name,
             &import_name,
@@ -457,7 +453,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|alias_sym_id| self.ctx.binder.get_symbol(alias_sym_id))
             .or_else(|| self.ctx.binder.get_symbol(sym_id))
             .filter(|alias_symbol| self.reference_symbol_is_import_alias(alias_symbol))
-            .and_then(|alias_symbol| alias_symbol.import_name.clone());
+            .and_then(|alias_symbol| alias_symbol.import_name().map(str::to_string));
         let mixed_class_interface = symbol.has_any_flags(symbol_flags::CLASS)
             && symbol.has_any_flags(symbol_flags::INTERFACE);
 
@@ -961,7 +957,7 @@ impl<'a> CheckerState<'a> {
 
                 let target_sym_id = self.resolve_alias_symbol(sym_id, visited_aliases);
 
-                if matches!(symbol.import_name.as_deref(), Some("*")) && target_sym_id.is_some() {
+                if matches!(symbol.import_name(), Some("*")) && target_sym_id.is_some() {
                     if symbol.is_umd_export {
                         if let Some(target_sym_id) = target_sym_id
                             && target_sym_id != sym_id
@@ -991,13 +987,9 @@ impl<'a> CheckerState<'a> {
                 // If the module has `export =`, resolve_alias_symbol would have succeeded
                 // above. If the module isn't in our exports table at all (unresolved
                 // cross-file reference), we can't assume it's namespace-only.
-                if let Some(ref module_name) = symbol.import_module
-                    && matches!(symbol.import_name.as_deref(), None | Some("*"))
-                    && self
-                        .ctx
-                        .binder
-                        .module_exports
-                        .contains_key(module_name.as_str())
+                if let Some(module_name) = symbol.import_module()
+                    && matches!(symbol.import_name(), None | Some("*"))
+                    && self.ctx.binder.module_exports.contains_key(module_name)
                 {
                     return true;
                 }

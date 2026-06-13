@@ -493,7 +493,7 @@ impl<'a> TypePrinter<'a> {
         self.symbol_arena
             .and_then(|arena| arena.get(sym_id))
             .is_some_and(|symbol| {
-                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some()
+                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module().is_some()
             })
     }
 
@@ -621,7 +621,7 @@ impl<'a> TypePrinter<'a> {
             return true;
         };
 
-        if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some() {
+        if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module().is_some() {
             return true;
         }
 

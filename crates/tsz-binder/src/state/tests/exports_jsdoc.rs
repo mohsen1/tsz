@@ -117,8 +117,8 @@ export type { Foo } from './a';
 
     // The visible binding keeps the first-bound spec's metadata so downstream
     // import resolution still routes through the original module specifier.
-    assert_eq!(foo_sym.import_module.as_deref(), Some("./a"));
-    assert_eq!(foo_sym.import_name.as_deref(), Some("Foo"));
+    assert_eq!(foo_sym.import_module(), Some("./a"));
+    assert_eq!(foo_sym.import_name(), Some("Foo"));
     assert!(
         !foo_sym.is_type_only,
         "first-bound spec was value-only — the merge must not escalate to type-only"
@@ -151,7 +151,7 @@ export { Bar as X } from './a';
         "expected two spec declarations on the shared re-export symbol, got: {:?}",
         x_sym.declarations
     );
-    assert_eq!(x_sym.import_name.as_deref(), Some("Foo"));
+    assert_eq!(x_sym.import_name(), Some("Foo"));
 }
 
 /// Aliased re-exports with DISTINCT exported names must remain separate
@@ -176,8 +176,8 @@ export type { Foo } from './a';
     let foo_sym = binder.symbols.get(foo).expect("Foo symbol data");
     assert_eq!(bar_sym.declarations.len(), 1);
     assert_eq!(foo_sym.declarations.len(), 1);
-    assert_eq!(bar_sym.import_name.as_deref(), Some("Foo"));
-    assert_eq!(foo_sym.import_name.as_deref(), Some("Foo"));
+    assert_eq!(bar_sym.import_name(), Some("Foo"));
+    assert_eq!(foo_sym.import_name(), Some("Foo"));
     assert!(foo_sym.is_type_only);
     assert!(!bar_sym.is_type_only);
 }
@@ -211,8 +211,8 @@ export { type Renamed as Aliased } from './mod';
         foo_sym.is_type_only,
         "per-specifier `type Foo` must mark the re-export alias type-only"
     );
-    assert_eq!(foo_sym.import_module.as_deref(), Some("./mod"));
-    assert_eq!(foo_sym.import_name.as_deref(), Some("Foo"));
+    assert_eq!(foo_sym.import_module(), Some("./mod"));
+    assert_eq!(foo_sym.import_name(), Some("Foo"));
 
     let bar_sym = lookup("Bar");
     assert!(
@@ -225,7 +225,7 @@ export { type Renamed as Aliased } from './mod';
         aliased_sym.is_type_only,
         "renamed per-spec `type Renamed as Aliased` must also be type-only"
     );
-    assert_eq!(aliased_sym.import_name.as_deref(), Some("Renamed"));
+    assert_eq!(aliased_sym.import_name(), Some("Renamed"));
 }
 
 #[test]
@@ -247,8 +247,8 @@ export type { D as E } from './b';
         .symbols
         .get(a_sym_id)
         .expect("expected symbol data for A");
-    assert_eq!(a_symbol.import_module.as_deref(), Some("./a"));
-    assert_eq!(a_symbol.import_name.as_deref(), Some("A"));
+    assert_eq!(a_symbol.import_module(), Some("./a"));
+    assert_eq!(a_symbol.import_name(), Some("A"));
     assert!(!a_symbol.is_type_only);
 
     let c_sym_id = binder
@@ -259,8 +259,8 @@ export type { D as E } from './b';
         .symbols
         .get(c_sym_id)
         .expect("expected symbol data for C");
-    assert_eq!(c_symbol.import_module.as_deref(), Some("./a"));
-    assert_eq!(c_symbol.import_name.as_deref(), Some("B"));
+    assert_eq!(c_symbol.import_module(), Some("./a"));
+    assert_eq!(c_symbol.import_name(), Some("B"));
     assert!(!c_symbol.is_type_only);
 
     let e_sym_id = binder
@@ -271,8 +271,8 @@ export type { D as E } from './b';
         .symbols
         .get(e_sym_id)
         .expect("expected symbol data for E");
-    assert_eq!(e_symbol.import_module.as_deref(), Some("./b"));
-    assert_eq!(e_symbol.import_name.as_deref(), Some("D"));
+    assert_eq!(e_symbol.import_module(), Some("./b"));
+    assert_eq!(e_symbol.import_name(), Some("D"));
     assert!(e_symbol.is_type_only);
 }
 
@@ -302,8 +302,8 @@ class C {}
         .expect("expected symbol data for NS");
     assert_ne!(ns_sym.flags & symbol_flags::ALIAS, 0);
     assert!(ns_sym.is_type_only);
-    assert_eq!(ns_sym.import_module.as_deref(), Some("./a"));
-    assert_eq!(ns_sym.import_name.as_deref(), Some("*"));
+    assert_eq!(ns_sym.import_module(), Some("./a"));
+    assert_eq!(ns_sym.import_name(), Some("*"));
 
     let renamed_i_sym_id = binder
         .file_locals
@@ -315,8 +315,8 @@ class C {}
         .expect("expected symbol data for RenamedI");
     assert_ne!(renamed_i_sym.flags & symbol_flags::ALIAS, 0);
     assert!(renamed_i_sym.is_type_only);
-    assert_eq!(renamed_i_sym.import_module.as_deref(), Some("./a"));
-    assert_eq!(renamed_i_sym.import_name.as_deref(), Some("I"));
+    assert_eq!(renamed_i_sym.import_module(), Some("./a"));
+    assert_eq!(renamed_i_sym.import_name(), Some("I"));
 
     let default_sym_id = binder
         .file_locals
@@ -328,8 +328,8 @@ class C {}
         .expect("expected symbol data for DefaultThing");
     assert_ne!(default_sym.flags & symbol_flags::ALIAS, 0);
     assert!(default_sym.is_type_only);
-    assert_eq!(default_sym.import_module.as_deref(), Some("./a"));
-    assert_eq!(default_sym.import_name.as_deref(), Some("default"));
+    assert_eq!(default_sym.import_module(), Some("./a"));
+    assert_eq!(default_sym.import_name(), Some("default"));
 
     assert!(
         binder.file_import_sources.iter().any(|spec| spec == "./a"),
@@ -368,8 +368,8 @@ class C {}
         .expect("expected symbol data for `types`");
     assert_ne!(ns_sym.flags & symbol_flags::ALIAS, 0);
     assert!(ns_sym.is_type_only);
-    assert_eq!(ns_sym.import_module.as_deref(), Some("./types"));
-    assert_eq!(ns_sym.import_name.as_deref(), Some("*"));
+    assert_eq!(ns_sym.import_module(), Some("./types"));
+    assert_eq!(ns_sym.import_name(), Some("*"));
 }
 
 #[test]
@@ -398,8 +398,8 @@ class C {}
             .unwrap_or_else(|| panic!("expected symbol data for {local_name}"));
         assert_ne!(symbol.flags & symbol_flags::ALIAS, 0);
         assert!(symbol.is_type_only);
-        assert_eq!(symbol.import_module.as_deref(), Some("./dep"));
-        assert_eq!(symbol.import_name.as_deref(), Some(import_name));
+        assert_eq!(symbol.import_module(), Some("./dep"));
+        assert_eq!(symbol.import_name(), Some(import_name));
     }
 
     assert!(
@@ -443,23 +443,23 @@ class C {}
     let imp = lookup("ImpAlias");
     assert_ne!(imp.flags & symbol_flags::ALIAS, 0);
     assert!(imp.is_type_only);
-    assert_eq!(imp.import_module.as_deref(), Some("pkg"));
-    assert_eq!(imp.import_name.as_deref(), Some("Esm"));
+    assert_eq!(imp.import_module(), Some("pkg"));
+    assert_eq!(imp.import_name(), Some("Esm"));
     assert_eq!(
-        imp.import_resolution_mode,
+        imp.import_resolution_mode(),
         Some(tsz_common::ImportResolutionMode::Import)
     );
 
     let req = lookup("ReqAlias");
-    assert_eq!(req.import_name.as_deref(), Some("Cjs"));
+    assert_eq!(req.import_name(), Some("Cjs"));
     assert_eq!(
-        req.import_resolution_mode,
+        req.import_resolution_mode(),
         Some(tsz_common::ImportResolutionMode::Require)
     );
 
     // No attribute clause → no override.
     let plain = lookup("Plain");
-    assert_eq!(plain.import_resolution_mode, None);
+    assert_eq!(plain.import_resolution_mode(), None);
 }
 
 #[test]
@@ -486,8 +486,8 @@ export as namespace Foo;
 
     assert_ne!(foo_symbol.flags & symbol_flags::ALIAS, 0);
     assert!(foo_symbol.is_umd_export);
-    assert_eq!(foo_symbol.import_module.as_deref(), Some("foo.d.ts"));
-    assert_eq!(foo_symbol.import_name.as_deref(), Some("*"));
+    assert_eq!(foo_symbol.import_module(), Some("foo.d.ts"));
+    assert_eq!(foo_symbol.import_name(), Some("*"));
 }
 
 #[test]
@@ -521,8 +521,8 @@ let ns = { a: 1 };
         .expect("expected symbol data for exported ns");
 
     assert_ne!(export_ns.flags & symbol_flags::ALIAS, 0);
-    assert_eq!(export_ns.import_module.as_deref(), Some("./mod"));
-    assert_eq!(export_ns.import_name.as_deref(), Some("*"));
+    assert_eq!(export_ns.import_module(), Some("./mod"));
+    assert_eq!(export_ns.import_name(), Some("*"));
     assert_ne!(export_ns_id, local_ns_id);
 }
 
@@ -553,8 +553,8 @@ export type Foo = { x: number };
         .get(alias_id)
         .expect("expected alias partner symbol data");
     assert_ne!(alias_symbol.flags & symbol_flags::ALIAS, 0);
-    assert_eq!(alias_symbol.import_module.as_deref(), Some("./mod"));
-    assert_eq!(alias_symbol.import_name.as_deref(), Some("*"));
+    assert_eq!(alias_symbol.import_module(), Some("./mod"));
+    assert_eq!(alias_symbol.import_name(), Some("*"));
 
     let export_foo_id = binder
         .module_exports
@@ -812,7 +812,7 @@ declare module "b" {
         .expect("expected symbol data for alias a");
 
     assert_ne!(a_symbol.flags & symbol_flags::ALIAS, 0);
-    assert_eq!(a_symbol.import_module.as_deref(), Some("a"));
+    assert_eq!(a_symbol.import_module(), Some("a"));
 
     let module_exports = binder
         .module_exports
@@ -1144,8 +1144,8 @@ fn assert_ns_module_alias_partner(source: &str, ns_name: &str) {
         .get(alias_id)
         .unwrap_or_else(|| panic!("expected alias partner symbol data for {ns_name}"));
     assert_ne!(alias_sym.flags & symbol_flags::ALIAS, 0);
-    assert_eq!(alias_sym.import_module.as_deref(), Some("./mod"));
-    assert_eq!(alias_sym.import_name.as_deref(), Some("*"));
+    assert_eq!(alias_sym.import_module(), Some("./mod"));
+    assert_eq!(alias_sym.import_name(), Some("*"));
 }
 
 /// `export * as N from './mod'` followed by `namespace N { ... }`:
@@ -1220,7 +1220,7 @@ export * as Ns from './mod';
         .expect("expected symbol data for Ns");
     // Should be ALIAS, not MODULE
     assert_ne!(ns_sym.flags & symbol_flags::ALIAS, 0);
-    assert_eq!(ns_sym.import_module.as_deref(), Some("./mod"));
+    assert_eq!(ns_sym.import_module(), Some("./mod"));
     // No alias_partners entry for a lone ALIAS
     assert!(
         !binder.alias_partners.contains_key(&ns_id),

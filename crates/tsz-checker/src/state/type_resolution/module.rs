@@ -379,8 +379,8 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return None;
         }
-        let module_name = symbol.import_module.as_ref()?;
-        let import_name = symbol.import_name.as_ref()?;
+        let module_name = symbol.import_module()?;
+        let import_name = symbol.import_name()?;
         if import_name == "default" {
             return None;
         }

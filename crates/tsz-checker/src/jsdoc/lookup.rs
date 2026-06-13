@@ -860,7 +860,7 @@ impl<'a> CheckerState<'a> {
         // CommonJS `var mod = require("./x")` binds `mod` to the module's
         // exports. Qualified references like `{mod.Foo}` resolve through the
         // imported module and must not be flagged here.
-        if symbol.import_module.is_some() {
+        if symbol.import_module().is_some() {
             return;
         }
         // Detect `var mod = require("./x")` in JS salsa mode, which is

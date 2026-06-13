@@ -802,7 +802,7 @@ import { foo } from './bar';
         "imported foo should have ALIAS flag"
     );
     assert_eq!(
-        foo_symbol.import_module.as_deref(),
+        foo_symbol.import_module(),
         Some("./bar"),
         "import_module should be './bar'"
     );
@@ -824,8 +824,8 @@ import { foo as bar } from './baz';
         .expect("expected import symbol bar");
     let bar_symbol = binder.symbols.get(bar_sym_id).unwrap();
     assert!(bar_symbol.flags & symbol_flags::ALIAS != 0);
-    assert_eq!(bar_symbol.import_module.as_deref(), Some("./baz"));
-    assert_eq!(bar_symbol.import_name.as_deref(), Some("foo"));
+    assert_eq!(bar_symbol.import_module(), Some("./baz"));
+    assert_eq!(bar_symbol.import_name(), Some("foo"));
 }
 
 #[test]
@@ -846,7 +846,7 @@ import * as ns from './mod';
         ns_symbol.flags & symbol_flags::ALIAS != 0,
         "namespace import should have ALIAS flag"
     );
-    assert_eq!(ns_symbol.import_module.as_deref(), Some("./mod"));
+    assert_eq!(ns_symbol.import_module(), Some("./mod"));
 }
 
 #[test]
@@ -908,7 +908,7 @@ import Foo from './mod';
         foo_symbol.flags & symbol_flags::ALIAS != 0,
         "default import should have ALIAS flag"
     );
-    assert_eq!(foo_symbol.import_module.as_deref(), Some("./mod"));
+    assert_eq!(foo_symbol.import_module(), Some("./mod"));
 }
 
 // =============================================================================

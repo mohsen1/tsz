@@ -200,8 +200,8 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_symbol_with_libs(original_left_sym, &lib_binders);
             let module_specifier = unresolved_left_symbol
-                .and_then(|symbol| symbol.import_module.clone())
-                .or_else(|| left_symbol.import_module.clone())
+                .and_then(|symbol| symbol.import_module().map(str::to_string))
+                .or_else(|| left_symbol.import_module().map(str::to_string))
                 .or_else(|| {
                     self.ctx
                         .arena
@@ -416,8 +416,8 @@ impl<'a> CheckerState<'a> {
             || unresolved_left_has_local_namespace_conflict
             || left_name_has_import_conflict;
         let module_specifier = unresolved_left_symbol
-            .and_then(|symbol| symbol.import_module.clone())
-            .or_else(|| left_symbol.import_module.clone())
+            .and_then(|symbol| symbol.import_module().map(str::to_string))
+            .or_else(|| left_symbol.import_module().map(str::to_string))
             .or_else(|| {
                 self.ctx
                     .arena
@@ -475,12 +475,13 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(reexported_sym);
         }
 
-        let augmentation_module_specifier = left_symbol.import_module.clone().or_else(|| {
-            self.ctx
-                .binder
-                .get_symbol_with_libs(original_left_sym, &lib_binders)
-                .and_then(|symbol| symbol.import_module.clone())
-        });
+        let augmentation_module_specifier =
+            left_symbol.import_module().map(str::to_string).or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(original_left_sym, &lib_binders)
+                    .and_then(|symbol| symbol.import_module().map(str::to_string))
+            });
         if !left_has_local_namespace_conflict
             && let Some(ref module_specifier) = augmentation_module_specifier
             && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
@@ -565,7 +566,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .binder
                     .get_symbol_with_libs(parent_sym_id, &lib_binders)
-                    .and_then(|symbol| symbol.import_module.as_deref())
+                    .and_then(|symbol| symbol.import_module())
                     .and_then(|module_specifier| self.ctx.resolve_import_target(module_specifier))
             });
 
@@ -1044,7 +1045,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            if let Some(ref module_specifier) = left_symbol.import_module {
+            if let Some(module_specifier) = left_symbol.import_module() {
                 if left_symbol.has_any_flags(symbol_flags::ALIAS)
                     && self
                         .ctx
@@ -1127,7 +1128,7 @@ impl<'a> CheckerState<'a> {
 
         // If not found in direct exports, check for re-exports
         // This handles cases like: export { foo } from './bar'
-        if let Some(ref module_specifier) = left_symbol.import_module {
+        if let Some(module_specifier) = left_symbol.import_module() {
             if left_symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx

@@ -156,7 +156,7 @@ impl<'a> CheckerContext<'a> {
             let authoritative_is_current =
                 authoritative_file_idx.is_none_or(|file_idx| file_idx == self.current_file_idx);
             authoritative_is_current
-                && symbol.import_module.is_none()
+                && symbol.import_module().is_none()
                 && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
         });
         let symbol_name = self

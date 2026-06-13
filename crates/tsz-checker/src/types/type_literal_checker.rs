@@ -207,8 +207,8 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .get_symbol(sym_id)
                                 .and_then(|symbol| {
-                                    symbol.import_module.as_ref().and_then(|module_name| {
-                                        symbol.import_name.as_deref().and_then(|import_name| {
+                                    symbol.import_module().and_then(|module_name| {
+                                        symbol.import_name().and_then(|import_name| {
                                             self.resolve_cross_file_export_from_file(
                                                 module_name,
                                                 import_name,
@@ -235,8 +235,8 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_symbol(sym_id)
                         .and_then(|symbol| {
-                            symbol.import_module.as_ref().and_then(|module_name| {
-                                symbol.import_name.as_deref().and_then(|import_name| {
+                            symbol.import_module().and_then(|module_name| {
+                                symbol.import_name().and_then(|import_name| {
                                     self.resolve_cross_file_export_from_file(
                                         module_name,
                                         import_name,
@@ -627,8 +627,8 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_symbol(sym_id)
                     .and_then(|symbol| {
-                        symbol.import_module.as_ref().and_then(|module_name| {
-                            symbol.import_name.as_deref().and_then(|import_name| {
+                        symbol.import_module().and_then(|module_name| {
+                            symbol.import_name().and_then(|import_name| {
                                 self.resolve_cross_file_export_from_file(
                                     module_name,
                                     import_name,

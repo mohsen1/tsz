@@ -1126,7 +1126,7 @@ impl<'a> CheckerState<'a> {
                 .get_symbol_with_libs(current_sym, &lib_binders)
         })?;
 
-        if let Some(module_specifier) = symbol.import_module.as_deref()
+        if let Some(module_specifier) = symbol.import_module()
             && self.jsdoc_module_specifier_prefers_direct_type_exports(module_specifier)
         {
             return self.resolve_jsdoc_import_member(module_specifier, segment);
@@ -1394,7 +1394,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if let Some(ref module_specifier) = symbol.import_module {
+            if let Some(module_specifier) = symbol.import_module() {
                 let mut visited_aliases = AliasCycleTracker::new();
                 if let Some(member_sym) = self.resolve_reexported_member_symbol(
                     module_specifier,

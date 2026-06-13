@@ -485,8 +485,8 @@ fn resolve_import_symbol_for_attribution_no_cache(
     sym_id: tsz_binder::SymbolId,
 ) -> Option<tsz_binder::SymbolId> {
     let symbol = binder.get_symbol(sym_id)?;
-    let module_specifier = symbol.import_module.as_ref()?;
-    let export_name = symbol.import_name.as_deref().unwrap_or("export=");
+    let module_specifier = symbol.import_module()?;
+    let export_name = symbol.import_name().unwrap_or("export=");
     let mut visited = HashSet::new();
     resolve_import_with_reexports_for_attribution_no_cache(
         binder,
@@ -654,8 +654,8 @@ mod tests {
             .symbols
             .alloc(symbol_flags::ALIAS, "Alias".to_string());
         let alias_symbol = binder.symbols.get_mut(alias_sym).expect("alias symbol");
-        alias_symbol.import_module = Some("./target".to_string());
-        alias_symbol.import_name = Some("Target".to_string());
+        alias_symbol.set_import_module(Some("./target".to_string()));
+        alias_symbol.set_import_name(Some("Target".to_string()));
         binder.file_locals.set("Alias".to_string(), alias_sym);
         let mut exports = SymbolTable::new();
         exports.set("Target".to_string(), target_sym);
@@ -706,8 +706,8 @@ mod tests {
             .symbols
             .alloc(symbol_flags::ALIAS, "Array".to_string());
         let alias_symbol = binder.symbols.get_mut(alias_sym).expect("alias symbol");
-        alias_symbol.import_module = Some("./target".to_string());
-        alias_symbol.import_name = Some("Array".to_string());
+        alias_symbol.set_import_module(Some("./target".to_string()));
+        alias_symbol.set_import_name(Some("Array".to_string()));
         binder.file_locals.set("Array".to_string(), alias_sym);
         let mut exports = SymbolTable::new();
         exports.set("Array".to_string(), target_sym);

@@ -173,8 +173,8 @@ impl<'a> CheckerContext<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             return None;
         }
-        let module_specifier = symbol.import_module.as_ref()?;
-        let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
 
         if let Some(target_idx) =
             self.resolve_import_target_from_file(source_file_idx, module_specifier)
@@ -1340,10 +1340,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         .and_then(|members| members.get(segment))
                 })
                 .or_else(|| {
-                    if symbol.import_name.as_deref() != Some("*") {
+                    if symbol.import_name() != Some("*") {
                         return None;
                     }
-                    let module = symbol.import_module.as_deref()?;
+                    let module = symbol.import_module()?;
                     let source_file_idx = self
                         .resolve_symbol_file_index_stable(current_sym)
                         .or_else(|| {

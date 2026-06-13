@@ -703,11 +703,11 @@ impl BindResult {
                 size += std::mem::size_of::<SymbolTable>();
                 size += members.len() * (32 + std::mem::size_of::<SymbolId>());
             }
-            if let Some(ref s) = sym.import_module {
-                size += s.capacity();
+            if let Some(s) = sym.import_module() {
+                size += s.len();
             }
-            if let Some(ref s) = sym.import_name {
-                size += s.capacity();
+            if let Some(s) = sym.import_name() {
+                size += s.len();
             }
         }
 

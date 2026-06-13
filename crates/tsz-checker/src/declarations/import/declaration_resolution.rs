@@ -380,8 +380,8 @@ impl<'a> CheckerState<'a> {
                                 import_has_type = true;
                             }
                             if resolved_sym.has_any_flags(symbol_flags::ALIAS)
-                                && sym.import_module.is_some()
-                                && sym.import_name.is_none()
+                                && sym.import_module().is_some()
+                                && sym.import_name().is_none()
                             {
                                 import_has_value = true;
                             }
@@ -391,9 +391,9 @@ impl<'a> CheckerState<'a> {
                         // itself (can't resolve cross-file), check the exported symbol's
                         // flags directly in the target file's binder.
                         if (!import_has_value || !import_has_type)
-                            && let Some(ref module_name) = sym.import_module
+                            && let Some(module_name) = sym.import_module()
                         {
-                            let export_name = sym.import_name.as_deref().unwrap_or(&name);
+                            let export_name = sym.import_name().unwrap_or(name.as_str());
                             // Try declared modules (module_exports)
                             // Use global_module_binder_index for O(1) lookup instead of O(N) binder scan
                             if let Some(binders) = &self.ctx.all_binders {
@@ -401,15 +401,13 @@ impl<'a> CheckerState<'a> {
                                     .ctx
                                     .global_module_binder_index
                                     .as_ref()
-                                    .and_then(|idx| idx.get(module_name.as_str()));
+                                    .and_then(|idx| idx.get(module_name));
                                 if let Some(indices) = candidate_indices {
                                     for &binder_idx in indices {
                                         if let Some(binder) = binders.get(binder_idx)
-                                            && let Some(exports) =
-                                                self.ctx.module_exports_for_module(
-                                                    binder,
-                                                    module_name.as_str(),
-                                                )
+                                            && let Some(exports) = self
+                                                .ctx
+                                                .module_exports_for_module(binder, module_name)
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
@@ -429,9 +427,8 @@ impl<'a> CheckerState<'a> {
                                     }
                                 } else {
                                     for binder in binders.iter() {
-                                        if let Some(exports) = self
-                                            .ctx
-                                            .module_exports_for_module(binder, module_name.as_str())
+                                        if let Some(exports) =
+                                            self.ctx.module_exports_for_module(binder, module_name)
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
@@ -498,12 +495,10 @@ impl<'a> CheckerState<'a> {
                                                 resolved_binder.symbols.get(partner_id)
                                             && partner.has_any_flags(symbol_flags::ALIAS)
                                             && !partner.is_type_only
-                                            && let Some(ref src_module) = partner.import_module
+                                            && let Some(src_module) = partner.import_module()
                                         {
-                                            let src_name = partner
-                                                .import_name
-                                                .as_deref()
-                                                .unwrap_or(export_name);
+                                            let src_name =
+                                                partner.import_name().unwrap_or(export_name);
                                             if let Some(src_idx) =
                                                 self.ctx.resolve_import_target_from_file(
                                                     resolved_file_idx,

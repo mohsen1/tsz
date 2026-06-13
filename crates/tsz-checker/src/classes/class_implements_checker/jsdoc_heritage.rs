@@ -770,8 +770,8 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<tsz_solver::TypeParamInfo> {
         let import_target = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
             Some((
-                symbol.import_module.as_ref()?.clone(),
-                symbol.import_name.as_ref()?.clone(),
+                symbol.import_module()?.to_string(),
+                symbol.import_name()?.to_string(),
             ))
         });
 
@@ -793,13 +793,9 @@ impl<'a> CheckerState<'a> {
             }
         }
         if type_params.is_empty()
-            && let Some((module_specifier, import_name)) =
-                self.get_cross_file_symbol(sym_id).and_then(|symbol| {
-                    Some((
-                        symbol.import_module.as_ref()?,
-                        symbol.import_name.as_deref()?,
-                    ))
-                })
+            && let Some((module_specifier, import_name)) = self
+                .get_cross_file_symbol(sym_id)
+                .and_then(|symbol| Some((symbol.import_module()?, symbol.import_name()?)))
             && import_name != "*"
             && import_name != "default"
             && let Some(export_sym) = self.resolve_cross_file_export(module_specifier, import_name)

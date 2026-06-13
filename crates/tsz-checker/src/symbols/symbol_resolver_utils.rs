@@ -327,7 +327,7 @@ impl<'a> CheckerState<'a> {
 
                 // For import aliases (import X = require("./module")), X represents
                 // the entire module namespace. Look up the member in module_exports.
-                if let Some(ref module_specifier) = left_symbol.import_module {
+                if let Some(module_specifier) = left_symbol.import_module() {
                     if left_symbol.has_any_flags(symbol_flags::ALIAS)
                         && self
                             .ctx
@@ -372,7 +372,7 @@ impl<'a> CheckerState<'a> {
                     return Some(member_sym);
                 }
                 // Also check module_exports on the resolved symbol
-                if let Some(ref module_specifier) = resolved_symbol.import_module
+                if let Some(module_specifier) = resolved_symbol.import_module()
                     && let Some(member_sym) = self.resolve_reexported_member_symbol(
                         module_specifier,
                         &name,
@@ -462,7 +462,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it has an import_module - if so, check if that module is resolved
-        if let Some(ref module_name) = symbol.import_module {
+        if let Some(module_name) = symbol.import_module() {
             // Check various ways a module can be resolved
             if self
                 .ctx
@@ -863,7 +863,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for re-exports from other modules
         // This handles cases like: export { foo } from './bar'
-        if let Some(ref module_specifier) = left_symbol.import_module {
+        if let Some(module_specifier) = left_symbol.import_module() {
             if left_symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
@@ -900,7 +900,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if from_typeof && left_symbol.import_module.is_none() {
+        if from_typeof && left_symbol.import_module().is_none() {
             let left_text = self
                 .entity_name_text(qn.left)
                 .unwrap_or_else(|| left_symbol.escaped_name.clone());

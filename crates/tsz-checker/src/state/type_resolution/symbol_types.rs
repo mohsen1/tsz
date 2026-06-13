@@ -190,12 +190,11 @@ impl<'a> CheckerState<'a> {
                     if structural_type != TypeId::ERROR
                         && structural_type != TypeId::UNKNOWN
                         && let Some(local_sym) = self.ctx.binder.get_symbol(sym_id)
-                        && let Some(module_specifier) = local_sym.import_module.as_ref()
+                        && let Some(module_specifier) = local_sym.import_module()
                     {
                         let aug_name = local_sym
-                            .import_name
-                            .as_deref()
-                            .unwrap_or(&local_sym.escaped_name);
+                            .import_name()
+                            .unwrap_or(local_sym.escaped_name.as_str());
                         structural_type = self.apply_module_augmentations(
                             module_specifier,
                             aug_name,
@@ -460,7 +459,7 @@ impl<'a> CheckerState<'a> {
             let alias_result = self.resolve_alias_symbol(sym_id, &mut visited);
             let is_default_import_alias = self
                 .get_cross_file_symbol(sym_id)
-                .and_then(|symbol| symbol.import_name.as_deref())
+                .and_then(|symbol| symbol.import_name())
                 == Some("default");
             if let Some(target_sym_id) = alias_result
                 && target_sym_id != sym_id
@@ -505,13 +504,12 @@ impl<'a> CheckerState<'a> {
                     }
                     let alias_augmentation_target =
                         local_alias_for_augmentation.and_then(|alias_symbol| {
-                            alias_symbol.import_module.as_ref().map(|module_specifier| {
+                            alias_symbol.import_module().map(|module_specifier| {
                                 let aug_name = alias_symbol
-                                    .import_name
-                                    .as_deref()
-                                    .unwrap_or(&alias_symbol.escaped_name)
+                                    .import_name()
+                                    .unwrap_or(alias_symbol.escaped_name.as_str())
                                     .to_string();
-                                (module_specifier.clone(), aug_name)
+                                (module_specifier.to_string(), aug_name)
                             })
                         });
                     self.ctx.leave_recursion();
@@ -911,11 +909,8 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return None;
         }
-        let module_specifier = symbol.import_module.as_ref()?;
-        let import_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(&symbol.escaped_name);
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
 
         // Local import aliases resolve relative to the current file even if a
         // same-number cross-file target has already been registered for `sym_id`.

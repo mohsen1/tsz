@@ -68,11 +68,8 @@ impl<'a> CheckerState<'a> {
         if let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
             && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
             && base_symbol.has_any_flags(symbol_flags::ALIAS)
-            && base_symbol.import_module.is_some()
-            && base_symbol
-                .import_name
-                .as_ref()
-                .is_none_or(|name| name == "*")
+            && base_symbol.import_module().is_some()
+            && base_symbol.import_name().is_none_or(|name| name == "*")
         {
             if let Some(member_type) =
                 self.resolve_namespace_value_member_from_symbol(base_sym_id, property_name)
@@ -87,16 +84,13 @@ impl<'a> CheckerState<'a> {
 
             if self.is_in_type_only_position(idx)
                 && let Some(member_sym_id) =
-                    base_symbol
-                        .import_module
-                        .as_deref()
-                        .and_then(|module_specifier| {
-                            self.resolve_effective_module_exports_from_file(
-                                module_specifier,
-                                Some(base_symbol.decl_file_idx as usize),
-                            )
-                            .and_then(|exports| exports.get(property_name))
-                        })
+                    base_symbol.import_module().and_then(|module_specifier| {
+                        self.resolve_effective_module_exports_from_file(
+                            module_specifier,
+                            Some(base_symbol.decl_file_idx as usize),
+                        )
+                        .and_then(|exports| exports.get(property_name))
+                    })
             {
                 let member_type = self.get_type_of_symbol(member_sym_id);
                 if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
@@ -426,7 +420,7 @@ impl<'a> CheckerState<'a> {
                     .resolve_identifier_symbol(access.expression)
                     .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                     .is_some_and(|sym| {
-                        sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_some()
+                        sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some()
                     })
             {
                 return TypeId::ANY;
@@ -1303,7 +1297,7 @@ impl<'a> CheckerState<'a> {
                         .resolve_identifier_symbol(access.expression)
                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                         .is_some_and(|sym| {
-                            sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_some()
+                            sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some()
                         })
                 {
                     return TypeId::ANY;

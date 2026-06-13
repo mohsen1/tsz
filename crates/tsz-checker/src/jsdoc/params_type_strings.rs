@@ -436,7 +436,7 @@ impl<'a> CheckerState<'a> {
                 | symbol_flags::NAMESPACE_MODULE
                 | symbol_flags::VALUE_MODULE
                 | symbol_flags::MODULE_EXPORTS,
-        ) || symbol.import_module.is_some()
+        ) || symbol.import_module().is_some()
     }
 
     const fn is_jsdoc_identifier_start(byte: u8) -> bool {

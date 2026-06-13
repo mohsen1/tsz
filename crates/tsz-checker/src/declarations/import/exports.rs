@@ -16,7 +16,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return false;
         };
-        if !symbol.is_exported || symbol.import_module.is_some() {
+        if !symbol.is_exported || symbol.import_module().is_some() {
             return false;
         }
         symbol.decl_file_idx == file_idx as u32
@@ -155,9 +155,9 @@ impl<'a> CheckerState<'a> {
             // If this is an alias, follow it to the source module
             if let Some(sym) = target_binder.symbols.get(sym_id)
                 && sym.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-                && let Some(ref import_module) = sym.import_module
+                && let Some(import_module) = sym.import_module()
             {
-                let import_name = sym.import_name.as_deref().unwrap_or(export_name);
+                let import_name = sym.import_name().unwrap_or(export_name);
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, import_module)

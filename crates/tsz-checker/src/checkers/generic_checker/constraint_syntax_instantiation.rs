@@ -177,11 +177,8 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
         {
             let imported_target = self.get_cross_file_symbol(sym_id).and_then(|symbol| {
-                let module_name = symbol.import_module.as_ref()?;
-                let import_name = symbol
-                    .import_name
-                    .as_deref()
-                    .unwrap_or(&symbol.escaped_name);
+                let module_name = symbol.import_module()?;
+                let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
                 let source_file_idx = (symbol.decl_file_idx != u32::MAX)
                     .then_some(symbol.decl_file_idx as usize)
                     .or_else(|| self.ctx.resolve_symbol_file_index(sym_id))
@@ -292,10 +289,10 @@ impl<'a> CheckerState<'a> {
             if symbol.flags & tsz_binder::symbol_flags::ALIAS == 0 {
                 return None;
             }
-            let module_name = symbol.import_module.clone()?;
+            let module_name = symbol.import_module()?.to_string();
             let import_name = symbol
-                .import_name
-                .clone()
+                .import_name()
+                .map(str::to_string)
                 .unwrap_or_else(|| symbol.escaped_name.clone());
             (module_name, import_name)
         };

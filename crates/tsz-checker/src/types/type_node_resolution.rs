@@ -56,8 +56,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if !symbol.is_type_only {
             return None;
         }
-        let module_name = symbol.import_module.as_ref()?;
-        let import_name = symbol.import_name.as_deref()?;
+        let module_name = symbol.import_module()?;
+        let import_name = symbol.import_name()?;
         if import_name == "*" {
             return None;
         }
@@ -118,8 +118,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if !symbol.is_type_only {
             return None;
         }
-        let module_name = symbol.import_module.as_ref()?;
-        let import_name = symbol.import_name.as_deref()?;
+        let module_name = symbol.import_module()?;
+        let import_name = symbol.import_name()?;
         if import_name == "*" {
             return None;
         }
@@ -246,7 +246,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             // Follow the ALIAS's import_module, resolving from the
                             // ALIAS's source file perspective (cross-file), then
                             // falling back to the merged binder (same-file).
-                            let module = alias_sym.import_module.as_ref()?;
+                            let module = alias_sym.import_module()?;
                             self.ctx
                                 .resolve_alias_import_member(alias_id, module, segment)
                                 .or_else(|| {
@@ -262,10 +262,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // namespace alias has no populated `exports` map, so all
                     // prior branches miss.  Resolve `segment` directly from
                     // the target module's binder (refs #12951).
-                    if symbol.import_name.as_deref() != Some("*") {
+                    if symbol.import_name() != Some("*") {
                         return None;
                     }
-                    let module = symbol.import_module.as_deref()?;
+                    let module = symbol.import_module()?;
                     let source_file_idx = self
                         .ctx
                         .resolve_symbol_file_index(current_sym)
@@ -352,10 +352,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // object is not materialised until runtime, so the ALIAS symbol has
                     // no `exports` map.  Look up `segment` directly in the target
                     // module's binder using the declared module specifier (refs #12951).
-                    if symbol.import_name.as_deref() != Some("*") {
+                    if symbol.import_name() != Some("*") {
                         return None;
                     }
-                    let module = symbol.import_module.as_deref()?;
+                    let module = symbol.import_module()?;
                     let target_idx = self
                         .ctx
                         .resolve_import_target_from_file(self.ctx.current_file_idx, module)?;
@@ -1529,7 +1529,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if !self
                     .ctx
                     .namespace_import_alias_has_local_namespace_conflict(alias_sym)
-                    && let Some(module_name) = alias_sym.import_module.as_ref()
+                    && let Some(module_name) = alias_sym.import_module()
                 {
                     let member = self
                         .ctx
@@ -1558,7 +1558,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && !self
                     .ctx
                     .namespace_import_alias_has_local_namespace_conflict(left_sym)
-                && let Some(module_name) = left_sym.import_module.as_ref()
+                && let Some(module_name) = left_sym.import_module()
             {
                 // Use the current file's index to resolve the import target, since `left_sym`
                 // is a local alias declared in the current file.

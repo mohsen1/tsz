@@ -1298,7 +1298,7 @@ impl<'a> CheckerState<'a> {
             // (before alias resolution) which may have import_module set.
             let orig_left_symbol = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders);
             if let Some(orig) = orig_left_symbol
-                && let Some(ref module_specifier) = orig.import_module
+                && let Some(module_specifier) = orig.import_module()
             {
                 let mut reexport_visited = AliasCycleTracker::new();
                 if let Some(resolved) = self.resolve_reexported_member_symbol(
@@ -1355,7 +1355,7 @@ impl<'a> CheckerState<'a> {
 
         if symbol.is_type_only {
             // Symbol is directly marked type-only — determine if it was via import or export
-            return if symbol.import_module.is_some() {
+            return if symbol.import_module().is_some() {
                 Some(TypeOnlyKind::ImportType)
             } else {
                 Some(TypeOnlyKind::ExportType)
@@ -1395,7 +1395,7 @@ impl<'a> CheckerState<'a> {
                 };
                 // Check directly: is the resolved target type-only?
                 if check_sym.is_type_only {
-                    return if check_sym.import_module.is_some() {
+                    return if check_sym.import_module().is_some() {
                         Some(TypeOnlyKind::ImportType)
                     } else {
                         Some(TypeOnlyKind::ExportType)
@@ -1471,7 +1471,7 @@ impl<'a> CheckerState<'a> {
             if is_same_arena && let Some(sym_id) = self.resolve_identifier_symbol(rhs_idx) {
                 let sym = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
                 if sym.is_type_only {
-                    return if sym.import_module.is_some() {
+                    return if sym.import_module().is_some() {
                         Some(TypeOnlyKind::ImportType)
                     } else {
                         Some(TypeOnlyKind::ExportType)
@@ -1500,7 +1500,7 @@ impl<'a> CheckerState<'a> {
                 for &(_file_idx, sym_id) in entries {
                     if let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                         if sym.is_type_only {
-                            return if sym.import_module.is_some() {
+                            return if sym.import_module().is_some() {
                                 Some(TypeOnlyKind::ImportType)
                             } else {
                                 Some(TypeOnlyKind::ExportType)
@@ -1519,7 +1519,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     {
                         if sym.is_type_only {
-                            return if sym.import_module.is_some() {
+                            return if sym.import_module().is_some() {
                                 Some(TypeOnlyKind::ImportType)
                             } else {
                                 Some(TypeOnlyKind::ExportType)
@@ -1555,7 +1555,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
                     && alias_sym.is_type_only
                 {
-                    return if alias_sym.import_module.is_some() {
+                    return if alias_sym.import_module().is_some() {
                         TypeOnlyKind::ImportType
                     } else {
                         TypeOnlyKind::ExportType
@@ -1566,7 +1566,7 @@ impl<'a> CheckerState<'a> {
             if let Some(target_sym) = self.ctx.binder.get_symbol_with_libs(target, &lib_binders)
                 && target_sym.is_type_only
             {
-                return if target_sym.import_module.is_some() {
+                return if target_sym.import_module().is_some() {
                     TypeOnlyKind::ImportType
                 } else {
                     TypeOnlyKind::ExportType

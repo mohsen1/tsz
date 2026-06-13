@@ -964,7 +964,7 @@ impl BinderState {
                     .current_scope
                     .get(name)
                     .and_then(|sym_id| self.symbols.get(sym_id))
-                    .is_some_and(|sym| sym.import_module.is_some());
+                    .is_some_and(|sym| sym.import_module().is_some());
                 if name_conflicts_with_import {
                     self.record_module_augmentation_entry(&module_spec, name, idx);
                     return;

@@ -1292,7 +1292,7 @@ impl BinderState {
                         && let Some(existing_id) = file_exports.get(name)
                         && self.symbols.get(existing_id).is_some_and(|s| {
                             (s.flags & symbol_flags::ALIAS) != 0
-                                && s.import_name.as_deref() == Some("*")
+                                && s.import_name() == Some("*")
                                 && !s.is_umd_export
                         })
                     {

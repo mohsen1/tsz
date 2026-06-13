@@ -23,8 +23,8 @@ impl<'a> CheckerState<'a> {
                 self.get_cross_file_symbol(sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(sym_id))
                     .and_then(|symbol| {
-                        (symbol.import_name.as_deref() == Some("default"))
-                            .then(|| symbol.import_module.clone())
+                        (symbol.import_name() == Some("default"))
+                            .then(|| symbol.import_module().map(str::to_string))
                             .flatten()
                     })
             })
@@ -334,8 +334,8 @@ impl<'a> CheckerState<'a> {
             );
             return Some(TypeId::ERROR);
         }
-        if let Some(module_name) = symbol.import_module.as_deref() {
-            let export_name = symbol.import_name.as_deref().unwrap_or(class_name);
+        if let Some(module_name) = symbol.import_module() {
+            let export_name = symbol.import_name().unwrap_or(class_name);
             if self.imported_value_is_abstract_class(module_name, export_name) {
                 self.error_at_node(
                     new_idx,

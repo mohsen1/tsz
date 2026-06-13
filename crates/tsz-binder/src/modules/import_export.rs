@@ -60,10 +60,10 @@ impl BinderState {
                 sym.is_type_only = clause_type_only;
                 // Track module for cross-file resolution
                 if let Some(ref specifier) = module_specifier {
-                    sym.import_module = Some(specifier.clone());
+                    sym.set_import_module(Some(specifier.clone()));
                     // Default imports (`import X from "mod"`) resolve the module's
                     // **default** export, regardless of the local binding name.
-                    sym.import_name = Some("default".to_string());
+                    sym.set_import_name(Some("default".to_string()));
                 }
             }
             Arc::make_mut(&mut self.node_symbols).insert(clause.name.0, sym_id);
@@ -86,7 +86,7 @@ impl BinderState {
                         sym.is_type_only = clause_type_only;
                         // Track module for cross-file resolution
                         if let Some(ref specifier) = module_specifier {
-                            sym.import_module = Some(specifier.clone());
+                            sym.set_import_module(Some(specifier.clone()));
                         }
                     }
                     Arc::make_mut(&mut self.node_symbols).insert(clause.named_bindings.0, sym_id);
@@ -108,10 +108,10 @@ impl BinderState {
                         sym.is_type_only = clause_type_only;
                         // Track module for cross-file resolution
                         if let Some(ref specifier) = module_specifier {
-                            sym.import_module = Some(specifier.clone());
+                            sym.set_import_module(Some(specifier.clone()));
                             // Namespace import: mark as `*` so type display
                             // renders `typeof import("mod")` instead of `typeof ns`.
-                            sym.import_name = Some("*".to_string());
+                            sym.set_import_name(Some("*".to_string()));
                         }
                     }
                     Arc::make_mut(&mut self.node_symbols).insert(named.name.0, sym_id);
@@ -149,15 +149,15 @@ impl BinderState {
                         sym.is_type_only = spec_type_only;
                         // Track module and original name for cross-file resolution
                         if let Some(ref specifier) = module_specifier {
-                            sym.import_module = Some(specifier.clone());
+                            sym.set_import_module(Some(specifier.clone()));
                             // For renamed imports (import { foo as bar }), track original name
                             if let Some(prop_name) = prop_name {
-                                sym.import_name = Some(prop_name.to_string());
+                                sym.set_import_name(Some(prop_name.to_string()));
                             } else {
                                 // For non-renamed imports (import { foo }), still set
                                 // import_name so the checker can distinguish named
                                 // imports from namespace imports (import * as ns).
-                                sym.import_name = Some(name.to_string());
+                                sym.set_import_name(Some(name.to_string()));
                             }
                         }
                     }
@@ -220,7 +220,7 @@ impl BinderState {
                         // For valid merges (if any), this logic might need refinement,
                         // but for duplicates it doesn't matter much which one wins for resolution
                         // as long as we report the error.
-                        sym.import_module = Some(specifier.clone());
+                        sym.set_import_module(Some(specifier.clone()));
                     }
 
                     // Propagate type-only flag from `import type X = require('...')`
@@ -697,13 +697,13 @@ impl BinderState {
                                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                                     sym.is_exported = true;
                                     sym.is_type_only = spec.is_type_only;
-                                    sym.import_module = Some(source_module.clone());
-                                    sym.import_name = Some(
+                                    sym.set_import_module(Some(source_module.clone()));
+                                    sym.set_import_name(Some(
                                         spec.original
                                             .as_deref()
                                             .unwrap_or(&spec.exported)
                                             .to_string(),
-                                    );
+                                    ));
                                 }
                                 Arc::make_mut(&mut self.node_symbols)
                                     .insert(spec.spec_idx.0, sym_id);
@@ -759,15 +759,15 @@ impl BinderState {
                         if is_umd {
                             // `export as namespace Foo` creates a global alias to the
                             // current file's external-module export surface.
-                            sym.import_module = Some(self.debugger.current_file.clone());
-                            sym.import_name = Some("*".to_string());
+                            sym.set_import_module(Some(self.debugger.current_file.clone()));
+                            sym.set_import_name(Some("*".to_string()));
                         } else if export.module_specifier.is_some()
                             && let Some(spec_node) = arena.get(export.module_specifier)
                             && let Some(lit) = arena.get_literal(spec_node)
                         {
-                            sym.import_module = Some(lit.text.clone());
+                            sym.set_import_module(Some(lit.text.clone()));
                             // Use '*' to indicate it's a namespace export, similar to namespace imports
-                            sym.import_name = Some("*".to_string());
+                            sym.set_import_name(Some("*".to_string()));
                         }
                     }
 
@@ -849,7 +849,7 @@ impl BinderState {
     ) -> Option<crate::SymbolId> {
         let candidate = self.current_scope.get(name)?;
         let sym = self.symbols.get(candidate)?;
-        if (sym.flags & symbol_flags::ALIAS) == 0 || sym.import_module.is_none() {
+        if (sym.flags & symbol_flags::ALIAS) == 0 || sym.import_module().is_none() {
             return None;
         }
         let first_decl = sym.declarations.first().copied()?;

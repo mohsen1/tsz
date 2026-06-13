@@ -696,8 +696,8 @@ impl<'a> CheckerState<'a> {
                 && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             {
                 // Follow the alias
-                if let Some(ref import_module) = symbol.import_module {
-                    let export_name = symbol.import_name.as_deref().unwrap_or(member_name);
+                if let Some(import_module) = symbol.import_module() {
+                    let export_name = symbol.import_name().unwrap_or(member_name);
                     return self.resolve_reexported_member(import_module, export_name, lib_binders);
                 }
             }

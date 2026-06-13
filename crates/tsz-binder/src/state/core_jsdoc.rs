@@ -410,9 +410,9 @@ impl BinderState {
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                         // JSDoc @import bindings are type-only aliases that target a module member.
                         sym.is_type_only = true;
-                        sym.import_module = Some(specifier.clone());
-                        sym.import_name = Some(import_name);
-                        sym.import_resolution_mode = resolution_mode;
+                        sym.set_import_module(Some(specifier.clone()));
+                        sym.set_import_name(Some(import_name));
+                        sym.set_import_resolution_mode(resolution_mode);
                     }
                 }
             }

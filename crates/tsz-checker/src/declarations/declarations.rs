@@ -1332,11 +1332,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return Some(sym_id);
         }
-        let module_specifier = symbol.import_module.as_ref()?;
-        let target_name = symbol
-            .import_name
-            .as_deref()
-            .unwrap_or(&symbol.escaped_name);
+        let module_specifier = symbol.import_module()?;
+        let target_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
         let source_file_idx = if symbol.decl_file_idx == u32::MAX {
             self.ctx.current_file_idx
         } else {

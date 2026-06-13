@@ -555,8 +555,8 @@ impl<'a> TypeFormatter<'a> {
                 // — tsc displays these as `typeof import("mod")` rather than `typeof X`.
                 if let Some(arena) = self.symbol_arena
                     && let Some(symbol) = arena.get(SymbolId(sym.0))
-                    && symbol.import_name.as_deref() == Some("*")
-                    && let Some(ref module_specifier) = symbol.import_module
+                    && symbol.import_name() == Some("*")
+                    && let Some(module_specifier) = symbol.import_module()
                 {
                     let display_name = Self::strip_module_extension(
                         module_specifier

@@ -1112,9 +1112,9 @@ impl<'a> CheckerState<'a> {
                     true
                 } else if let Some(sym) = sym
                     && sym.has_any_flags(symbol_flags::ALIAS)
-                    && let Some(ref module_spec) = sym.import_module
+                    && let Some(module_spec) = sym.import_module()
                 {
-                    let import_name = sym.import_name.as_deref().unwrap_or(&name_str);
+                    let import_name = sym.import_name().unwrap_or(&name_str);
                     self.import_binding_is_type_only(module_spec, import_name)
                 } else {
                     self.is_local_symbol_type_only(&name_str)
@@ -1511,11 +1511,10 @@ impl<'a> CheckerState<'a> {
 
                 // For import aliases with import_module, use cross-file resolution
                 // to properly track which file we're resolving from.
-                if let Some(ref module_name) = curr_sym.import_module {
+                if let Some(module_name) = curr_sym.import_module() {
                     let export_name = curr_sym
-                        .import_name
-                        .as_deref()
-                        .unwrap_or(&curr_sym.escaped_name);
+                        .import_name()
+                        .unwrap_or(curr_sym.escaped_name.as_str());
 
                     // Use checker's cross-file module resolution first.
                     // This correctly resolves relative specifiers from the
@@ -1530,7 +1529,7 @@ impl<'a> CheckerState<'a> {
                             .resolve_import_with_reexports_type_only(module_name, export_name)
                             .map(|(sym_id, _)| sym_id)
                             .or_else(|| {
-                                (curr_sym.import_name.is_none())
+                                (curr_sym.import_name().is_none())
                                     .then(|| {
                                         target_binder
                                             .resolve_import_with_reexports_type_only(

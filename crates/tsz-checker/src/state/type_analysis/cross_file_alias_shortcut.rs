@@ -28,13 +28,13 @@ impl<'a> CheckerState<'a> {
                 );
                 return None;
             }
-            let Some(module_name) = symbol.import_module.clone() else {
+            let Some(module_name) = symbol.import_module().map(str::to_string) else {
                 tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
                     AliasOutcome::MissingModule,
                 );
                 return None;
             };
-            let Some(import_name) = symbol.import_name.clone() else {
+            let Some(import_name) = symbol.import_name().map(str::to_string) else {
                 tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
                     AliasOutcome::MissingImportName,
                 );

@@ -47,9 +47,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if symbol.has_any_flags(symbol_flags::ALIAS)
-            && let Some(module_name) = symbol.import_module.as_ref()
+            && let Some(module_name) = symbol.import_module()
         {
-            let import_name = symbol.import_name.as_deref().unwrap_or(name);
+            let import_name = symbol.import_name().unwrap_or(name);
             let target_sym_id =
                 self.resolve_cross_file_export_from_file(module_name, import_name, Some(file_idx))?;
             if let Some(target_file_idx) = self
@@ -201,8 +201,8 @@ impl<'a> CheckerState<'a> {
         alias_symbol: &tsz_binder::Symbol,
         expected_name: &str,
     ) -> Option<(SymbolId, Option<usize>)> {
-        let module_specifier = alias_symbol.import_module.as_ref()?;
-        let import_name = alias_symbol.import_name.as_deref().unwrap_or(expected_name);
+        let module_specifier = alias_symbol.import_module()?;
+        let import_name = alias_symbol.import_name().unwrap_or(expected_name);
         let source_file_idx = if alias_symbol.decl_file_idx == u32::MAX {
             self.ctx.current_file_idx
         } else {
@@ -242,7 +242,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.get_arena_for_file(symbol.decl_file_idx)
         };
         symbol.has_any_flags(symbol_flags::ALIAS)
-            && symbol.import_module.is_some()
+            && symbol.import_module().is_some()
             && symbol
                 .declarations
                 .iter()

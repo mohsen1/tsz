@@ -1376,8 +1376,8 @@ impl<'a> CheckerContext<'a> {
         if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
             return None;
         }
-        let module_specifier = symbol.import_module.as_ref()?;
-        let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
 
         let source_file_idx = if self
             .binder
@@ -1416,8 +1416,8 @@ impl<'a> CheckerContext<'a> {
         if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
             return None;
         }
-        let module_specifier = symbol.import_module.as_ref()?;
-        let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
 
         let source_file_idx = if self
             .binder

@@ -719,7 +719,7 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(sym_id) = self.find_symbol_in_arena_by_name(arena, &left_name) {
             let binder = self.binder?;
             let symbol = binder.symbols.get(sym_id)?;
-            if let Some(import_module) = symbol.import_module.as_deref() {
+            if let Some(import_module) = symbol.import_module() {
                 if import_module.starts_with('.') || import_module.starts_with('/') {
                     return None;
                 }

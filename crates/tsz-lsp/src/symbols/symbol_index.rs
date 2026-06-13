@@ -453,11 +453,11 @@ impl SymbolIndex {
         for (local_name, symbol_id) in binder.file_locals.iter() {
             if let Some(symbol) = binder.symbols.get(*symbol_id)
                 && symbol.has_any_flags(symbol_flags::ALIAS)
-                && let Some(ref source_module) = symbol.import_module
+                && let Some(source_module) = symbol.import_module()
             {
                 let exported_name = symbol
-                    .import_name
-                    .clone()
+                    .import_name()
+                    .map(|s| s.to_string())
                     .unwrap_or_else(|| local_name.clone());
 
                 let kind = if exported_name == "*" {
@@ -470,7 +470,7 @@ impl SymbolIndex {
 
                 let info = ImportInfo {
                     local_name: local_name.clone(),
-                    source_module: source_module.clone(),
+                    source_module: source_module.to_string(),
                     exported_name,
                     kind,
                 };
@@ -481,7 +481,7 @@ impl SymbolIndex {
                     .push(info);
 
                 self.importers
-                    .entry(source_module.clone())
+                    .entry(source_module.to_string())
                     .or_default()
                     .insert(file_name_owned.clone());
             }

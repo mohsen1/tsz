@@ -18,8 +18,8 @@ impl<'a> CheckerState<'a> {
         &self,
         symbol: &tsz_binder::Symbol,
     ) -> Option<(String, bool)> {
-        let module_specifier = symbol.import_module.as_deref()?;
-        let import_name = symbol.import_name.as_deref();
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name();
         let is_namespace_binding = import_name.is_none() || import_name == Some("*");
 
         if self.module_uses_module_exports_interop(
@@ -482,7 +482,7 @@ impl<'a> CheckerState<'a> {
             let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
                 continue;
             };
-            let Some(ref import_module) = sym.import_module else {
+            let Some(import_module) = sym.import_module() else {
                 continue;
             };
             // Check if the member is type-only in the target module
@@ -719,7 +719,7 @@ impl<'a> CheckerState<'a> {
         if self
             .resolve_identifier_symbol(root_idx)
             .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-            .is_some_and(|symbol| symbol.import_module.is_some())
+            .is_some_and(|symbol| symbol.import_module().is_some())
         {
             return None;
         }
@@ -797,7 +797,7 @@ impl<'a> CheckerState<'a> {
         if symbol.is_type_only {
             return true;
         }
-        if let Some(module_specifier) = symbol.import_module.as_deref() {
+        if let Some(module_specifier) = symbol.import_module() {
             let Some((export_name, is_namespace_binding)) =
                 self.effective_import_binding_name(symbol)
             else {
@@ -873,7 +873,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Namespace imports (`import * as ns`) are always values.
-        if symbol.import_name.as_deref() == Some("*") {
+        if symbol.import_name() == Some("*") {
             return false;
         }
 
@@ -901,7 +901,7 @@ impl<'a> CheckerState<'a> {
         // namespace.
         if !target_sym.has_any_flags(symbol_flags::NAMESPACE_MODULE)
             && target_sym.has_any_flags(symbol_flags::ALIAS)
-            && target_sym.import_module.is_none()
+            && target_sym.import_module().is_none()
             && let Some(file_idx) = target_file_idx
         {
             let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
@@ -912,13 +912,12 @@ impl<'a> CheckerState<'a> {
             {
                 let ident_name = target_ident.escaped_text.as_str();
                 let import_module = symbol
-                    .import_module
-                    .as_deref()
+                    .import_module()
                     .unwrap_or("")
                     .trim_matches('"')
                     .trim_matches('\'');
                 let module_keys = [
-                    symbol.import_module.as_deref().unwrap_or(""),
+                    symbol.import_module().unwrap_or(""),
                     import_module,
                     target_file_name.as_str(),
                 ];
@@ -1631,8 +1630,8 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    if let Some(ref import_module) = sym.import_module {
-                        let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
+                    if let Some(import_module) = sym.import_module() {
+                        let import_name = sym.import_name().unwrap_or(sym.escaped_name.as_str());
                         if self.is_export_type_only_in_file(
                             target_file_idx,
                             import_module,
@@ -1651,7 +1650,7 @@ impl<'a> CheckerState<'a> {
                 // type-only for cross-file import/value checks.
                 if export_name == "default"
                     && sym.has_any_flags(symbol_flags::ALIAS)
-                    && sym.import_module.is_none()
+                    && sym.import_module().is_none()
                     && let Some(target_decl_idx) = sym.primary_declaration()
                     && let Some(target_decl_node) = target_arena.get(target_decl_idx)
                     && let Some(target_ident) = target_arena.get_identifier(target_decl_node)

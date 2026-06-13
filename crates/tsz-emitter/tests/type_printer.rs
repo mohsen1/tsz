@@ -163,7 +163,7 @@ fn local_import_alias_uses_bare_name_when_alias_is_emitted() {
     symbols
         .get_mut(thing)
         .expect("missing alias symbol")
-        .import_module = Some("pkg".to_string());
+        .set_import_module(Some("pkg".to_string()));
 
     let module_path_resolver = |sym_id| (sym_id == thing).then(|| "pkg".to_string());
     let alias_name_resolver = |sym_id| sym_id == thing;
@@ -187,7 +187,7 @@ fn local_import_alias_falls_back_to_import_qualified_name_when_elided() {
     symbols
         .get_mut(thing)
         .expect("missing alias symbol")
-        .import_module = Some("inner/other.js".to_string());
+        .set_import_module(Some("inner/other.js".to_string()));
 
     let module_path_resolver = |sym_id| (sym_id == thing).then(|| "inner/other".to_string());
     let alias_name_resolver = |_sym_id| false;

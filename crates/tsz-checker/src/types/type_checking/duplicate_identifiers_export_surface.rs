@@ -473,8 +473,8 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
             && let Some(symbol) = binder.get_symbol(sym_id)
             && let (Some(module_name), Some(export_name), Some(source_file_idx)) = (
-                symbol.import_module.as_deref(),
-                symbol.import_name.as_deref(),
+                symbol.import_module(),
+                symbol.import_name(),
                 self.ctx.get_file_idx_for_arena(arena),
             )
             && let Some(target_sym_id) = self.resolve_cross_file_export_from_file(

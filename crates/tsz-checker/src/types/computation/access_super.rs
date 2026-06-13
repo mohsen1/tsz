@@ -197,7 +197,7 @@ impl<'a> CheckerState<'a> {
             }
             // Same-file classes only — cross-file references have no runtime
             // ordering relationship worth TDZ-checking here.
-            if symbol.import_module.is_some() {
+            if symbol.import_module().is_some() {
                 continue;
             }
             if symbol.decl_file_idx != u32::MAX

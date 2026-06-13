@@ -635,7 +635,7 @@ impl<'a> CheckerState<'a> {
         if symbol.is_umd_export {
             return true;
         }
-        if symbol.is_exported || symbol.import_module.is_some() {
+        if symbol.is_exported || symbol.import_module().is_some() {
             return false;
         }
         let Some(owner_binder) = self.ctx.get_binder_for_file(symbol.decl_file_idx as usize) else {
@@ -869,7 +869,7 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        if let Some(module_name) = root_symbol.import_module.as_deref() {
+        if let Some(module_name) = root_symbol.import_module() {
             let source_file_idx = self
                 .ctx
                 .resolve_symbol_file_index(root_sym)

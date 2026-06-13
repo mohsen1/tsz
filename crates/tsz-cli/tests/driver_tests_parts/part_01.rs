@@ -1718,8 +1718,8 @@ fn symbol_snapshot_by_id(binder: &BinderState, sym_id: SymbolId) -> Option<Symbo
         members,
         is_exported: sym.is_exported,
         is_type_only: sym.is_type_only,
-        import_module: sym.import_module.clone(),
-        import_name: sym.import_name.clone(),
+        import_module: sym.import_module().map(str::to_string),
+        import_name: sym.import_name().map(str::to_string),
         is_umd_export: sym.is_umd_export,
     })
 }
