@@ -1124,9 +1124,8 @@ impl ScannerState {
         self.scanner_diagnostics.clear();
     }
 
-    /// Push a no-argument scanner diagnostic. This is the single chokepoint for
-    /// the common 4-tuple `(pos, length, message, code)` form, replacing the
-    /// repeated 5-field struct literal (with `args: Vec::new()`) at every site.
+    /// Push a no-argument scanner diagnostic: the common `(pos, length, message,
+    /// code)` form, routed through [`Self::push_diag_args`] with empty `args`.
     pub(crate) fn push_diag(
         &mut self,
         pos: usize,
@@ -1137,9 +1136,8 @@ impl ScannerState {
         self.push_diag_args(pos, length, message, code, Vec::new());
     }
 
-    /// Push a scanner diagnostic carrying message-template arguments. The
-    /// no-arg [`Self::push_diag`] routes through here so both forms share one
-    /// construction site.
+    /// Push a scanner diagnostic carrying message-template arguments; the single
+    /// `ScannerDiagnostic` construction site for both `push_diag` forms.
     pub(crate) fn push_diag_args(
         &mut self,
         pos: usize,
