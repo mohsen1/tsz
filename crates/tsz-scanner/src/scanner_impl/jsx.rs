@@ -185,24 +185,22 @@ impl ScannerState {
 
             // TS1382: bare `>` in JSX text
             if c == CharacterCodes::GREATER_THAN {
-                self.scanner_diagnostics.push(ScannerDiagnostic {
-                    pos: self.pos,
-                    length: 1,
-                    message: diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
-                    code: diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
-                    args: Vec::new(),
-                });
+                self.push_diag(
+                    self.pos,
+                    1,
+                    diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                    diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                );
             }
 
             // TS1381: bare `}` in JSX text
             if c == CharacterCodes::CLOSE_BRACE {
-                self.scanner_diagnostics.push(ScannerDiagnostic {
-                    pos: self.pos,
-                    length: 1,
-                    message: diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
-                    code: diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
-                    args: Vec::new(),
-                });
+                self.push_diag(
+                    self.pos,
+                    1,
+                    diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
+                    diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
+                );
             }
 
             // Handle newlines in JSX text
