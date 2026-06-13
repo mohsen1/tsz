@@ -327,7 +327,6 @@ mod tests {
             atom: stale_atom,
             escaped_text: "uniquely_named_identifier".to_string(),
             original_text: None,
-            type_arguments: None,
         };
 
         assert_eq!(
@@ -361,7 +360,6 @@ mod tests {
             // can confirm which branch was taken.
             escaped_text: "stale_escaped_form".to_string(),
             original_text: None,
-            type_arguments: None,
         };
 
         assert_eq!(arena.resolve_identifier_text(&data), "stale_escaped_form");

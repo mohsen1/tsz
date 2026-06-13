@@ -1032,7 +1032,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else if self.is_token(SyntaxKind::ThisKeyword) {
@@ -1092,7 +1091,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else if self.is_identifier_or_keyword() {
@@ -1118,7 +1116,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 )
             } else if parameter_name_is_reserved_word {
@@ -1141,7 +1138,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 )
             } else {

@@ -171,7 +171,6 @@ mod tests {
             atom: AstAtom::NONE,
             escaped_text: text.to_string(),
             original_text: None,
-            type_arguments: None,
         }
     }
 

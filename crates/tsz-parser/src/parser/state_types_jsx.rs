@@ -400,7 +400,6 @@ impl ParserState {
                     atom,
                     escaped_text: text,
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }
@@ -420,7 +419,6 @@ impl ParserState {
                 atom,
                 escaped_text: text,
                 original_text: None,
-                type_arguments: None,
             },
         )
     }
@@ -503,7 +501,6 @@ impl ParserState {
                                 atom: tsz_common::interner::AstAtom::NONE,
                                 escaped_text: String::new(),
                                 original_text: None,
-                                type_arguments: None,
                             },
                         )
                     } else {
