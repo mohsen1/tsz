@@ -218,7 +218,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Create a flow analyzer and apply narrowing
-        let analyzer = FlowAnalyzer::from_context(&self.ctx);
+        let analyzer = FlowAnalyzer::from_ctx(&self.ctx);
 
         // Non-narrowable member accesses cannot match any control-flow
         // antecedent, so the flow walk can only return the declared type. tsc
@@ -808,7 +808,7 @@ impl<'a> CheckerState<'a> {
             crate::control_flow::symbol_first_identifier_ref(
                 self.ctx.arena,
                 self.ctx.binder,
-                Some(&self.ctx.symbol_flow_memo.first_identifier_ref),
+                Some(&self.ctx.flow_shared.symbol_flow_memo.first_identifier_ref),
                 sym,
             )
         };

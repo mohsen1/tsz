@@ -609,7 +609,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     });
 
                 if let Some(flow_node) = flow_node {
-                    let analyzer = crate::FlowAnalyzer::from_context(self.ctx);
+                    let analyzer = crate::FlowAnalyzer::from_ctx(self.ctx);
 
                     let narrowed =
                         analyzer.get_flow_type(type_query.expr_name, declared_type, flow_node);
