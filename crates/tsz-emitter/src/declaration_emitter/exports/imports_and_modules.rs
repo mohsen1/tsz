@@ -318,6 +318,12 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(std::path::Path::new(""));
         // Normalize path to remove `.` and `..` segments without requiring
         // the path to exist on disk (unlike std::fs::canonicalize).
+        //
+        // Deliberately NOT `path_identity::normalize_segments`: this loop's
+        // historical underflow policy differs (an unmatched `..` pops past a
+        // root component and is otherwise dropped, instead of clamping /
+        // being kept), and the produced candidate must keep matching the
+        // `files_with_augmentations` spellings minted under that policy.
         let joined = current_dir.join(spec);
         let mut parts = Vec::new();
         for component in joined.components() {
@@ -800,6 +806,15 @@ impl<'a> DeclarationEmitter<'a> {
         spec_stem.is_some() && spec_stem == current_stem
     }
 
+    /// Lexical `.`/`..` collapse for the self-import check above.
+    ///
+    /// Deliberately NOT `path_identity::normalize_segments`: this loop's
+    /// historical semantics differ in ways the equality check depends on —
+    /// an unmatched `..` pops past a root component (or is dropped), and
+    /// joining the components with `/` renders a rooted path with a doubled
+    /// leading slash (`//src/a`), so rooted spellings intentionally never
+    /// compare equal to the raw `current_path` and fall through to the
+    /// file-stem fallback.
     fn normalize_path_text(path: &std::path::Path) -> String {
         let mut parts = Vec::new();
         for component in path.components() {
