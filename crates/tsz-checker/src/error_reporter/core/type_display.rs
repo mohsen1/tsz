@@ -822,6 +822,10 @@ impl<'a> CheckerState<'a> {
                             visiting,
                             depth + 1,
                         );
+                        if crate::error_reporter::display_budget::is_exhausted() {
+                            visiting.remove(&ty);
+                            return evaluated;
+                        }
                         changed |=
                             normalized_read != prop.type_id || normalized_write != prop.write_type;
                         prop.type_id = normalized_read;
@@ -833,6 +837,10 @@ impl<'a> CheckerState<'a> {
                             visiting,
                             depth + 1,
                         );
+                        if crate::error_reporter::display_budget::is_exhausted() {
+                            visiting.remove(&ty);
+                            return evaluated;
+                        }
                         changed |= normalized != index.value_type;
                         index.value_type = normalized;
                     }
@@ -842,6 +850,10 @@ impl<'a> CheckerState<'a> {
                             visiting,
                             depth + 1,
                         );
+                        if crate::error_reporter::display_budget::is_exhausted() {
+                            visiting.remove(&ty);
+                            return evaluated;
+                        }
                         changed |= normalized != index.value_type;
                         index.value_type = normalized;
                     }
@@ -1078,6 +1090,10 @@ impl<'a> CheckerState<'a> {
                         visiting,
                         depth + 1,
                     );
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return evaluated;
+                    }
                     changed |=
                         normalized_read != prop.type_id || normalized_write != prop.write_type;
                     prop.type_id = normalized_read;
@@ -1089,6 +1105,10 @@ impl<'a> CheckerState<'a> {
                         visiting,
                         depth + 1,
                     );
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return evaluated;
+                    }
                     changed |= normalized != index.value_type;
                     index.value_type = normalized;
                 }
@@ -1098,6 +1118,10 @@ impl<'a> CheckerState<'a> {
                         visiting,
                         depth + 1,
                     );
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return evaluated;
+                    }
                     changed |= normalized != index.value_type;
                     index.value_type = normalized;
                 }
