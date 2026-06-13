@@ -79,12 +79,133 @@ fn record_max_inner(counter: &AtomicU64, value: u64) {
 /// `enabled_fast()` re-check via `inc()`).
 #[inline]
 pub fn record_cross_arena_symbol_miss(
+    source: CrossArenaSymbolMissSource,
+    kind: CrossArenaSymbolMissKind,
+    target_is_declaration_file: bool,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.delegate_cross_arena_symbol_miss_by_source[source.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+    c.delegate_cross_arena_symbol_miss_by_kind[kind.as_index()].fetch_add(1, Ordering::Relaxed);
+    if target_is_declaration_file {
+        c.delegate_cross_arena_symbol_miss_target_declaration_file
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        c.delegate_cross_arena_symbol_miss_target_source_file
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 #[inline]
 pub fn record_cross_arena_declaration_file_miss_residue(
+    source: CrossArenaSymbolMissSource,
+    kind: CrossArenaSymbolMissKind,
+    name: &str,
+    target_file: Option<&str>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let source_name = CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES[source.as_index()];
+    let kind_name = CROSS_ARENA_SYMBOL_MISS_KIND_NAMES[kind.as_index()];
+    let target_file = target_file.map(|file| {
+        std::path::Path::new(file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file)
+            .to_owned()
+    });
+    let mut rows = delegate_declaration_file_miss_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.name == name
+            && row.kind == kind_name
+            && row.source == source_name
+            && row.target_file == target_file
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len() < DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT {
+        rows.push(DelegateDeclarationFileMissResidue {
+            name: name.to_owned(),
+            kind: kind_name,
+            source: source_name,
+            target_file,
+            count: 1,
+        });
+    } else if let Some(row) = rows.iter_mut().find(|row| row.name == "__truncated__") {
+        row.count += 1;
+    } else {
+        rows.push(DelegateDeclarationFileMissResidue {
+            name: "__truncated__".to_string(),
+            kind: "overflow",
+            source: "overflow",
+            target_file: None,
+            count: 1,
+        });
+    }
+}
 
 #[inline]
 pub fn record_cross_arena_source_file_miss_residue(
+    source: CrossArenaSymbolMissSource,
+    kind: CrossArenaSymbolMissKind,
+    name: &str,
+    target_file: Option<&str>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let source_name = CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES[source.as_index()];
+    let kind_name = CROSS_ARENA_SYMBOL_MISS_KIND_NAMES[kind.as_index()];
+    let target_file = target_file.map(|file| {
+        std::path::Path::new(file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file)
+            .to_owned()
+    });
+    let mut rows = delegate_source_file_miss_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.name == name
+            && row.kind == kind_name
+            && row.source == source_name
+            && row.target_file == target_file
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len() < DELEGATE_SOURCE_FILE_MISS_RESIDUE_LIMIT {
+        rows.push(DelegateSourceFileMissResidue {
+            name: name.to_owned(),
+            kind: kind_name,
+            source: source_name,
+            target_file,
+            count: 1,
+        });
+    } else if let Some(row) = rows.iter_mut().find(|row| row.name == "__truncated__") {
+        row.count += 1;
+    } else {
+        rows.push(DelegateSourceFileMissResidue {
+            name: "__truncated__".to_string(),
+            kind: "overflow",
+            source: "overflow",
+            target_file: None,
+            count: 1,
+        });
+    }
+}
 
 #[inline]
 pub fn record_cross_arena_alias_shortcut_outcome(outcome: CrossArenaAliasShortcutOutcome) {
