@@ -69,7 +69,7 @@ impl<'a> FlowAnalyzer<'a> {
         use tsz_binder::flow_flags;
 
         let cache_key = (alias_sym_id.0, target.0, antecedent_id.0);
-        if let Some(cache) = self.shared_alias_path_assignment_cache {
+        if let Some(cache) = self.shared_alias_path_assignment_cache() {
             let cached = cache.borrow().get(&cache_key).copied();
             if let Some(result) = cached {
                 return result;
@@ -114,7 +114,7 @@ impl<'a> FlowAnalyzer<'a> {
                 stack.push(ant);
             }
         }
-        if let Some(cache) = self.shared_alias_path_assignment_cache {
+        if let Some(cache) = self.shared_alias_path_assignment_cache() {
             cache.borrow_mut().insert(cache_key, result);
         }
         result
@@ -348,7 +348,7 @@ impl<'a> FlowAnalyzer<'a> {
         use tsz_binder::flow_flags;
 
         let cache_key = (target.0, after_pos);
-        if let Some(cache) = self.shared_alias_base_assignment_cache {
+        if let Some(cache) = self.shared_alias_base_assignment_cache() {
             let cached = cache.borrow().get(&cache_key).copied();
             if let Some(result) = cached {
                 return result;
@@ -394,7 +394,7 @@ impl<'a> FlowAnalyzer<'a> {
                 break;
             }
         }
-        if let Some(cache) = self.shared_alias_base_assignment_cache {
+        if let Some(cache) = self.shared_alias_base_assignment_cache() {
             cache.borrow_mut().insert(cache_key, result);
         }
         result

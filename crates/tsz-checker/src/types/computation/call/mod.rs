@@ -85,6 +85,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(TypePredicate, Vec<ParamInfo>)> {
         if self
             .ctx
+            .flow_shared
             .call_type_predicates
             .is_invalid_assertion_call(call_idx.0)
         {
@@ -93,6 +94,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some((predicate, params)) = self
             .ctx
+            .flow_shared
             .call_type_predicates
             .get(&call_idx.0)
             .filter(|(predicate, _)| predicate.asserts)
@@ -132,7 +134,10 @@ impl<'a> CheckerState<'a> {
         let assertion_target_is_valid =
             !predicate.0.asserts || self.validate_assertion_call_target(call_idx, callee_idx);
         if assertion_target_is_valid {
-            self.ctx.call_type_predicates.insert(call_idx.0, predicate);
+            self.ctx
+                .flow_shared
+                .call_type_predicates
+                .insert(call_idx.0, predicate);
         }
     }
 
@@ -185,6 +190,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::ASSERTIONS_REQUIRE_THE_CALL_TARGET_TO_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME,
             );
             self.ctx
+                .flow_shared
                 .call_type_predicates
                 .mark_invalid_assertion_call(call_idx.0);
             return false;
@@ -197,6 +203,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::ASSERTIONS_REQUIRE_EVERY_NAME_IN_THE_CALL_TARGET_TO_BE_DECLARED_WITH_AN_EXPLICIT,
             );
             self.ctx
+                .flow_shared
                 .call_type_predicates
                 .mark_invalid_assertion_call(call_idx.0);
             return false;

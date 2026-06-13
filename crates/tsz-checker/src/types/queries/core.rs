@@ -1290,6 +1290,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(&cached) = self
             .ctx
+            .flow_shared
             .narrowing_cache
             .contains_type_parameters_cache
             .borrow()
@@ -1300,6 +1301,7 @@ impl<'a> CheckerState<'a> {
 
         let contains = contains_type_parameters(self.ctx.types, type_id);
         self.ctx
+            .flow_shared
             .narrowing_cache
             .contains_type_parameters_cache
             .borrow_mut()
@@ -1319,6 +1321,7 @@ impl<'a> CheckerState<'a> {
     ) -> (Option<TypeId>, Option<TypeId>) {
         if let Some(&cached) = self
             .ctx
+            .flow_shared
             .narrowing_cache
             .split_nullish_cache
             .borrow()
@@ -1329,6 +1332,7 @@ impl<'a> CheckerState<'a> {
 
         let split = split_nullish_type(self.ctx.types.as_type_database(), type_id);
         self.ctx
+            .flow_shared
             .narrowing_cache
             .split_nullish_cache
             .borrow_mut()
