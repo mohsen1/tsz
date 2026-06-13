@@ -339,6 +339,8 @@ pub struct TypeInterner {
 pub struct TypePredicateCacheStatistics {
     /// Number of memoized identity-comparability predicate results.
     pub identity_comparable_cache_entries: usize,
+    /// Number of memoized union-normalization results.
+    pub union_normalize_cache_entries: usize,
     /// Number of memoized `ThisType` containment predicate results.
     pub contains_this_cache_entries: usize,
     /// Number of memoized `infer` containment predicate results.
@@ -379,6 +381,7 @@ impl TypeInterner {
     pub fn type_predicate_cache_statistics(&self) -> TypePredicateCacheStatistics {
         TypePredicateCacheStatistics {
             identity_comparable_cache_entries: self.identity_comparable_cache.len(),
+            union_normalize_cache_entries: self.union_normalize_cache.len(),
             contains_this_cache_entries: self
                 .predicate_cache_entries_for(PredicateCacheKind::ContainsThis),
             contains_infer_cache_entries: self

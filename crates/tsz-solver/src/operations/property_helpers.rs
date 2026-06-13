@@ -664,6 +664,19 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
         }
 
+        // A structural interface body published by another checker can carry
+        // no shape symbol (or a symbol that does not map to a def in this
+        // checker's view). Recover the declaration identity through the
+        // shared store's `type_to_def` reverse mapping so members read off a
+        // generic application are still instantiated; otherwise raw type
+        // parameters leak schedule-dependently into member types.
+        if let Some(def_id) = self.resolver().def_for_type(base)
+            && let Some(params) = self.resolver().get_lazy_type_params(def_id)
+            && !params.is_empty()
+        {
+            return params;
+        }
+
         Vec::new()
     }
 
@@ -912,6 +925,19 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     let return_type = self.instantiate_type_cached(func_shape.return_type, &subst);
                     return self.resolve_property_access_inner(return_type, prop_atom);
                 }
+            }
+            if !app.args.is_empty() {
+                tracing::debug!(
+                    def_id = def_id.0,
+                    def_name = ?self
+                        .resolver()
+                        .get_def_name(def_id)
+                        .map(|atom| self.interner().resolve_atom(atom)),
+                    body_type = body_type.0,
+                    args = app.args.len(),
+                    prop = %self.interner().resolve_atom(prop_atom),
+                    "application property access: def observed with NO type params; reading raw body"
+                );
             }
             // No type params - still rebind polymorphic `this` to the concrete application.
             let resolved_body = if crate::contains_this_type(self.interner(), body_type) {
