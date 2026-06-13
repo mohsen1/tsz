@@ -222,3 +222,63 @@ fn type_parameter_target_keeps_instantiation_caveat() {
         related_messages(&diag)
     );
 }
+
+/// An *unconstrained* type-parameter target keeps `tsc`'s TS5082 caveat: the
+/// parameter could be instantiated with an arbitrary type unrelated to the
+/// concrete source. Previously the caveat was dropped whenever the parameter
+/// had no constraint (the `?` short-circuit on the missing constraint), so the
+/// bare headline was emitted alone.
+#[test]
+fn unconstrained_type_parameter_target_keeps_arbitrary_type_caveat() {
+    let diag = ts2322(
+        "function emit<Out>(value: number): Out {\n\
+         return value;\n\
+         }\n",
+    );
+    assert!(
+        diag.message_text
+            .contains("Type 'number' is not assignable to type 'Out'"),
+        "headline is the bare parameter mismatch; got: {}",
+        diag.message_text
+    );
+    assert!(
+        has_related(
+            &diag,
+            "'Out' could be instantiated with an arbitrary type which could be unrelated to 'number'",
+        ),
+        "an unconstrained type-parameter target keeps tsc's arbitrary-type caveat; got: {:?}",
+        related_messages(&diag)
+    );
+}
+
+/// A *constrained* type-parameter target whose constraint the source satisfies
+/// gets `tsc`'s TS5075 note instead of the arbitrary-type caveat: the source is
+/// assignable to the constraint, but the parameter could still be instantiated
+/// with a different, narrower subtype of that constraint.
+#[test]
+fn constrained_type_parameter_target_with_satisfied_constraint_reports_different_subtype() {
+    let diag = ts2322(
+        "function shape<Acc extends object>(value: { tag: number }): Acc {\n\
+         return value;\n\
+         }\n",
+    );
+    assert!(
+        diag.message_text
+            .contains("is not assignable to type 'Acc'"),
+        "headline relates the source to the bare parameter; got: {}",
+        diag.message_text
+    );
+    assert!(
+        has_related(
+            &diag,
+            "is assignable to the constraint of type 'Acc', but 'Acc' could be instantiated with a different subtype of constraint 'object'",
+        ),
+        "a satisfied constraint reports tsc's different-subtype note; got: {:?}",
+        related_messages(&diag)
+    );
+    assert!(
+        !has_related(&diag, "could be instantiated with an arbitrary type"),
+        "the arbitrary-type caveat must not stack on the different-subtype note; got: {:?}",
+        related_messages(&diag)
+    );
+}
