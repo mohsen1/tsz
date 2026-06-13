@@ -17,6 +17,14 @@ Options:
                     also provided as a descriptive label.
   --runs N         Number of sequential and forced runs per worker width (default: 5).
   --workers LIST   Comma-separated Rayon worker widths (default: 4,8,16).
+  --mode MODE      Candidate mode: forced, default, or both (default: forced).
+                    forced sets TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1.
+                    default only varies RAYON_NUM_THREADS, preserving normal
+                    dispatch gates. Use this for #13255 default-path witnesses.
+  --baseline-workers N
+                    Set RAYON_NUM_THREADS for baseline runs. For default-path
+                    schedule checks, use 1 to compare parallel runs against a
+                    single-worker baseline.
   --out DIR        Output directory (default: .target/forced-parallel-determinism).
 
 Environment:
@@ -26,10 +34,12 @@ Environment:
   TSZ_DETERMINISM_TIMEOUT
                    Per-run timeout in seconds (default: 150).
 
-The harness keeps the normal sequential DOM/webworker gate for baseline runs,
-then sets TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1 for forced-parallel runs. Each
-run captures raw stdout+stderr and exit code. A row passes when every captured
-byte stream and exit code matches the first sequential baseline run.
+The harness keeps normal dispatch for baseline runs unless --baseline-workers
+is set. Candidate runs either set TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1
+(--mode forced), preserve normal dispatch while varying RAYON_NUM_THREADS
+(--mode default), or do both (--mode both). Each run captures raw stdout+stderr
+and exit code. A row passes when every captured byte stream and exit code
+matches the first baseline run.
 EOF
 }
 
@@ -38,6 +48,8 @@ ROW_WAS_SET=0
 TSCONFIG_INPUT=""
 RUNS=5
 WORKERS="4,8,16"
+MODE="forced"
+BASELINE_WORKERS=""
 OUT_ROOT="$ROOT_DIR/.target/forced-parallel-determinism"
 
 while [[ $# -gt 0 ]]; do
@@ -59,6 +71,14 @@ while [[ $# -gt 0 ]]; do
       WORKERS="${2:-}"
       shift 2
       ;;
+    --mode)
+      MODE="${2:-}"
+      shift 2
+      ;;
+    --baseline-workers)
+      BASELINE_WORKERS="${2:-}"
+      shift 2
+      ;;
     --out)
       OUT_ROOT="${2:-}"
       shift 2
@@ -77,6 +97,20 @@ done
 
 if ! [[ "$RUNS" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: --runs must be a positive integer: $RUNS" >&2
+  exit 2
+fi
+
+case "$MODE" in
+  forced|default|both)
+    ;;
+  *)
+    echo "error: --mode must be forced, default, or both: $MODE" >&2
+    exit 2
+    ;;
+esac
+
+if [[ -n "$BASELINE_WORKERS" ]] && ! [[ "$BASELINE_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: --baseline-workers must be a positive integer: $BASELINE_WORKERS" >&2
   exit 2
 fi
 
@@ -167,12 +201,22 @@ echo "tsconfig=$TSCONFIG"
 echo "out=$OUT_DIR"
 echo "runs=$RUNS"
 echo "workers=$WORKERS"
+echo "mode=$MODE"
+echo "baseline_workers=${BASELINE_WORKERS:-default}"
 
-BASELINE="$OUT_DIR/sequential-1.out"
+BASELINE="$OUT_DIR/baseline-1.out"
 for run in $(seq 1 "$RUNS"); do
-  out="$OUT_DIR/sequential-$run.out"
-  run_capture "sequential run $run" "$out" "$TSZ_BIN" --noEmit -p "$TSCONFIG"
-  compare_capture "$BASELINE" "$out" "sequential run $run"
+  out="$OUT_DIR/baseline-$run.out"
+  if [[ -n "$BASELINE_WORKERS" ]]; then
+    run_capture \
+      "baseline workers=$BASELINE_WORKERS run $run" \
+      "$out" \
+      env RAYON_NUM_THREADS="$BASELINE_WORKERS" \
+      "$TSZ_BIN" --noEmit -p "$TSCONFIG"
+  else
+    run_capture "baseline run $run" "$out" "$TSZ_BIN" --noEmit -p "$TSCONFIG"
+  fi
+  compare_capture "$BASELINE" "$out" "baseline run $run"
 done
 
 IFS=',' read -ra WORKER_LIST <<< "$WORKERS"
@@ -181,15 +225,28 @@ for worker_count in "${WORKER_LIST[@]}"; do
     echo "error: worker count must be a positive integer: $worker_count" >&2
     exit 2
   fi
-  for run in $(seq 1 "$RUNS"); do
-    out="$OUT_DIR/forced-workers-${worker_count}-run-${run}.out"
-    run_capture \
-      "forced workers=$worker_count run $run" \
-      "$out" \
-      env TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1 RAYON_NUM_THREADS="$worker_count" \
-      "$TSZ_BIN" --noEmit -p "$TSCONFIG"
-    compare_capture "$BASELINE" "$out" "forced workers=$worker_count run $run"
-  done
+  if [[ "$MODE" == "forced" || "$MODE" == "both" ]]; then
+    for run in $(seq 1 "$RUNS"); do
+      out="$OUT_DIR/forced-workers-${worker_count}-run-${run}.out"
+      run_capture \
+        "forced workers=$worker_count run $run" \
+        "$out" \
+        env TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1 RAYON_NUM_THREADS="$worker_count" \
+        "$TSZ_BIN" --noEmit -p "$TSCONFIG"
+      compare_capture "$BASELINE" "$out" "forced workers=$worker_count run $run"
+    done
+  fi
+  if [[ "$MODE" == "default" || "$MODE" == "both" ]]; then
+    for run in $(seq 1 "$RUNS"); do
+      out="$OUT_DIR/default-workers-${worker_count}-run-${run}.out"
+      run_capture \
+        "default workers=$worker_count run $run" \
+        "$out" \
+        env RAYON_NUM_THREADS="$worker_count" \
+        "$TSZ_BIN" --noEmit -p "$TSCONFIG"
+      compare_capture "$BASELINE" "$out" "default workers=$worker_count run $run"
+    done
+  fi
 done
 
-echo "forced-parallel determinism passed: $OUT_DIR"
+echo "project determinism passed: $OUT_DIR"
