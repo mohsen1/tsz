@@ -24,6 +24,7 @@ include!("perf_counters/recorders/checker_session.rs");
 include!("perf_counters/recorders/solver.rs");
 include!("perf_counters/recorders/interner_resolver.rs");
 include!("perf_counters/recorders/compute_type_of_symbol.rs");
+include!("perf_counters/recorders/misc.rs");
 include!("perf_counters/dump.rs");
 include!("perf_counters/snapshot.rs");
 include!("perf_counters/residency.rs");
