@@ -74,6 +74,34 @@ impl<'a> CheckerState<'a> {
         resolved
     }
 
+    /// Widen literal annotations of `ty` for diagnostic display (#13075),
+    /// using the type environment for display-time evaluation when it is
+    /// available (so generic applications that evaluate to literals widen
+    /// like the literals they render as).
+    pub(crate) fn widen_annotation_literals_for_display(
+        &self,
+        ty: TypeId,
+        policy: crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy,
+    ) -> crate::query_boundaries::diagnostics::AnnotationWideningOutcome {
+        match self.ctx.type_env.try_borrow() {
+            Ok(env) => {
+                crate::query_boundaries::diagnostics::widen_object_property_literals_for_display_resolved(
+                    self.ctx.types,
+                    &*env,
+                    ty,
+                    policy,
+                )
+            }
+            Err(_) => {
+                crate::query_boundaries::diagnostics::widen_object_property_literals_for_display(
+                    self.ctx.types,
+                    ty,
+                    policy,
+                )
+            }
+        }
+    }
+
     pub(in crate::error_reporter) fn format_type_for_diagnostic_role(
         &mut self,
         ty: TypeId,

@@ -29,6 +29,7 @@
 
 pub mod assertion_overlap;
 pub mod classifiers;
+pub mod conditional_infer_alias;
 mod core;
 pub mod data;
 pub mod extended;
@@ -63,6 +64,7 @@ pub use classifiers::{
     is_deferred_lazy_or_indexed_access, is_deferred_type_operation,
     is_distributive_conditional_with_deferred_check, is_indexed_access, is_only_false_or_never,
 };
+pub use conditional_infer_alias::*;
 // `get_def_id` is an alias for `get_lazy_def_id` (identical semantics).
 pub use classifiers::get_lazy_def_id as get_def_id;
 pub use extended::get_application_info;

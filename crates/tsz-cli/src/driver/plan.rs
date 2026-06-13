@@ -12,7 +12,7 @@ use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, NewLine, T
 use crate::config::{
     CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, TsConfig,
     checker_target_from_emitter, parse_tsconfig_with_diagnostics, resolve_default_lib_files,
-    resolve_lib_files,
+    resolve_lib_files, strict_family,
 };
 use tsz::checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_common::common::NewLineKind;
@@ -152,69 +152,43 @@ pub(super) fn apply_cli_overrides_with_config_options(
         // importHelpers means "import from tslib" — suppress inline helper emission
         options.printer.no_emit_helpers = true;
     }
-    if args.strict {
-        options.checker.strict = true;
-        // Expand --strict to individual flags (matching TypeScript behavior).
-        // NOTE: noImplicitReturns is NOT part of --strict in TypeScript.
-        options.checker.no_implicit_any = true;
-        options.checker.strict_null_checks = true;
-        options.checker.strict_function_types = true;
-        options.checker.strict_bind_call_apply = true;
-        options.checker.strict_property_initialization = true;
-        options.checker.no_implicit_this = true;
-        options.checker.use_unknown_in_catch_variables = true;
-        options.checker.strict_builtin_iterator_return = true;
-        options.checker.always_strict = true;
-        options.printer.always_strict = true;
+    // Strict-family expansion and explicit member overrides are owned by the
+    // shared `strict_family` table (tsc 6.0 `getStrictOptionValue`).
+    // NOTE: noImplicitReturns is NOT part of --strict in TypeScript.
+    // An explicit `--strict false` (forwarded by `preprocess_args` through
+    // the hidden side-channel) contracts a config `strict: true` plus its
+    // expansion to `false`; the explicit `Option<bool>` member overrides are
+    // applied after the umbrella inside the helper, so `--strict false
+    // --strictNullChecks=true` still keeps `strict_null_checks = true`
+    // (issue #3861). `alwaysStrict` is not a strict-family member in tsc 6.0
+    // (`alwaysStrict !== false`, independent of `strict`), so neither
+    // `--strict` nor `--strict false` touches it; only the explicit
+    // `--alwaysStrict` override below does.
+    let strict_umbrella = if args.strict {
+        Some(true)
     } else if args
         .explicitly_disabled_bool_flags
         .iter()
         .any(|name| name == "strict")
     {
-        // Mirror config loader's strict-disable expansion: explicit
-        // `--strict false` (forwarded by `preprocess_args` through the hidden
-        // side-channel) flips a config `strict: true` plus its expansion to
-        // `false`. Must run before the individual `Option<bool>` family
-        // overrides below so that `--strict false --strictNullChecks=true`
-        // still keeps `strict_null_checks = true` (issue #3861).
-        options.checker.strict = false;
-        options.checker.no_implicit_any = false;
-        // noImplicitReturns is NOT part of the strict family; do not reset it here.
-        options.checker.strict_null_checks = false;
-        options.checker.strict_function_types = false;
-        options.checker.strict_bind_call_apply = false;
-        options.checker.strict_property_initialization = false;
-        options.checker.no_implicit_this = false;
-        options.checker.use_unknown_in_catch_variables = false;
-        options.checker.strict_builtin_iterator_return = false;
-        options.checker.always_strict = false;
-        options.printer.always_strict = false;
-    }
-    // Individual strict flag overrides (must come after --strict expansion)
-    if let Some(val) = args.strict_null_checks {
-        options.checker.strict_null_checks = val;
-    }
-    if let Some(val) = args.strict_function_types {
-        options.checker.strict_function_types = val;
-    }
-    if let Some(val) = args.strict_property_initialization {
-        options.checker.strict_property_initialization = val;
-    }
-    if let Some(val) = args.strict_bind_call_apply {
-        options.checker.strict_bind_call_apply = val;
-    }
-    if let Some(val) = args.no_implicit_this {
-        options.checker.no_implicit_this = val;
-    }
-    if let Some(val) = args.no_implicit_any {
-        options.checker.no_implicit_any = val;
-    }
-    if let Some(val) = args.use_unknown_in_catch_variables {
-        options.checker.use_unknown_in_catch_variables = val;
-    }
-    if let Some(val) = args.strict_builtin_iterator_return {
-        options.checker.strict_builtin_iterator_return = val;
-    }
+        Some(false)
+    } else {
+        None
+    };
+    strict_family::apply_strict_family(
+        &mut options.checker,
+        &strict_family::StrictFamilyOverrides {
+            strict: strict_umbrella,
+            no_implicit_any: args.no_implicit_any,
+            no_implicit_this: args.no_implicit_this,
+            strict_null_checks: args.strict_null_checks,
+            strict_function_types: args.strict_function_types,
+            strict_bind_call_apply: args.strict_bind_call_apply,
+            strict_property_initialization: args.strict_property_initialization,
+            strict_builtin_iterator_return: args.strict_builtin_iterator_return,
+            use_unknown_in_catch_variables: args.use_unknown_in_catch_variables,
+        },
+    );
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
     }
@@ -532,10 +506,10 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
     for name in &args.explicitly_disabled_bool_flags {
         if matches!(
             name.as_str(),
-            // `strict` is handled earlier (just after the `--strict` true
-            // expansion) so the strict-family `Option<bool>` overrides that
-            // run between can still win over the disable. See the
-            // `else if` branch on `args.strict` above.
+            // `strict` is handled earlier by the shared `strict_family`
+            // helper, which applies the explicit `Option<bool>` member
+            // overrides after the umbrella so they win over the disable
+            // (issue #3861). See `apply_strict_family` above.
             "strict"
                 // CLI-only display flag; no compiler option to toggle.
                 | "noErrorTruncation"

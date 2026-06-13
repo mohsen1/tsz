@@ -269,21 +269,24 @@ impl Default for CheckerOptions {
 
 impl CheckerOptions {
     /// Apply TypeScript's `--strict` defaults to individual strict flags.
-    /// In tsc, enabling `strict` turns on the strict family unless explicitly disabled.
-    /// We mirror that behavior by OR-ing the per-flag booleans with `strict`.
+    ///
+    /// In tsc, enabling `strict` turns on every strict-family member that is
+    /// not explicitly provided. This builder variant has no explicitly-set
+    /// mask, so it re-expands the umbrella over the whole family table;
+    /// callers that track which members the user provided must use
+    /// [`super::strict_family::apply_strict_family`] instead so explicit
+    /// members win over the umbrella.
+    ///
+    /// `alwaysStrict` is not touched: tsc 6.0 removed it from the strict
+    /// family (`TypeScript/src/compiler/utilities.ts`
+    /// `computedOptions.alwaysStrict`: "Previously a strict-mode flag, but
+    /// no longer"); it resolves as `alwaysStrict !== false`, independent of
+    /// `strict`. `exactOptionalPropertyTypes` and other options are likewise
+    /// not implied by `--strict`.
     #[must_use]
-    pub const fn apply_strict_defaults(mut self) -> Self {
+    pub fn apply_strict_defaults(mut self) -> Self {
         if self.strict {
-            self.no_implicit_any = true;
-            self.no_implicit_this = true;
-            self.strict_null_checks = true;
-            self.strict_function_types = true;
-            self.strict_bind_call_apply = true;
-            self.strict_property_initialization = true;
-            self.use_unknown_in_catch_variables = true;
-            self.always_strict = true;
-            self.strict_builtin_iterator_return = true;
-            // exactOptionalPropertyTypes and other opts are not implied by --strict
+            super::strict_family::expand_strict(&mut self, true);
         }
         self
     }

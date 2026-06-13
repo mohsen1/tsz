@@ -639,6 +639,47 @@ pub(crate) fn display_widen_for_redeclaration(db: &dyn TypeDatabase, type_id: Ty
     tsz_solver::operations::widening::display_widen_for_redeclaration(db, type_id)
 }
 
+/// Policy selecting which literal annotation kinds
+/// [`widen_object_property_literals_for_display`] rewrites.
+pub(crate) use tsz_solver::operations::widening::AnnotationLiteralWideningPolicy;
+/// Outcome of [`widen_object_property_literals_for_display`]: the widened
+/// `TypeId` plus whether literal spellings remain in display provenance that
+/// only a display-property-free formatter can hide.
+pub(crate) use tsz_solver::operations::widening::AnnotationWideningOutcome;
+
+/// Widen literal types in annotation positions (object property types, method
+/// return types, function parameter annotations, index-signature value types,
+/// labeled tuple elements) for diagnostic display, then let the caller reprint
+/// the result.
+///
+/// Type-level replacement for the checker's former byte-walking display
+/// rewriters (issue #13075): widening happens on the `TypeId` through the
+/// solver's widening operations and the formatter prints the widened type
+/// once. Top-level literals, bare union/intersection members, unlabeled tuple
+/// elements, and non-method function return types are preserved, matching the
+/// positions a `": <literal>"` text rewrite could reach.
+pub(crate) fn widen_object_property_literals_for_display(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    policy: AnnotationLiteralWideningPolicy,
+) -> AnnotationWideningOutcome {
+    tsz_solver::operations::widening::widen_annotation_literals_for_display(db, type_id, policy)
+}
+
+/// Like [`widen_object_property_literals_for_display`], with a resolver so
+/// leading annotation positions held by generic applications that evaluate
+/// to literals (and render as such) widen too.
+pub(crate) fn widen_object_property_literals_for_display_resolved<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+    policy: AnnotationLiteralWideningPolicy,
+) -> AnnotationWideningOutcome {
+    tsz_solver::operations::widening::widen_annotation_literals_for_display_resolved(
+        db, resolver, type_id, policy,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

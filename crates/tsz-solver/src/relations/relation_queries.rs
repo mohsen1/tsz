@@ -662,17 +662,8 @@ pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     context: RelationContext<'a>,
 ) -> CompatChecker<'a, R> {
     let mut checker = CompatChecker::with_resolver(interner, resolver);
-    configure_compat_checker_policy_bits(&mut checker, policy);
+    configure_compat_checker_policy(&mut checker, policy);
     checker.set_inheritance_graph(context.inheritance_graph);
-    checker.set_strict_subtype_checking(policy.strict_subtype_checking);
-    checker.set_strict_any_propagation(policy.strict_any_propagation);
-    checker.set_any_source_not_related(matches!(
-        policy.any_propagation_mode,
-        AnyPropagationMode::AnySourceNotRelated
-    ));
-    checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
-    checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
-    checker.set_erase_generics(policy.erase_generics);
     if let Some(query_db) = context.query_db {
         checker.set_query_db(query_db);
     }
@@ -688,12 +679,8 @@ pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
     policy: RelationPolicy,
     context: RelationContext<'a>,
 ) -> SubtypeChecker<'a, R> {
-    let mut checker = configure_subtype_checker_policy_bits(
-        SubtypeChecker::with_resolver(interner, resolver),
-        policy,
-    )
-    .with_any_propagation_mode(policy.any_propagation_mode)
-    .with_assume_related_on_cycle(policy.assume_related_on_cycle);
+    let mut checker =
+        configure_subtype_checker_policy(SubtypeChecker::with_resolver(interner, resolver), policy);
     if let Some(query_db) = context.query_db {
         checker = checker.with_query_db(query_db);
     }
@@ -704,6 +691,22 @@ pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
         checker = checker.with_class_check(class_check);
     }
     checker
+}
+
+fn configure_compat_checker_policy<R: TypeResolver>(
+    checker: &mut CompatChecker<'_, R>,
+    policy: RelationPolicy,
+) {
+    configure_compat_checker_policy_bits(checker, policy);
+    checker.set_strict_subtype_checking(policy.strict_subtype_checking);
+    checker.set_strict_any_propagation(policy.strict_any_propagation);
+    checker.set_any_source_not_related(matches!(
+        policy.any_propagation_mode,
+        AnyPropagationMode::AnySourceNotRelated
+    ));
+    checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
+    checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
+    checker.set_erase_generics(policy.erase_generics);
 }
 
 fn configure_compat_checker_policy_bits<R: TypeResolver>(
@@ -719,6 +722,15 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.set_disable_method_bivariance(policy.disable_method_bivariance());
 
     apply_policy_bits_to_subtype_checker(&mut checker.subtype, policy);
+}
+
+const fn configure_subtype_checker_policy<'a, R: TypeResolver>(
+    checker: SubtypeChecker<'a, R>,
+    policy: RelationPolicy,
+) -> SubtypeChecker<'a, R> {
+    configure_subtype_checker_policy_bits(checker, policy)
+        .with_any_propagation_mode(policy.any_propagation_mode)
+        .with_assume_related_on_cycle(policy.assume_related_on_cycle)
 }
 
 const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
@@ -776,83 +788,64 @@ pub fn check_application_variance<R: TypeResolver>(
         (Some(TypeData::Application(s)), Some(TypeData::Application(t))) => (s, t),
         _ => return None,
     };
-
     let s_app = db.type_application(s_app_id);
     let t_app = db.type_application(t_app_id);
 
-    // Only for same-base applications with matching arg counts
-    if s_app.base != t_app.base || s_app.args.len() != t_app.args.len() {
-        return None;
-    }
-
-    let def_id = lazy_def_id(db, s_app.base)?;
-
-    // Conditional type aliases with concrete (non-type-parameter) arguments
-    // must expand structurally so that tsc's `getRecursionIdentity` depth cap
-    // can apply. A direct variance check would short-circuit the recursive
-    // evaluation path and produce false TS2322 errors for deeply-recursive
-    // conditional aliases like `PathRecord<"a.b.c.d", V>` where tsc returns
-    // `Ternary.Maybe` (assumed compatible) after hitting the recursion limit.
-    //
-    // When the source arguments contain free type parameters (e.g.
-    // `__Awaited<T>` vs `__Awaited<U>` where T and U are different unconstrained
-    // type params), variance is reliable: the recursion-identity depth cap does
-    // not fire for type parameters (they have no concrete string value to split),
-    // and T is genuinely not assignable to U.
-    if let Some(body) = resolver.get_def_raw_body(def_id, db)
-        && matches!(db.lookup(body), Some(TypeData::Conditional(_)))
-        && !s_app
-            .args
-            .iter()
-            .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+    let same_base_same_arity = s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+    let base_def_id = |base| {
+        crate::type_queries::conditional_infer_alias::application_base_def_id(db, resolver, base)
+    };
+    let is_conditional_alias_base = |base| {
+        if query_db.is_some_and(|query_db| query_db.is_conditional_alias_base(base)) {
+            return true;
+        }
+        let Some(def_id) = base_def_id(base) else {
+            return false;
+        };
+        let Some(body) = resolver.get_def_raw_body(def_id, db) else {
+            return false;
+        };
+        matches!(db.lookup(body), Some(TypeData::Conditional(_)))
+    };
+    // Conditional type aliases must expand structurally at this public query
+    // boundary. Their relation outcome can depend on constraint-sensitive
+    // conditional evaluation and recursion identity, so a same-base variance
+    // shortcut is not definitive even when both applications share arity.
+    if same_base_same_arity
+        && (is_conditional_alias_base(s_app.base) || is_conditional_alias_base(t_app.base))
     {
         return None;
     }
 
-    let variances = resolver.get_type_param_variance(def_id).or_else(|| {
-        crate::relations::variance::compute_type_param_variances_with_resolver_cached(
-            db, resolver, query_db, def_id,
-        )
-    });
+    if !same_base_same_arity {
+        return None;
+    }
 
-    let variances = variances?;
+    let variances = {
+        let def_id = lazy_def_id(db, s_app.base)?;
+        resolver.get_type_param_variance(def_id).or_else(|| {
+            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
+                db, resolver, query_db, def_id,
+            )
+        })?
+    };
     if variances.len() != s_app.args.len() {
         return None;
     }
 
-    // If all parameters are independent (no variance info), we can't make any
-    // conclusion from variance alone — fall through to structural checking,
-    // EXCEPT when at least one target arg is `any`. `any` is the universal
-    // sink in any-propagation mode, so even with unknown variance, source
-    // -> target is trivially satisfied at that position. Returning True
-    // here prevents structural expansion of recursive aliases like
-    // `FlatArray<Arr, any>` from spuriously rejecting valid assignments.
-    if variances.iter().all(|v| v.is_empty()) {
-        if !policy.strict_any_propagation
-            && t_app.args.iter().any(|a| a.is_any())
-            && s_app
-                .args
-                .iter()
-                .zip(t_app.args.iter())
-                .all(|(s_arg, t_arg)| t_arg.is_any() || *s_arg == *t_arg)
-        {
-            return Some(true);
-        }
+    let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
+    let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
+    if needs_structural_fallback || rejection_unreliable {
         return None;
     }
 
-    // Set up a compat checker for the argument checks
     let mut checker = configured_compat_checker(db, resolver, policy, context);
     if let Some(qdb) = query_db {
         checker.set_query_db(qdb);
     }
 
-    // When variance is empty/unknown for some parameters, we still need to check
-    // type argument assignability to catch cases where different type parameters
-    // (like T vs U) are not assignable to each other.
-    let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
-    let mut all_ok = true;
     let mut any_checked = false;
+    let mut all_ok = true;
     for (i, variance) in variances.iter().enumerate() {
         let s_arg = s_app.args[i];
         let t_arg = t_app.args[i];
@@ -876,67 +869,44 @@ pub fn check_application_variance<R: TypeResolver>(
                 break;
             }
         }
-        // Independent: no check needed
     }
 
-    // If we didn't actually check any parameter (all independent), fall through
-    if !any_checked {
-        return None;
-    }
-
-    if all_ok {
-        // When any type parameter's variance is marked as needing structural fallback
-        // (due to mapped type modifiers like -?/+?), don't trust the variance shortcut.
-        // Fall through to structural comparison. This handles cases like
-        // Required<{a?}> vs Required<{b?}> where args are mutually assignable
-        // but the mapped type results are structurally incompatible.
-        if needs_structural_fallback {
-            return None;
-        }
-        return Some(true);
-    }
-
-    // When variance check fails AND rejection is unreliable (indexed access
-    // types can normalize away differences between type arguments), don't
-    // conclusively reject. Fall through to structural comparison.
-    if variances.iter().any(|v| v.rejection_unreliable()) {
-        return None;
-    }
-
-    // When structural fallback is needed (mapped types with modifiers like
-    // +?/-?/+readonly/-readonly), variance failures are NOT definitive —
-    // UNLESS the type parameter also has direct usage in non-mapped-type
-    // positions (function params, properties). Direct usage provides a
-    // reliable variance signal, so the rejection can be trusted. This matches
-    // tsc's probe-based variance where interfaces with both call signatures
-    // and mapped-type members get plain Invariant (no Unmeasurable flag).
-    if needs_structural_fallback {
-        let has_reliable_rejection = variances.iter().any(|v| v.has_direct_usage());
-        if !has_reliable_rejection {
-            return None;
-        }
-    }
-    if alias_body_application_uses_type_parameters(db, resolver, def_id) {
-        return None;
-    }
-    Some(false)
-}
-
-fn alias_body_application_uses_type_parameters<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
-    def_id: crate::def::DefId,
-) -> bool {
-    let Some(body) = resolver.resolve_lazy(def_id, db) else {
-        return false;
-    };
-    let Some(app_id) = crate::visitor::application_id(db, body) else {
-        return false;
-    };
-    let app = db.type_application(app_id);
-    app.args
+    let source_args_contain_type_parameters = s_app
+        .args
         .iter()
-        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg));
+    let type_has_method_property = |type_id| {
+        crate::visitor::object_shape_id(db, type_id)
+            .or_else(|| crate::visitor::object_with_index_shape_id(db, type_id))
+            .map(|shape_id| db.object_shape(shape_id))
+            .is_some_and(|shape| shape.properties.iter().any(|prop| prop.is_method))
+    };
+    let base_has_method_property = |base| {
+        let Some(def_id) = base_def_id(base) else {
+            return false;
+        };
+        resolver
+            .get_def_raw_body(def_id, db)
+            .or_else(|| resolver.resolve_lazy(def_id, db))
+            .is_some_and(type_has_method_property)
+    };
+    if any_checked
+        && !all_ok
+        && (!source_args_contain_type_parameters
+            || (variances.iter().any(|v| v.has_direct_usage())
+                && !base_has_method_property(s_app.base)
+                && !base_has_method_property(t_app.base)))
+    {
+        return Some(false);
+    }
+
+    // Both positive and negative outcomes still fall through structurally at
+    // this boundary. Even concrete-looking application arguments can normalize
+    // through recursive conditionals, global aliases, mapped/indexed access, or
+    // declared-variance bodies before `tsc` decides assignability. The ordinary
+    // solver relation path owns definitive App/App variance decisions after
+    // those structural hooks have been observed.
+    None
 }
 
 /// Check if two type parameters are assignable to each other.
