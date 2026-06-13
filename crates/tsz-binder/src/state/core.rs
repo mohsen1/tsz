@@ -1771,22 +1771,16 @@ impl BinderState {
                         i += 1;
                     }
                 }
-                sym.first_declaration_span = sym
-                    .declarations
-                    .first()
-                    .and_then(|decl| arena.get(*decl).map(|n| (n.pos, n.end)));
                 if sym.value_declaration == node {
                     sym.value_declaration =
                         sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                    sym.value_declaration_span = if sym.value_declaration.is_some() {
+                    let value_span = if sym.value_declaration.is_some() {
                         arena.pos_end_at(sym.value_declaration)
                     } else {
                         None
                     };
-                    sym.stable_value_declaration = crate::symbols::StableLocation::from_span(
-                        self.file_idx,
-                        sym.value_declaration_span,
-                    );
+                    sym.stable_value_declaration =
+                        crate::symbols::StableLocation::from_span(self.file_idx, value_span);
                 }
             }
         }

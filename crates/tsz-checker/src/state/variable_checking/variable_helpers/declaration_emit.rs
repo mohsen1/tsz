@@ -1539,8 +1539,8 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             candidate_symbol.escaped_name == symbol.escaped_name
-                && (candidate_symbol.value_declaration_span == symbol.value_declaration_span
-                    || candidate_symbol.first_declaration_span == symbol.first_declaration_span)
+                && (candidate_symbol.value_declaration_span() == symbol.value_declaration_span()
+                    || candidate_symbol.first_declaration_span() == symbol.first_declaration_span())
         };
 
         for candidate in owner_binder.symbols.iter() {

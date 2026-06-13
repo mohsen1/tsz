@@ -325,9 +325,9 @@ impl<'a> CheckerContext<'a> {
         // Prefer binder-owned stable declaration spans over raw NodeIndex-based
         // reconstruction so fallback identity does not treat syntax handles as
         // semantic coordinates.
-        let span = symbol.first_declaration_span.or_else(|| {
+        let span = symbol.first_declaration_span().or_else(|| {
             if symbol.value_declaration.is_some() {
-                symbol.value_declaration_span
+                symbol.value_declaration_span()
             } else {
                 None
             }
@@ -541,9 +541,9 @@ impl<'a> CheckerContext<'a> {
         } else {
             tsz_solver::def::DefKind::TypeAlias
         };
-        let span = symbol.first_declaration_span.or_else(|| {
+        let span = symbol.first_declaration_span().or_else(|| {
             if symbol.value_declaration.is_some() {
-                symbol.value_declaration_span
+                symbol.value_declaration_span()
             } else {
                 None
             }
