@@ -1613,7 +1613,16 @@ impl BinderState {
         // block scope (e.g., for-loop), the hoisted symbol lives in a parent scope
         // and won't be found in current_scope. Look it up via node_symbols which
         // was populated during hoisting.
+        // `node_symbols` is keyed on the declaration's `NodeIndex`. The synthetic
+        // `arguments` binding (`declare_arguments_symbol`) uses `NodeIndex::NONE`
+        // (`u32::MAX`) as its key, which is shared by every function scope. Looking up
+        // that sentinel here would make a later function's synthetic `arguments` (or
+        // any other `NONE`-keyed declaration) reuse the *previous* function's symbol,
+        // merging their parameter/`var` declarations into one cross-function symbol and
+        // producing spurious TS2403. Only real, hoisted declarations participate in this
+        // reuse path, so require a concrete declaration node.
         if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+            && declaration.is_some()
             && let Some(&existing_id) = self.node_symbols.get(&declaration.0)
             && self.symbols.get(existing_id).is_some_and(|sym| {
                 // Only reuse the existing symbol if it was actually hoisted as a
@@ -1633,11 +1642,26 @@ impl BinderState {
                     sym.is_exported = true;
                 }
             }
-            self.declare_in_persistent_scope_with_atom(
-                name.to_string(),
-                name_atom_key,
-                existing_id,
-            );
+            // The hoisted `var` symbol is homed in the enclosing function/source/module
+            // scope, not in this (possibly nested) block scope. Only re-expose it in the
+            // current scope's table when that scope is the var's home. Writing it into a
+            // nested block table would make a later same-name block-scoped declaration
+            // (e.g. `function x() {}` in a `catch`/`if`/loop block under ES2015) collide
+            // with it via the bind-time `current_scope()` lookup, producing spurious
+            // TS2300. References inside the block still resolve through the persistent
+            // scope's parent chain, so the home-scope entry is sufficient. This restores
+            // the pre-arena-collapse behavior, where the transient block `current_scope`
+            // never received the hoisted var.
+            let home_scope = self
+                .current_persistent_scope()
+                .is_none_or(crate::scopes::Scope::is_function_scope);
+            if home_scope {
+                self.declare_in_persistent_scope_with_atom(
+                    name.to_string(),
+                    name_atom_key,
+                    existing_id,
+                );
+            }
             return existing_id;
         }
 
