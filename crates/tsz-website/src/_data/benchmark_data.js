@@ -880,6 +880,9 @@ function categoryFor(name, lines) {
   if (name.startsWith("ts-toolbelt/")) return "Single file: ts-toolbelt";
   if (name.startsWith("ts-essentials/")) return "Single file: ts-essentials";
   if (isTinyBenchmark(lines)) return "Tiny File Benchmarks";
+  if (/Recursive utility aliases|Indexed access hotspot|Remapped accessor hotspot|Conditional infer hotspot|Object spread hotspot|Contextual callback hotspot/i.test(name)) {
+    return "Project Hotspot Microbenchmarks";
+  }
   if (/Recursive generic|Conditional dist|Mapped type/i.test(name)) return "Solver Stress Tests";
   if (/\d+\s+classes|\d+\s+generic functions|\d+\s+union members|DeepPartial|Shallow optional/i.test(name)) {
     return "Synthetic Type Workloads";
@@ -960,6 +963,10 @@ function categoryMeta(category) {
       title: "Generated type workloads",
       description: "Generated stress tests that isolate specific type-system patterns.",
     },
+    "Project Hotspot Microbenchmarks": {
+      title: "Project hotspot probes",
+      description: "Focused synthetic rows that isolate hot patterns found in real project benchmark regressions.",
+    },
     "Solver Stress Tests": {
       title: "Solver stress",
       description: "Upper-bound tests for recursive, mapped, and conditional type complexity.",
@@ -1029,6 +1036,7 @@ function benchmarkKind(category) {
   if (isProjectCategory(category)) return "project";
   if (isExternalLibraryCategory(category)) return "library file";
   if (category === "Tiny File Benchmarks") return "startup";
+  if (category === "Project Hotspot Microbenchmarks") return "hotspot";
   if (category === "Solver Stress Tests") return "solver stress";
   if (category === "Synthetic Type Workloads") return "synthetic";
   return "benchmark";
@@ -1074,6 +1082,24 @@ function benchmarkFocus(row, category) {
   }
   if (name.includes("union members")) {
     return "Union construction, reduction, and assignability checks.";
+  }
+  if (name.includes("Recursive utility aliases")) {
+    return "Recursive utility alias applications that stress generic instantiation, substitution, and cache reuse.";
+  }
+  if (name.includes("Indexed access hotspot")) {
+    return "Indexed access over mapped reader helpers, a reduced shape from project-row property access pressure.";
+  }
+  if (name.includes("Remapped accessor hotspot")) {
+    return "Mapped-type key remapping with accessor-like property surfaces.";
+  }
+  if (name.includes("Conditional infer hotspot")) {
+    return "Conditional infer extraction chains that probe repeated evaluation and inference reuse.";
+  }
+  if (name.includes("Object spread hotspot")) {
+    return "Object spread inference and property merging from project-style update pipelines.";
+  }
+  if (name.includes("Contextual callback hotspot")) {
+    return "Contextual typing through callback dispatch tables with repeated generic payload shapes.";
   }
   if (name.includes("classes")) {
     return "Class declaration binding plus constructor/member shape checking.";
@@ -1417,6 +1443,7 @@ function buildGroupedBenchmarks(data) {
     "Single file: ts-essentials",
     "General Benchmarks",
     "Synthetic Type Workloads",
+    "Project Hotspot Microbenchmarks",
     "Solver Stress Tests",
     "Tiny File Benchmarks",
   ];
