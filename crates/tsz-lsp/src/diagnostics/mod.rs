@@ -377,6 +377,17 @@ pub struct UnchangedDocumentDiagnosticReport {
     pub result_id: String,
 }
 
+/// The response payload for `textDocument/diagnostic` — either a full report
+/// or an `Unchanged` marker against the client's `previousResultId`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum DocumentDiagnosticReport {
+    /// Full set of diagnostics with a fresh `result_id`.
+    Full(FullDocumentDiagnosticReport),
+    /// Diagnostics identical to the client's `previousResultId` snapshot.
+    Unchanged(UnchangedDocumentDiagnosticReport),
+}
+
 /// A workspace diagnostic report item — either full or unchanged per document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

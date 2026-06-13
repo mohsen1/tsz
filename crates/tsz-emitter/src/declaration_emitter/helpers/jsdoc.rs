@@ -604,23 +604,21 @@ impl<'a> DeclarationEmitter<'a> {
         output
     }
 
+    /// Resolve a `./`/`../` specifier against the current ambient module
+    /// name. The collapse loop is owned by
+    /// `tsz_common::module_resolution::path_identity` (lossy variant: an
+    /// unmatched `..` escaping the virtual module root is dropped, the
+    /// historical behavior of this site).
     fn resolve_ambient_module_relative_specifier(
         current_module: &str,
         module_specifier: &str,
     ) -> String {
         let mut parts: Vec<&str> = current_module.split('/').collect();
         parts.pop();
-
-        for part in module_specifier.split('/') {
-            match part {
-                "" | "." => {}
-                ".." => {
-                    parts.pop();
-                }
-                _ => parts.push(part),
-            }
-        }
-
+        tsz_common::module_resolution::path_identity::apply_slash_segments_lossy(
+            &mut parts,
+            module_specifier,
+        );
         parts.join("/")
     }
 

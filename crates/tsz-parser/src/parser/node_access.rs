@@ -176,6 +176,24 @@ impl NodeArenaInner {
         ident.atom == tsz_common::interner::AstAtom::NONE && ident.escaped_text.is_empty()
     }
 
+    /// Name of the first class-body member dropped by parser error recovery
+    /// whose shape matches tsc's `var <name>() { }` recovery emit and whose
+    /// position falls inside `[pos, end)` — normally a class node's span.
+    ///
+    /// The class emitters use this to append tsc's recovery tail
+    /// (`var <name>;` plus a recovered function/arrow expression) after the
+    /// class output, mirroring tsc parsing the malformed member as statements
+    /// following the aborted class body. See
+    /// [`crate::parser::node::ClassBodyVarFnRecovery`].
+    #[must_use]
+    pub fn class_body_var_fn_recovery_name_in_span(&self, pos: u32, end: u32) -> Option<&str> {
+        self.class_body_var_fn_recoveries
+            .iter()
+            .filter(|recovery| recovery.pos >= pos && recovery.pos < end)
+            .min_by_key(|recovery| recovery.pos)
+            .map(|recovery| recovery.name.as_str())
+    }
+
     /// Get the borrowed text of an `Identifier` node. Returns `None` for any
     /// other kind, including `PrivateIdentifier` -- mirrors the common
     /// caller-side pattern that pre-filters on `SyntaxKind::Identifier`

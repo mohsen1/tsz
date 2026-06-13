@@ -583,3 +583,81 @@ fn test_var_function_recovery_supports_dollar_identifier() {
         "Recovery emit should keep `$` in identifier: {output}"
     );
 }
+
+#[test]
+fn test_var_function_recovery_emits_canonical_tail() {
+    let output = emit_class("class C {\n    var constructor() { }\n}");
+    assert!(
+        output.contains("var C = /** @class */ (function () {"),
+        "Class IIFE should still be emitted before the recovery tail: {output}"
+    );
+    assert!(
+        output.ends_with("var constructor;\n(function () { });"),
+        "Recovered `var <name>() {{ }}` class member should emit tsc's canonical tail: {output}"
+    );
+}
+
+#[test]
+fn test_var_function_recovery_supports_renamed_binder() {
+    let output = emit_class("class Widget {\n    var myWidget_3() { }\n}");
+    assert!(
+        output.ends_with("var myWidget_3;\n(function () { });"),
+        "Recovery tail should use the recovered declaration name verbatim: {output}"
+    );
+}
+
+#[test]
+fn test_var_function_recovery_requires_var_keyword() {
+    let output = emit_class("class C {\n    let constructor() { }\n}");
+    assert!(
+        !output.contains("(function () { });"),
+        "`let` class-member recovery must not emit the var recovery tail: {output}"
+    );
+}
+
+#[test]
+fn test_var_function_recovery_requires_empty_parameter_list() {
+    let output = emit_class("class C {\n    var fn(a) { }\n}");
+    assert!(
+        !output.contains("var fn;"),
+        "Recovered member with parameters must not emit the recovery tail: {output}"
+    );
+}
+
+#[test]
+fn test_var_function_recovery_requires_empty_body() {
+    let output = emit_class("class C {\n    var fn() { run(); }\n}");
+    assert!(
+        !output.contains("var fn;"),
+        "Recovered member with a non-empty body must not emit the recovery tail: {output}"
+    );
+}
+
+#[test]
+fn test_var_function_recovery_skips_return_type_annotation() {
+    let output = emit_class("class C {\n    var fn(): void { }\n}");
+    assert!(
+        !output.contains("var fn;"),
+        "Recovered member with a return type must not emit the recovery tail: {output}"
+    );
+}
+
+#[test]
+fn test_var_initializer_member_has_no_recovery_tail() {
+    let output = emit_class("class C {\n    var x = 1;\n}");
+    assert!(
+        !output.contains("(function () { });"),
+        "`var x = 1` recovery is a property, not the var-function tail: {output}"
+    );
+}
+
+#[test]
+fn test_var_function_recovery_ignores_string_literal_text() {
+    // A healthy class must not gain a recovery tail just because a string
+    // literal inside it happens to contain the `var <name> () { }` shape.
+    let output = emit_class("class C {\n    m() { return \"var hijack () { }\"; }\n}");
+    assert!(
+        !output.contains("var hijack;"),
+        "String literal contents must not trigger the recovery tail: {output}"
+    );
+}

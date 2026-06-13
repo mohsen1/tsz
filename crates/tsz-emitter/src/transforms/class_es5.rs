@@ -903,75 +903,16 @@ impl<'a> ClassES5Emitter<'a> {
     /// which tsc emits as:
     /// `var constructor;`
     /// `(function () { });`
+    ///
+    /// The parser records the dropped member on the arena
+    /// (`ClassBodyVarFnRecovery`); the emitter only consumes that
+    /// parser-owned AST data — it never re-scans raw source text.
     fn emit_var_function_recovery(&self, class_idx: NodeIndex) -> Option<String> {
-        let text = self.source_text?;
         let class_node = self.arena.get(class_idx)?;
-        let start = std::cmp::min(class_node.pos as usize, text.len());
-        let end = std::cmp::min(class_node.end as usize, text.len());
-        if start >= end {
-            return None;
-        }
-
-        let slice = &text[start..end];
-        let mut i = 0usize;
-        let bytes = slice.as_bytes();
-
-        while i < bytes.len() {
-            // Find "var"
-            if bytes[i].is_ascii_whitespace() {
-                i += 1;
-                continue;
-            }
-            if i + 3 > bytes.len() || &bytes[i..i + 3] != b"var" {
-                i += 1;
-                continue;
-            }
-            i += 3;
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            let ident_start = i;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
-            {
-                i += 1;
-            }
-            if ident_start == i {
-                continue;
-            }
-            let ident = String::from_utf8_lossy(&bytes[ident_start..i]).to_string();
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            if i >= bytes.len() || bytes[i] != b'(' {
-                continue;
-            }
-            i += 1;
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            if i >= bytes.len() || bytes[i] != b')' {
-                continue;
-            }
-            i += 1;
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            if i >= bytes.len() || bytes[i] != b'{' {
-                continue;
-            }
-            i += 1;
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            if i >= bytes.len() || bytes[i] != b'}' {
-                continue;
-            }
-
-            return Some(format!("var {ident};\n(function () {{ }});"));
-        }
-
-        None
+        let ident = self
+            .arena
+            .class_body_var_fn_recovery_name_in_span(class_node.pos, class_node.end)?;
+        Some(format!("var {ident};\n(function () {{ }});"))
     }
 }
 

@@ -379,6 +379,11 @@ fn anchor_relative_selector(selector: &mut String, base_dir: &Path) {
 /// here: it short-circuits to the original string when `components()` surfaces
 /// no `.`/`..`, but `components()` silently drops *embedded* `.` segments, so a
 /// joined `<dir>/./glob` would be returned with its `/./` intact.
+///
+/// The canonical `path_identity::normalize_segments` is also deliberately
+/// *not* reused: it clamps a `..` at the filesystem root (the `tsc`/Node
+/// module-identity rule), while a glob selector must keep an unmatched `..`
+/// so an anchored pattern never silently changes which directory it matches.
 fn lexically_normalize_selector(path: &Path) -> PathBuf {
     use std::path::Component;
 
