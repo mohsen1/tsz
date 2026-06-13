@@ -893,7 +893,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn clear_loop_body_recheck_caches(&mut self, stmt_idx: NodeIndex) {
         self.clear_type_cache_recursive(stmt_idx);
-        self.ctx.flow_analysis_cache.borrow_mut().clear();
+        self.ctx
+            .flow_shared
+            .flow_analysis_cache
+            .borrow_mut()
+            .clear();
         self.ctx.symbol_flow_confirmed.borrow_mut().clear();
     }
 

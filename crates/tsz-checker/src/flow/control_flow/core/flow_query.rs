@@ -198,7 +198,7 @@ impl<'a> FlowAnalyzer<'a> {
         symbol_first_identifier_ref(
             self.arena,
             self.binder,
-            self.shared_symbol_first_identifier_ref,
+            self.shared_symbol_first_identifier_ref(),
             sym,
         )
     }

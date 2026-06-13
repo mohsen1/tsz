@@ -246,7 +246,7 @@ impl<'a> CheckerContext<'a> {
                     .type_reference_validation_caches
                     .type_node_scope_types
                     .clone(),
-                flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
+                flow_analysis_cache: self.flow_shared.flow_analysis_cache.borrow().clone(),
                 flow_narrowed_nodes: self.flow_narrowed_nodes.clone(),
                 daa_error_nodes: self.daa_error_nodes.clone(),
                 symbol_flow_confirmed: self.symbol_flow_confirmed.borrow().clone(),
@@ -371,7 +371,8 @@ impl<'a> CheckerContext<'a> {
         self.type_reference_validation_caches
             .type_node_scope_types
             .clone_from(&snap.cache.type_node_scope_types);
-        self.flow_analysis_cache
+        self.flow_shared
+            .flow_analysis_cache
             .borrow_mut()
             .clone_from(&snap.cache.flow_analysis_cache);
         self.flow_narrowed_nodes

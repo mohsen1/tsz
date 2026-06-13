@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(in crate::types_domain) fn flow_analyzer_for_property_reads(&self) -> FlowAnalyzer<'_> {
-        FlowAnalyzer::from_context_for_property_reads(&self.ctx)
+        FlowAnalyzer::from_ctx(&self.ctx)
     }
 
     pub(in crate::types_domain::property_access_helpers) fn expando_read_is_within_initializing_scope(
