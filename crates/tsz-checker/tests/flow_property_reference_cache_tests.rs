@@ -581,3 +581,106 @@ function classify(token: unknown) {
         "unknown switch-case narrowing must survive a pass-through run, got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Non-narrowable (call-rooted) reference flow-walk short-circuit.
+//
+// A reference rooted at a pure call result (`reader('k').a.b`) carries no binder
+// symbol and is not a narrowable member access, so no flow node can
+// `is_matching_reference`-match it. `get_flow_type` short-circuits to the
+// declared type without walking the flow graph (mirroring tsc's
+// `getFlowTypeOfReference`, which only walks for narrowable references). This
+// removes the O(N^2) backward enumeration over preceding call/condition/
+// assignment statements (the indexed-access hotspot). These witnesses pin that
+// the short-circuit is narrowing-exact: the call-rooted reference itself stays
+// unnarrowed (tsc parity), while ANY const the call result flows INTO, or a
+// DIFFERENT const narrowed between the reads, still narrows correctly — the
+// short-circuit keys on the reference's own root, not the surrounding run.
+// Binder names are varied so it cannot be keyed on identifier text.
+// ---------------------------------------------------------------------------
+
+/// A long straight-line run of call-rooted member reads (the exact hotspot
+/// shape: `reader('k').leaf.flag`) with a DIFFERENT, genuinely narrowed `const`
+/// reference interleaved. The call-rooted reads short-circuit the flow walk, but
+/// the interleaved guard on the real `const` must still narrow: `parcel.detail`
+/// narrows to present, so `.amount` is a `number` and no diagnostic is expected.
+/// If the call-rooted short-circuit wrongly suppressed the guard, the read would
+/// stay `{ amount: number } | undefined` and trip an error.
+#[test]
+fn intervening_const_narrows_despite_call_rooted_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+interface Cells { alpha: { leaf: { flag: boolean }; value: number }; }
+declare function reader<K extends keyof Cells>(key: K): Cells[K];
+function survey(parcel: { detail?: { amount: number } }) {
+  const c0 = reader('alpha').leaf.flag ? reader('alpha').value : 0;
+  const c1 = reader('alpha').leaf.flag ? reader('alpha').value : 0;
+  const c2 = reader('alpha').leaf.flag ? reader('alpha').value : 0;
+  if (parcel.detail) {
+    const amount: number = parcel.detail.amount;
+  }
+  const c3 = reader('alpha').leaf.flag ? reader('alpha').value : 0;
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "a different const must still narrow across a call-rooted pass-through run, got: {codes:?}"
+    );
+}
+
+/// A call-rooted member read assigned to a `const` that IS then narrowed: the
+/// call result itself is not narrowable (parity), but the `const` it flows into
+/// is an ordinary binder symbol whose type guard must still narrow. `captured`
+/// holds `{ amount: number } | undefined`; the guard narrows it, so `.amount`
+/// reads as a `number`. The call-rooted early-out applies only to the
+/// call-rooted reference, never to the narrowable `const` that captures it.
+#[test]
+fn call_result_flowing_into_narrowed_const_still_narrows() {
+    let codes = check_source_strict_codes(
+        r#"
+interface Cells { beta: { detail?: { amount: number } }; }
+declare function reader<K extends keyof Cells>(key: K): Cells[K];
+function survey() {
+  const noise1 = reader('beta');
+  const noise2 = reader('beta');
+  const captured = reader('beta').detail;
+  if (captured) {
+    const amount: number = captured.amount;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "a const capturing a call result must still narrow under its own guard, got: {codes:?}"
+    );
+}
+
+/// Negative parity guard for the early-out: a call-rooted member reference is
+/// never narrowed by a preceding straight-line guard, even when many unrelated
+/// `const` reads precede it (the spliced run). `reader('gamma').slot` is
+/// `number | undefined`; the guard on a *fresh* call result does not narrow the
+/// next *fresh* call result (distinct call expressions), so annotating it
+/// `number` trips TS2322 — exactly tsc's behavior, preserved by the O(1) skip.
+#[test]
+fn call_rooted_reference_stays_unnarrowed_after_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+interface Cells { gamma: { slot: number | undefined }; }
+declare function reader<K extends keyof Cells>(key: K): Cells[K];
+function survey() {
+  const f1 = reader('gamma').slot;
+  const f2 = reader('gamma').slot;
+  const f3 = reader('gamma').slot;
+  if (reader('gamma').slot !== undefined) {
+    const used: number = reader('gamma').slot;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "call-rooted reference must stay unnarrowed (tsc parity), expected TS2322, got: {codes:?}"
+    );
+}
