@@ -5,8 +5,30 @@
 //! the incorrectly-instantiated signature. This prevents spurious TS2345
 //! (argument not assignable) errors.
 
+use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::{check_source_codes, check_source_diagnostics};
+use tsz_checker::test_utils::{
+    check_multi_file_with_libs, check_source_codes, check_source_diagnostics, load_lib_files,
+};
+use tsz_common::common::ModuleKind;
+
+fn check_namespace_import_codes(lib: &str, main: &str) -> Vec<u32> {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    check_multi_file_with_libs(
+        &[("query.ts", lib), ("main.ts", main)],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
+    .into_iter()
+    .filter(|diag| diag.code != 2318)
+    .map(|diag| diag.code)
+    .collect()
+}
 
 /// When calling a generic function with too few type arguments,
 /// only TS2558 should be emitted — no spurious TS2345.
@@ -128,6 +150,48 @@ type Alias = Box<Pair<string>>;
     assert!(
         codes.contains(&2314),
         "Expected TS2314 for nested Pair<string>, got: {codes:?}"
+    );
+}
+
+#[test]
+fn namespace_import_defaulted_class_type_reference_allows_omitted_type_arg() {
+    let lib = r#"
+export namespace SQL {
+  export class Aliased<T = unknown> {
+    value!: T
+  }
+}
+"#;
+    let main = r#"
+import * as Query from './query'
+export type Bare = Query.SQL.Aliased
+"#;
+    let codes = check_namespace_import_codes(lib, main);
+
+    assert!(
+        !codes.contains(&2314),
+        "defaulted namespace-imported class should not require a type argument, got {codes:?}"
+    );
+}
+
+#[test]
+fn namespace_import_required_class_type_reference_still_requires_type_arg() {
+    let lib = r#"
+export namespace SQL {
+  export class Required<T> {
+    value!: T
+  }
+}
+"#;
+    let main = r#"
+import * as Query from './query'
+export type Bare = Query.SQL.Required
+"#;
+    let codes = check_namespace_import_codes(lib, main);
+
+    assert!(
+        codes.contains(&2314),
+        "required namespace-imported class should still emit TS2314, got {codes:?}"
     );
 }
 
