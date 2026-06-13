@@ -88,6 +88,7 @@ EFFECT_DIR="$EXTERNAL_BENCH_DIR/effect"
 DRIZZLE_ORM_DIR="$EXTERNAL_BENCH_DIR/drizzle-orm"
 TS_REST_DIR="$EXTERNAL_BENCH_DIR/ts-rest"
 OFETCH_DIR="$EXTERNAL_BENCH_DIR/ofetch"
+TS_PATTERN_DIR="$EXTERNAL_BENCH_DIR/ts-pattern"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 # The local fallback was previously implicit, which silently contaminated
 # PR-quality numbers on any developer machine that happened to have a
@@ -400,6 +401,11 @@ ensure_ts_rest_fixture() {
 ensure_ofetch_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
     tsz_ensure_git_fixture "ofetch" "$OFETCH_REPO" "$OFETCH_REF" "$OFETCH_DIR" 1
+}
+
+ensure_ts_pattern_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-pattern" "$TS_PATTERN_REPO" "$TS_PATTERN_REF" "$TS_PATTERN_DIR" 1
 }
 
 run_utility_types_benchmarks() {
@@ -820,6 +826,21 @@ run_ofetch_project_benchmarks() {
     echo
 }
 
+run_ts_pattern_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ts-pattern-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-pattern"
+    ensure_ts_pattern_fixture
+    local tsconfig="$TS_PATTERN_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TS_PATTERN_DIR/src"
+    tsz_write_ts_pattern_config "$tsconfig"
+    run_project_benchmark "ts-pattern-project" "$tsconfig" "$src_dir"
+    echo
+}
+
 run_nextjs_benchmarks() {
     if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
         return
@@ -1124,6 +1145,7 @@ main() {
     run_isolated "drizzle-orm-project"    run_drizzle_orm_project_benchmarks
     run_isolated "ts-rest-project"        run_ts_rest_project_benchmarks
     run_isolated "ofetch-project"         run_ofetch_project_benchmarks
+    run_isolated "ts-pattern-project"     run_ts_pattern_project_benchmarks
     run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
     run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks
