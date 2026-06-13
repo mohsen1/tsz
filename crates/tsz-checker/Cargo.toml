@@ -701,6 +701,9 @@ path = "tests/static_member_access_types.rs"
 name = "contextual_tuple_tests"
 path = "tests/contextual_tuple_tests.rs"
 [[test]]
+name = "contextual_return_tuple_generic_member_tests"
+path = "tests/contextual_return_tuple_generic_member_tests.rs"
+[[test]]
 name = "contextual_ts2345_conformance_tests"
 path = "tests/contextual_ts2345_conformance_tests.rs"
 [[test]]

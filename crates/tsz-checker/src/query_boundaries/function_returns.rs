@@ -5,6 +5,7 @@
 //! boundaries.
 
 pub(crate) use super::common::{
-    application_info, array_element_type, contains_type_parameters, index_access_types,
-    lazy_def_id, mapped_type_info, type_application, type_param_info, union_members,
+    application_info, array_element_type, contains_free_type_parameters, contains_infer_types,
+    contains_type_parameters, index_access_types, lazy_def_id, mapped_type_info, type_application,
+    type_param_info, union_members,
 };

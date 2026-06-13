@@ -102,6 +102,26 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             });
 
+        // Non-narrowable reference short-circuit (mirrors tsc's
+        // `getFlowTypeOfReference`, which only walks the flow graph for
+        // narrowable references). When the reference carries no binder symbol AND
+        // is not a narrowable member access — its receiver chain bottoms out at a
+        // call result / non-narrowable expression (e.g. `readIndexed('p').a.b`,
+        // the indexed-access hotspot) — no flow node can `is_matching_reference`-
+        // match it, so the backward walk provably returns the declared type
+        // unchanged at every node. Skipping it is byte-identical and removes the
+        // O(N^2) per-antecedent enumeration the worklist would otherwise perform
+        // over preceding statements (each call/condition/assignment node re-runs
+        // `is_matching_reference` against the call-rooted reference). Bare
+        // identifiers, `this`/`super`, and any narrowable member path still walk.
+        if symbol_id.is_none()
+            && self.is_member_like_reference(reference)
+            && self.reference_root_symbol(reference).is_none()
+            && self.reference_bottoms_at_call_result(reference)
+        {
+            return initial_type;
+        }
+
         self.check_flow(
             reference,
             initial_type,

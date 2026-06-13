@@ -44,9 +44,9 @@ const artifact = {
     {
       name: "utility-types-project",
       lines: 2000,
-      tsz_ms: 30,
-      tsgo_ms: 9000,
-      winner: "tsz",
+      tsz_ms: 9000,
+      tsgo_ms: 3000,
+      winner: "tsgo",
     },
     {
       name: "failed-row",
@@ -60,12 +60,15 @@ const artifact = {
 };
 
 const summary = createReadmePerfSummary(artifact);
-assert.equal(summary.rows, 3);
+assert.equal(summary.rows, 1);
+assert.equal(summary.projectRows, 1);
+assert.equal(summary.microRows, 3);
+assert.equal(summary.rowKind, "project");
 assert.equal(summary.totalRows, 5);
-assert.equal(summary.tszMs, 2000);
-assert.equal(summary.tsgoMs, 6000);
-assert.equal(summary.speedup, 3);
-assert.equal(summary.winner, "tsz");
+assert.equal(summary.tszMs, 9000);
+assert.equal(summary.tsgoMs, 3000);
+assert.equal(summary.speedup, 1 / 3);
+assert.equal(summary.winner, "tsgo");
 assert.equal(summary.generatedAt, "2026-05-28T02:14:24Z");
 assert.equal(summary.sourceCommit, "0123456789ab");
 
@@ -81,9 +84,10 @@ assert.doesNotMatch(renderReadmePerfSvg(artifact, { theme: "dark" }), /fill="#0d
 assert.doesNotMatch(svg, />Latest benchmark snapshot</);
 assert.doesNotMatch(svg, />2 successful micro rows</);
 assert.doesNotMatch(svg, />tsz 3\.0x faster</);
-assert.match(svg, />tsz is 3\.0x faster</);
-assert.match(svg, /2\.0s/);
-assert.match(svg, /6\.0s/);
+assert.match(svg, />tsgo is 3\.0x faster</);
+assert.match(svg, />1 project rows</);
+assert.match(svg, /9\.0s/);
+assert.match(svg, /3\.0s/);
 assert.doesNotMatch(svg, /Project-mode and tiny startup fixtures are excluded/);
 
 const lightPng = await renderReadmePerfPng(artifact, { theme: "light" });

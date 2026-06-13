@@ -718,45 +718,47 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(app) = query::type_application(self.ctx.types, evaluated) {
-                    let args: Vec<_> = app
-                        .args
-                        .iter()
-                        .map(|&arg| {
-                            self.normalize_assignability_display_type_inner(
-                                arg,
-                                visiting,
-                                depth + 1,
-                            )
-                        })
-                        .collect();
+                    let mut args = Vec::with_capacity(app.args.len());
+                    for &arg in app.args.iter() {
+                        args.push(self.normalize_assignability_display_type_inner(
+                            arg,
+                            visiting,
+                            depth + 1,
+                        ));
+                        if crate::error_reporter::display_budget::is_exhausted() {
+                            visiting.remove(&ty);
+                            return evaluated;
+                        }
+                    }
                     if args == app.args {
                         evaluated
                     } else {
                         self.ctx.types.factory().application(app.base, args)
                     }
                 } else if let Some(shape) = query::function_shape(self.ctx.types, evaluated) {
-                    let params: Vec<_> = shape
-                        .params
-                        .iter()
-                        .map(|param| {
-                            // Skip normalizing TypeQuery param types to preserve typeof
-                            // syntax, matching tsc's behavior of not expanding typeof
-                            // references in parameter positions.
-                            let type_id = if crate::query_boundaries::common::is_type_query_type(
-                                self.ctx.types,
+                    let mut params = Vec::with_capacity(shape.params.len());
+                    for param in shape.params.iter() {
+                        // Skip normalizing TypeQuery param types to preserve typeof
+                        // syntax, matching tsc's behavior of not expanding typeof
+                        // references in parameter positions.
+                        let type_id = if crate::query_boundaries::common::is_type_query_type(
+                            self.ctx.types,
+                            param.type_id,
+                        ) {
+                            param.type_id
+                        } else {
+                            self.normalize_assignability_display_type_inner(
                                 param.type_id,
-                            ) {
-                                param.type_id
-                            } else {
-                                self.normalize_assignability_display_type_inner(
-                                    param.type_id,
-                                    visiting,
-                                    depth + 1,
-                                )
-                            };
-                            tsz_solver::ParamInfo { type_id, ..*param }
-                        })
-                        .collect();
+                                visiting,
+                                depth + 1,
+                            )
+                        };
+                        params.push(tsz_solver::ParamInfo { type_id, ..*param });
+                        if crate::error_reporter::display_budget::is_exhausted() {
+                            visiting.remove(&ty);
+                            return evaluated;
+                        }
+                    }
                     // Skip normalizing TypeQuery return types to preserve the typeof
                     // syntax. Resolving TypeQuery to the full function type causes double
                     // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
@@ -775,6 +777,10 @@ impl<'a> CheckerState<'a> {
                             depth + 1,
                         )
                     };
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return evaluated;
+                    }
                     let return_type = if crate::query_boundaries::common::is_conditional_type(
                         self.ctx.types,
                         shape.return_type,
@@ -888,43 +894,51 @@ impl<'a> CheckerState<'a> {
                         evaluated
                     }
                 } else if let Some(members) = query::union_members(self.ctx.types, evaluated) {
-                    self.ctx.types.factory().union_preserve_members(
-                        members
-                            .iter()
-                            .map(|&member| {
-                                self.normalize_assignability_display_type_inner(
-                                    member,
-                                    visiting,
-                                    depth + 1,
-                                )
-                            })
-                            .collect(),
-                    )
+                    let mut normalized = Vec::with_capacity(members.len());
+                    for &member in members.iter() {
+                        normalized.push(self.normalize_assignability_display_type_inner(
+                            member,
+                            visiting,
+                            depth + 1,
+                        ));
+                        if crate::error_reporter::display_budget::is_exhausted() {
+                            visiting.remove(&ty);
+                            return evaluated;
+                        }
+                    }
+                    self.ctx.types.factory().union_preserve_members(normalized)
                 } else if let Some(members) = query::intersection_members(self.ctx.types, evaluated)
                 {
-                    self.ctx.types.factory().intersection(
-                        members
-                            .iter()
-                            .map(|&member| {
-                                self.normalize_assignability_display_type_inner(
-                                    member,
-                                    visiting,
-                                    depth + 1,
-                                )
-                            })
-                            .collect(),
-                    )
+                    let mut normalized = Vec::with_capacity(members.len());
+                    for &member in members.iter() {
+                        normalized.push(self.normalize_assignability_display_type_inner(
+                            member,
+                            visiting,
+                            depth + 1,
+                        ));
+                        if crate::error_reporter::display_budget::is_exhausted() {
+                            visiting.remove(&ty);
+                            return evaluated;
+                        }
+                    }
+                    self.ctx.types.factory().intersection(normalized)
                 } else {
                     evaluated
                 }
             }
         } else if let Some(members) = query::union_members(self.ctx.types, ty) {
-            let normalized: Vec<_> = members
-                .iter()
-                .map(|&member| {
-                    self.normalize_assignability_display_type_inner(member, visiting, depth + 1)
-                })
-                .collect();
+            let mut normalized = Vec::with_capacity(members.len());
+            for &member in members.iter() {
+                normalized.push(self.normalize_assignability_display_type_inner(
+                    member,
+                    visiting,
+                    depth + 1,
+                ));
+                if crate::error_reporter::display_budget::is_exhausted() {
+                    visiting.remove(&ty);
+                    return ty;
+                }
+            }
             if normalized == members {
                 ty
             } else {
@@ -932,13 +946,18 @@ impl<'a> CheckerState<'a> {
             }
         } else if let Some(app) = query::type_application(self.ctx.types, ty) {
             if query::preserves_named_application_base(self.ctx.types, app.base) {
-                let args: Vec<_> = app
-                    .args
-                    .iter()
-                    .map(|&arg| {
-                        self.normalize_assignability_display_type_inner(arg, visiting, depth + 1)
-                    })
-                    .collect();
+                let mut args = Vec::with_capacity(app.args.len());
+                for &arg in app.args.iter() {
+                    args.push(self.normalize_assignability_display_type_inner(
+                        arg,
+                        visiting,
+                        depth + 1,
+                    ));
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return ty;
+                    }
+                }
                 if args == app.args {
                     ty
                 } else {
@@ -1003,31 +1022,39 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(app) = query::type_application(self.ctx.types, evaluated) {
-                let args: Vec<_> = app
-                    .args
-                    .iter()
-                    .map(|&arg| {
-                        self.normalize_assignability_display_type_inner(arg, visiting, depth + 1)
-                    })
-                    .collect();
+                let mut args = Vec::with_capacity(app.args.len());
+                for &arg in app.args.iter() {
+                    args.push(self.normalize_assignability_display_type_inner(
+                        arg,
+                        visiting,
+                        depth + 1,
+                    ));
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return evaluated;
+                    }
+                }
                 if args == app.args {
                     evaluated
                 } else {
                     self.ctx.types.factory().application(app.base, args)
                 }
             } else if let Some(shape) = query::function_shape(self.ctx.types, evaluated) {
-                let params: Vec<_> = shape
-                    .params
-                    .iter()
-                    .map(|param| tsz_solver::ParamInfo {
+                let mut params = Vec::with_capacity(shape.params.len());
+                for param in shape.params.iter() {
+                    params.push(tsz_solver::ParamInfo {
                         type_id: self.normalize_assignability_display_type_inner(
                             param.type_id,
                             visiting,
                             depth + 1,
                         ),
                         ..*param
-                    })
-                    .collect();
+                    });
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return evaluated;
+                    }
+                }
                 // Skip normalizing TypeQuery return types to preserve the typeof
                 // syntax. Resolving TypeQuery to the full function type causes double
                 // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
@@ -1046,6 +1073,10 @@ impl<'a> CheckerState<'a> {
                         depth + 1,
                     )
                 };
+                if crate::error_reporter::display_budget::is_exhausted() {
+                    visiting.remove(&ty);
+                    return evaluated;
+                }
                 let return_type = if crate::query_boundaries::common::is_conditional_type(
                     self.ctx.types,
                     shape.return_type,
@@ -1148,18 +1179,19 @@ impl<'a> CheckerState<'a> {
                     evaluated
                 }
             } else if let Some(members) = query::intersection_members(self.ctx.types, evaluated) {
-                self.ctx.types.factory().intersection(
-                    members
-                        .iter()
-                        .map(|&member| {
-                            self.normalize_assignability_display_type_inner(
-                                member,
-                                visiting,
-                                depth + 1,
-                            )
-                        })
-                        .collect(),
-                )
+                let mut normalized = Vec::with_capacity(members.len());
+                for &member in members.iter() {
+                    normalized.push(self.normalize_assignability_display_type_inner(
+                        member,
+                        visiting,
+                        depth + 1,
+                    ));
+                    if crate::error_reporter::display_budget::is_exhausted() {
+                        visiting.remove(&ty);
+                        return evaluated;
+                    }
+                }
+                self.ctx.types.factory().intersection(normalized)
             } else {
                 evaluated
             }
