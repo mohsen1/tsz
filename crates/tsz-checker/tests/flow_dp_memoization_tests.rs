@@ -39,6 +39,28 @@ fn diagnostics_within(source: &str, budget: Duration) -> Vec<(u32, String)> {
     diagnostics
 }
 
+#[test]
+fn assignment_flow_prefilters_disjoint_member_roots_before_ast_matching() {
+    let source = include_str!("../src/flow/control_flow/core/flow_traversal.rs");
+    assert!(
+        source.contains("assignment_root_symbols_may_overlap("),
+        "ASSIGNMENT flow should compare receiver-root symbols before full AST reference matching",
+    );
+    assert!(
+        source.contains("assignment_roots_may_overlap\n                    && self.assignment_affects_reference_node"),
+        "ASSIGNMENT flow should guard affects-reference AST matching with receiver-root overlap",
+    );
+}
+
+#[test]
+fn antecedent_defer_prefilters_disjoint_member_roots_before_ast_matching() {
+    let source = include_str!("../src/flow/control_flow/core.rs");
+    assert!(
+        source.contains("assignment_root_symbols_may_overlap(ant_flow.node, reference, symbol_id)"),
+        "antecedent defer checks should compare receiver-root symbols before full AST reference matching",
+    );
+}
+
 /// 32-level `instanceof` chain on a single `unknown`-typed binding. The
 /// pre-fix `O(2^N)` traversal explodes here (each new branch doubles the
 /// work); the memoized DP completes in milliseconds. The chain itself does
@@ -207,5 +229,33 @@ function probe(items: unknown[]) {
             .iter()
             .all(|(code, _)| *code != 2322 && *code != 2345),
         "loop back-edge should not cause spurious narrowing errors, got: {diagnostics:?}",
+    );
+}
+
+/// Member-like references should not re-scan every unrelated assignment on a
+/// different receiver root. The historical path compared each `other.value`
+/// assignment against every later `source.value` read through the full AST
+/// reference matcher, producing an O(N^2) flow walk.
+#[test]
+fn member_reference_skips_unrelated_assignment_roots() {
+    let mut source = String::from(
+        "type Box = { value: string | number };\n\
+         function probe(source: Box, other: Box, seed: number) {\n\
+             if (typeof source.value === \"string\") {\n",
+    );
+    for index in 0..450 {
+        source.push_str(&format!(
+            "        other.value = seed + {index};\n\
+             const narrowed{index}: string = source.value;\n"
+        ));
+    }
+    source.push_str("        return source.value;\n    }\n    return source.value;\n}\n");
+
+    let diagnostics = diagnostics_within(&source, Duration::from_secs(2));
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| *code != 2322 && *code != 2345),
+        "unrelated receiver assignments must not disturb member narrowing, got: {diagnostics:?}",
     );
 }

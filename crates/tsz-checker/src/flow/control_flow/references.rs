@@ -844,6 +844,65 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
+    pub(crate) fn assignment_root_symbols_may_overlap(
+        &self,
+        assignment: NodeIndex,
+        reference: NodeIndex,
+        reference_symbol: Option<SymbolId>,
+    ) -> bool {
+        let Some(assignment_root) = self.reference_root_symbol(assignment) else {
+            return true;
+        };
+        let Some(reference_root) =
+            reference_symbol.or_else(|| self.reference_root_symbol(reference))
+        else {
+            return true;
+        };
+        assignment_root == reference_root
+    }
+
+    fn reference_root_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let idx = self.skip_parenthesized(idx);
+        let node = self.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+            let unary = self.arena.get_unary_expr_ex(node)?;
+            return self.reference_root_symbol(unary.expression);
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            let assertion = self.arena.get_type_assertion(node)?;
+            return self.reference_root_symbol(assertion.expression);
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let bin = self.arena.get_binary_expr(node)?;
+            if self.is_assignment_operator(bin.operator_token) {
+                return self.reference_root_symbol(bin.left);
+            }
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let access = self.arena.get_access_expr(node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            return self.reference_root_symbol(access.expression);
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.arena.get_qualified_name(node)?;
+            return self.reference_root_symbol(qn.left);
+        }
+
+        self.reference_symbol(idx)
+    }
+
     pub(crate) fn reference_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
         let idx = self.skip_parenthesized(idx);
         if let Some(&cached) = self.reference_symbol_cache.borrow().get(&idx.0) {
