@@ -63,6 +63,67 @@ pub fn normalize_segments(path: &Path) -> PathBuf {
     normalized
 }
 
+/// Shared collapse loop for the string-domain helpers below.
+///
+/// Returns `false` only when `bail_on_underflow` is set and a `..` segment had
+/// no collected segment left to cancel.
+fn apply_slash_segments<'a>(
+    segments: &mut Vec<&'a str>,
+    specifier: &'a str,
+    bail_on_underflow: bool,
+) -> bool {
+    for part in specifier.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if segments.pop().is_none() && bail_on_underflow {
+                    return false;
+                }
+            }
+            part => segments.push(part),
+        }
+    }
+    true
+}
+
+/// String-domain sibling of [`normalize_segments`] for `/`-joined *virtual*
+/// paths (ambient module names, AMD module ids) that never pass through
+/// `std::path`. Collapses the segments of `specifier` onto an existing segment
+/// stack: empty and `.` segments are skipped, `..` pops the most recently
+/// collected segment — including segments the caller seeded from a base path,
+/// which pop verbatim (a seeded `..` is itself poppable, matching the
+/// historical emitter loops this replaces).
+///
+/// Underflow policy: an unmatched `..` is silently dropped (lossy). Callers
+/// that must not lose an unmatched `..` use
+/// [`resolve_relative_slash_specifier`], which bails instead; callers in the
+/// `Path` domain use [`normalize_segments`], which keeps the `..` (relative)
+/// or clamps it (rooted) the way `tsc`/Node do.
+pub fn apply_slash_segments_lossy<'a>(segments: &mut Vec<&'a str>, specifier: &'a str) {
+    apply_slash_segments(segments, specifier, false);
+}
+
+/// String-domain sibling of [`normalize_segments`]: resolve a relative
+/// (`./`/`../`) module specifier against a `/`-joined virtual base directory,
+/// collapsing `.`/`..` lexically. Empty and `.` segments are skipped; `..`
+/// pops the most recently collected segment, including segments seeded from
+/// `base_dir` (which pop verbatim — a seeded `..` is itself poppable).
+///
+/// Underflow policy: returns `None` when a `..` has no segment left to cancel
+/// (the specifier escapes the virtual root) or when the result is empty, so
+/// the caller chooses the fallback (typically the raw specifier).
+pub fn resolve_relative_slash_specifier(base_dir: &str, specifier: &str) -> Option<String> {
+    let mut segments: Vec<&str> = if base_dir.is_empty() {
+        Vec::new()
+    } else {
+        base_dir.split('/').collect()
+    };
+    if !apply_slash_segments(&mut segments, specifier, true) {
+        return None;
+    }
+    (!segments.is_empty()).then(|| segments.join("/"))
+}
+
 /// Returns `true` when `path` contains no `.` or `..` segment, i.e. it is
 /// already lexically canonical and [`normalize_segments`] would be an identity
 /// transform. Callers on hot probe paths use this to avoid an allocation.
@@ -136,6 +197,57 @@ mod tests {
         ] {
             assert_eq!(normalize_segments(Path::new(spelling)), canonical);
         }
+    }
+
+    #[test]
+    fn resolve_relative_slash_specifier_collapses_against_base() {
+        assert_eq!(
+            resolve_relative_slash_specifier("src/lib", "./mod"),
+            Some("src/lib/mod".to_string())
+        );
+        assert_eq!(
+            resolve_relative_slash_specifier("src/lib", "../mod"),
+            Some("src/mod".to_string())
+        );
+        assert_eq!(
+            resolve_relative_slash_specifier("", "./mod"),
+            Some("mod".to_string())
+        );
+        // Empty segments (doubled slashes) are skipped, matching the
+        // historical AMD-resolver loops.
+        assert_eq!(
+            resolve_relative_slash_specifier("src", ".//.//mod"),
+            Some("src/mod".to_string())
+        );
+        // Segments seeded from `base_dir` pop verbatim: a seeded `..` is
+        // itself poppable, so it does not trigger the underflow bail.
+        assert_eq!(
+            resolve_relative_slash_specifier("../lib", "../mod"),
+            Some("../mod".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_relative_slash_specifier_bails_on_underflow_and_empty() {
+        // `..` escaping the virtual root: the caller picks the fallback.
+        assert_eq!(resolve_relative_slash_specifier("", "../mod"), None);
+        assert_eq!(resolve_relative_slash_specifier("src", "../../mod"), None);
+        // Empty results also bail (`define()` dep arrays cannot hold "").
+        assert_eq!(resolve_relative_slash_specifier("", "."), None);
+        assert_eq!(resolve_relative_slash_specifier("src", ".."), None);
+    }
+
+    #[test]
+    fn apply_slash_segments_lossy_drops_unmatched_parent() {
+        let mut segments = vec!["pkg"];
+        apply_slash_segments_lossy(&mut segments, "../../mod");
+        // First `..` pops `pkg`; the second has nothing to cancel and is
+        // dropped (lossy), matching the historical jsdoc ambient-module loop.
+        assert_eq!(segments, vec!["mod"]);
+
+        let mut segments: Vec<&str> = Vec::new();
+        apply_slash_segments_lossy(&mut segments, "./a/../b");
+        assert_eq!(segments, vec!["b"]);
     }
 
     #[test]

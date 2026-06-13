@@ -571,25 +571,20 @@ fn strip_json_extension(config_path: &Path) -> PathBuf {
 }
 
 /// Collapse `..` and `.` components syntactically (no filesystem access).
+///
+/// Delegates to the canonical
+/// [`tsz_common::module_resolution::path_identity::normalize_segments`]
+/// (clamp `..` at the root, keep an unmatched `..` on relative paths) and
+/// keeps this site's historical `.` fallback for an input that collapses to
+/// the empty path, so the `.tsbuildinfo` suffix is appended to a real
+/// component.
 fn normalize_path(p: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for comp in p.components() {
-        match comp {
-            Component::ParentDir => {
-                let popped = out.pop();
-                if !popped {
-                    out.push("..");
-                }
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
+    let out = tsz_common::module_resolution::path_identity::normalize_segments(p);
     if out.as_os_str().is_empty() {
-        out.push(".");
+        PathBuf::from(".")
+    } else {
+        out
     }
-    out
 }
 
 #[cfg(test)]

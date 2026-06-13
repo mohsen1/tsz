@@ -119,6 +119,42 @@ fn test_instantiate_union() {
 }
 
 #[test]
+fn test_instantiate_type_list_if_changed_allocates_on_first_change() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let type_param_u = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(u_name, TypeId::STRING);
+    let mut instantiator = TypeInstantiator::new(&interner, &subst);
+
+    let changed = instantiator
+        .instantiate_type_list_if_changed(&[TypeId::NUMBER, type_param_t, type_param_u])
+        .expect("last member should instantiate");
+    assert_eq!(changed, vec![TypeId::NUMBER, type_param_t, TypeId::STRING]);
+
+    let mut noop_instantiator = TypeInstantiator::new(&interner, &subst);
+    assert!(
+        noop_instantiator
+            .instantiate_type_list_if_changed(&[TypeId::NUMBER, type_param_t])
+            .is_none(),
+        "unchanged member lists should not allocate a replacement Vec"
+    );
+}
+
+#[test]
 fn test_instantiate_union_preserves_display_origin() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");

@@ -9,6 +9,7 @@ use super::content_predicates::{
 };
 use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
+use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1460,7 +1461,7 @@ fn resolve_concrete_conditional_result(
     {
         if evaluator.type_contains_infer(cond.extends_type) {
             let mut bindings = rustc_hash::FxHashMap::default();
-            let mut visited = FxHashSet::default();
+            let mut visited = InferPatternVisited::default();
             let mut checker = SubtypeChecker::new(db);
             if evaluator.match_infer_pattern(
                 check_type,

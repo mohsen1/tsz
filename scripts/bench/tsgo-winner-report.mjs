@@ -574,7 +574,10 @@ function attributionStatusForRow(row, fallbackArtifact = null, attempt = null) {
 }
 
 function hasCompleteAttribution(status) {
-  return Boolean(status?.present && status?.dominant_subsystem && !status?.warning);
+  return Boolean(
+    status?.present &&
+      (status.mode === "attribution" || (status.dominant_subsystem && !status.warning)),
+  );
 }
 
 function attributionAttemptSummary(rows) {

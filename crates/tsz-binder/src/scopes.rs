@@ -1,6 +1,6 @@
 //! Persistent scope system for the binder.
 //!
-//! Provides `Scope`, `ScopeId`, `ScopeContext`, and `ContainerKind`.
+//! Provides `Scope`, `ScopeId`, and `ContainerKind`.
 
 use serde::{Deserialize, Serialize};
 use tsz_parser::NodeIndex;
@@ -92,46 +92,6 @@ impl Scope {
     pub const fn is_function_scope(&self) -> bool {
         matches!(
             self.kind,
-            ContainerKind::SourceFile | ContainerKind::Function | ContainerKind::Module
-        )
-    }
-}
-
-/// Scope context - tracks scope chain and hoisting (used by `BinderState`).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ScopeContext {
-    /// The symbol table for this scope
-    pub locals: SymbolTable,
-    /// Parent scope (for scope chain lookup)
-    pub parent_idx: Option<usize>,
-    /// The kind of container this scope belongs to
-    pub container_kind: ContainerKind,
-    /// Node index of the container
-    pub container_node: NodeIndex,
-    /// Hoisted var declarations (for function scope)
-    pub hoisted_vars: Vec<(String, NodeIndex)>,
-    /// Hoisted function declarations (for function scope)
-    pub hoisted_functions: Vec<(String, NodeIndex)>,
-}
-
-impl ScopeContext {
-    #[must_use]
-    pub fn new(kind: ContainerKind, node: NodeIndex, parent: Option<usize>) -> Self {
-        Self {
-            locals: SymbolTable::new(),
-            parent_idx: parent,
-            container_kind: kind,
-            container_node: node,
-            hoisted_vars: Vec::new(),
-            hoisted_functions: Vec::new(),
-        }
-    }
-
-    /// Check if this scope is a function scope (where var hoisting happens)
-    #[must_use]
-    pub const fn is_function_scope(&self) -> bool {
-        matches!(
-            self.container_kind,
             ContainerKind::SourceFile | ContainerKind::Function | ContainerKind::Module
         )
     }

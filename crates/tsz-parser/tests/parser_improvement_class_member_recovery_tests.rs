@@ -416,3 +416,105 @@ fn yield_suppression_does_not_leak_to_sibling_member_after_case() {
         "only the sibling member should report TS1163; got {codes:?}"
     );
 }
+
+/// Recovery-record name for the first class declaration in `source`, as the
+/// emitters would query it: by the class node's span.
+fn class_var_fn_recovery_name(source: &str) -> Option<String> {
+    let (parser, root) = parse_source(source);
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    parser
+        .get_arena()
+        .class_body_var_fn_recovery_name_in_span(class_node.pos, class_node.end)
+        .map(str::to_string)
+}
+
+#[test]
+fn class_body_var_fn_recovery_records_dropped_member() {
+    let source = "class C {\n    var constructor() { }\n}";
+    let (parser, root) = parse_source(source);
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    assert_eq!(
+        parser
+            .get_arena()
+            .class_body_var_fn_recovery_name_in_span(class_node.pos, class_node.end),
+        Some("constructor"),
+        "dropped `var constructor() {{ }}` member should be recorded for emit"
+    );
+
+    // The recovery record must not change the diagnostic cascade.
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            diagnostic_codes::EXPECTED,
+            diagnostic_codes::EXPECTED,
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        ],
+        "diagnostics must be unchanged by recovery recording, got {diags:?}"
+    );
+}
+
+#[test]
+fn class_body_var_fn_recovery_records_renamed_binder() {
+    assert_eq!(
+        class_var_fn_recovery_name("class Box {\n    var boxName_7() { }\n}"),
+        Some("boxName_7".to_string())
+    );
+}
+
+#[test]
+fn class_body_var_fn_recovery_requires_var_keyword() {
+    assert_eq!(
+        class_var_fn_recovery_name("class C {\n    let constructor() { }\n}"),
+        None,
+        "`let` member recovery must not record the var-function shape"
+    );
+}
+
+#[test]
+fn class_body_var_fn_recovery_requires_empty_parameter_list() {
+    assert_eq!(
+        class_var_fn_recovery_name("class C {\n    var fn(a) { }\n}"),
+        None
+    );
+}
+
+#[test]
+fn class_body_var_fn_recovery_requires_empty_body() {
+    assert_eq!(
+        class_var_fn_recovery_name("class C {\n    var fn() { run(); }\n}"),
+        None
+    );
+}
+
+#[test]
+fn class_body_var_fn_recovery_rejects_return_type_annotation() {
+    assert_eq!(
+        class_var_fn_recovery_name("class C {\n    var fn(): void { }\n}"),
+        None
+    );
+}
+
+#[test]
+fn class_body_var_fn_recovery_rejects_type_parameters() {
+    assert_eq!(
+        class_var_fn_recovery_name("class C {\n    var fn<T>() { }\n}"),
+        None
+    );
+}
+
+#[test]
+fn class_body_var_fn_recovery_ignores_var_initializer_member() {
+    assert_eq!(
+        class_var_fn_recovery_name("class C {\n    var x = 1;\n}"),
+        None,
+        "`var x = 1` recovers as a property, not the var-function shape"
+    );
+}
