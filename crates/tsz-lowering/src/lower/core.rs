@@ -29,6 +29,40 @@ mod signature_members;
 #[cfg(test)]
 mod constructor_parity_tests;
 
+/// Fetch an arena node and, optionally, its typed payload, short-circuiting the
+/// enclosing handler with a caller-supplied fallback when either is absent.
+///
+/// Every `lower_*` handler opens with the same prologue: fetch the node from
+/// the arena (or return early), then fetch its node-specific typed data (or
+/// return early). This macro is the single home for that guard so call sites
+/// express only the expected variant and the per-node work. The fallback is
+/// explicit at each call so the rare non-`ERROR` policies (e.g. an empty tuple
+/// or object literal) stay deliberate instead of drifting silently.
+///
+/// Two forms:
+/// - `lower_node_data!(self, idx; fallback)` yields the raw `&Node`.
+/// - `lower_node_data!(self, idx, getter, fallback)` yields the typed payload
+///   produced by `self.arena.getter(node)`.
+macro_rules! lower_node_data {
+    ($self:ident, $node_idx:expr; $fallback:expr $(,)?) => {{
+        let Some(node) = $self.arena.get($node_idx) else {
+            return $fallback;
+        };
+        node
+    }};
+    ($self:ident, $node_idx:expr, $getter:ident, $fallback:expr $(,)?) => {{
+        let Some(node) = $self.arena.get($node_idx) else {
+            return $fallback;
+        };
+        let Some(data) = $self.arena.$getter(node) else {
+            return $fallback;
+        };
+        data
+    }};
+}
+
+pub(super) use lower_node_data;
+
 /// Maximum number of type lowering operations to prevent infinite loops
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 
@@ -1107,10 +1141,7 @@ impl<'a> TypeLowering<'a> {
             return TypeId::ERROR;
         }
 
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        let node = lower_node_data!(self, node_idx; TypeId::ERROR);
 
         match node.kind {
             // =========================================================================
@@ -1263,83 +1294,57 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a union type (A | B | C)
     fn lower_union_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_composite_type(node) {
-            let members: Vec<TypeId> = data
-                .types
-                .nodes
-                .iter()
-                .map(|&idx| self.lower_type(idx))
-                .collect();
-            // Mirror tsc's `UnionType.origin`: record the as-written input
-            // member list so the printer can render `0 | 1 | 2` in source
-            // order even when the canonical sort uses non-deterministic
-            // alloc-order for non-zero number literals.
-            let result = self.interner.union_literal_reduce(members.clone());
-            self.interner.store_union_origin(result, members);
-            result
-        } else {
-            TypeId::ERROR
-        }
+        let data = lower_node_data!(self, node_idx, get_composite_type, TypeId::ERROR);
+        let members: Vec<TypeId> = data
+            .types
+            .nodes
+            .iter()
+            .map(|&idx| self.lower_type(idx))
+            .collect();
+        // Mirror tsc's `UnionType.origin`: record the as-written input
+        // member list so the printer can render `0 | 1 | 2` in source
+        // order even when the canonical sort uses non-deterministic
+        // alloc-order for non-zero number literals.
+        let result = self.interner.union_literal_reduce(members.clone());
+        self.interner.store_union_origin(result, members);
+        result
     }
 
     /// Lower an intersection type (A & B & C)
     fn lower_intersection_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_composite_type(node) {
-            let members: Vec<TypeId> = data
-                .types
-                .nodes
-                .iter()
-                .map(|&idx| self.lower_type(idx))
-                .collect();
-            self.interner.intersection(members)
-        } else {
-            TypeId::ERROR
-        }
+        let data = lower_node_data!(self, node_idx, get_composite_type, TypeId::ERROR);
+        let members: Vec<TypeId> = data
+            .types
+            .nodes
+            .iter()
+            .map(|&idx| self.lower_type(idx))
+            .collect();
+        self.interner.intersection(members)
     }
 
     /// Lower an array type (T[])
     fn lower_array_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_array_type(node) {
-            let element_type = self.lower_type(data.element_type);
-            self.interner.array(element_type)
-        } else {
-            TypeId::ERROR // Missing array type data - propagate error
-        }
+        // Missing node or array type data - propagate error.
+        let data = lower_node_data!(self, node_idx, get_array_type, TypeId::ERROR);
+        let element_type = self.lower_type(data.element_type);
+        self.interner.array(element_type)
     }
 
     /// Lower a tuple type ([A, B, C])
     fn lower_tuple_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
-
-        if let Some(data) = self.arena.get_tuple_type(node) {
-            let elements: Vec<TupleElement> = data
-                .elements
-                .nodes
-                .iter()
-                .map(|&idx| self.lower_tuple_element(idx))
-                .collect();
-            self.interner.tuple(elements)
-        } else {
-            self.interner.tuple(vec![])
-        }
+        // Deliberate divergence from the `TypeId::ERROR` sibling fallback: a
+        // tuple node with missing typed data lowers to the empty tuple `[]`
+        // rather than an error type, preserving long-standing tuple-lowering
+        // behavior. This is now an explicit policy rather than an accidental
+        // hand-written else-branch.
+        let data = lower_node_data!(self, node_idx, get_tuple_type, self.interner.tuple(vec![]));
+        let elements: Vec<TupleElement> = data
+            .elements
+            .nodes
+            .iter()
+            .map(|&idx| self.lower_tuple_element(idx))
+            .collect();
+        self.interner.tuple(elements)
     }
 
     /// Lower a tuple element, preserving name, optional, and rest metadata.
@@ -1639,35 +1644,27 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a function type ((a: T, b: U) => R)
     fn lower_function_type(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
+        let data = lower_node_data!(self, node_idx, get_function_type, TypeId::ERROR);
+        let (type_params, (params, this_type, return_type, type_predicate)) = self
+            .with_type_params(&data.type_parameters, || {
+                let (params, this_type) = self.lower_params_with_this(&data.parameters);
+
+                let (return_type, type_predicate) =
+                    self.lower_return_type(data.type_annotation, &params);
+                (params, this_type, return_type, type_predicate)
+            });
+
+        let shape = FunctionShape {
+            type_params,
+            params,
+            this_type,
+            return_type,
+            type_predicate,
+            is_constructor: false,
+            is_method: false,
         };
 
-        if let Some(data) = self.arena.get_function_type(node) {
-            let (type_params, (params, this_type, return_type, type_predicate)) = self
-                .with_type_params(&data.type_parameters, || {
-                    let (params, this_type) = self.lower_params_with_this(&data.parameters);
-
-                    let (return_type, type_predicate) =
-                        self.lower_return_type(data.type_annotation, &params);
-                    (params, this_type, return_type, type_predicate)
-                });
-
-            let shape = FunctionShape {
-                type_params,
-                params,
-                this_type,
-                return_type,
-                type_predicate,
-                is_constructor: false,
-                is_method: false,
-            };
-
-            self.interner.function(shape)
-        } else {
-            TypeId::ERROR
-        }
+        self.interner.function(shape)
     }
 
     /// Lower a type literal ({ x: T, y: U })
@@ -1681,10 +1678,11 @@ impl<'a> TypeLowering<'a> {
     /// member conflicts are detected instead of producing duplicate
     /// properties.
     fn lower_type_literal(&self, node_idx: NodeIndex) -> TypeId {
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return TypeId::ERROR,
-        };
+        // Node-missing and data-missing diverge here: a missing node propagates
+        // `TypeId::ERROR`, while a present node lacking type-literal data lowers
+        // to the empty object literal `{}`. The node fetch shares the common
+        // guard; the data fallback stays inline because it is distinct.
+        let node = lower_node_data!(self, node_idx; TypeId::ERROR);
 
         let Some(data) = self.arena.get_type_literal(node) else {
             return self.interner.object(vec![]);
