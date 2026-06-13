@@ -94,14 +94,58 @@ impl<'a> FlowAnalyzer<'a> {
         let mut condition_antecedent_defer_memo: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
         condition_dp_memos.clear();
 
+        // Reusable scratch buffer for the linear pass-through chase below: the run
+        // of pure pass-through ASSIGNMENT nodes spliced out in O(1) per node, each
+        // aliased to the landed node's result.
+        let mut passthrough_run: Vec<FlowNodeId> = Vec::new();
+
         // Process worklist until empty
-        while let Some((current_flow, current_type)) = worklist.pop_front() {
+        while let Some((entry_flow, current_type)) = worklist.pop_front() {
             steps += 1;
             if steps > step_budget {
                 // Bail out conservatively to avoid unbounded traversal in pathological CFGs.
                 return results.get(&flow_id).copied().unwrap_or(initial_type);
             }
-            in_worklist.remove(&current_flow);
+            in_worklist.remove(&entry_flow);
+
+            // O(N²) → O(N) linear pass-through short-circuit.
+            //
+            // A straight-line run of ASSIGNMENT flow nodes that neither *target*
+            // nor *affect* the reference (the prior top-level `const x_j = …`
+            // statements when narrowing `x_i`/`x_i.prop`) carries no narrowing:
+            // each node's flow type equals its antecedent's. The plain worklist
+            // would still pop, cache-probe, hashset-track, and re-push the
+            // antecedent for every one of them — Σ O(i) per reference, O(N²) total.
+            // The #13404 root pre-filter made each visit cheap to *reject* but the
+            // worklist still ENUMERATED all N, so it stayed O(N²) with a smaller
+            // constant.
+            //
+            // Splice the whole run out in O(1) per node by chasing the single
+            // antecedent in place, landing on the first node that is NOT a pure
+            // pass-through (a merge/condition/call/loop/switch, a targeting or
+            // affecting assignment, a node needing defer, or one already
+            // finalized/cached). Only that landed node is processed; its result is
+            // then aliased back to every skipped node so `results[flow_id]` (the
+            // only result read outside this walk) stays correct when the entry was
+            // itself spliced. Skipped nodes are pure pass-throughs with a single
+            // antecedent and single straight-line successor, so no surviving merge
+            // point reads their now-absent result within this traversal, and the
+            // distinct-reference flow cache keys make caching them useless to later
+            // references anyway. Falls back to the full per-node walk whenever any
+            // gate is uncertain, so narrowing stays byte-identical.
+            passthrough_run.clear();
+            let current_flow = self.chase_linear_passthrough(
+                entry_flow,
+                reference,
+                symbol_id,
+                initial_type,
+                initial_has_type_params,
+                skip_cache_for_control_flow_typed_any,
+                cache_symbol,
+                visited,
+                results,
+                &mut passthrough_run,
+            );
 
             // Check global cache first to avoid redundant traversals.
             // Skip cache for SWITCH_CLAUSE nodes — they must be processed to
@@ -141,15 +185,30 @@ impl<'a> FlowAnalyzer<'a> {
             {
                 let key = (current_flow, cache_symbol, initial_type);
                 if let Some(&cached_type) = cache.borrow().get(&key) {
-                    // Use cached result and skip processing this node
+                    // Use cached result and skip processing this node. Alias the
+                    // cached type to every pass-through node the chase spliced out:
+                    // those nodes are pure pass-throughs whose flow type equals this
+                    // (landed) node's, so `results[flow_id]` stays correct even when
+                    // the landed node was already cached by a prior walk.
                     results.insert(current_flow, cached_type);
                     visited.insert(current_flow);
+                    for &skipped in &passthrough_run {
+                        results.insert(skipped, cached_type);
+                        visited.insert(skipped);
+                    }
                     continue;
                 }
             }
 
-            // Skip if we've already finalized this node
+            // Skip if we've already finalized this node. Propagate its result to
+            // the spliced pass-through run for the same reason as the cache-hit path.
             if visited.contains(&current_flow) {
+                if let Some(&done) = results.get(&current_flow) {
+                    for &skipped in &passthrough_run {
+                        results.insert(skipped, done);
+                        visited.insert(skipped);
+                    }
+                }
                 continue;
             }
 
@@ -1014,6 +1073,19 @@ impl<'a> FlowAnalyzer<'a> {
             results.insert(current_flow, final_type);
             visited.insert(current_flow);
 
+            // Alias the landed node's result to every pure pass-through node spliced
+            // out by `chase_linear_passthrough`: their flow type is exactly this
+            // antecedent result (they neither target nor affect the reference), so
+            // finalizing them here keeps `results[flow_id]` correct when the entry
+            // node was itself spliced, and prevents a redundant re-walk if reached
+            // again. These are not written to the global flow cache: each pass-through
+            // node's cached entry would be keyed by this reference's `cache_symbol`,
+            // which no other reference shares, so it could never be reused.
+            for &skipped in &passthrough_run {
+                results.insert(skipped, final_type);
+                visited.insert(skipped);
+            }
+
             // Store result in global cache for future calls
             // CRITICAL: Only cache if BOTH initial and final types are concrete (no type parameters).
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
@@ -1063,6 +1135,143 @@ impl<'a> FlowAnalyzer<'a> {
             initial_type
         } else {
             result
+        }
+    }
+
+    /// Linear pass-through short-circuit for the `check_flow` worklist.
+    ///
+    /// Starting at `entry`, chases the single antecedent in place across a run of
+    /// *pure pass-through* ASSIGNMENT flow nodes — nodes that neither target nor
+    /// affect `reference` — collapsing a straight-line `const`/assignment segment
+    /// (the `Σ O(i)` independent-assignment narrowing hotspot) into one landed
+    /// node. Every node skipped this way is pushed onto `run` so the caller can
+    /// alias the landed node's result back to it (their flow type equals the
+    /// antecedent result by construction).
+    ///
+    /// A node is only spliced when ALL of these hold, so narrowing is byte
+    /// identical to the full walk:
+    /// - it is an ASSIGNMENT with no other flow flags (not a merge label, switch
+    ///   clause, loop label, call, condition, array mutation, or start);
+    /// - it has exactly one antecedent (no join to union);
+    /// - it neither targets nor affects `reference`, checked with the same
+    ///   `assignment_root_symbols_may_overlap` pre-filter (#13404) plus the symbol
+    ///   and `assignment_targets_reference_node` / `assignment_affects_reference_node`
+    ///   AST predicates the worklist's own ASSIGNMENT branch uses, so it is neither
+    ///   a killing definition, a base reassignment, nor a property mutation of the
+    ///   reference;
+    /// - its antecedent does not `antecedent_requires_defer` (so we never skip past
+    ///   a node carrying pending narrowing such as a condition, call, loop, branch,
+    ///   or a targeting assignment); and
+    /// - the antecedent is not already finalized/cached for this walk (so we never
+    ///   bypass an existing `results`/`visited`/flow-cache answer).
+    ///
+    /// The chase is disabled for type-parameter-bearing or control-flow-`any`
+    /// initial types, mirroring the worklist's own cache-eligibility gate, so it
+    /// cannot perturb loop fixed-point or generic-result caching. On any node that
+    /// fails a gate the chase stops and returns that node for normal processing.
+    #[allow(clippy::too_many_arguments)]
+    fn chase_linear_passthrough(
+        &self,
+        entry: FlowNodeId,
+        reference: NodeIndex,
+        symbol_id: Option<SymbolId>,
+        initial_type: TypeId,
+        initial_has_type_params: bool,
+        skip_cache_for_control_flow_typed_any: bool,
+        cache_symbol: SymbolId,
+        visited: &FxHashSet<FlowNodeId>,
+        results: &FxHashMap<FlowNodeId, TypeId>,
+        run: &mut Vec<FlowNodeId>,
+    ) -> FlowNodeId {
+        // Gate: only collapse when the worklist treats this walk as
+        // cacheable/concrete. Generic or control-flow-`any` walks keep the full
+        // per-node path so loop fixed-point and generic-result invariants are
+        // untouched.
+        if initial_has_type_params
+            || skip_cache_for_control_flow_typed_any
+            || initial_type == TypeId::ANY
+            || initial_type == TypeId::ERROR
+        {
+            return entry;
+        }
+
+        // Only pure non-merge ASSIGNMENT flow flags are skippable. Any other flag
+        // means the node can apply or merge narrowing and must be processed.
+        let pure_assignment_only = |flags: u32| -> bool {
+            flags & flow_flags::ASSIGNMENT != 0
+                && flags
+                    & (flow_flags::BRANCH_LABEL
+                        | flow_flags::LOOP_LABEL
+                        | flow_flags::SWITCH_CLAUSE
+                        | flow_flags::CONDITION
+                        | flow_flags::CALL
+                        | flow_flags::ARRAY_MUTATION
+                        | flow_flags::START)
+                    == 0
+        };
+
+        let mut current = entry;
+        loop {
+            let Some(flow) = self.binder.flow_nodes.get(current) else {
+                return current;
+            };
+            if !pure_assignment_only(flow.flags) {
+                return current;
+            }
+            // Exactly one antecedent: a join/merge must be processed so its
+            // antecedents union correctly.
+            let [ant] = flow.antecedent.as_slice() else {
+                return current;
+            };
+            let ant = *ant;
+
+            // The assignment must neither target nor affect the reference. Reuse
+            // the #13404 O(1) root pre-filter (`assignment_root_symbols_may_overlap`):
+            // when the assignment's root symbol is provably disjoint from the
+            // reference's, it is irrelevant and skippable. Only fall back to the
+            // deep AST predicates (which the worklist's ASSIGNMENT branch also runs)
+            // when the roots may overlap.
+            let relevant =
+                if !self.assignment_root_symbols_may_overlap(flow.node, reference, symbol_id) {
+                    false
+                } else if let Some(target_sym) = symbol_id {
+                    let assignment_sym = self.reference_symbol(flow.node);
+                    if assignment_sym.is_some() && assignment_sym != Some(target_sym) {
+                        // Different binder symbol: cannot target the reference. It may
+                        // still *affect* a property/element path of the reference.
+                        self.assignment_affects_reference_node(flow.node, reference)
+                    } else {
+                        self.assignment_targets_reference_node(flow.node, reference)
+                            || self.assignment_affects_reference_node(flow.node, reference)
+                    }
+                } else {
+                    self.assignment_targets_reference_node(flow.node, reference)
+                        || self.assignment_affects_reference_node(flow.node, reference)
+                };
+            if relevant {
+                return current;
+            }
+
+            // Never skip past an antecedent that carries pending narrowing, and
+            // never skip one already finalized/cached (let the worklist reuse the
+            // existing answer for it).
+            if self.antecedent_requires_defer(ant, reference, symbol_id)
+                || visited.contains(&ant)
+                || results.contains_key(&ant)
+            {
+                return current;
+            }
+            if let Some(cache) = self.flow_cache()
+                && cache
+                    .borrow()
+                    .contains_key(&(ant, cache_symbol, initial_type))
+            {
+                return current;
+            }
+
+            // `current` is a pure pass-through: record it and advance.
+            run.push(current);
+            current = ant;
         }
     }
 
