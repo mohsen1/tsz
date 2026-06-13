@@ -230,7 +230,13 @@ pub struct PrepareRenameResult {
 
 impl PrepareRenameResult {
     /// Create a result for when renaming is not allowed.
-    pub(crate) fn cannot_rename(msg: &str) -> Self {
+    ///
+    /// The error's [`Display`] impl is the single source of the canonical
+    /// client-facing message, shared with the `Result<_, RenameError>` rename
+    /// surfaces.
+    ///
+    /// [`Display`]: std::fmt::Display
+    pub(crate) fn cannot_rename(error: &crate::errors::RenameError) -> Self {
         Self {
             can_rename: false,
             display_name: String::new(),
@@ -238,7 +244,7 @@ impl PrepareRenameResult {
             kind: RenameSymbolKind::Unknown,
             kind_modifiers: String::new(),
             trigger_span: Range::new(Position::new(0, 0), Position::new(0, 0)),
-            localized_error_message: Some(msg.to_string()),
+            localized_error_message: Some(error.to_string()),
         }
     }
 }

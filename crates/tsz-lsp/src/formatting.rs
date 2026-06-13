@@ -20,6 +20,7 @@
 //! Format-on-key follows the same policy: in fallback mode it only trims
 //! trailing whitespace; it does not re-indent or manipulate semicolons.
 
+use crate::errors::FormatError;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 #[cfg(not(target_arch = "wasm32"))]
@@ -158,7 +159,7 @@ impl DocumentFormattingProvider {
         file_path: &str,
         source_text: &str,
         options: &FormattingOptions,
-    ) -> Result<Vec<TextEdit>, String> {
+    ) -> Result<Vec<TextEdit>, FormatError> {
         // External formatters (prettier, eslint) require process spawning,
         // which is not available on WASM.
         #[cfg(not(target_arch = "wasm32"))]
@@ -187,12 +188,12 @@ impl DocumentFormattingProvider {
         file_path: &str,
         source_text: &str,
         options: &FormattingOptions,
-    ) -> Result<Vec<TextEdit>, String> {
+    ) -> Result<Vec<TextEdit>, FormatError> {
         let path = Path::new(file_path);
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .ok_or("Invalid file path")?;
+            .ok_or(FormatError::InvalidFilePath)?;
 
         let mut cmd = Command::new("prettier");
         cmd.arg("--stdin-filepath").arg(file_name);
@@ -212,22 +213,34 @@ impl DocumentFormattingProvider {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn prettier: {e}"))?;
+            .map_err(|e| FormatError::SpawnFailed {
+                tool: "prettier",
+                source: e.to_string(),
+            })?;
 
         output
             .stdin
             .as_ref()
-            .ok_or("Failed to open stdin")?
+            .ok_or(FormatError::OpenStdin {
+                message: "Failed to open stdin",
+            })?
             .write_all(source_text.as_bytes())
-            .map_err(|e| format!("Failed to write to prettier stdin: {e}"))?;
+            .map_err(|e| FormatError::Io {
+                stage: "Failed to write to prettier stdin",
+                source: e.to_string(),
+            })?;
 
-        let result = output
-            .wait_with_output()
-            .map_err(|e| format!("Failed to read prettier output: {e}"))?;
+        let result = output.wait_with_output().map_err(|e| FormatError::Io {
+            stage: "Failed to read prettier output",
+            source: e.to_string(),
+        })?;
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("Prettier failed: {stderr}"));
+            return Err(FormatError::FormatterFailed {
+                tool: "Prettier",
+                stderr: stderr.into_owned(),
+            });
         }
 
         let formatted = String::from_utf8_lossy(&result.stdout).to_string();
@@ -246,7 +259,7 @@ impl DocumentFormattingProvider {
         file_path: &str,
         source_text: &str,
         _options: &FormattingOptions,
-    ) -> Result<Vec<TextEdit>, String> {
+    ) -> Result<Vec<TextEdit>, FormatError> {
         let path = Path::new(file_path);
 
         let child = Command::new("eslint")
@@ -261,25 +274,37 @@ impl DocumentFormattingProvider {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn eslint: {e}"))?;
+            .map_err(|e| FormatError::SpawnFailed {
+                tool: "eslint",
+                source: e.to_string(),
+            })?;
 
         child
             .stdin
             .as_ref()
-            .ok_or("Failed to open eslint stdin")?
+            .ok_or(FormatError::OpenStdin {
+                message: "Failed to open eslint stdin",
+            })?
             .write_all(source_text.as_bytes())
-            .map_err(|e| format!("Failed to write to eslint stdin: {e}"))?;
+            .map_err(|e| FormatError::Io {
+                stage: "Failed to write to eslint stdin",
+                source: e.to_string(),
+            })?;
 
-        let result = child
-            .wait_with_output()
-            .map_err(|e| format!("Failed to read eslint output: {e}"))?;
+        let result = child.wait_with_output().map_err(|e| FormatError::Io {
+            stage: "Failed to read eslint output",
+            source: e.to_string(),
+        })?;
 
         // Exit code 0 = no problems, 1 = lint problems (fixable or not),
         // 2 = internal/configuration error. With `--fix-dry-run` we still
         // want to read stdout for codes 0 and 1.
         if result.status.code().is_some_and(|c| c >= 2) {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("ESLint failed: {stderr}"));
+            return Err(FormatError::FormatterFailed {
+                tool: "ESLint",
+                stderr: stderr.into_owned(),
+            });
         }
 
         let stdout = String::from_utf8_lossy(&result.stdout);
@@ -302,14 +327,16 @@ impl DocumentFormattingProvider {
     /// - `Ok(None)` when `ESLint` produced no fixes (empty stdout or no
     ///   `output` key on the result object).
     /// - `Err(msg)` when stdout is non-empty but not valid JSON.
-    pub fn parse_eslint_fix_output(stdout: &str) -> Result<Option<String>, String> {
+    pub fn parse_eslint_fix_output(stdout: &str) -> Result<Option<String>, FormatError> {
         let trimmed = stdout.trim();
         if trimmed.is_empty() {
             return Ok(None);
         }
 
-        let parsed: serde_json::Value = serde_json::from_str(trimmed)
-            .map_err(|e| format!("Failed to parse eslint JSON output: {e}"))?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(trimmed).map_err(|e| FormatError::JsonParse {
+                source: e.to_string(),
+            })?;
 
         let output = parsed
             .as_array()
@@ -335,7 +362,10 @@ impl DocumentFormattingProvider {
     ///   insertions/deletions.
     ///
     /// All positions are 0-based.
-    pub fn compute_line_edits(original: &str, formatted: &str) -> Result<Vec<TextEdit>, String> {
+    pub fn compute_line_edits(
+        original: &str,
+        formatted: &str,
+    ) -> Result<Vec<TextEdit>, FormatError> {
         if original == formatted {
             return Ok(vec![]);
         }
@@ -405,7 +435,7 @@ impl DocumentFormattingProvider {
     pub fn apply_safe_whitespace_formatting(
         source_text: &str,
         options: &FormattingOptions,
-    ) -> Result<Vec<TextEdit>, String> {
+    ) -> Result<Vec<TextEdit>, FormatError> {
         let formatted = Self::safe_whitespace_text(source_text, options);
         Self::compute_line_edits(source_text, &formatted)
     }
@@ -480,7 +510,7 @@ impl DocumentFormattingProvider {
         source_text: &str,
         range: Range,
         options: &FormattingOptions,
-    ) -> Result<Vec<TextEdit>, String> {
+    ) -> Result<Vec<TextEdit>, FormatError> {
         let lines: Vec<&str> = source_text.split('\n').collect();
         if lines.is_empty() {
             return Ok(vec![]);
@@ -536,7 +566,7 @@ impl DocumentFormattingProvider {
         _offset: u32,
         key: &str,
         options: &FormattingOptions,
-    ) -> Result<Vec<TextEdit>, String> {
+    ) -> Result<Vec<TextEdit>, FormatError> {
         match key {
             ";" => Self::trim_trailing_whitespace_on_line(source_text, line, options),
             "\n" => {
@@ -555,7 +585,7 @@ impl DocumentFormattingProvider {
         source_text: &str,
         line: u32,
         options: &FormattingOptions,
-    ) -> Result<Vec<TextEdit>, String> {
+    ) -> Result<Vec<TextEdit>, FormatError> {
         if !options.trim_trailing_whitespace.unwrap_or(true) {
             return Ok(vec![]);
         }
