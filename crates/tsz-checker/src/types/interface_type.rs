@@ -809,6 +809,7 @@ impl<'a> CheckerState<'a> {
                         base_symbol_declarations,
                         base_symbol_value_declaration,
                         base_symbol_name,
+                        base_symbol_flags,
                     )) = self
                         .get_cross_file_symbol(base_sym_id)
                         .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
@@ -817,6 +818,7 @@ impl<'a> CheckerState<'a> {
                                 symbol.declarations.clone(),
                                 symbol.value_declaration,
                                 symbol.escaped_name.clone(),
+                                symbol.flags,
                             )
                         })
                     else {
@@ -921,9 +923,62 @@ impl<'a> CheckerState<'a> {
                         })
                     });
 
-                    let substitution =
-                        TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
-                    base_type = instantiate_type(self.ctx.types, base_type, &substitution);
+                    // A generic type alias is referenced nominally as `Lazy(DefId)`,
+                    // which carries no inline type-parameter occurrences, so
+                    // `instantiate_type` is a no-op that silently drops the heritage
+                    // type arguments. Cross-file (multi-arena) resolution of a generic
+                    // alias commonly yields exactly that bare `Lazy` here — e.g.
+                    // `interface I extends Omit<Base, K>` / `Pick<…>` / `Partial<…>` /
+                    // `Record<…>` — and without the arguments the base collapses to an
+                    // argument-less `Lazy` that resolves to `unknown` and is then dropped
+                    // by the merge, losing every inherited member.
+                    //
+                    // Form the generic application `Alias<args>` (mirroring the canonical
+                    // `Name<args>` type-reference lowering) and then resolve it env-aware
+                    // to its concrete apparent shape. Resolving here — rather than leaving
+                    // a deferred `Application` for the merge to wrap in an intersection —
+                    // is what lets the inherited members compose through a *second* level
+                    // of generic-interface inheritance (`interface R<…> extends I<…>`):
+                    // an `Object & Application` intersection base does not merge cleanly
+                    // through `merge_with_intersection`, but a plain `Object` does. When
+                    // the application stays generic (its arguments still depend on the
+                    // deriving interface's own type parameters) evaluation makes no
+                    // progress and the deferred application is kept, preserving the
+                    // existing single-level behaviour.
+                    //
+                    // Scoped to type-alias bases: interface/class heritage resolves to an
+                    // already-expanded object/callable (or class instance) body whose
+                    // member signatures embed the base's own type-parameter `TypeId`s, so
+                    // those keep going through `instantiate_type`, which substitutes them
+                    // directly (and aliases whose body the resolver does expand inline
+                    // are not `Lazy`, so they are unaffected too).
+                    let base_is_lazy_alias_ref = base_symbol_flags
+                        & tsz_binder::symbol_flags::TYPE_ALIAS
+                        != 0
+                        && crate::query_boundaries::common::lazy_def_id(self.ctx.types, base_type)
+                            .is_some();
+                    base_type = if base_is_lazy_alias_ref && !type_args.is_empty() {
+                        let application = self.ctx.types.application(base_type, type_args.clone());
+                        let resolved = self.evaluate_type_with_env(application);
+                        if resolved != application
+                            && crate::query_boundaries::common::classify_for_interface_merge(
+                                self.ctx.types,
+                                resolved,
+                            )
+                            .is_structurally_mergeable()
+                        {
+                            resolved
+                        } else {
+                            application
+                        }
+                    } else {
+                        let substitution = TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &base_type_params,
+                            &type_args,
+                        );
+                        instantiate_type(self.ctx.types, base_type, &substitution)
+                    };
                     let is_builtin_array_heritage =
                         matches!(base_symbol_name.as_str(), "Array" | "ReadonlyArray");
                     let requires_self = !is_builtin_array_heritage
