@@ -862,6 +862,58 @@ impl<'a> CheckerState<'a> {
             }
 
             PropertyAccessResult::PropertyNotFound { .. } => {
+                // `T extends Alias<...>` exposes members from the constraint even
+                // when the first lookup on `T` cannot see through the alias shell.
+                if crate::query_boundaries::state::checking::is_type_parameter_like(
+                    self.ctx.types,
+                    object_type_for_access,
+                ) && let Some(constraint) =
+                    crate::query_boundaries::state::checking::type_parameter_constraint(
+                        self.ctx.types,
+                        object_type_for_access,
+                    )
+                {
+                    let mut candidates = Vec::with_capacity(3);
+                    candidates.push(constraint);
+                    let property_expanded =
+                        self.evaluate_application_type_for_property_access(constraint);
+                    if property_expanded != constraint {
+                        candidates.push(property_expanded);
+                    }
+                    let evaluated = self.evaluate_type_with_env(constraint);
+                    if evaluated != constraint && evaluated != property_expanded {
+                        candidates.push(evaluated);
+                    }
+
+                    for candidate in candidates {
+                        match self.resolve_property_access_with_env(candidate, property_name) {
+                            PropertyAccessResult::Success {
+                                type_id,
+                                write_type,
+                                ..
+                            } => {
+                                return self.finalize_property_access_result(
+                                    idx,
+                                    effective_write_result(type_id, write_type),
+                                    skip_flow_narrowing,
+                                    false,
+                                );
+                            }
+                            PropertyAccessResult::PossiblyNullOrUndefined {
+                                property_type: Some(type_id),
+                                ..
+                            } => {
+                                return self.finalize_property_access_result(
+                                    idx,
+                                    type_id,
+                                    skip_flow_narrowing,
+                                    false,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 if self.is_array_constructor_is_array_recovery(access.expression, property_name) {
                     return self.finalize_property_access_result(
                         idx,
