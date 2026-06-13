@@ -5,7 +5,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, TypeId, TypeParamInfo};
+use tsz_solver::{CallSignature, TypeId, TypeParamInfo, TypeParamOrigin};
 
 type JsdocTemplateParamScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
 type JsdocTemplateParamPushResult = (Vec<TypeParamInfo>, JsdocTemplateParamScopeUpdates);
@@ -151,7 +151,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default,
                 is_const,
-                origin: tsz_solver::types::TypeParamOrigin::User,
+                origin: TypeParamOrigin::User,
             };
             let type_id = factory.type_param(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);

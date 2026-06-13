@@ -139,11 +139,10 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
 
         let subst = TypeSubstitution::single(mapped.type_param.name, constrained_key);
 
-        let mut value_type = self.evaluator.evaluate(instantiate_type(
-            self.evaluator.interner(),
-            mapped.template,
-            &subst,
-        ));
+        let interner = self.evaluator.interner();
+        let mut value_type =
+            self.evaluator
+                .evaluate(instantiate_type(interner, mapped.template, &subst));
 
         if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
             value_type = self
