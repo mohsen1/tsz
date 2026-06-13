@@ -1157,14 +1157,18 @@ withTempDir((dir) => {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout, /2x target gaps with attribution: 0\/2/);
+  assert.match(result.stdout, /2x target gaps with attribution: 1\/2/);
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.two_x_target.attribution_attempts, {
     failed: 1,
     skipped: 1,
   });
-  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.equal(report.two_x_target.rows_with_attribution, 1);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["vite-vanilla-ts-app"]);
+  assert.deepEqual(report.two_x_target.missing_attribution_plan.map((row) => row.name), [
+    "vite-vanilla-ts-app",
+  ]);
 
   const tsEssentials = report.target_gaps.find((row) => row.name === "ts-essentials-project");
   assert.equal(tsEssentials.attribution_status.present, true);
@@ -1182,7 +1186,7 @@ withTempDir((dir) => {
   );
 
   const planMarkdown = fs.readFileSync(attributionPlan, "utf8");
-  assert.match(planMarkdown, /Attribution attempt: failed/);
+  assert.doesNotMatch(planMarkdown, /Attribution attempt: failed/);
   assert.match(planMarkdown, /Attribution attempt: skipped/);
 });
 
