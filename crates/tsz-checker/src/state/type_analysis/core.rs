@@ -675,6 +675,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: tsz_solver::TypeParamOrigin::User,
             };
             let mut shadowed_class_param = false;
             if let Some(ref mut c) = self.ctx.enclosing_class
@@ -784,6 +785,7 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     default,
                     is_const,
+                    origin: tsz_solver::TypeParamOrigin::User,
                 };
 
                 let constrained_type_id = self.intern_type_param_for_decl(data.name, info);

@@ -10,6 +10,7 @@ fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -48,6 +49,7 @@ fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
     let u_array = interner.array(u_type);
@@ -91,6 +93,7 @@ fn test_array_mapped_type_method_resolution() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -100,6 +103,7 @@ fn test_array_mapped_type_method_resolution() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let p_type = interner.intern(TypeData::TypeParameter(p_param));
     let index_access = interner.intern(TypeData::IndexAccess(t_type, p_type));
@@ -127,6 +131,7 @@ fn test_array_mapped_type_method_resolution() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let array_t = interner.intern(TypeData::TypeParameter(array_t_param));
     let pop_return_type = interner.union2(array_t, TypeId::UNDEFINED);
@@ -189,18 +194,21 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let s_param = TypeParamInfo {
         name: interner.intern_string("S"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let s_type = interner.intern(TypeData::TypeParameter(s_param));
@@ -257,6 +265,7 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let id_t = interner.intern(TypeData::TypeParameter(id_t_param));
     let id = interner.function(FunctionShape {
@@ -711,6 +720,7 @@ fn test_infer_application_to_mapped_type_direct_arg_unification() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -720,6 +730,7 @@ fn test_infer_application_to_mapped_type_direct_arg_unification() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     // Build mapped type body: { [K in keyof T]: T[K] }
@@ -1300,6 +1311,7 @@ fn test_union_generic_single_signature_members_require_shared_call_signature() {
             constraint: Some(TypeId::NUMBER),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         type_predicate: None,
         is_constructor: false,
@@ -1318,6 +1330,7 @@ fn test_union_generic_single_signature_members_require_shared_call_signature() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         type_predicate: None,
         is_constructor: false,
@@ -1356,6 +1369,7 @@ fn test_call_index_access_on_mapped_type_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
 
@@ -1387,6 +1401,7 @@ fn test_call_index_access_on_mapped_type_constraint() {
         constraint: Some(mapped),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create IndexAccess: T[K]
@@ -1421,6 +1436,7 @@ fn test_generic_call_evaluates_conditional_constraint_to_never() {
         name: tp_name,
         constraint: None,
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = interner.type_param(tp);
 
@@ -1439,6 +1455,7 @@ fn test_generic_call_evaluates_conditional_constraint_to_never() {
         name: tp_name,
         constraint: Some(cond),
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id_constrained = interner.type_param(tp_with_constraint);
 
@@ -1482,6 +1499,7 @@ fn test_generic_call_infers_type_param_from_this_parameter() {
         name: t_name,
         constraint: None,
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_info);
 
@@ -1527,6 +1545,7 @@ fn test_generic_call_conditional_constraint_accepts_nullable() {
         name: tp_name,
         constraint: None,
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = interner.type_param(tp);
 
@@ -1544,6 +1563,7 @@ fn test_generic_call_conditional_constraint_accepts_nullable() {
         name: tp_name,
         constraint: Some(cond),
         default: None,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id_constrained = interner.type_param(tp_with_constraint);
 

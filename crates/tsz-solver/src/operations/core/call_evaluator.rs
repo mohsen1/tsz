@@ -1499,8 +1499,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> bool {
         match self.interner.lookup(ty) {
             Some(TypeData::TypeParameter(info)) => {
-                let name = self.interner.resolve_atom(info.name);
-                if name.as_str().starts_with("__infer_") {
+                if info.is_infer_placeholder() {
                     return false;
                 }
                 substitution.map().contains_key(&info.name)

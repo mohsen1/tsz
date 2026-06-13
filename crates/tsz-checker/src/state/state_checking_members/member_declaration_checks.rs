@@ -734,6 +734,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name.clone(), previous, false));
@@ -764,6 +765,7 @@ impl<'a> CheckerState<'a> {
                 constraint: Some(resolved),
                 default: None,
                 is_const: entry.is_const,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
             self.ctx
                 .type_parameter_scope

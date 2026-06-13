@@ -1089,6 +1089,7 @@ fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
         constraint: Some(types.array(TypeId::UNKNOWN)),
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     });
     let bar = types.intern_string("bar");
 

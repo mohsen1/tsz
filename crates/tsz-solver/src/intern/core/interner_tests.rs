@@ -133,6 +133,7 @@ fn same_name_type_parameter_intersection_collapses_to_constrained_member() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     assert_eq!(
@@ -152,6 +153,7 @@ fn same_name_type_parameter_replacement_dedups_non_adjacent_members() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = interner.type_param(TypeParamInfo::simple(u_name));
 

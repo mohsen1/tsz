@@ -209,6 +209,7 @@ fn test_return_type_generic_function() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -537,12 +538,14 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         params: vec![

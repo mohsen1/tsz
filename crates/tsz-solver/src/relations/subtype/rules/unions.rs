@@ -243,6 +243,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 constraint: Some(mapped.constraint),
                 default: None,
                 is_const: false,
+                origin: mapped.type_param.origin,
             });
             let source_value_type = self.interner.index_access(constraint_source, k_type_id);
             if !self

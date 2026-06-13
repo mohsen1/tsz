@@ -1391,6 +1391,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::types::TypeParamOrigin::User,
         });
         assert_eq!(
             TypePrinter::new(&interner).print_type(unconstrained),
@@ -1402,6 +1403,7 @@ mod tests {
             constraint: Some(TypeId::NUMBER),
             default: None,
             is_const: false,
+            origin: tsz_solver::types::TypeParamOrigin::User,
         });
         assert_eq!(
             TypePrinter::new(&interner).print_type(constrained),
@@ -1429,6 +1431,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::types::TypeParamOrigin::User,
         });
         let empty = interner.object(Vec::new());
 
@@ -1559,6 +1562,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::types::TypeParamOrigin::User,
         };
         let t_type = interner.type_param(t_param);
         let ty = interner.union2(t_type, TypeId::UNDEFINED);
@@ -1583,6 +1587,7 @@ mod tests {
             constraint: None,
             default: Some(TypeId::UNDEFINED),
             is_const: false,
+            origin: tsz_solver::types::TypeParamOrigin::User,
         };
         let this_type = interner.type_param(this_param);
         let ty = interner.union2(this_type, TypeId::UNDEFINED);

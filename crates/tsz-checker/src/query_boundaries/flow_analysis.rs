@@ -1253,6 +1253,7 @@ mod tests {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         })
     }
 

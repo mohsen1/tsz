@@ -432,13 +432,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .function_shape(shape_id)
                     .type_params
                     .iter()
-                    .filter_map(|tp| {
-                        self.interner
-                            .resolve_atom(tp.name)
-                            .as_str()
-                            .starts_with("__infer_src_")
-                            .then_some(tp.name)
-                    })
+                    .filter_map(|tp| tp.is_infer_source().then_some(tp.name))
                     .collect()
             } else {
                 rustc_hash::FxHashSet::default()
@@ -447,11 +441,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut source_placeholder_subst = TypeSubstitution::new();
         for ty in crate::visitor::collect_all_types(self.interner.as_type_database(), current) {
             if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(ty)
-                && self
-                    .interner
-                    .resolve_atom(info.name)
-                    .as_str()
-                    .starts_with("__infer_src_")
+                && info.is_infer_source()
                 && !preserved_source_placeholders.contains(&info.name)
             {
                 source_placeholder_subst.insert(info.name, TypeId::UNKNOWN);
@@ -493,12 +483,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .map()
             .iter()
             .filter_map(|(&name, &ty)| {
+                // Substitution keys are bare atoms; classify by name here.
                 (ty == TypeId::UNKNOWN
-                    && self
-                        .interner
-                        .resolve_atom(name)
-                        .as_str()
-                        .starts_with("__infer_src_"))
+                    && super::atom_names_source_inference_placeholder(
+                        self.interner.resolve_atom(name).as_str(),
+                    ))
                 .then_some(name)
             })
             .collect::<Vec<_>>();
@@ -571,7 +560,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
-        let mut type_param_placeholder_atoms: Vec<tsz_common::Atom> =
+        // Store each placeholder's atom *and* its mint-time inference id so that
+        // reconstruction sites below re-intern the byte-identical
+        // `TypeParamInfo` (same `origin`), preserving the placeholder's
+        // interned `TypeId`. The `origin` field participates in interning
+        // identity, so a reconstruction with a mismatched origin would split the
+        // placeholder into two distinct types and break higher-order inference.
+        let mut type_param_placeholder_atoms: Vec<(tsz_common::Atom, u64)> =
             Vec::with_capacity(func.type_params.len());
 
         self.constraint_pairs.borrow_mut().clear();
@@ -589,8 +584,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let var = infer_ctx.fresh_var();
             type_param_vars.push(var);
 
-            let placeholder_id = self.checker.next_inference_placeholder_id();
-            write_placeholder_name(&mut placeholder_buf, placeholder_id);
+            let placeholder_mint_id = self.checker.next_inference_placeholder_id();
+            write_placeholder_name(&mut placeholder_buf, placeholder_mint_id);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
@@ -598,12 +593,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 name: placeholder_atom,
                 constraint: tp.constraint,
                 default: None,
+                origin: crate::types::TypeParamOrigin::InferPlaceholder {
+                    id: placeholder_mint_id,
+                },
             });
             let placeholder_id = self.interner.intern(placeholder_key);
 
             substitution.insert(tp.name, placeholder_id);
             var_map.insert(placeholder_id, var);
-            type_param_placeholder_atoms.push(placeholder_atom);
+            type_param_placeholder_atoms.push((placeholder_atom, placeholder_mint_id));
 
             // Track defaulted placeholders to prevent union inference in constrain_types
             if tp.default.is_some() {
@@ -894,7 +892,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Pass 1: Collect all resolved (non-UNKNOWN) type parameters
         let mut unresolved_indices = Vec::new();
         for (i, tp) in func.type_params.iter().enumerate() {
-            let placeholder_atom = type_param_placeholder_atoms[i];
+            let (placeholder_atom, _placeholder_mint_id) = type_param_placeholder_atoms[i];
             // Skip the preferred_lower_bound optimization in compute_contextual_types.
             // Unlike resolve_generic_call_inner (which gates this on direct_param_vars
             // for parameters where the type IS the type parameter, like f<T>(x: T)),
@@ -984,12 +982,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // This ensures that `foo((x) => 1, (x) => '')` produces arg types with
             // unique placeholder names instead of `T`, avoiding name collisions.
             {
-                let placeholder_atom = type_param_placeholder_atoms[i];
+                let (placeholder_atom, placeholder_mint_id) = type_param_placeholder_atoms[i];
+                // Re-intern the byte-identical placeholder minted above (same
+                // `origin`, so the same interned `TypeId`).
                 let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
                     is_const: tp.is_const,
                     name: placeholder_atom,
                     constraint: tp.constraint,
                     default: None,
+                    origin: crate::types::TypeParamOrigin::InferPlaceholder {
+                        id: placeholder_mint_id,
+                    },
                 });
                 let placeholder_id = self.interner.intern(placeholder_key);
                 result_subst.insert(tp.name, placeholder_id);

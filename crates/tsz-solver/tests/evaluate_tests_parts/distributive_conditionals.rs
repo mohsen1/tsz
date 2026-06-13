@@ -407,6 +407,7 @@ fn test_distributive_with_constrained_infer() {
         constraint: Some(TypeId::STRING), // R extends string constraint
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let extends_array = interner.array(infer_r);
@@ -577,6 +578,7 @@ fn test_string_intrinsic_over_type_param_stays_deferred() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let intrinsic = interner.string_intrinsic(StringIntrinsicKind::Uppercase, t_param);
     let result = evaluate_type(&interner, intrinsic);

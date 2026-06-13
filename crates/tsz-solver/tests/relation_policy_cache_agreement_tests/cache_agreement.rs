@@ -1446,6 +1446,7 @@ fn assignability_cache_erase_generics_matches_uncached_relation_policy() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let target_t_type = interner.type_param(target_t);
     let source = interner.function(FunctionShape {
@@ -1548,6 +1549,7 @@ fn assignability_cache_erased_generic_retry_matches_uncached_relation_policy() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let source_s_type = interner.type_param(source_s);
     let source = interner.function(FunctionShape {
@@ -1565,12 +1567,14 @@ fn assignability_cache_erased_generic_retry_matches_uncached_relation_policy() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let target_u = TypeParamInfo {
         name: interner.intern_string("TargetU"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let target_t_type = interner.type_param(target_t);
     let target_u_type = interner.type_param(target_u);

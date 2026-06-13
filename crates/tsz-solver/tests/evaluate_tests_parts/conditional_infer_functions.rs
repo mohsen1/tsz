@@ -1025,6 +1025,7 @@ fn test_conditional_infer_tuple_element_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends [infer R extends string] ? R : never, with T = [number] | [string].
@@ -1080,6 +1081,7 @@ fn test_conditional_infer_optional_tuple_element_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // T extends [infer R extends string] ? R : never, with T = [string?] | [number?].

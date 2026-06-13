@@ -41,6 +41,7 @@ fn build_instantiated_homomorphic_mapped(
             constraint: Some(original_constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(concrete_source),
         name_type: None,
@@ -73,6 +74,7 @@ fn mapped_property_template_uses_preserving_instantiation_cache() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -131,6 +133,7 @@ fn remapped_key_type_uses_preserving_instantiation_cache() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: Some(name_type),
@@ -186,6 +189,7 @@ fn mapped_index_template_uses_instantiation_cache_per_concrete_key() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -283,6 +287,7 @@ fn direct_mapped_over_string_does_not_short_circuit() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -464,6 +469,7 @@ fn instantiated_homomorphic_mapped_over_intersection_distributes() {
         constraint: Some(interner.keyof(outer_t)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let template = interner.index_access(a_and_b, iter_k);
 
@@ -556,6 +562,7 @@ fn direct_mapped_over_intersection_does_not_distribute() {
             constraint: Some(constraint), // declared = effective → no distribution
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -597,6 +604,7 @@ fn partial_style_instantiated_mapped_over_intersection_distributes() {
         constraint: Some(keyof_outer_t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let template = interner.index_access(src, iter_k);
 
@@ -607,6 +615,7 @@ fn partial_style_instantiated_mapped_over_intersection_distributes() {
             constraint: Some(keyof_outer_t),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(src),
         name_type: None,

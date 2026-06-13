@@ -16,6 +16,7 @@ fn test_application_ref_expansion_with_rest_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -87,6 +88,7 @@ fn test_application_ref_expansion_with_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -155,6 +157,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -223,6 +226,7 @@ fn test_application_ref_expansion_with_literal_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -273,6 +277,7 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -320,6 +325,7 @@ fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -374,6 +380,7 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -425,12 +432,14 @@ fn test_application_ref_expansion_with_union_body() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let r_param = TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let l_type = interner.intern(TypeData::TypeParameter(l_param));
     let r_type = interner.intern(TypeData::TypeParameter(r_param));
@@ -480,12 +489,14 @@ fn test_application_ref_expansion_with_intersection_body() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let b_param = TypeParamInfo {
         name: b_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let a_type = interner.intern(TypeData::TypeParameter(a_param));
     let b_type = interner.intern(TypeData::TypeParameter(b_param));
@@ -539,6 +550,7 @@ fn test_application_ref_expansion_with_this_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -605,6 +617,7 @@ fn test_application_ref_expansion_with_optional_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -673,6 +686,7 @@ fn test_application_ref_expansion_with_readonly_array_body() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -721,6 +735,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -804,12 +819,14 @@ fn test_application_ref_expansion_with_callable_body() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let r_param = TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let r_type = interner.intern(TypeData::TypeParameter(r_param));
@@ -889,6 +906,7 @@ fn test_application_ref_expansion_with_construct_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -969,6 +987,7 @@ fn test_application_ref_expansion_with_deeply_nested_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1392,6 +1411,7 @@ fn test_conditional_infer_constraint_mismatch_edge() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create pattern { x: infer T extends string }

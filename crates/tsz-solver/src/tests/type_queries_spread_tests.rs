@@ -150,6 +150,7 @@ fn spread_unconstrained_type_param_is_valid() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     assert!(is_valid_spread_type(&db, tp_id));
@@ -165,6 +166,7 @@ fn spread_type_param_constrained_to_object_is_valid() {
         constraint: Some(obj),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     assert!(is_valid_spread_type(&db, tp_id));
@@ -179,6 +181,7 @@ fn spread_type_param_constrained_to_string_is_invalid() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     assert!(!is_valid_spread_type(&db, tp_id));
@@ -199,6 +202,7 @@ fn spread_type_param_constrained_to_any_is_invalid() {
         constraint: Some(TypeId::ANY),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     assert!(!is_valid_spread_type(&db, tp_id));
@@ -213,6 +217,7 @@ fn spread_type_param_constrained_to_unknown_is_invalid() {
         constraint: Some(TypeId::UNKNOWN),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     assert!(!is_valid_spread_type(&db, tp_id));
@@ -229,12 +234,14 @@ fn spread_nested_type_param_chain_resolves_to_unknown_via_any() {
         constraint: Some(TypeId::ANY),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: Some(t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     assert!(!is_valid_spread_type(&db, u));
 }
@@ -249,12 +256,14 @@ fn spread_nested_type_param_chain_resolves_to_primitive() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: Some(t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     assert!(!is_valid_spread_type(&db, u));
 }
@@ -270,12 +279,14 @@ fn spread_nested_type_param_chain_resolves_to_object_is_valid() {
         constraint: Some(obj),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: Some(t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     assert!(is_valid_spread_type(&db, u));
 }
@@ -290,12 +301,14 @@ fn spread_nested_type_param_chain_with_unconstrained_tail_is_valid() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: Some(t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     assert!(is_valid_spread_type(&db, u));
 }
@@ -346,6 +359,7 @@ fn spread_index_access_uses_base_constraint_before_validation() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
 
@@ -381,6 +395,7 @@ fn spread_keyof_type_param_is_invalid() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     let keyof_tp = db.keyof(tp_id);
@@ -518,6 +533,7 @@ fn spread_union_with_intersection_containing_undefined_is_valid() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     let intersection = db.intersection(vec![tp_id, TypeId::UNDEFINED]);
@@ -534,6 +550,7 @@ fn spread_intersection_with_undefined_is_invalid_on_its_own() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tp_id = db.type_param(tp);
     let intersection = db.intersection(vec![tp_id, TypeId::UNDEFINED]);
@@ -568,6 +585,7 @@ fn tp(db: &TypeInterner, name: &str, constraint: Option<TypeId>) -> TypeId {
         constraint,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     })
 }
 
@@ -697,6 +715,7 @@ fn object_spread_dts_projection_matches_falsy_spread_rules() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let unconstrained_id = db.type_param(unconstrained);
     let undefined_constrained = TypeParamInfo {
@@ -704,6 +723,7 @@ fn object_spread_dts_projection_matches_falsy_spread_rules() {
         constraint: Some(TypeId::UNDEFINED),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let undefined_constrained_id = db.type_param(undefined_constrained);
 

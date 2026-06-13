@@ -144,6 +144,7 @@ fn format_mapped_type_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -166,6 +167,7 @@ fn format_mapped_type_with_remove_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -191,6 +193,7 @@ fn format_mapped_type_with_remove_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -216,6 +219,7 @@ fn format_mapped_string_index_signature_like() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -237,6 +241,7 @@ fn format_mapped_preserves_key_dependent_template() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let mapped = db.mapped(MappedType {
         type_param: TypeParamInfo {
@@ -244,6 +249,7 @@ fn format_mapped_preserves_key_dependent_template() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: key_param,
@@ -349,12 +355,14 @@ fn format_template_literal_pattern_union_does_not_repaint_application_alias() {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: db.intern_string("U"),
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         TypeId::STRING,
@@ -513,6 +521,7 @@ fn format_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     assert_eq!(fmt.format(tp), "MyType");
 }
@@ -536,12 +545,14 @@ fn format_keyof_intersection_distributes() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let intersection = db.intersection2(t, u);
     let keyof = db.keyof(intersection);
@@ -579,6 +590,7 @@ fn format_keyof_intersection_with_empty_object_does_not_distribute() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let empty_obj = db.object(vec![]);
     let intersection = db.intersection2(t, empty_obj);
@@ -621,6 +633,7 @@ fn make_homomorphic_mapped(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let template = db.index_access(source, bound);
     db.mapped(MappedType {
@@ -629,6 +642,7 @@ fn make_homomorphic_mapped(
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: db.keyof(source),
         template,
@@ -649,12 +663,14 @@ fn homomorphic_mapped_index_access_partial_simplifies() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let k = db.type_param(TypeParamInfo {
         name: db.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let partial_u = make_homomorphic_mapped(&db, u, "P", Some(MappedModifier::Add), None);
     let access = db.index_access(partial_u, k);
@@ -674,12 +690,14 @@ fn homomorphic_mapped_index_access_readonly_simplifies() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let k = db.type_param(TypeParamInfo {
         name: db.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let readonly_u = make_homomorphic_mapped(&db, u, "P", None, Some(MappedModifier::Add));
     let access = db.index_access(readonly_u, k);
@@ -699,6 +717,7 @@ fn homomorphic_mapped_index_access_independent_of_bound_name() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let key_index = db.keyof(u);
     let partial_u_q = make_homomorphic_mapped(&db, u, "Q", Some(MappedModifier::Add), None);
@@ -725,12 +744,14 @@ fn homomorphic_mapped_index_access_skips_non_identity_template() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let k = db.type_param(TypeParamInfo {
         name: db.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let mapped = db.mapped(MappedType {
         type_param: TypeParamInfo {
@@ -738,6 +759,7 @@ fn homomorphic_mapped_index_access_skips_non_identity_template() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: db.keyof(u),
         template: TypeId::NUMBER, // not `U[P]`
@@ -773,6 +795,7 @@ fn remapped_mapped_type_alias_index_access_shows_alias_name() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let p = db.type_param(TypeParamInfo::simple(db.intern_string("P")));
     // Template: { a: P }
@@ -821,6 +844,7 @@ fn remapped_mapped_type_alias_index_access_independent_of_iteration_var_name() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Build two structurally-distinct mapped types differing only in the
@@ -875,6 +899,7 @@ fn remapped_mapped_type_without_alias_formats_structurally_in_index_access() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let p = db.type_param(TypeParamInfo::simple(db.intern_string("P")));
     let prefix = db.intern_string("pfx");
@@ -921,6 +946,7 @@ fn format_infer_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     assert_eq!(fmt.format(infer), "infer R");
 }
@@ -1084,18 +1110,21 @@ fn format_application_pads_missing_args_with_param_defaults() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let treturn_param = TypeParamInfo {
         name: db.intern_string("TReturn"),
         constraint: None,
         default: Some(TypeId::ANY),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tnext_param = TypeParamInfo {
         name: db.intern_string("TNext"),
         constraint: None,
         default: Some(TypeId::ANY),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let iter_body = db.object(vec![]); // structural body isn't relevant to the display test
     let iter_def = crate::def::DefinitionInfo::type_alias(
@@ -1128,18 +1157,21 @@ fn format_iterable_iterator_elides_trailing_any_without_recorded_default() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: db.intern_string("TReturn"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: db.intern_string("TNext"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         vec![],
@@ -1178,6 +1210,7 @@ fn display_alias_does_not_repaint_preexisting_structural_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let app = db.application(db.lazy(crate::def::DefId(1)), vec![type_param]);
 
@@ -1201,6 +1234,7 @@ fn skip_application_alias_names_suppresses_nested_application_display_alias() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let merge_def = def_store.register(crate::def::DefinitionInfo::type_alias(
         db.intern_string("merge"),
@@ -1245,6 +1279,7 @@ fn skip_application_display_alias_chase_keeps_selected_application_name() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let objectish_def = def_store.register(crate::def::DefinitionInfo::type_alias(
         db.intern_string("Objectish"),
@@ -1320,6 +1355,7 @@ fn application_display_alias_can_name_intermediate_application() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
         db.intern_string("Inner"),
@@ -1406,18 +1442,21 @@ fn empty_object_interface_application_preserves_type_args() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: db.intern_string("TReturn"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: db.intern_string("TNext"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         vec![],
@@ -1460,6 +1499,7 @@ fn empty_object_does_not_repaint_as_generic_interface_without_display_alias() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         vec![],
     );
@@ -1578,6 +1618,7 @@ fn string_intrinsic_display_alias_keeps_resolved_intrinsic_surface() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         vec![],
     ));
@@ -1606,6 +1647,7 @@ fn template_literal_display_alias_keeps_resolved_pattern_surface() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         vec![],
     ));
@@ -1673,6 +1715,7 @@ fn format_callable_generic_single_call_signature_arrow_syntax() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let s_type = db.type_param(s_param);
 
@@ -1731,6 +1774,7 @@ fn format_callable_single_construct_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = db.type_param(type_param);
 

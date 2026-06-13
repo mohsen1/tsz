@@ -177,6 +177,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default,
                 is_const,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
         }
 
@@ -293,6 +294,7 @@ impl<'a> CheckerState<'a> {
                     constraint: None,
                     default: None,
                     is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
+                    origin: tsz_solver::TypeParamOrigin::User,
                 })
             })
             .collect();
@@ -344,6 +346,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default,
                 is_const,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
         }
 
@@ -818,6 +821,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: tsz_solver::TypeParamOrigin::User,
             })
             .collect()
     }

@@ -19,6 +19,7 @@ fn test_intersection_with_empty_object_assignable_to_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create {} (empty object type)
@@ -54,6 +55,7 @@ fn test_type_param_union_undefined_intersect_empty_or_null_assignable_to_type_pa
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let empty_obj = interner.object(vec![]);
@@ -94,6 +96,7 @@ fn test_non_reducing_cross_product_intersection_is_not_distributed() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }))
     };
     let (a, b, c, d) = (mk("A"), mk("B"), mk("C"), mk("D"));
@@ -123,6 +126,7 @@ fn test_value_union_filter_intersection_is_not_distributed() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let obj_a = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),
@@ -156,6 +160,7 @@ fn test_intersection_with_type_param_and_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create T & string
@@ -199,6 +204,7 @@ fn test_intersection_with_mapped_type_member_matches_target() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create type parameter P (for the mapped type iteration variable)
@@ -208,6 +214,7 @@ fn test_intersection_with_mapped_type_member_matches_target() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     // Create keyof T
@@ -255,6 +262,7 @@ fn test_intersection_member_check_with_application_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create Application<T> (like Readonly<T>)
@@ -324,6 +332,7 @@ fn test_intersection_type_params_assignable_to_constraint_union_intersection() {
         constraint: Some(a_type),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // U extends B
@@ -332,6 +341,7 @@ fn test_intersection_type_params_assignable_to_constraint_union_intersection() {
         constraint: Some(b_type),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Source: T & U
@@ -366,6 +376,7 @@ fn test_indexed_access_intersection_with_unconstrained_type_param() {
         constraint: Some(TypeId::UNKNOWN),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create T (constrained type parameter, e.g., extends Foo)
@@ -376,6 +387,7 @@ fn test_indexed_access_intersection_with_unconstrained_type_param() {
         constraint: Some(foo),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create State<T> = { a?: T }

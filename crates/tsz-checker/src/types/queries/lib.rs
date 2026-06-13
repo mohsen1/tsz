@@ -1653,6 +1653,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         };
         types.set_array_base_type(array_base, vec![array_param]);
 

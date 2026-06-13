@@ -31,6 +31,7 @@ fn one_arg_infer_pattern(interner: &TypeInterner, name: &str) -> (TypeId, TypeId
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let pattern = interner.function(FunctionShape {
         type_params: vec![],
@@ -102,12 +103,14 @@ fn infer_callable_two_missing_params_default_each_to_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("B"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let pattern = interner.function(FunctionShape {
         type_params: vec![],
@@ -243,6 +246,7 @@ fn infer_callable_unmatched_param_defaults_nested_object_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let param_obj = interner.object(vec![PropertyInfo::new(
         interner.intern_string("value"),
@@ -291,6 +295,7 @@ fn infer_callable_unmatched_param_defaults_deferred_application_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     // Base `Box` is an ordinary (non-infer) shell; the infer lives only in the
     // application argument, so this exercises the Application-arg traversal.

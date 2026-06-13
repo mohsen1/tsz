@@ -420,6 +420,7 @@ fn test_template_constrained_infer_string() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: `${infer S extends string}`
@@ -455,6 +456,7 @@ fn test_template_constrained_infer_literal_union() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: `${infer S extends "a" | "b"}`
@@ -491,6 +493,7 @@ fn test_template_constrained_infer_violation() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: `${infer S extends "a" | "b"}`
@@ -523,6 +526,7 @@ fn test_template_constrained_prefix_infer() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: `prefix${infer S extends string}`
@@ -655,12 +659,14 @@ fn test_omit_this_preserves_generics() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         params: vec![ParamInfo {
@@ -1039,6 +1045,7 @@ fn test_instance_type_with_generics() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),

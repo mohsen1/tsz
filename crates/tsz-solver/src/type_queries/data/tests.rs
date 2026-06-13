@@ -227,6 +227,7 @@ fn test_union_has_direct_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     // Not a union — returns false
     assert!(!union_has_direct_type_parameter(&interner, tp));
@@ -445,6 +446,7 @@ fn test_extract_type_params_for_call() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     // Function with 1 type param
@@ -718,12 +720,14 @@ fn classify_body_for_arg_preservation_conditional_with_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let infer_type = interner.infer(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Conditional with infer in extends: T extends infer U ? T : never
@@ -762,12 +766,14 @@ fn classify_body_for_arg_preservation_conditional_application_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let infer_v = interner.infer(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Application(Lazy(42), [T, infer V]) — represents Synthetic<T, infer V>
@@ -966,6 +972,7 @@ fn contains_application_in_structure_ignores_mapped_constraints() {
             constraint: Some(app),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: app,
         name_type: None,
@@ -997,6 +1004,7 @@ fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let keyof_t = interner.keyof(t_param);
     let k_param = interner.type_param(TypeParamInfo {
@@ -1004,6 +1012,7 @@ fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Sanity: a bare K should not look free relative to itself, even though
@@ -1053,6 +1062,7 @@ fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let cond_with_u = interner.conditional(ConditionalType {
         check_type: u_param,
@@ -1076,6 +1086,7 @@ fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
         constraint: Some(keyof_t_for_p),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let pick_app_p = interner.application(pick_base, vec![obj, p_param]);
     let cond_with_p = interner.conditional(ConditionalType {
@@ -1113,6 +1124,7 @@ fn contains_type_parameters_except_name_ignores_nested_mapped_param_metadata() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let keyof_t = interner.keyof(t_param);
     let inner_iter = TypeParamInfo {
@@ -1120,6 +1132,7 @@ fn contains_type_parameters_except_name_ignores_nested_mapped_param_metadata() {
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let inner_obj = interner.object(vec![PropertyInfo {
         name: a_name,
@@ -1319,6 +1332,7 @@ fn is_substitution_dependent_type_classifies_lazy_vs_type_param() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         assert!(is_substitution_dependent_type(&interner, tp));
         // Buried inside an application argument it still propagates up.
@@ -1347,6 +1361,7 @@ fn contains_type_parameters_db_is_name_agnostic_and_cache_stable() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         // Bury the param under array/union/index-access wrappers.
         let arr = interner.array(tp);

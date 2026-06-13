@@ -67,12 +67,14 @@ fn test_type_kind_classification() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let inter = interner.intersection(vec![t_param, u_param]);
     assert_eq!(
@@ -226,12 +228,14 @@ fn test_is_intersection_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let inter = interner.intersection(vec![t_param, u_param]);
     assert!(is_intersection_type(&interner, inter));
@@ -270,6 +274,7 @@ fn test_is_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     assert!(is_type_parameter(&interner, param));
     assert!(!is_type_parameter(&interner, TypeId::STRING));
@@ -360,6 +365,7 @@ fn test_contains_type_parameters() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Array<T>
@@ -392,6 +398,7 @@ fn contains_type_parameters_uses_deep_cache_without_broadening_semantics() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let arr = interner.array(t_param);
     let union = interner.union(vec![TypeId::STRING, arr]);
@@ -529,12 +536,14 @@ fn test_type_list_extractors_for_union_and_intersection() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let union = interner.union(vec![t_param, u_param]);
@@ -709,6 +718,7 @@ fn test_type_param_ref_and_lazy_extractors() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let param_type = interner.intern(TypeData::TypeParameter(param_info));
     assert_eq!(type_param_info(&interner, param_type), Some(param_info));
@@ -741,6 +751,7 @@ fn test_application_mapped_and_conditional_extractors() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -850,6 +861,7 @@ fn test_contains_infer_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let union = interner.union(vec![TypeId::STRING, infer_type]);
 
@@ -866,6 +878,7 @@ fn test_cached_contains_infer_and_type_query_predicates() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let type_query = interner.type_query(SymbolRef(7));
     let nested = interner.union(vec![infer_type, type_query]);
@@ -929,6 +942,7 @@ fn test_meta_type_predicates() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -1023,6 +1037,7 @@ fn test_collect_infer_bindings_skips_terminal_types() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let root = interner.union(vec![
         TypeId::STRING,
@@ -1119,6 +1134,7 @@ fn test_references_any_type_param_named_direct() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let mut names = rustc_hash::FxHashSet::default();
     names.insert(interner.intern_string("T"));
@@ -1133,6 +1149,7 @@ fn test_references_any_type_param_named_nested_in_union() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let union = interner.union(vec![TypeId::STRING, tp]);
     let mut names = rustc_hash::FxHashSet::default();
@@ -1148,6 +1165,7 @@ fn test_references_any_type_param_named_not_found() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let union = interner.union(vec![TypeId::STRING, tp]);
     let mut names = rustc_hash::FxHashSet::default();
@@ -1175,6 +1193,7 @@ fn test_is_type_parameter_at_top_level_bare() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     // The bare type parameter itself counts as top-level.
     assert!(is_type_parameter_at_top_level(&interner, u, u_atom));
@@ -1189,6 +1208,7 @@ fn test_is_type_parameter_at_top_level_under_union() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let union = interner.union(vec![u, TypeId::UNDEFINED]);
     // `U | undefined` keeps U at top level for tsc's purposes.
@@ -1204,12 +1224,14 @@ fn test_is_type_parameter_at_top_level_under_intersection() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let v = interner.type_param(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let inter = interner.intersection(vec![u, v]);
     assert!(is_type_parameter_at_top_level(&interner, inter, u_atom));
@@ -1224,6 +1246,7 @@ fn test_is_type_parameter_at_top_level_inside_function() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     // `(a: number) => U` — when this whole function is the candidate (i.e. the
     // signature's *return type* is itself a function returning U), U is NOT
@@ -1256,6 +1279,7 @@ fn test_is_type_parameter_at_top_level_different_name() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     // `T` is at top level but we're asking about `U`.
     assert!(!is_type_parameter_at_top_level(&interner, t, u_atom));
@@ -1270,6 +1294,7 @@ fn test_is_type_parameter_at_top_level_inside_array_is_false() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let arr = interner.array(u);
     // tsc's rule does not unwrap arrays; `U[]` is not "U at top level".

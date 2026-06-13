@@ -108,6 +108,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
         constraint: Some(interner.keyof(model)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_type = interner.type_param(key_param);
     let suffix_param = TypeParamInfo {
@@ -115,6 +116,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let suffix_type = interner.type_param(suffix_param);
     let remapped_name = interner.template_literal(vec![
@@ -418,6 +420,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let t_key = TypeParamInfo {
@@ -425,6 +428,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
         constraint: Some(interner.keyof(t_type)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_key_type = interner.type_param(t_key);
     let foo_param_type = interner.mapped(MappedType {
@@ -455,6 +459,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
         constraint: Some(interner.array(TypeId::STRING)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_type = interner.type_param(u_param);
     let u_key = TypeParamInfo {
@@ -462,6 +467,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
         constraint: Some(interner.keyof(u_type)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_key_type = interner.type_param(u_key);
     let bar_param_type = interner.mapped(MappedType {
@@ -1315,6 +1321,7 @@ fn test_index_access_fresh_equivalent_type_parameter_keys_are_related() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let source_key = interner.fresh_type_param(key_info);
     let target_key = interner.fresh_type_param(key_info);
@@ -1769,6 +1776,7 @@ fn test_lazy_type_params_falls_back_from_symbol_based_lazy_ref() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let generic_def = DefId(200);
     env.insert_def_with_params(generic_def, TypeId::STRING, vec![t_param]);

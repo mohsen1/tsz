@@ -136,6 +136,7 @@ fn test_contextual_property_type_specializes_unique_symbol_mapped_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let key_param = interner.intern(crate::TypeData::TypeParameter(key_param_info));
 

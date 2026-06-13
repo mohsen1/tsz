@@ -161,8 +161,7 @@ fn contextual_type_param_instantiation_plan(
         let Some(info) = common::type_param_info(db, referenced) else {
             continue;
         };
-        let name = db.resolve_atom(info.name);
-        if name.starts_with("__infer_") || name.starts_with("__infer_src_") {
+        if info.is_infer_placeholder() {
             infer_bindings.push((info.name, referenced));
         }
     }

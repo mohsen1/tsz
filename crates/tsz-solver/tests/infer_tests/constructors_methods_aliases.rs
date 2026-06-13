@@ -123,6 +123,7 @@ fn test_method_return_type_inference_basic() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Method signature: () => T
@@ -132,6 +133,7 @@ fn test_method_return_type_inference_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![],
         this_type: None,
@@ -161,6 +163,7 @@ fn test_method_parameter_type_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Method signature: (x: T) => void
@@ -170,6 +173,7 @@ fn test_method_parameter_type_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -204,6 +208,7 @@ fn test_method_this_type_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Method signature: (this: This) => This
@@ -213,6 +218,7 @@ fn test_method_this_type_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![],
         this_type: Some(this_type),
@@ -248,6 +254,7 @@ fn test_method_generic_parameter_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Method signature: <T>(x: T) => Array<T>
@@ -258,6 +265,7 @@ fn test_method_generic_parameter_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),

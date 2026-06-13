@@ -35,6 +35,7 @@ fn test_mapped_type_as_never_skips_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param_p = interner.intern(TypeData::TypeParameter(type_param_p_info));
 
@@ -43,6 +44,7 @@ fn test_mapped_type_as_never_skips_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info));
 
@@ -98,6 +100,7 @@ fn remapped_template_pattern_key_indexes_matching_literal() {
         constraint: Some(key_space),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_type = interner.type_param(key_param);
     let remapped_pattern = interner.template_literal(vec![
@@ -137,6 +140,7 @@ fn remapped_template_pattern_key_preserves_per_source_value_type() {
         constraint: Some(key_space),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_type = interner.type_param(key_param);
     let remapped_pattern = interner.template_literal(vec![
@@ -182,6 +186,7 @@ fn remapped_template_pattern_key_matches_renamed_iteration_param_with_suffix() {
         constraint: Some(key_space),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_type = interner.type_param(key_param);
     let remapped_pattern = interner.template_literal(vec![
@@ -264,6 +269,7 @@ fn test_mapped_keyof_intersection_prunes_impossible_discriminant_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let mapped = interner.mapped(MappedType {
         type_param: key_param_info,
@@ -356,6 +362,7 @@ fn test_mapped_keyof_intersection_prunes_impossible_enum_discriminant_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let mapped = interner.mapped(MappedType {
         type_param: key_param_info,
@@ -495,6 +502,7 @@ fn test_instantiated_generic_discriminant_intersection_preserves_keyof_branch_ke
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.type_param(t_info);
 
@@ -569,6 +577,7 @@ fn test_instantiated_generic_same_enum_discriminant_intersection_preserves_keyof
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_param = interner.type_param(t_info);
 
@@ -664,6 +673,7 @@ fn test_mapped_type_key_remap_to_never_filters_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info));
 
@@ -721,6 +731,7 @@ fn test_finite_mapped_property_names_resolve_concrete_filtering_remap() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
 
@@ -789,6 +800,7 @@ fn test_finite_mapped_property_type_specializes_key_filtered_template() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
 
@@ -852,6 +864,7 @@ fn test_finite_mapped_property_type_preserves_template_alias_provenance() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped = interner.mapped(MappedType {
@@ -904,6 +917,7 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let record_pattern = interner.object(vec![PropertyInfo::new(tag_name, infer_x)]);
     let tags = interner.conditional(ConditionalType {
@@ -919,6 +933,7 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tag_type = interner.intern(TypeData::TypeParameter(tag_param));
     let string_constraint = interner.intersection(vec![tags, TypeId::STRING]);
@@ -1005,6 +1020,7 @@ fn test_finite_mapped_property_type_specializes_unique_symbol_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
 
@@ -1074,6 +1090,7 @@ fn test_finite_mapped_property_names_do_not_materialize_string_index_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped = interner.mapped(MappedType {
@@ -1171,6 +1188,7 @@ fn test_keyof_generic_remapped_mapped_type_keeps_concrete_lower_bound_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let source = interner.intersection(vec![concrete_source, generic_tail]);
 
@@ -1179,6 +1197,7 @@ fn test_keyof_generic_remapped_mapped_type_keeps_concrete_lower_bound_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
     let mapped = interner.mapped(MappedType {
@@ -1247,6 +1266,7 @@ fn evaluated_remapped_property_type(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let iter_type = interner.intern(TypeData::TypeParameter(iter_info));
     let mapped = interner.mapped(MappedType {
@@ -1303,6 +1323,7 @@ fn conditional_remap_collisions_union_value_types_from_both_branches() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let iter_type = interner.intern(TypeData::TypeParameter(iter_info));
     let source = interner.object(vec![

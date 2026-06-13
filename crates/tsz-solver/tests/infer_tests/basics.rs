@@ -101,6 +101,7 @@ fn test_inference_occurs_check() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let array_t = interner.array(t_type);
 
@@ -120,6 +121,7 @@ fn test_inference_occurs_check_function_this_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),

@@ -8,7 +8,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, TypeId, TypeParamInfo, Visibility,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, TypeId, TypeParamInfo,
+    TypeParamOrigin, Visibility,
 };
 
 /// Bookkeeping record for a single type parameter pushed into
@@ -422,6 +423,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default,
                 is_const,
+                origin: TypeParamOrigin::User,
             };
             let ty = factory.type_param(info);
             type_params.push(info);

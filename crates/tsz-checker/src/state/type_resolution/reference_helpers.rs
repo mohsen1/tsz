@@ -478,6 +478,7 @@ impl<'a> CheckerState<'a> {
                             constraint: None,
                             default: None,
                             is_const: false,
+                            origin: tsz_solver::TypeParamOrigin::User,
                         })
                         .collect();
                 }
@@ -859,6 +860,7 @@ impl<'a> CheckerState<'a> {
                             constraint: incoming.constraint,
                             default: slot.default,
                             is_const: slot.is_const,
+                            origin: slot.origin,
                         };
                     }
                     if slot.default.is_none() && incoming.default.is_some() {
@@ -867,6 +869,7 @@ impl<'a> CheckerState<'a> {
                             constraint: slot.constraint,
                             default: incoming.default,
                             is_const: slot.is_const,
+                            origin: slot.origin,
                         };
                     }
                 }
@@ -923,6 +926,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default,
                 is_const,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
         }
         if params.is_empty() {

@@ -275,6 +275,7 @@ fn format_const_type_param() {
         constraint: None,
         default: None,
         is_const: true,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -282,6 +283,7 @@ fn format_const_type_param() {
             constraint: None,
             default: None,
             is_const: true,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -335,6 +337,7 @@ fn generic_class_type_shows_type_params() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         body: Some(instance_type),
         instance_shape: None,
@@ -387,12 +390,14 @@ fn application_lazy_shows_type_args() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: db.intern_string("U"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         body: None,
@@ -444,12 +449,14 @@ fn resolved_indexed_access_alias_bodies_stay_structural_without_repainting_writt
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let f_param = TypeParamInfo {
         name: db.intern_string("F"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t = db.type_param(t_param);
     let f = db.type_param(f_param);
@@ -468,6 +475,7 @@ fn resolved_indexed_access_alias_bodies_stay_structural_without_repainting_writt
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let vehicle_t = db.type_param(vehicle_t_param);
     let vehicle_body = db.index_access(db.lazy(data_fetch_def), vehicle_t);
@@ -798,6 +806,7 @@ fn build_distributive_foo_alias(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t = db.type_param(t_param);
 
@@ -881,6 +890,7 @@ fn conditional_alias_application_resolving_to_tuple_renders_structurally() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t = db.type_param(t_param);
     let tuple = db.tuple(vec![crate::types::TupleElement {
@@ -1097,6 +1107,7 @@ fn store_union_origin_preserves_source_order_for_type_parameter_union() {
         constraint: Some(top),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // This mirrors a two-pass type-parameter push: `U` keeps its first-pass
@@ -1346,6 +1357,7 @@ fn union_application_uses_max_arg_position() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         vec![],
     )

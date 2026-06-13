@@ -1156,11 +1156,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             rename_buf.clear();
             write!(rename_buf, "__infer_src_ctx_{index}").expect("write to String is infallible");
             let fresh_name = self.interner.intern_string(&rename_buf);
+            // Legacy index-named source placeholder: classified as a higher-order
+            // source placeholder but carries no origin name (matches the historical
+            // `decode_src_placeholder_origin` returning `None` for `__infer_src_ctx_*`).
+            let ctx_origin = crate::types::TypeParamOrigin::InferSource {
+                id: index as u64,
+                origin_name: None,
+            };
             let fresh_type = self.interner.type_param(TypeParamInfo {
                 name: fresh_name,
                 constraint: None,
                 default: None,
                 is_const: tp.is_const,
+                origin: ctx_origin,
             });
             rename_substitution.insert(tp.name, fresh_type);
             renamed_type_params.push(TypeParamInfo {
@@ -1172,6 +1180,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .default
                     .map(|default| instantiate_type(self.interner, default, &rename_substitution)),
                 is_const: tp.is_const,
+                origin: ctx_origin,
             });
         }
         let renamed_source = FunctionShape {

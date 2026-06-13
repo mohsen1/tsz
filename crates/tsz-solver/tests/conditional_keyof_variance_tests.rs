@@ -15,6 +15,7 @@ fn conditional_keyof_branch_variance_computation() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     });
     let keyof_t = interner.keyof(t_type);
 

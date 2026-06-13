@@ -266,6 +266,7 @@ fn test_overload_generic_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let callable = interner.callable(CallableShape {
@@ -278,6 +279,7 @@ fn test_overload_generic_identity() {
                     constraint: None,
                     default: None,
                     is_const: false,
+                    origin: crate::types::TypeParamOrigin::User,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -326,6 +328,7 @@ fn test_overload_generic_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let t_number = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -333,6 +336,7 @@ fn test_overload_generic_with_constraint() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let callable = interner.callable(CallableShape {
@@ -345,6 +349,7 @@ fn test_overload_generic_with_constraint() {
                     constraint: Some(TypeId::STRING),
                     default: None,
                     is_const: false,
+                    origin: crate::types::TypeParamOrigin::User,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -363,6 +368,7 @@ fn test_overload_generic_with_constraint() {
                     constraint: Some(TypeId::NUMBER),
                     default: None,
                     is_const: false,
+                    origin: crate::types::TypeParamOrigin::User,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -702,6 +708,7 @@ fn test_overload_generic_multiple_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -709,6 +716,7 @@ fn test_overload_generic_multiple_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let tuple_t_u = interner.tuple(vec![
@@ -737,12 +745,14 @@ fn test_overload_generic_multiple_type_params() {
                         constraint: None,
                         default: None,
                         is_const: false,
+                        origin: crate::types::TypeParamOrigin::User,
                     },
                     TypeParamInfo {
                         name: interner.intern_string("U"),
                         constraint: None,
                         default: None,
                         is_const: false,
+                        origin: crate::types::TypeParamOrigin::User,
                     },
                 ],
                 params: vec![
@@ -770,6 +780,7 @@ fn test_overload_generic_multiple_type_params() {
                     constraint: None,
                     default: None,
                     is_const: false,
+                    origin: crate::types::TypeParamOrigin::User,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -1136,6 +1147,7 @@ fn test_overload_generic_default_type() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let callable = interner.callable(CallableShape {
@@ -1147,6 +1159,7 @@ fn test_overload_generic_default_type() {
                 constraint: None,
                 default: Some(TypeId::STRING),
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
                 name: Some(interner.intern_string("x")),
@@ -1183,6 +1196,7 @@ fn test_overload_array_methods_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -1190,6 +1204,7 @@ fn test_overload_array_methods_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // (x: T) => U
@@ -1258,6 +1273,7 @@ fn test_overload_array_methods_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("fn")),
@@ -1295,6 +1311,7 @@ fn test_overload_array_methods_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![
             ParamInfo {
@@ -1501,6 +1518,7 @@ fn test_overload_promise_then_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -1508,6 +1526,7 @@ fn test_overload_promise_then_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let v_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -1515,6 +1534,7 @@ fn test_overload_promise_then_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // (value: T) => U
@@ -1562,6 +1582,7 @@ fn test_overload_promise_then_pattern() {
                     constraint: None,
                     default: None,
                     is_const: false,
+                    origin: crate::types::TypeParamOrigin::User,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("onFulfilled")),
@@ -1583,12 +1604,14 @@ fn test_overload_promise_then_pattern() {
                         constraint: None,
                         default: None,
                         is_const: false,
+                        origin: crate::types::TypeParamOrigin::User,
                     },
                     TypeParamInfo {
                         name: interner.intern_string("V"),
                         constraint: None,
                         default: None,
                         is_const: false,
+                        origin: crate::types::TypeParamOrigin::User,
                     },
                 ],
                 params: vec![

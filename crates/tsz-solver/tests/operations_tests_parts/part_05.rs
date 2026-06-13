@@ -10,6 +10,7 @@ fn test_tuple_rest_captures_remaining() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -80,6 +81,7 @@ fn test_tuple_rest_with_multiple_prefix() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -162,6 +164,7 @@ fn test_tuple_rest_single_capture() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -229,6 +232,7 @@ fn test_variadic_with_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -271,6 +275,7 @@ fn test_variadic_zip_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -279,6 +284,7 @@ fn test_variadic_zip_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
@@ -393,6 +399,7 @@ fn test_variadic_empty_args_uses_constraint() {
         constraint: Some(TypeId::UNKNOWN),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -499,6 +506,7 @@ fn test_solve_generic_instantiation_success() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // <string> - satisfies the constraint
@@ -520,6 +528,7 @@ fn test_solve_generic_instantiation_constraint_violation() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // <number> - does NOT satisfy the constraint
@@ -554,6 +563,7 @@ fn test_solve_generic_instantiation_unconstrained_success() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // <any type> - should always succeed when unconstrained
@@ -576,12 +586,14 @@ fn test_solve_generic_instantiation_multiple_params() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(TypeId::NUMBER),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
     ];
 
@@ -623,6 +635,7 @@ fn test_solve_generic_instantiation_literal_satisfies_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // "hello" literal should satisfy string constraint
@@ -646,6 +659,7 @@ fn test_solve_generic_instantiation_union_satisfies_constraint() {
         constraint: Some(union_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // string should satisfy string | number constraint
@@ -673,6 +687,7 @@ fn test_solve_generic_instantiation_task_example() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // Explicit type argument <string>
@@ -695,6 +710,7 @@ fn test_solve_generic_instantiation_number_not_string() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // number does NOT extend string
@@ -732,6 +748,7 @@ fn test_solve_generic_instantiation_object_constraint() {
         constraint: Some(object_type),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // { x: number; y: string; } should satisfy constraint (has at least x: number)
@@ -1002,6 +1019,7 @@ fn test_generic_function_tuple_to_array_constraint() {
         constraint: Some(string_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // [string, string] should satisfy string[] constraint
@@ -1043,6 +1061,7 @@ fn test_generic_function_heterogeneous_tuple_fails_homogeneous_array_constraint(
         constraint: Some(string_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // [string, number] should NOT satisfy string[] constraint
@@ -1087,6 +1106,7 @@ fn test_generic_function_tuple_to_union_array_constraint() {
         constraint: Some(union_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // [string, number] should satisfy (string | number)[] constraint
@@ -1130,6 +1150,7 @@ fn test_generic_function_tuple_with_rest_to_array_constraint() {
         constraint: Some(union_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // [string, ...number[]] should satisfy (string | number)[] constraint
@@ -1171,6 +1192,7 @@ fn test_generic_function_empty_tuple_to_any_array_constraint() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // [] should satisfy any[] constraint
@@ -1199,6 +1221,7 @@ fn test_generic_function_single_element_tuple_to_array_constraint() {
         constraint: Some(number_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // [number] should satisfy number[] constraint
@@ -1232,6 +1255,7 @@ fn test_generic_function_tuple_with_optional_to_array_constraint() {
         constraint: Some(string_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
 
     // [string, string?] should satisfy string[] constraint
@@ -1272,6 +1296,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // <T, U extends T>
@@ -1281,12 +1306,14 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(t_type), // U extends T
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
     ];
 
@@ -1314,6 +1341,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // <T, U extends T>
@@ -1323,12 +1351,14 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(t_type), // U extends T
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
     ];
 
@@ -1539,6 +1569,7 @@ fn test_property_access_array_push_with_env_resolver() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1611,6 +1642,7 @@ fn test_property_access_array_push_with_query_cache_resolver() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1665,6 +1697,7 @@ fn test_property_access_array_push_with_intersection_array_base() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1724,6 +1757,7 @@ fn test_array_push_instantiates_intersection_array_base_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1759,6 +1793,7 @@ fn test_array_push_instantiates_intersection_array_base_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
     let u_array = interner.array(u_type);

@@ -291,6 +291,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let mapped_with_as = interner.mapped(MappedType {
             type_param: TypeParamInfo {
@@ -298,6 +299,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: type_param,
             name_type: Some(TypeId::STRING), // has as-clause
@@ -322,6 +324,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let mapped_no_as = interner.mapped(MappedType {
             type_param: TypeParamInfo {
@@ -329,6 +332,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: type_param,
             name_type: None, // no as-clause
@@ -353,6 +357,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let mapped = interner.mapped(MappedType {
             type_param: TypeParamInfo {
@@ -360,6 +365,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             constraint: type_param,
             name_type: Some(TypeId::STRING),
@@ -490,6 +496,7 @@ mod tests {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         })
     }
 
@@ -521,6 +528,7 @@ mod tests {
             constraint: Some(arr),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let evaluator = ElementAccessEvaluator::new(&interner);
         let literal_0 = interner.literal_number(0.0);
@@ -654,6 +662,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let evaluator = ElementAccessEvaluator::new(&interner);
         let literal_0 = interner.literal_number(0.0);

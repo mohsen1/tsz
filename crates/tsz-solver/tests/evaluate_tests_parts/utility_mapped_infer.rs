@@ -757,6 +757,7 @@ fn test_noinfer_preserves_constraints() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // NoInfer<T> should still have the constraint information
@@ -831,6 +832,7 @@ fn test_noinfer_default_parameter() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let t_param = interner.intern(TypeData::TypeParameter(t_with_default));
@@ -889,12 +891,14 @@ fn test_noinfer_multiple_type_params() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: crate::types::TypeParamOrigin::User,
             },
         ],
         params: vec![
@@ -961,6 +965,7 @@ fn test_noinfer_in_return_position() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1455,6 +1460,7 @@ fn test_required_mapped_type() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING, // keyof T
         name_type: None,
@@ -1627,6 +1633,7 @@ fn test_readonly_mapped_type() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,

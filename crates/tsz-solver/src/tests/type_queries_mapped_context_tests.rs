@@ -9,6 +9,7 @@ fn make_type_param(db: &TypeInterner, name: &str, constraint: Option<TypeId>) ->
         constraint,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }))
 }
 
@@ -26,6 +27,7 @@ fn test_homomorphic_mapped_type_with_keyof_type_param() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         })),
     );
     let mapped = db.mapped(MappedType {
@@ -34,6 +36,7 @@ fn test_homomorphic_mapped_type_with_keyof_type_param() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -59,6 +62,7 @@ fn test_non_homomorphic_mapped_type() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -89,6 +93,7 @@ fn test_homomorphic_mapped_type_with_intersection_constraint() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,

@@ -250,6 +250,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
         constraint: Some(keyof_source),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -328,6 +329,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
         constraint: Some(union_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -380,6 +382,7 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
         constraint: Some(keyof_source),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
     let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
@@ -417,6 +420,7 @@ fn test_application_homomorphic_mapped_type_primitive_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -427,6 +431,7 @@ fn test_application_homomorphic_mapped_type_primitive_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
     let keyof_t = interner.intern(TypeData::KeyOf(t_type));
@@ -496,6 +501,7 @@ fn test_application_homomorphic_mapped_type_object_expands() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -506,6 +512,7 @@ fn test_application_homomorphic_mapped_type_object_expands() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
     let keyof_t = interner.intern(TypeData::KeyOf(t_type));
@@ -627,6 +634,7 @@ fn test_tuple_evaluates_index_access_element() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -740,6 +748,7 @@ fn intermediate_application_alias_skips_preexisting_application_occurrence() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
@@ -781,6 +790,7 @@ fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
@@ -830,6 +840,7 @@ fn intermediate_application_alias_stores_for_fresh_generic_mapped_type() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Application is allocated first (as it would be when `Alias<K>` appears in source).
@@ -879,6 +890,7 @@ fn intermediate_application_alias_skips_generic_args_for_non_mapped_structural_t
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // --- Object shape ---
@@ -921,6 +933,7 @@ fn evaluator_stored_mapped_alias_appears_in_index_access_format() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Allocation order: Application first, then fresh Mapped.
@@ -981,6 +994,7 @@ fn test_distributive_conditional_over_union_evaluates_correctly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let lit1 = interner.literal_number(1.0);
@@ -1002,6 +1016,7 @@ fn test_distributive_conditional_over_union_evaluates_correctly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
     let k_args = vec![union_1_2];
 
@@ -1028,6 +1043,7 @@ fn test_distributive_conditional_renamed_param_evaluates_correctly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let lit_a = interner.literal_string("a");
@@ -1048,6 +1064,7 @@ fn test_distributive_conditional_renamed_param_evaluates_correctly() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }];
     let x_args = vec![union_ab];
 

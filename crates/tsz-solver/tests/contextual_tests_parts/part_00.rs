@@ -521,6 +521,7 @@ fn test_contextual_generic_call_union_preserves_literal() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let func = FunctionShape {
@@ -722,6 +723,7 @@ fn test_conditional_function_branch_contextual_parameter_type() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let fn_true_branch = interner.function(FunctionShape {
@@ -760,6 +762,7 @@ fn test_conditional_function_branch_contextual_type_for_call_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let callback = interner.function(FunctionShape {
@@ -1169,6 +1172,7 @@ fn test_contextual_generic_function_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 

@@ -17,7 +17,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, TypeParamInfo};
+use tsz_solver::{TypeId, TypeParamInfo, TypeParamOrigin};
 impl<'a> CheckerState<'a> {
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
@@ -324,6 +324,7 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     default,
                     is_const,
+                    origin: TypeParamOrigin::User,
                 };
                 let ty = factory.type_param(info);
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
@@ -352,6 +353,7 @@ impl<'a> CheckerState<'a> {
                         constraint,
                         default,
                         is_const,
+                        origin: TypeParamOrigin::User,
                     };
                     let ty = factory.type_param(info);
                     jsdoc_type_params.push(info);
