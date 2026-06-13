@@ -1,10 +1,11 @@
 //! Type Node Checking
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
+use super::type_node_cache_policy::scoped_type_node_cache_allowed;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
     type_node_includes_explicit_undefined,
 };
-use crate::context::CheckerContext;
+use crate::context::{CheckerContext, TypeParameterScopeCacheKey};
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -42,6 +43,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         }
 
+        let Some(node) = self.ctx.arena.get(idx) else {
+            self.depth.leave();
+            return TypeId::ERROR;
+        };
+        let has_type_parameter_scope = !self.ctx.type_parameter_scope.is_empty();
+        let scoped_cache_allowed = scoped_type_node_cache_allowed(self.ctx.arena, idx, node.kind);
+        let scope_cache_key = scoped_cache_allowed
+            .then(|| TypeParameterScopeCacheKey::from_scope(&self.ctx.type_parameter_scope))
+            .flatten();
+
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
             if cached == TypeId::ERROR {
@@ -52,14 +63,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // For non-ERROR cached results, check if we're in a generic context
             // If we're not in a generic context (type params are empty), the cache is valid
-            if self.ctx.type_parameter_scope.is_empty() {
+            if !has_type_parameter_scope {
                 // No type parameters in scope - cache is valid
                 self.depth.leave();
                 return cached;
             }
-            // If we have type parameters in scope, we need to be more careful
-            // For now, recompute to ensure correctness
-            // TODO: Add cache key based on type param hash for smarter caching
+        }
+        if let Some(key) = scope_cache_key.as_ref()
+            && let Some(&cached) = self
+                .ctx
+                .type_reference_validation_caches
+                .type_node_scope_types
+                .get(&(idx.0, key.clone()))
+        {
+            self.depth.leave();
+            return cached;
         }
         // Compute and cache
         let result = self.compute_type(idx);
@@ -68,13 +86,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // calls get_type_from_type_reference() which emits diagnostics
         // (TS2314, TS2304, etc.). If we cache here, the checker's handler
         // finds the cached result and skips the diagnostic-emitting path.
-        let is_type_ref = self
-            .ctx
-            .arena
-            .get(idx)
-            .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE);
+        let is_type_ref = node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE;
         if !is_type_ref {
-            self.ctx.node_types.insert(idx.0, result);
+            if let Some(key) = scope_cache_key
+                && result != TypeId::ERROR
+            {
+                self.ctx
+                    .type_reference_validation_caches
+                    .type_node_scope_types
+                    .insert((idx.0, key), result);
+            } else if !has_type_parameter_scope {
+                self.ctx.node_types.insert(idx.0, result);
+            }
         }
 
         self.depth.leave();
@@ -1956,6 +1979,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         "_".to_string()
     }
 }
+
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
 mod tests;
