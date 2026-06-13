@@ -225,7 +225,7 @@ assert.match(
 
 assert.match(
   workflow,
-  /- id: merge[\s\S]+expected_shards=8[\s\S]+echo "complete=false" >> "\$GITHUB_OUTPUT"[\s\S]+node scripts\/bench\/merge-results\.mjs/,
+  /- id: merge[\s\S]+expected_shards=9[\s\S]+echo "complete=false" >> "\$GITHUB_OUTPUT"[\s\S]+node scripts\/bench\/merge-results\.mjs/,
   "bench publish should merge partial shard sets into a diagnostic artifact instead of discarding completed shard JSON",
 );
 

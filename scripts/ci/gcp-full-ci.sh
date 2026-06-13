@@ -410,6 +410,8 @@ run_lint() {
   node scripts/bench/test-benchmark-artifact-selection.mjs || return $?
   node scripts/bench/test-gh-pages-benchmark-artifact-gate.mjs || return $?
   node scripts/bench/test-bench-workflow-cloudbuild-prep.mjs || return $?
+  node scripts/bench/test-bench-workflow-cloudbuild-shards.mjs || return $?
+  node scripts/bench/test-bench-workflow-micro-coverage.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
   done
