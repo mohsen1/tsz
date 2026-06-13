@@ -9,6 +9,7 @@ fn infer_var(interner: &TypeInterner, name: &str) -> TypeId {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     }))
 }
 

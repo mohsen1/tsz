@@ -214,6 +214,7 @@ fn make_type_param(interner: &TypeInterner, name: &str) -> (TypeId, TypeParamInf
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let id = interner.intern(TypeData::TypeParameter(info));
     (id, info)
@@ -367,6 +368,7 @@ fn partial_over_numeric_keyed_object_preserves_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_id = interner.intern(TypeData::TypeParameter(t_info));
 
@@ -380,6 +382,7 @@ fn partial_over_numeric_keyed_object_preserves_types() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_id = interner.intern(TypeData::TypeParameter(k_info));
     let t_k = interner.index_access(t_id, k_id);

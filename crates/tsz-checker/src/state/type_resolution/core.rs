@@ -1849,6 +1849,7 @@ impl<'a> CheckerState<'a> {
                         constraint: None,
                         default: None,
                         is_const: false,
+                        origin: tsz_solver::TypeParamOrigin::User,
                     };
                     let key_type = self.ctx.types.type_param(key_param);
                     return factory.mapped(tsz_solver::MappedType {

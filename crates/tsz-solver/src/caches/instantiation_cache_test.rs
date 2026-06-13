@@ -35,6 +35,7 @@ fn param_info(atom: tsz_common::interner::Atom) -> TypeParamInfo {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }
 }
 
@@ -732,6 +733,7 @@ fn instantiate_generic_cached_is_invariant_to_type_param_renaming() {
         constraint: Some(TypeId::UNKNOWN),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let stats0 = db.statistics();
@@ -999,6 +1001,7 @@ fn query_database_evaluate_entry_points_preserve_results() {
             constraint: Some(interner.keyof(outer_t)),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_src,
         name_type: None,

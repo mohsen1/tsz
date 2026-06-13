@@ -212,6 +212,7 @@ fn test_same_base_conditional_alias_check_terminates() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_info);
 
@@ -278,6 +279,7 @@ fn test_conditional_alias_self_comparison_is_compatible() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.type_param(k_info);
 
@@ -328,6 +330,7 @@ fn test_conditional_alias_self_comparison_is_compatible_renamed_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let x_type = interner.type_param(x_info);
 
@@ -423,6 +426,7 @@ fn test_type_parameter_constraint_assignability() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     assert!(checker.is_subtype_of(t_param, TypeId::STRING));
@@ -433,6 +437,7 @@ fn test_type_parameter_constraint_assignability() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     assert!(!checker.is_subtype_of(unconstrained, TypeId::STRING));
 }
@@ -447,18 +452,21 @@ fn test_base_constraint_assignability_subtyping() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let v_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     assert!(checker.is_subtype_of(t_param, TypeId::STRING));
@@ -477,6 +485,7 @@ fn test_base_constraint_not_assignable_to_param() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     assert!(!checker.is_subtype_of(TypeId::STRING, t_param));
@@ -492,12 +501,14 @@ fn test_type_parameter_identity_only() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     assert!(!checker.is_subtype_of(t_param, u_param));
@@ -513,6 +524,7 @@ fn test_deferred_conditional_source_subtyping() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let conditional = interner.conditional(ConditionalType {
@@ -539,6 +551,7 @@ fn test_deferred_conditional_target_subtyping() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let conditional = interner.conditional(ConditionalType {
@@ -562,6 +575,7 @@ fn test_deferred_conditional_structural_subtyping() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let source = interner.conditional(ConditionalType {
@@ -620,6 +634,7 @@ fn test_conditional_tuple_wrapper_no_distribution_subtyping() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let tuple_check = interner.tuple(vec![TupleElement {

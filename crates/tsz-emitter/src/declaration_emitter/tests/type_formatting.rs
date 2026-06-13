@@ -621,12 +621,14 @@ fn test_inferred_generic_function_type_omits_synthesized_optional_undefined() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     };
     let u_param = tsz_solver::TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let u_type = interner.type_param(u_param);

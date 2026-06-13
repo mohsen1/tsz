@@ -68,6 +68,7 @@ fn application_evaluator_cache_statistics_account_for_entries_and_size() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let body = interner.object(vec![PropertyInfo::new(value_atom, t_type)]);
@@ -140,6 +141,7 @@ fn evaluator_recovers_def_id_from_symbol_stamped_application_base() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
     let symbol = SymbolId(42);

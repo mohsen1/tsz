@@ -214,6 +214,7 @@ mod tests {
             name,
             constraint: None,
             default,
+            origin: crate::types::TypeParamOrigin::User,
         }
     }
 

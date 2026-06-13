@@ -37,7 +37,13 @@ pub(crate) fn next_global_placeholder_id() -> u64 {
     PLACEHOLDER_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Write the inference-placeholder name `__infer_{id}` into `buf`.
+/// Write the inference-placeholder *display* name `__infer_{id}` into `buf`.
+///
+/// Used only for display/debug and to give the interned placeholder atom a
+/// unique text. The placeholder kind is carried structurally on
+/// [`crate::types::TypeParamInfo::origin`]
+/// ([`crate::types::TypeParamOrigin::InferPlaceholder`]); consumers classify a
+/// `TypeParameter` *node* by reading that field, not by scanning this name.
 ///
 /// `buf` is cleared first so callers can reuse a single allocation across
 /// type parameters.
@@ -47,19 +53,39 @@ pub(crate) fn write_placeholder_name(buf: &mut String, id: u64) {
     write!(buf, "__infer_{id}").expect("write to String is infallible");
 }
 
-/// Write the higher-order source placeholder name into `buf`.
+/// Whether an *atom* names an inference placeholder, by the `__infer_` prefix.
 ///
-/// The name is `__infer_src_{id}#{origin}`. The `{id}` keeps the placeholder
-/// program-unique; the `#{origin}` suffix records the *original* type parameter
-/// name of the generic function argument so that, when a higher-order inference
-/// result is re-generalized (see
-/// [`super::CallEvaluator::hoist_source_placeholders_into_return_type`]), the
-/// re-generalized type parameters display with their source names — matching
-/// tsc's `<T>(a: T) => ...` output instead of the internal placeholder name.
+/// Prefer [`crate::types::TypeParamInfo::is_infer_placeholder`] whenever a
+/// `TypeParameter` node (and thus its
+/// [`crate::types::TypeParamOrigin`]) is in hand: that is an O(1) structured
+/// read with no atom resolution or string scan.
 ///
-/// `#` is not a valid identifier character, so it is an unambiguous delimiter:
-/// every `starts_with("__infer_src_")` check elsewhere keeps matching, and the
-/// origin can be recovered with [`decode_src_placeholder_origin`].
+/// This name-based check survives only for the few sites that inspect
+/// [`crate::instantiation::TypeSubstitution`] *keys*, which are bare `Atom`s
+/// (no `TypeParamInfo` is reachable from a substitution key). Routing those
+/// sites through one named helper keeps the remaining string dependence
+/// explicit and centralized rather than scattered inline `starts_with` calls.
+/// See issue #13052 for the substitution-key follow-up that would key
+/// substitutions by inference identity directly.
+pub(crate) fn atom_names_inference_placeholder(name: &str) -> bool {
+    name.starts_with("__infer_")
+}
+
+/// Whether an *atom* names a higher-order source inference placeholder, by the
+/// `__infer_src_` prefix. See [`atom_names_inference_placeholder`] for why a
+/// handful of substitution-key sites still classify by atom text.
+pub(crate) fn atom_names_source_inference_placeholder(name: &str) -> bool {
+    name.starts_with("__infer_src_")
+}
+
+/// Write the higher-order source placeholder *display* name into `buf`.
+///
+/// The name is `__infer_src_{id}#{origin}`, used only for display/debug. The
+/// placeholder's kind and origin type-parameter name are now carried
+/// structurally on [`crate::types::TypeParamInfo::origin`]
+/// ([`crate::types::TypeParamOrigin::InferSource`]); consumers read that field
+/// instead of parsing this name. The `{id}` keeps the interned atom unique so
+/// distinct placeholders do not collide in the type universe.
 ///
 /// `buf` is cleared first so callers can reuse a single allocation across
 /// type parameters.
@@ -67,14 +93,6 @@ pub(crate) fn write_src_placeholder_name(buf: &mut String, id: u64, origin: &str
     use std::fmt::Write;
     buf.clear();
     write!(buf, "__infer_src_{id}#{origin}").expect("write to String is infallible");
-}
-
-/// Recover the original source type-parameter name encoded by
-/// [`write_src_placeholder_name`], or `None` when `name` is not an origin-tagged
-/// source placeholder (e.g. legacy `__infer_src_ctx_*` names).
-pub(crate) fn decode_src_placeholder_origin(name: &str) -> Option<&str> {
-    let origin = name.strip_prefix("__infer_src_")?.split_once('#')?.1;
-    (!origin.is_empty()).then_some(origin)
 }
 
 /// Check if a type constraint is a primitive type (string, number, boolean, bigint, symbol)

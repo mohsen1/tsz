@@ -83,6 +83,7 @@ fn mapped_modifier_computation_via_boundary() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -108,6 +109,7 @@ fn identity_name_mapping_detection_via_boundary() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -123,6 +125,7 @@ fn identity_name_mapping_detection_via_boundary() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     });
     let mapped_with_as_k = tsz_solver::MappedType {
         type_param: tsz_solver::TypeParamInfo {
@@ -130,6 +133,7 @@ fn identity_name_mapping_detection_via_boundary() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: Some(k_param),
@@ -166,6 +170,7 @@ fn solver_evaluator_handles_mapped_type_with_resolver() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -241,6 +246,7 @@ fn non_homomorphic_mapped_type_delegates_to_solver_after_constraint_resolution()
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -288,12 +294,14 @@ fn type_param_name_extracts_name_via_boundary() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     });
     let param_u = types.type_param(tsz_solver::TypeParamInfo {
         name: name_u,
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     });
 
     // type_param_name should extract the name from a TypeParameter
@@ -312,12 +320,14 @@ fn type_param_name_extracts_name_via_boundary() {
             constraint: Some(TypeId::OBJECT),
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
         tsz_solver::TypeParamInfo {
             name: name_u,
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
     ];
     let extracted_name = type_param_name(&types, param_t).unwrap();
@@ -385,6 +395,7 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
         },
         constraint,
         name_type: None,
@@ -436,6 +447,7 @@ fn type_parameter_constraint_query_boundary() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     });
     assert_eq!(
         type_parameter_constraint(&types, constrained),
@@ -449,6 +461,7 @@ fn type_parameter_constraint_query_boundary() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
     });
     assert_eq!(
         type_parameter_constraint(&types, unconstrained),

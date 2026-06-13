@@ -279,6 +279,7 @@ fn homomorphic_array_source_uses_resolver_for_member_applications() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let box_def = DefId(99);

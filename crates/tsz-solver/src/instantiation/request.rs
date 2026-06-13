@@ -282,6 +282,7 @@ mod tests {
             name: t_name,
             constraint: None,
             default: None,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let array_of_t = interner.array(t_param);
 

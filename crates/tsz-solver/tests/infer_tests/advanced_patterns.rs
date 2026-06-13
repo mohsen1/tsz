@@ -263,12 +263,14 @@ fn test_mapped_type_template_union_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let t_type = interner.type_param(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let source = interner.object(vec![
@@ -282,6 +284,7 @@ fn test_mapped_type_template_union_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(t_type),
         name_type: None,

@@ -20,7 +20,8 @@ use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::DefId;
 use tsz_solver::types::{
     CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-    ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
+    ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypeParamOrigin, TypePredicate,
+    Visibility,
 };
 
 mod signature_members;
@@ -1447,6 +1448,7 @@ impl<'a> TypeLowering<'a> {
                 name,
                 constraint: None,
                 default: None,
+                origin: TypeParamOrigin::User,
             };
             self.add_type_param_binding(name, self.interner.type_param(placeholder));
             param_names.push((idx, name, is_const));
@@ -1505,6 +1507,7 @@ impl<'a> TypeLowering<'a> {
             name,
             constraint,
             default,
+            origin: TypeParamOrigin::User,
         })
     }
 

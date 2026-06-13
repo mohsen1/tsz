@@ -123,8 +123,7 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            let name = self.ctx.types.resolve_atom_ref(info.name);
-            if name.starts_with("__infer_") && !name.starts_with("__infer_src_") {
+            if info.is_current_infer_placeholder() {
                 substitution.insert(info.name, TypeId::UNKNOWN);
             }
         }

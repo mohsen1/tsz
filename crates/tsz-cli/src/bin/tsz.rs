@@ -307,19 +307,27 @@ fn clear_batch_iteration_state() {
 fn write_batch_residency_report(
     stdout: &mut impl std::io::Write,
     result: &driver::CompilationResult,
-) -> Result<()> {
+) -> Result<Option<MemoryPressure>> {
     let Some(stats) = result.residency_stats.as_ref() else {
-        return Ok(());
+        return Ok(None);
     };
     let retained_kb = stats.retained_file_state_bytes_est() as f64 / 1024.0;
-    let pressure = match ResidencyBudget::default().assess(stats) {
+    let pressure = ResidencyBudget::default().assess(stats);
+    let pressure_label = match pressure {
         MemoryPressure::Low => "low",
         MemoryPressure::Medium => "medium",
         MemoryPressure::High => "high",
     };
     writeln!(stdout, "Batch retained file state:     {retained_kb:.1}K")?;
-    writeln!(stdout, "Batch retained residency pressure: {pressure}")?;
-    Ok(())
+    writeln!(
+        stdout,
+        "Batch retained residency pressure: {pressure_label}"
+    )?;
+    Ok(Some(pressure))
+}
+
+const fn batch_residency_should_clear(pressure: MemoryPressure) -> bool {
+    matches!(pressure, MemoryPressure::Medium | MemoryPressure::High)
 }
 
 /// Batch compilation mode: read project directory paths from stdin (one per line),
@@ -400,9 +408,11 @@ fn run_batch_mode(residency_budget: bool) -> Result<()> {
                     }
                 }
                 if residency_budget {
-                    write_batch_residency_report(&mut stdout, &result)?;
+                    let pressure = write_batch_residency_report(&mut stdout, &result)?;
                     drop(result);
-                    clear_batch_iteration_state();
+                    if pressure.is_some_and(batch_residency_should_clear) {
+                        clear_batch_iteration_state();
+                    }
                 }
             }
             Err(e) => {

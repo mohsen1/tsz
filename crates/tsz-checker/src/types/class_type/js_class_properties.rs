@@ -134,6 +134,7 @@ impl CheckerState<'_> {
                                 constraint,
                                 default,
                                 is_const,
+                                origin: tsz_solver::TypeParamOrigin::User,
                             })
                     });
                 }
@@ -204,6 +205,7 @@ impl CheckerState<'_> {
                             constraint,
                             default,
                             is_const,
+                            origin: tsz_solver::TypeParamOrigin::User,
                         })
                 });
             }
@@ -425,6 +427,7 @@ impl CheckerState<'_> {
                                     constraint,
                                     default,
                                     is_const,
+                                    origin: tsz_solver::TypeParamOrigin::User,
                                 },
                             ));
                         }
@@ -503,6 +506,7 @@ impl CheckerState<'_> {
                             constraint,
                             default,
                             is_const,
+                            origin: tsz_solver::TypeParamOrigin::User,
                         }));
                     }
                 }

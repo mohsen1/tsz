@@ -508,6 +508,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous));
@@ -546,6 +547,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 constraint,
                 default,
                 is_const,
+                origin: tsz_solver::TypeParamOrigin::User,
             };
             let type_id = factory.type_param(info);
             self.ctx.type_parameter_scope.insert(name, type_id);

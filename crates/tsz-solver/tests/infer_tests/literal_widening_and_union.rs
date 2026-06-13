@@ -213,6 +213,7 @@ fn test_union_inference_prefers_structural_match_over_naked_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create Foo<T> interface as an object with a `prop: T` property
@@ -222,6 +223,7 @@ fn test_union_inference_prefers_structural_match_over_naked_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Build Foo<U> and Foo<V> as objects with `prop: U` and `prop: V`
@@ -240,6 +242,7 @@ fn test_union_inference_prefers_structural_match_over_naked_type_param() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("value")),
@@ -290,6 +293,7 @@ fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     // Parameter: T | string
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
@@ -300,6 +304,7 @@ fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -337,6 +342,7 @@ fn test_union_inference_multiple_unmatched_candidates() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     // Parameter: T | string
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
@@ -347,6 +353,7 @@ fn test_union_inference_multiple_unmatched_candidates() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -472,6 +479,7 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Parameter shape: (x: U) => U
@@ -513,6 +521,7 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![
             ParamInfo {
@@ -587,6 +596,7 @@ fn test_reverse_mapped_inference_preserves_source_declaration_order() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     // Intern names in an order that makes atom-id order DIFFER from the
@@ -624,6 +634,7 @@ fn test_reverse_mapped_inference_preserves_source_declaration_order() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.type_param(k_param);
     let inner_index = interner.index_access(t_type, k_type);
@@ -697,6 +708,7 @@ fn test_inference_from_array_against_single_rest_variadic_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Source: number[]
@@ -737,6 +749,7 @@ fn test_inference_from_array_against_single_rest_variadic_tuple_alt_name() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let source = interner.array(TypeId::STRING);
 
@@ -775,6 +788,7 @@ fn test_inference_from_array_against_mixed_variadic_tuple_does_not_match() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let source = interner.array(TypeId::NUMBER);
@@ -830,6 +844,7 @@ fn test_inference_through_extract_pattern_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Source: a unique symbol stand-in (any concrete type works for this rule;
@@ -873,6 +888,7 @@ fn test_inference_through_extract_pattern_conditional_alt_name() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let source = TypeId::NUMBER;
@@ -914,6 +930,7 @@ fn test_inference_skips_non_distributive_extract_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let source = TypeId::NUMBER;

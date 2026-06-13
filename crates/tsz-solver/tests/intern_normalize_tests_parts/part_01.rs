@@ -181,6 +181,7 @@ fn infer_type_construction() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let inf = i.infer(info);
     match i.lookup(inf) {
@@ -365,6 +366,7 @@ fn array_base_type_set_and_get() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
     );
     assert_eq!(i.get_array_base_type(), Some(arr_type));

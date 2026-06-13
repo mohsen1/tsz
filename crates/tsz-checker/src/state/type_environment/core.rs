@@ -517,6 +517,7 @@ impl<'a> CheckerState<'a> {
                     constraint: None,
                     default: None,
                     is_const: false,
+                    origin: mapped.type_param.origin,
                 });
                 subst.insert(mapped.type_param.name, k_unconstrained);
 

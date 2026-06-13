@@ -63,6 +63,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 constraint: None,
                 default: None,
                 is_const: tp.is_const,
+                origin: crate::types::TypeParamOrigin::InferPlaceholder { id: placeholder_id },
             });
             substitution.insert(tp.name, fresh_type);
             fresh_params.push((tp, fresh_name));
@@ -94,6 +95,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .default
                         .map(|default| instantiate_type(self.interner, default, &substitution)),
                     is_const: tp.is_const,
+                    origin: tp.origin,
                 })
                 .collect(),
             type_predicate: func.type_predicate.as_ref().map(|predicate| {

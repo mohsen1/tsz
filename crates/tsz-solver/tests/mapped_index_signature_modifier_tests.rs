@@ -56,6 +56,7 @@ fn eval_identity_mapped(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
     let template = interner.index_access(source, type_param);

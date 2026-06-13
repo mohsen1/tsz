@@ -1455,6 +1455,7 @@ fn make_unconstrained_type_param(interner: &TypeInterner, name: &str) -> TypeId 
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     interner.type_param(info)
 }
@@ -1466,6 +1467,7 @@ fn make_string_constrained_type_param(interner: &TypeInterner, name: &str) -> Ty
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     interner.type_param(info)
 }

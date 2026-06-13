@@ -38,13 +38,12 @@ impl ScannerState {
                     .char_code_at(self.pos + 2)
                     .is_some_and(|c| is_digit(c) || c == CharacterCodes::UNDERSCORE)
             {
-                self.scanner_diagnostics.push(ScannerDiagnostic {
-                    pos: self.pos + 1,
-                    length: 1,
-                    args: Vec::new(),
-                    message: diagnostic_messages::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
-                    code: diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
-                });
+                self.push_diag(
+                    self.pos + 1,
+                    1,
+                    diagnostic_messages::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                    diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                );
                 self.token_flags |= TokenFlags::ContainsInvalidSeparator as u32;
                 if self.token_invalid_separator_pos.is_none() {
                     self.token_invalid_separator_pos = Some(self.pos + 1);
@@ -108,13 +107,7 @@ impl ScannerState {
                     diagnostic_codes::OCTAL_DIGIT_EXPECTED,
                 )
             };
-            self.scanner_diagnostics.push(ScannerDiagnostic {
-                pos: self.pos,
-                length: 0,
-                args: Vec::new(),
-                message,
-                code,
-            });
+            self.push_diag(self.pos, 0, message, code);
         }
 
         if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N {
@@ -195,13 +188,12 @@ impl ScannerState {
                 // TS1351 at the same position is suppressed by the helper below.
                 let saw_exp_digit = self.scan_digits_with_separators(is_digit);
                 if !saw_exp_digit {
-                    self.scanner_diagnostics.push(ScannerDiagnostic {
-                        pos: self.pos,
-                        length: 0,
-                        args: Vec::new(),
-                        message: diagnostic_messages::DIGIT_EXPECTED,
-                        code: diagnostic_codes::DIGIT_EXPECTED,
-                    });
+                    self.push_diag(
+                        self.pos,
+                        0,
+                        diagnostic_messages::DIGIT_EXPECTED,
+                        diagnostic_codes::DIGIT_EXPECTED,
+                    );
                 }
             }
         }
@@ -259,21 +251,21 @@ impl ScannerState {
         let identifier_text = &self.source[identifier_start..identifier_end];
 
         if identifier_text == "n" {
-            self.scanner_diagnostics.push(ScannerDiagnostic {
-                pos: numeric_start,
-                length: identifier_end - numeric_start,
-                args: Vec::new(),
-                message: if is_scientific {
-                    diagnostic_messages::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION
-                } else {
-                    diagnostic_messages::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER
-                },
-                code: if is_scientific {
-                    diagnostic_codes::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION
-                } else {
-                    diagnostic_codes::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER
-                },
-            });
+            // Couple the message and its TS code in one selection so the two
+            // can never drift (see the in-crate idiom at the prefixed-digit
+            // ladder above and `push_invalid_separator` below).
+            let (message, code) = if is_scientific {
+                (
+                    diagnostic_messages::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION,
+                    diagnostic_codes::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION,
+                )
+            } else {
+                (
+                    diagnostic_messages::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER,
+                    diagnostic_codes::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER,
+                )
+            };
+            self.push_diag(numeric_start, identifier_end - numeric_start, message, code);
             true
         } else {
             // Mirror tsc's `parseErrorAtPosition` same-start dedup: if a prior
@@ -288,13 +280,12 @@ impl ScannerState {
                 .last()
                 .is_some_and(|d| d.pos == identifier_start);
             if !already_diag_at_pos {
-                self.scanner_diagnostics.push(ScannerDiagnostic {
-                    pos: identifier_start,
-                    length: identifier_end - identifier_start,
-                    message: diagnostic_messages::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
-                    code: diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
-                    args: Vec::new(),
-                });
+                self.push_diag(
+                    identifier_start,
+                    identifier_end - identifier_start,
+                    diagnostic_messages::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                    diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                );
             }
             self.pos = identifier_start;
             false
@@ -422,13 +413,7 @@ impl ScannerState {
                 diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
             )
         };
-        self.scanner_diagnostics.push(ScannerDiagnostic {
-            pos,
-            length: 1,
-            message,
-            code,
-            args: Vec::new(),
-        });
+        self.push_diag(pos, 1, message, code);
     }
 
     pub(crate) fn push_invalid_character(&mut self, pos: usize) {
@@ -437,12 +422,11 @@ impl ScannerState {
         {
             return;
         }
-        self.scanner_diagnostics.push(ScannerDiagnostic {
+        self.push_diag(
             pos,
-            length: 1,
-            message: diagnostic_messages::INVALID_CHARACTER,
-            code: diagnostic_codes::INVALID_CHARACTER,
-            args: Vec::new(),
-        });
+            1,
+            diagnostic_messages::INVALID_CHARACTER,
+            diagnostic_codes::INVALID_CHARACTER,
+        );
     }
 }

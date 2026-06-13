@@ -8,7 +8,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::types::{
     ConditionalType, MappedModifier, MappedType, ParamInfo, SymbolRef, TemplateSpan, TypeId,
-    TypeParamInfo, TypePredicate, TypePredicateTarget,
+    TypeParamInfo, TypeParamOrigin, TypePredicate, TypePredicateTarget,
 };
 
 impl<'a> TypeLowering<'a> {
@@ -150,6 +150,7 @@ impl<'a> TypeLowering<'a> {
                         name,
                         constraint: None,
                         default: None,
+                        origin: TypeParamOrigin::User,
                     },
                     TypeId::ERROR, // Missing node - propagate error
                 );
@@ -183,6 +184,7 @@ impl<'a> TypeLowering<'a> {
                     name,
                     constraint,
                     default,
+                    origin: TypeParamOrigin::User,
                 },
                 constraint_type,
             )
@@ -194,6 +196,7 @@ impl<'a> TypeLowering<'a> {
                     name,
                     constraint: None,
                     default: None,
+                    origin: TypeParamOrigin::User,
                 },
                 TypeId::ERROR, // Missing type parameter data - propagate error
             )
@@ -1056,6 +1059,7 @@ impl<'a> TypeLowering<'a> {
                 name,
                 constraint: None,
                 default: None,
+                origin: TypeParamOrigin::User,
             })
         } else {
             TypeId::ERROR

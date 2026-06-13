@@ -503,6 +503,7 @@ fn test_readonly_nested_object_top_level_only() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_outer,
         name_type: None,
@@ -565,6 +566,7 @@ fn test_readonly_multiple_properties_nested() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_outer,
         name_type: None,
@@ -624,6 +626,7 @@ fn test_deep_readonly_pattern_structure() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_obj,
         name_type: None,
@@ -671,6 +674,7 @@ fn test_deep_readonly_manual_nested_application() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_inner,
         name_type: None,
@@ -697,6 +701,7 @@ fn test_deep_readonly_manual_nested_application() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_outer,
         name_type: None,
@@ -753,6 +758,7 @@ fn test_deep_readonly_with_array_property() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_obj,
         name_type: None,
@@ -1089,6 +1095,7 @@ fn test_infer_with_extends_constraint() {
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: (x: infer U extends string) => any
@@ -1148,6 +1155,7 @@ fn test_infer_with_constraint_violation() {
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: (x: infer U extends string) => any

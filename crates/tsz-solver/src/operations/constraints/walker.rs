@@ -1182,6 +1182,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             name: placeholder_atom,
                             constraint: tp.constraint,
                             default: None,
+                            origin: crate::types::TypeParamOrigin::InferSource {
+                                id: placeholder_id,
+                                origin_name: Some(tp.name),
+                            },
                         });
                         let placeholder_id = self.interner.intern(placeholder_key);
                         source_subst.insert(tp.name, placeholder_id);

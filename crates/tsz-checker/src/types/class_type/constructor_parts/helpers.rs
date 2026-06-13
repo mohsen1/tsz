@@ -497,6 +497,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const: false,
+                origin: tsz_solver::TypeParamOrigin::User,
             });
             if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&param.name.0)
                 && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)

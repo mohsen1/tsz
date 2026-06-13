@@ -1632,6 +1632,7 @@ fn test_constructor_generic_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1659,6 +1660,7 @@ fn test_constructor_generic_with_constraint() {
         constraint: Some(TypeId::OBJECT),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 

@@ -24,6 +24,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: Some(interner.array(TypeId::UNKNOWN)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let tuple_t_type = interner.intern(TypeData::TypeParameter(tuple_t_param));
 
@@ -32,6 +33,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let return_t_type = interner.intern(TypeData::TypeParameter(return_t_param));
 
@@ -78,6 +80,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let a_type = interner.intern(TypeData::TypeParameter(a_param));
     let b_param = TypeParamInfo {
@@ -85,6 +88,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let b_type = interner.intern(TypeData::TypeParameter(b_param));
     let generic_binary = interner.function(FunctionShape {
@@ -179,6 +183,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
         constraint: Some(c_type),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -284,6 +289,7 @@ fn test_infer_generic_object_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -325,6 +331,7 @@ fn test_infer_generic_optional_property_value() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -362,6 +369,7 @@ fn test_infer_generic_optional_property_undefined_value() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -399,6 +407,7 @@ fn test_infer_generic_optional_property_missing() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -437,6 +446,7 @@ fn test_infer_generic_required_property_from_optional_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -475,6 +485,7 @@ fn test_infer_generic_object_literal_repeated_property_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -519,6 +530,7 @@ fn test_resolve_call_generic_object_literal_repeated_property_uses_first_propert
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -568,6 +580,7 @@ fn test_infer_generic_required_property_missing_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -603,6 +616,7 @@ fn test_infer_generic_readonly_property_mismatch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -641,6 +655,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -701,6 +716,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -759,6 +775,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -817,6 +834,7 @@ fn test_infer_generic_method_property_bivariant_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -888,6 +906,7 @@ fn test_infer_generic_function_property_contravariant_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -960,6 +979,7 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1042,6 +1062,7 @@ fn test_infer_generic_tuple_element() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1103,6 +1124,7 @@ fn test_infer_generic_tuple_rest_elements_rejects_heterogeneous_candidates() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let t_array = interner.array(t_type);
@@ -1167,6 +1189,7 @@ fn test_infer_generic_tuple_rest_parameter_rejects_heterogeneous_candidates() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1221,6 +1244,7 @@ fn test_infer_generic_tuple_rest_from_rest_argument_rejects_heterogeneous_candid
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let t_array = interner.array(t_type);
@@ -1287,6 +1311,7 @@ fn test_infer_generic_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1345,6 +1370,7 @@ fn test_infer_generic_index_signature_from_object_literal() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1395,6 +1421,7 @@ fn test_infer_generic_index_signature_from_optional_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1447,6 +1474,7 @@ fn test_infer_generic_number_index_from_optional_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1505,6 +1533,7 @@ fn test_infer_generic_number_index_from_numeric_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1555,6 +1584,7 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1607,6 +1637,7 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1659,6 +1690,7 @@ fn test_infer_generic_number_index_from_nan_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1709,6 +1741,7 @@ fn test_infer_generic_number_index_from_exponent_property() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 

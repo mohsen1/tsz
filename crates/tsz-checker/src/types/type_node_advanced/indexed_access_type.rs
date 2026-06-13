@@ -260,20 +260,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     if key.as_str() == "globalThis" {
                         return object_type;
                     }
-                    let not_in_locals = self.ctx.binder.file_locals.get(key.as_str()).is_none();
-                    let is_block_scoped = self
+                    // A key is absent from the `typeof globalThis` surface when it
+                    // binds to no global local, to a block-scoped `let`/`const`
+                    // (not a `var`/`function`), or to a string-literal ambient
+                    // module (`declare module "x"`) — modules seed a separate
+                    // ambient table in `tsc`, never `globalThis`.
+                    let key_absent_from_surface = self
                         .ctx
                         .binder
                         .file_locals
                         .get(key.as_str())
                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                        .is_some_and(|symbol| {
-                            symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
-                                && !symbol.has_any_flags(
-                                    tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE,
-                                )
-                        });
-                    if not_in_locals || is_block_scoped {
+                        .is_none_or(|symbol| {
+                        (symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                            && !symbol
+                                .has_any_flags(tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                            || crate::symbols_domain::symbol_resolver_utils::symbol_is_string_literal_module_only(
+                                self.ctx.arena,
+                                symbol,
+                            )
+                    });
+                    if key_absent_from_surface {
                         if let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type) {
                             let message = crate::diagnostics::format_message(
                                 crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,

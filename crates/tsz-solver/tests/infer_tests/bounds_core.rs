@@ -394,6 +394,7 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let name_next = interner.intern_string("next");
     let upper = interner.object(vec![PropertyInfo::new(name_next, t_type)]);
@@ -423,6 +424,7 @@ fn test_resolve_self_upper_bound_with_concrete() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     ctx.add_upper_bound(var, t_type);
@@ -447,12 +449,14 @@ fn test_resolve_mutual_circular_upper_bounds_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     ctx.add_upper_bound(var_t, u_type);
@@ -480,12 +484,14 @@ fn test_resolve_mutual_circular_upper_bounds_with_concrete() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     ctx.add_upper_bound(var_t, u_type);
@@ -514,12 +520,14 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let name_next = interner.intern_string("next");
 
@@ -559,12 +567,14 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let name_next = interner.intern_string("next");
 

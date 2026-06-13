@@ -59,6 +59,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "foo2" (no distribution).
@@ -112,6 +113,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "bar" (no distribution).
@@ -253,6 +255,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`foo${infer R extends string}bar`] ? R : never,
@@ -308,6 +311,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`foo${infer R extends string}bar`] ? R : never,
@@ -863,6 +867,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`${infer R extends string}bar`] ? R : never, with T = "foobar" | "bazbar" (no distribution).
@@ -916,6 +921,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`${infer R extends string}bar`] ? R : never, with T = "foobar" | "baz" (no distribution).
@@ -1141,6 +1147,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "foo2" (no distribution).
@@ -1194,6 +1201,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "bar" (no distribution).
@@ -1244,6 +1252,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -1251,6 +1260,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`${infer A extends string}-${infer B extends string}`] ? A | B : never,
@@ -1309,6 +1319,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -1316,6 +1327,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`${infer A extends string}-${infer B extends string}`] ? A | B : never,
@@ -1368,6 +1380,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -1375,6 +1388,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // [T] extends [`${infer A extends string}-${infer B extends string}`] ? A | B : never,

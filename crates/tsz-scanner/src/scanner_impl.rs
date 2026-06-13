@@ -874,13 +874,12 @@ impl ScannerState {
                         if !comment_closed {
                             self.token_flags |= TokenFlags::Unterminated as u32;
                             // TS1010: "'*/' expected."
-                            self.scanner_diagnostics.push(ScannerDiagnostic {
-                                pos: self.pos,
-                                length: 0,
-                                message: diagnostic_messages::EXPECTED_2,
-                                code: diagnostic_codes::EXPECTED_2,
-                                args: Vec::new(),
-                            });
+                            self.push_diag(
+                                self.pos,
+                                0,
+                                diagnostic_messages::EXPECTED_2,
+                                diagnostic_codes::EXPECTED_2,
+                            );
                         }
                         if self.skip_trivia {
                             continue;
@@ -1125,6 +1124,37 @@ impl ScannerState {
         self.scanner_diagnostics.clear();
     }
 
+    /// Push a no-argument scanner diagnostic: the common `(pos, length, message,
+    /// code)` form, routed through [`Self::push_diag_args`] with empty `args`.
+    pub(crate) fn push_diag(
+        &mut self,
+        pos: usize,
+        length: usize,
+        message: &'static str,
+        code: u32,
+    ) {
+        self.push_diag_args(pos, length, message, code, Vec::new());
+    }
+
+    /// Push a scanner diagnostic carrying message-template arguments; the single
+    /// `ScannerDiagnostic` construction site for both `push_diag` forms.
+    pub(crate) fn push_diag_args(
+        &mut self,
+        pos: usize,
+        length: usize,
+        message: &'static str,
+        code: u32,
+        args: Vec<String>,
+    ) {
+        self.scanner_diagnostics.push(ScannerDiagnostic {
+            pos,
+            length,
+            message,
+            code,
+            args,
+        });
+    }
+
     /// Merge conflict marker length (7 characters: `<<<<<<<`, `=======`, etc.)
     const MERGE_CONFLICT_MARKER_LENGTH: usize = 7;
 
@@ -1162,13 +1192,12 @@ impl ScannerState {
     /// For `|` and `=` markers: skip until the next `=======` or `>>>>>>>` marker.
     fn scan_conflict_marker_trivia(&mut self) {
         // Emit TS1185: "Merge conflict marker encountered."
-        self.scanner_diagnostics.push(ScannerDiagnostic {
-            pos: self.pos,
-            length: Self::MERGE_CONFLICT_MARKER_LENGTH,
-            message: diagnostic_messages::MERGE_CONFLICT_MARKER_ENCOUNTERED,
-            code: diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED,
-            args: Vec::new(),
-        });
+        self.push_diag(
+            self.pos,
+            Self::MERGE_CONFLICT_MARKER_LENGTH,
+            diagnostic_messages::MERGE_CONFLICT_MARKER_ENCOUNTERED,
+            diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED,
+        );
 
         let ch = self.char_code_unchecked(self.pos);
         if ch == CharacterCodes::LESS_THAN || ch == CharacterCodes::GREATER_THAN {

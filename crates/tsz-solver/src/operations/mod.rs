@@ -45,7 +45,7 @@ mod constraints;
 mod constructors;
 mod core;
 pub mod expression_ops;
-mod generic_call;
+pub(crate) mod generic_call;
 pub mod generics;
 pub mod iterators;
 pub mod property;

@@ -643,6 +643,7 @@ fn test_infer_union_target_with_placeholder_member() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
 
@@ -652,6 +653,7 @@ fn test_infer_union_target_with_placeholder_member() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -681,6 +683,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let param_type = interner.union(vec![t_type, TypeId::NEVER]);
 
@@ -690,6 +693,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -723,12 +727,14 @@ fn test_resolve_circular_extends_with_concrete_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Simulate: <T extends U, U extends T, U extends string>
@@ -758,12 +764,14 @@ fn test_resolve_circular_extends_bound_order() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Same cycle, but add concrete bound before the cyclic one.
@@ -793,12 +801,14 @@ fn test_resolve_usage_based_inference_from_bound_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Simulate: <T extends U, U extends T> with usage-based lower bound on U.

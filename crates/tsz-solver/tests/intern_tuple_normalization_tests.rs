@@ -163,12 +163,14 @@ fn tuple_type_param_rest_elements_not_merged() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let b_param = db.type_param(TypeParamInfo {
         name: db.intern_string("B"),
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let result = db.tuple(vec![rest_elem(a_param), rest_elem(b_param)]);

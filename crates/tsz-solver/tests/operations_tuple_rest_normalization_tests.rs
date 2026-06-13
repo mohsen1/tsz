@@ -13,6 +13,7 @@ fn infer_generic_tuple_rest_from_rest_argument_returns_array() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 

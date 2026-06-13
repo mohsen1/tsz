@@ -145,13 +145,10 @@ pub fn contains_param_or_infer_db(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 
 pub(super) struct InferPredicate;
 impl ContentPredicate for InferPredicate {
-    fn matches_node(&self, db: &dyn TypeDatabase, key: &TypeData) -> bool {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         match key {
             TypeData::Infer(_) => true,
-            TypeData::TypeParameter(tp) => {
-                let name = db.resolve_atom_ref(tp.name);
-                name.starts_with("__infer_") || name.starts_with("__infer_src_")
-            }
+            TypeData::TypeParameter(tp) => tp.is_infer_placeholder(),
             _ => false,
         }
     }
@@ -787,10 +784,7 @@ pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// type parameters (`T`, `U`, `this`, bound params) should still block it.
 pub fn contains_non_infer_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching(db, type_id, |key| match key {
-        TypeData::TypeParameter(tp) => {
-            let name = db.resolve_atom_ref(tp.name);
-            !(name.starts_with("__infer_") || name.starts_with("__infer_src_"))
-        }
+        TypeData::TypeParameter(tp) => !tp.is_infer_placeholder(),
         TypeData::Infer(_) | TypeData::ThisType | TypeData::BoundParameter(_) => true,
         _ => false,
     })
@@ -815,10 +809,7 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
     match db.lookup(type_id) {
         Some(TypeData::Infer(_)) => true,
-        Some(TypeData::TypeParameter(tp)) => {
-            let name = db.resolve_atom_ref(tp.name);
-            name.starts_with("__infer_") || name.starts_with("__infer_src_")
-        }
+        Some(TypeData::TypeParameter(tp)) => tp.is_infer_placeholder(),
         _ => false,
     }
 }
@@ -835,10 +826,7 @@ pub fn is_bare_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: Type
     }
     match db.lookup(type_id) {
         Some(TypeData::Infer(_)) => true,
-        Some(TypeData::TypeParameter(tp)) => {
-            let name = db.resolve_atom_ref(tp.name);
-            name.starts_with("__infer_") && !name.starts_with("__infer_src_")
-        }
+        Some(TypeData::TypeParameter(tp)) => tp.is_current_infer_placeholder(),
         _ => false,
     }
 }
@@ -903,10 +891,7 @@ pub fn contains_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> 
         return true;
     }
     contains_type_matching(db, type_id, |key| match key {
-        TypeData::TypeParameter(tp) => {
-            let name = db.resolve_atom_ref(tp.name);
-            name.starts_with("__infer_") || name.starts_with("__infer_src_")
-        }
+        TypeData::TypeParameter(tp) => tp.is_infer_placeholder(),
         TypeData::Infer(_) => true,
         _ => false,
     })
@@ -921,10 +906,7 @@ pub fn contains_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: Typ
         return true;
     }
     contains_type_matching(db, type_id, |key| match key {
-        TypeData::TypeParameter(tp) => {
-            let name = db.resolve_atom_ref(tp.name);
-            name.starts_with("__infer_") && !name.starts_with("__infer_src_")
-        }
+        TypeData::TypeParameter(tp) => tp.is_current_infer_placeholder(),
         TypeData::Infer(_) => true,
         _ => false,
     })

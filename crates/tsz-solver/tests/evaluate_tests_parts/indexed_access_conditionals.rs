@@ -392,6 +392,7 @@ fn test_conditional_deferred_type_parameter_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let cond = ConditionalType {
@@ -421,6 +422,7 @@ fn test_conditional_deferred_type_parameter_constraint_not_satisfying() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let yes = interner.literal_string("yes");
@@ -470,6 +472,7 @@ fn test_conditional_infer_constraint_mismatch() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let no = interner.literal_string("no");
 
@@ -776,12 +779,14 @@ fn test_mapped_index_union_of_generic_key_intersections_preserves_key() {
         constraint: Some(key_space),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let generic_key = interner.type_param(TypeParamInfo {
         name: generic_key_name,
         constraint: Some(key_space),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let mapped = interner.mapped(MappedType {
@@ -790,6 +795,7 @@ fn test_mapped_index_union_of_generic_key_intersections_preserves_key() {
             constraint: Some(key_space),
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: key_space,
         template: mapped_key,
@@ -1100,6 +1106,7 @@ fn test_index_access_type_param_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let key_x = interner.literal_string("x");

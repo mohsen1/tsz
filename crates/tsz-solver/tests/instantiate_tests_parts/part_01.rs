@@ -17,12 +17,14 @@ fn test_object_property_does_not_contaminate_method_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let u_param = TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
@@ -159,6 +161,7 @@ fn test_distributive_conditional_over_union_with_lazy_members() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Create distributive conditional: T extends { type: "cat" } ? T : never
@@ -245,6 +248,7 @@ fn test_instantiate_mapped_over_tuple_preserves_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -256,6 +260,7 @@ fn test_instantiate_mapped_over_tuple_preserves_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     // template = T[K] (index access)
@@ -326,6 +331,7 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -335,6 +341,7 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
 
@@ -436,6 +443,7 @@ fn build_identity_mapped_type(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -445,6 +453,7 @@ fn build_identity_mapped_type(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(t_type, k_type);
@@ -557,6 +566,7 @@ fn test_instantiate_mapped_over_trailing_rest_tuple_with_wrapper_template() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -566,6 +576,7 @@ fn test_instantiate_mapped_over_trailing_rest_tuple_with_wrapper_template() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
 
@@ -701,6 +712,7 @@ fn test_mapped_type_with_lazy_union_template_defers_evaluation() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     // Create union template: number | Application(Lazy(DefId(1)), [string])
@@ -783,6 +795,7 @@ fn test_instantiate_homomorphic_mapped_with_any_unconstrained() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -793,6 +806,7 @@ fn test_instantiate_homomorphic_mapped_with_any_unconstrained() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(t_type, k_type);
@@ -842,6 +856,7 @@ fn test_instantiate_homomorphic_mapped_with_any_array_constrained() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -852,6 +867,7 @@ fn test_instantiate_homomorphic_mapped_with_any_array_constrained() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(t_type, k_type);
@@ -906,6 +922,7 @@ fn test_instantiate_homomorphic_mapped_with_any_union_array_constrained() {
         constraint: Some(union_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -916,6 +933,7 @@ fn test_instantiate_homomorphic_mapped_with_any_union_array_constrained() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(t_type, k_type);
@@ -977,6 +995,7 @@ fn test_instantiate_homomorphic_mapped_any_array_constraint_constant_template() 
         constraint: Some(readonly_any_array),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
 
@@ -987,6 +1006,7 @@ fn test_instantiate_homomorphic_mapped_any_array_constraint_constant_template() 
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let mapped = interner.mapped(MappedType {

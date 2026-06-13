@@ -140,8 +140,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         match self.interner.lookup(type_id) {
             Some(TypeData::TypeParameter(info)) => {
-                let name = self.interner.resolve_atom(info.name);
-                name.as_str().starts_with("__infer_")
+                info.is_infer_placeholder()
                     || info
                         .constraint
                         .is_some_and(|constraint| self.type_uses_inference_placeholders(constraint))

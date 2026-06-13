@@ -90,6 +90,7 @@ fn classify_source_type_param_with_array_constraint() {
         constraint: Some(arr_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     match classify_mapped_source(&interner, tp) {
         MappedSourceKind::TypeParamWithArrayConstraint(_) => {} // expected
@@ -106,6 +107,7 @@ fn classify_source_type_param_with_object_constraint() {
         constraint: Some(obj_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     assert_eq!(
         classify_mapped_source(&interner, tp),
@@ -126,6 +128,7 @@ fn modifiers_add_optional_and_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -147,6 +150,7 @@ fn modifiers_remove_optional_and_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -168,6 +172,7 @@ fn modifiers_homomorphic_preserves_source() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -199,6 +204,7 @@ fn identity_no_name_type() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -218,6 +224,7 @@ fn identity_name_type_same_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -225,6 +232,7 @@ fn identity_name_type_same_param() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: Some(k_param),
@@ -244,6 +252,7 @@ fn non_identity_name_type_different_param() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -251,6 +260,7 @@ fn non_identity_name_type_different_param() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: Some(other_param),
@@ -325,6 +335,7 @@ fn expand_simple_mapped_type() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -358,6 +369,7 @@ fn expand_mapped_with_add_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -388,6 +400,7 @@ fn expand_homomorphic_with_remove_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -442,6 +455,7 @@ fn mapped_type_over_tuple_preserves_structure() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_tuple,
         name_type: None,
@@ -482,6 +496,7 @@ fn mapped_type_over_array_preserves_structure() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_array,
         name_type: None,
@@ -534,6 +549,7 @@ fn mapped_type_over_tuple_with_rest() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_tuple,
         name_type: None,
@@ -573,6 +589,7 @@ fn mapped_type_over_type_param_with_array_constraint() {
         constraint: Some(arr_constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
 
     let keyof_tp = interner.keyof(tp);
@@ -583,6 +600,7 @@ fn mapped_type_over_type_param_with_array_constraint() {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: keyof_tp,
         name_type: None,
@@ -621,6 +639,7 @@ fn build_required_mapped(interner: &TypeInterner, iter_name: &str, source: TypeI
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let iter_type = interner.type_param(iter_param);
     let template = interner.index_access(source, iter_type);
@@ -773,6 +792,7 @@ fn no_modifier_over_optional_tuple_preserves_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let iter_type = interner.type_param(iter_param);
     let template = interner.index_access(source, iter_type);
@@ -824,6 +844,7 @@ fn eval_identity_mapped_prop(
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     });
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -831,6 +852,7 @@ fn eval_identity_mapped_prop(
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         },
         constraint: interner.keyof(source),
         name_type: None,

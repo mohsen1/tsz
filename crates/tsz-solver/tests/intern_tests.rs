@@ -34,6 +34,7 @@ fn test_fresh_type_param_constructor_preserves_declaration_identity() {
         constraint: Some(interner.keyof(interner.object(vec![]))),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
 
     let first = interner.fresh_type_param(info);
@@ -494,6 +495,7 @@ fn test_interner_intersection_type_param_with_string_literal_union_constraint_an
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.type_param(t);
     let intersection = interner.intersection(vec![type_param, TypeId::UNDEFINED]);
@@ -510,6 +512,7 @@ fn test_interner_intersection_type_param_with_primitive_union_constraint_and_nul
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.type_param(t);
     let intersection = interner.intersection(vec![type_param, TypeId::NULL]);
@@ -527,6 +530,7 @@ fn test_interner_intersection_type_param_with_nullable_union_constraint_and_unde
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let type_param = interner.type_param(t);
     let intersection = interner.intersection(vec![type_param, TypeId::UNDEFINED]);

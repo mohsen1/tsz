@@ -68,6 +68,121 @@ const lit: "__unique_1" = key;
     );
 }
 
+// Regression coverage for #13402: a `unique symbol` const that is name-merged
+// with a same-named `type X = typeof X` alias must still key a computed member
+// `[X]` by the symbol's own value identity. Before the fix, value-position
+// resolution of `X` degraded to the general `symbol` type, so the interface
+// member and the object literal minted disagreeing keys and produced a spurious
+// TS2322 / phantom `__unique_NNNNN` member.
+
+fn assert_clean(diags: &[crate::diagnostics::Diagnostic], context: &str) {
+    assert!(
+        diags.is_empty(),
+        "{context}; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn namemerged_unique_symbol_method_key_is_symbol_keyed() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const tag: unique symbol;
+type tag = typeof tag;
+interface Protocol { [tag](): number; }
+const impl: Protocol = { [tag]: () => 1 };
+"#,
+    );
+    assert_clean(
+        &diags,
+        "name-merged unique-symbol method key should be clean",
+    );
+}
+
+#[test]
+fn namemerged_unique_symbol_property_key_is_symbol_keyed() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const t2: unique symbol;
+type t2 = typeof t2;
+interface HA2 { [t2]: number; }
+const ha2: HA2 = { [t2]: 1 };
+"#,
+    );
+    assert_clean(
+        &diags,
+        "name-merged unique-symbol property key should be clean",
+    );
+}
+
+#[test]
+fn unique_symbol_key_without_alias_is_symbol_keyed() {
+    // Control: same shape with no `type X = typeof X` merge. Isolates the
+    // defect to the value/type name-merge rather than unique-symbol keys.
+    let diags = check_source_diagnostics(
+        r#"
+declare const k2: unique symbol;
+interface H2 { [k2](): number; }
+const h2: H2 = { [k2]: () => 1 };
+"#,
+    );
+    assert_clean(&diags, "unique-symbol key without an alias should be clean");
+}
+
+#[test]
+fn namemerged_unique_symbol_renamed_binder_is_symbol_keyed() {
+    // Structural, not name-keyed: a differently named binder behaves the same.
+    let diags = check_source_diagnostics(
+        r#"
+declare const brandKey: unique symbol;
+type brandKey = typeof brandKey;
+interface Brand { [brandKey](): string; }
+const b: Brand = { [brandKey]: () => "x" };
+"#,
+    );
+    assert_clean(
+        &diags,
+        "renamed name-merged unique-symbol key should be clean",
+    );
+}
+
+#[test]
+fn namemerged_unique_symbol_value_read_keeps_unique_identity() {
+    // The value identity must survive the merge: `tag` read as a value keeps
+    // its own `typeof tag` identity, so it is assignable to the alias type and
+    // not to a foreign `unique symbol`.
+    let diags = check_source_diagnostics(
+        r#"
+declare const tag: unique symbol;
+type tag = typeof tag;
+declare const other: unique symbol;
+const ok: tag = tag;
+const bad: typeof other = tag;
+"#,
+    );
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "assigning `tag` to a foreign unique symbol must still fail (TS2322); got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2322).count(),
+        1,
+        "only the foreign assignment should fail; `const ok: tag = tag` must be clean; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn keyof_keeps_computed_unique_like_string_property_as_string_key() {
     let source = r#"

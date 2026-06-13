@@ -1316,6 +1316,7 @@ fn make_constrained_type_param(interner: &TypeInterner, name: &str, constraint: 
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }))
 }
 

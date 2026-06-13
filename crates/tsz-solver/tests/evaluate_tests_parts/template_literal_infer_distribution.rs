@@ -434,6 +434,7 @@ fn test_distributive_multiple_type_params() {
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let lit_yes = interner.literal_string("yes");
@@ -1186,6 +1187,7 @@ fn test_infer_with_keyof_constraint() {
         constraint: Some(TypeId::STRING), // K extends string
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Pattern: { [key: infer K]: number } where K extends string
@@ -1566,6 +1568,7 @@ fn test_template_literal_pattern_infer_numeric() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     let extends_template = interner.template_literal(vec![

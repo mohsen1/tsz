@@ -632,6 +632,16 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
             if var_decl.type_annotation.is_some() {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
+                // `const X: unique symbol` has the value identity `typeof X`; apply the
+                // upgrade so value-position references resolve the symbol's own unique
+                // identity rather than the general `symbol` type the annotation lowers
+                // to. Without this, a `const X: unique symbol` that is also name-merged
+                // with a `type X = typeof X` alias would type `X` as `symbol` here.
+                let annotated = self.const_unique_symbol_value_type(
+                    decl_idx,
+                    var_decl.type_annotation,
+                    annotated,
+                );
                 return self.resolve_ref_type(annotated);
             }
             if self.ctx.is_js_file()

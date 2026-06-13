@@ -124,12 +124,14 @@ fn test_intersection_target_produces_type_mismatch_not_missing_property() {
         constraint: Some(obj_a),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(obj_b),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
 
     // Source: { a: string } — satisfies T but not U
@@ -514,6 +516,7 @@ fn test_type_param_extends_never_assignable_to_never() {
         constraint: Some(TypeId::NEVER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
 
@@ -536,6 +539,7 @@ fn test_type_param_extends_never_assignable_to_never() {
         constraint: Some(TypeId::NEVER),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let n_type = interner.type_param(n_param);
     assert!(
@@ -555,6 +559,7 @@ fn test_type_param_extends_string_not_assignable_to_never() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
 
@@ -575,6 +580,7 @@ fn test_unconstrained_type_param_not_assignable_to_never() {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     };
     let t_type = interner.type_param(t_param);
 
@@ -624,6 +630,7 @@ fn unconstrained_type_param(interner: &TypeInterner, name: &str) -> TypeParamInf
         constraint: None,
         default: None,
         is_const: false,
+          origin: crate::types::TypeParamOrigin::User,
     }
 }
 

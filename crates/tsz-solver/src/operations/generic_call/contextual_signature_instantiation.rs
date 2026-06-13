@@ -383,11 +383,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 crate::visitor::collect_all_types(self.interner.as_type_database(), source_ty)
             {
                 if let Some(info) = crate::type_param_info(self.interner.as_type_database(), nested)
-                    && self
-                        .interner
-                        .resolve_atom(info.name)
-                        .as_str()
-                        .starts_with("__infer_src_")
+                    && info.is_infer_source()
                     && !tracked_type_params.contains(&info.name)
                 {
                     tracked_type_params.push(info.name);
@@ -460,11 +456,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut substitution = TypeSubstitution::new();
         for &tp_name in &tracked_type_params {
-            let is_source_placeholder = self
-                .interner
-                .resolve_atom(tp_name)
-                .as_str()
-                .starts_with("__infer_src_");
+            // `tracked_type_params` mixes source-function param atoms with
+            // collected placeholder atoms, so classify the bare atom by name.
+            let is_source_placeholder = super::atom_names_source_inference_placeholder(
+                self.interner.resolve_atom(tp_name).as_str(),
+            );
             let replacement = contextual_candidates
                 .get(&tp_name)
                 .and_then(|candidates| candidates.first().copied())

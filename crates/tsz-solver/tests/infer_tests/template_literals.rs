@@ -23,6 +23,7 @@ fn make_string_param(
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }));
     (var, type_id)
 }

@@ -19,6 +19,7 @@ fn unconstrained_param(interner: &TypeInterner, name: &str) -> TypeParamInfo {
         constraint: None,
         default: None,
         is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
     }
 }
 

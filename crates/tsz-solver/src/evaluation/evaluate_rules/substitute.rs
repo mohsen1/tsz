@@ -486,6 +486,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
 
         // Two named base types `Bar` and `Foo` (modeled as `Lazy(DefId)`).
@@ -534,6 +535,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
 
         let bar = interner.lazy(DefId(201));
@@ -574,6 +576,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let obj = interner.lazy(DefId(301));
         let indexed = interner.index_access(obj, k_param);
@@ -620,6 +623,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let value_atom = interner.intern_string("value");
         let nested_atom = interner.intern_string("inner");
@@ -661,6 +665,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let arg_atom = interner.intern_string("arg");
 
@@ -726,6 +731,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
         });
         let value_atom = interner.intern_string("value");
         let branch = interner.object(vec![PropertyInfo::new(value_atom, TypeId::STRING)]);
