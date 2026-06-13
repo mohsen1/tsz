@@ -252,3 +252,46 @@ const e: boolean = strMap[0 as 0 | 1];
         "A string index signature accepts numeric keys, so numeric-literal unions must not emit TS7053. Got: {codes:?}",
     );
 }
+
+/// Tuple literal indices under NUIA are guaranteed only while they address the
+/// fixed prefix before the first rest. With a fixed suffix after a variable rest,
+/// tsc widens the first literal position after the minimum suffix offset.
+#[test]
+fn nuia_tuple_rest_region_literal_index_adds_undefined() {
+    let source = r#"
+declare const leadingRest: [...number[], number];
+const okLeadingBoundary: number = leadingRest[0];
+const badLeadingSuffixOffset: number = leadingRest[1];
+
+declare const prefixedRest: [number, ...number[], number];
+const okPrefix: number = prefixedRest[0];
+const okRestBoundary: number = prefixedRest[1];
+const badRestSuffixOffset: number = prefixedRest[2];
+
+declare const noSuffix: [boolean, ...boolean[]];
+const okNoSuffixPrefix: boolean = noSuffix[0];
+const badNoSuffixRest: boolean = noSuffix[1];
+"#;
+    let diags = diags_for_strict_nuia(source);
+    let ts2322_count = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        3,
+        "NUIA should reject suffix-offset literal indices and keep fixed prefix/rest-boundary positions exact. Got: {:?}",
+        diagnostic_codes(&diags)
+    );
+}
+
+#[test]
+fn nuia_tuple_rest_region_literal_index_renamed_value_type() {
+    let source = r#"
+declare const values: [...string[], string];
+const first: string = values[1];
+"#;
+    let diags = diags_for_strict_nuia(source);
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        codes.contains(&2322),
+        "Renamed leading-rest tuple should read string|undefined at the suffix-offset index. Got: {codes:?}",
+    );
+}
