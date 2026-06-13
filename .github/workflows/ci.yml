@@ -206,10 +206,10 @@ jobs:
                 bench_shell_only=true
               fi
             fi
-            # Perf-tool Python script-only changes do not need Rust compiler CI.
+            # Perf-tool Python/shell script-only changes do not need Rust compiler CI.
             # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
-            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
-            # files, Rust crates, shell scripts, and non-perf scripts still take
+            # jobs with a cheap tool smoke job below. CI workflow edits, Cargo
+            # files, Rust crates, and non-perf scripts still take
             # the normal path.
             if [[ "$should_run" == "true" && -n "${path_classification:-}" ]]; then
               perf_tool_only_classified=$(printf '%s' "$path_classification" | jq -r '.perfToolOnly')
@@ -514,11 +514,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Check perf Python tools
+      - name: Check perf tools
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/perf/*.py
+          shopt -s nullglob
+          perf_python_tools=(scripts/perf/*.py)
+          perf_shell_tools=(scripts/perf/*.sh)
+          if [[ "${#perf_python_tools[@]}" -gt 0 ]]; then
+            python3 -m py_compile "${perf_python_tools[@]}"
+          fi
+          if [[ "${#perf_shell_tools[@]}" -gt 0 ]]; then
+            bash -n "${perf_shell_tools[@]}"
+          fi
           tests=()
           while IFS= read -r test_file; do
             tests+=("$test_file")
