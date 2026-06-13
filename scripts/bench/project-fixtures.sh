@@ -40,6 +40,7 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "drizzle-orm-project"
   "ts-rest-project"
   "ofetch-project"
+  "ts-pattern-project"
 )
 
 # Row metadata pre-loaded by tsz_load_fixture_pins_from_rows (pipe-delimited).
@@ -282,6 +283,9 @@ tsz_project_fixture_sources() {
       ;;
     ofetch-project)
       printf 'ofetch|%s|%s\n' "$OFETCH_REPO" "$OFETCH_REF"
+      ;;
+    ts-pattern-project)
+      printf 'ts-pattern|%s|%s\n' "$TS_PATTERN_REPO" "$TS_PATTERN_REF"
       ;;
     vite-vanilla-ts-app)
       local fixture_dir="${VITE_APP_BENCH_DIR:-}"
@@ -618,6 +622,10 @@ tsz_write_ts_rest_config() {
 }
 
 tsz_write_ofetch_config() {
+  tsz_write_basic_external_project_config "$1" "src"
+}
+
+tsz_write_ts_pattern_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 
