@@ -1561,9 +1561,10 @@ mod plan;
 pub use plan::apply_cli_overrides;
 use plan::{
     apply_cli_overrides_with_config_options, cli_ignore_deprecations_silences_6_0,
-    display_relative_to_dir, find_latest_dts_file, implicit_common_source_directory,
-    is_deprecation_diagnostic_code, is_removed_option_diagnostic_code,
-    is_removed_option_value_diagnostic_code, validate_cli_compiler_option_diagnostics,
+    display_relative_to_dir, emit_common_source_directory, find_latest_dts_file,
+    implicit_common_source_directory, is_deprecation_diagnostic_code,
+    is_removed_option_diagnostic_code, is_removed_option_value_diagnostic_code,
+    validate_cli_compiler_option_diagnostics,
 };
 
 #[cfg(test)]

@@ -1125,6 +1125,35 @@ fn longest_common_directory(a: &Path, b: &Path) -> PathBuf {
         .collect()
 }
 
+/// Compute tsc's `getCommonSourceDirectory()` for the emit layout when no
+/// explicit `rootDir` is in play: the longest common directory of the emittable
+/// source files, with declaration files and `node_modules` sources excluded so
+/// they cannot drag the inferred root upward.
+///
+/// This is the root tsc lays output out against for an explicit file list with
+/// no tsconfig, so `tsz src/a.ts --outDir out` emits `out/a.js` like tsc rather
+/// than the cwd-relative `out/src/a.js`. Returns `None` when that directory
+/// coincides with `base_dir` (the emitter's `base_dir` fallback already
+/// produces the right layout) or when there are no emittable files.
+pub(super) fn emit_common_source_directory<I>(
+    program_file_paths: I,
+    base_dir: &Path,
+    cwd: &Path,
+) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let emittable: Vec<PathBuf> = program_file_paths
+        .into_iter()
+        .filter(|path| {
+            !path
+                .components()
+                .any(|component| component.as_os_str() == "node_modules")
+        })
+        .collect();
+    implicit_common_source_directory(&emittable, base_dir, cwd)
+}
+
 /// Format `path` for display relative to `dir`, using forward slashes and a
 /// leading `./` when the result is a non-parent relative path. Falls back to
 /// the path's own string representation when it cannot be expressed under
@@ -1178,6 +1207,47 @@ mod tests {
         assert!(!is_valid_jsx_factory_expression("my-lib.create"));
         assert!(!is_valid_jsx_factory_expression(".leading"));
         assert!(!is_valid_jsx_factory_expression("trailing."));
+    }
+
+    #[test]
+    fn emit_common_source_directory_single_file_uses_file_directory() {
+        // `tsz src/a.ts --outDir out` (no tsconfig, no rootDir): tsc lays output
+        // relative to the file's directory, not the cwd, so the root is src.
+        let files = vec![PathBuf::from("/proj/src/a.ts")];
+        let got = emit_common_source_directory(files, Path::new("/proj"), Path::new("/proj"));
+        assert_eq!(got, Some(PathBuf::from("/proj/src")));
+    }
+
+    #[test]
+    fn emit_common_source_directory_multi_file_uses_longest_common_directory() {
+        let files = vec![
+            PathBuf::from("/proj/src/a.ts"),
+            PathBuf::from("/proj/src/sub/c.ts"),
+        ];
+        let got = emit_common_source_directory(files, Path::new("/proj"), Path::new("/proj"));
+        assert_eq!(got, Some(PathBuf::from("/proj/src")));
+    }
+
+    #[test]
+    fn emit_common_source_directory_none_when_common_equals_base_dir() {
+        // Common directory coincides with base_dir: the base_dir fallback already
+        // produces the right layout, so there is nothing to override.
+        let files = vec![PathBuf::from("/proj/a.ts"), PathBuf::from("/proj/b.ts")];
+        let got = emit_common_source_directory(files, Path::new("/proj"), Path::new("/proj"));
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn emit_common_source_directory_excludes_node_modules_and_declaration_sources() {
+        // node_modules and `.d.ts` sources must not drag the common directory up.
+        let files = vec![
+            PathBuf::from("/proj/src/a.ts"),
+            PathBuf::from("/proj/src/sub/c.ts"),
+            PathBuf::from("/proj/node_modules/dep/index.ts"),
+            PathBuf::from("/proj/types/global.d.ts"),
+        ];
+        let got = emit_common_source_directory(files, Path::new("/proj"), Path::new("/proj"));
+        assert_eq!(got, Some(PathBuf::from("/proj/src")));
     }
 
     #[test]

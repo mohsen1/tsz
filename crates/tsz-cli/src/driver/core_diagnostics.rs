@@ -1111,6 +1111,28 @@ pub(super) fn compile_inner(
         }
     }
 
+    // Output layout follows tsc's `getCommonSourceDirectory()`. When `rootDir`
+    // is set, that is the root. In project (tsconfig) mode tsc 6.0 anchors the
+    // layout at the config directory (the `base_dir` fallback used inside the
+    // emitter, see TS5011), so nothing extra is needed there. But when
+    // compilation is driven by an explicit file list with no tsconfig, tsc lays
+    // output out relative to the longest common directory of the emittable
+    // source files — not the cwd. Compute that implicit root so a single input
+    // `src/a.ts --outDir out` emits to `out/a.js` (like tsc) rather than
+    // `out/src/a.js`.
+    let emit_root_dir = if root_dir.is_some() || tsconfig_path.is_some() {
+        root_dir
+    } else {
+        emit_common_source_directory(
+            program
+                .files
+                .iter()
+                .map(|file| PathBuf::from(&file.file_name)),
+            &base_dir,
+            &cwd,
+        )
+    };
+
     let emit_outputs_start = Instant::now();
     let emitted_files = if !should_emit && !should_run_declaration_emit_check {
         Vec::new()
@@ -1120,7 +1142,7 @@ pub(super) fn compile_inner(
             options: &resolved,
             base_dir: &base_dir,
             root_file_paths: &root_file_paths,
-            root_dir: root_dir.as_deref(),
+            root_dir: emit_root_dir.as_deref(),
             out_dir: out_dir.as_deref(),
             declaration_dir: declaration_dir.as_deref(),
             dirty_paths: dirty_paths.as_ref(),
