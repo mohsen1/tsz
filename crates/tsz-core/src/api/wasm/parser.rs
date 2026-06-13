@@ -1115,7 +1115,7 @@ impl Parser {
                     serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
                 Ok(edit.serialize(&serializer)?)
             }
-            Err(e) => Err(JsValue::from_str(&e)),
+            Err(e) => Err(JsValue::from_str(&e.to_string())),
         }
     }
 

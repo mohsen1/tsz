@@ -1614,7 +1614,8 @@ impl FourslashTest {
         let pos = Position::new(m.line, m.character);
         let result = self
             .project
-            .get_rename_edits(&m.file, pos, new_name.to_string());
+            .get_rename_edits(&m.file, pos, new_name.to_string())
+            .map_err(|e| e.to_string());
         RenameResult { result }
     }
 

@@ -34,6 +34,7 @@ pub mod diagnostics;
 pub mod document_links;
 pub mod editor_decorations;
 pub mod editor_ranges;
+pub mod errors;
 pub mod export_signature;
 pub mod formatting;
 pub mod hierarchy;

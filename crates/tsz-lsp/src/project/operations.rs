@@ -6,6 +6,7 @@ use web_time::Instant;
 
 use rustc_hash::FxHashSet;
 
+use crate::errors::RenameError;
 use crate::navigation::implementation::{GoToImplementationProvider, TargetKind};
 use crate::navigation::references::FindReferences;
 use crate::rename::{RenameProvider, TextEdit, WorkspaceEdit};
@@ -1250,17 +1251,14 @@ impl Project {
         file_name: &str,
         position: Position,
         new_name: String,
-    ) -> Result<WorkspaceEdit, String> {
+    ) -> Result<WorkspaceEdit, RenameError> {
         self.touch_file(file_name);
         let start = Instant::now();
         let mut scope_stats = ScopeCacheStats::default();
 
         // Step 1: Normalize the new name
         let normalized_name = {
-            let file = self
-                .files
-                .get(file_name)
-                .ok_or_else(|| "You cannot rename this element.".to_string())?;
+            let file = self.files.get(file_name).ok_or(RenameError::NotRenamable)?;
             let provider = RenameProvider::from_context(file.provider_context());
             provider.normalize_rename_at_position(position, &new_name)?
         };
@@ -1270,14 +1268,14 @@ impl Project {
             let file = self
                 .files
                 .get_mut(file_name)
-                .ok_or_else(|| "You cannot rename this element.".to_string())?;
+                .ok_or(RenameError::NotRenamable)?;
             let offset = file
                 .line_map
                 .position_to_offset(position, file.source_text())
-                .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+                .ok_or(RenameError::SymbolNotFound)?;
             let node_idx = find_node_at_offset(file.arena(), offset);
             if node_idx.is_none() {
-                return Err("Could not find symbol to rename".to_string());
+                return Err(RenameError::SymbolNotFound);
             }
 
             let finder = FindReferences::new(
@@ -1294,12 +1292,12 @@ impl Project {
                     &mut file.scope_cache,
                     Some(&mut scope_stats),
                 )
-                .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+                .ok_or(RenameError::SymbolNotFound)?;
             let symbol = file
                 .binder()
                 .symbols
                 .get(symbol_id)
-                .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+                .ok_or(RenameError::SymbolNotFound)?;
             let local_name = symbol.escaped_name.clone();
 
             (symbol_id, local_name)
@@ -1307,10 +1305,7 @@ impl Project {
 
         // Step 3: Check if this is a heritage member (class/interface member)
         let is_heritage_member = {
-            let file = self
-                .files
-                .get(file_name)
-                .ok_or_else(|| "Could not find file".to_string())?;
+            let file = self.files.get(file_name).ok_or(RenameError::FileNotFound)?;
             let symbol = file.binder().symbols.get(symbol_id);
             symbol.is_some_and(|s| Self::is_heritage_member_symbol(file, s))
         };
@@ -1333,7 +1328,7 @@ impl Project {
                 let file = self
                     .files
                     .get_mut(file_name)
-                    .ok_or_else(|| "You cannot rename this element.".to_string())?;
+                    .ok_or(RenameError::NotRenamable)?;
                 let import_targets = file.import_targets_for_local(&local_name);
                 let export_names = file.exported_names_for_symbol(symbol_id);
                 let source_file_name = file.file_name().to_string();
@@ -1344,7 +1339,7 @@ impl Project {
                 let file = self
                     .files
                     .get_mut(file_name)
-                    .ok_or_else(|| "You cannot rename this element.".to_string())?;
+                    .ok_or(RenameError::NotRenamable)?;
                 let root = file.root();
                 let provider = RenameProvider::from_context(file.provider_context());
                 provider.provide_rename_edits_for_symbol(
@@ -1593,7 +1588,7 @@ impl Project {
     ///
     /// # Returns
     /// * `Ok(WorkspaceEdit)` - The workspace edit with all rename changes
-    /// * `Err(String)` - Error message if rename failed
+    /// * `Err(RenameError)` - Typed error if rename failed
     fn get_heritage_rename_edits(
         &mut self,
         file_name: &str,
@@ -1602,14 +1597,11 @@ impl Project {
         new_name: String,
         start: Instant,
         scope_stats: ScopeCacheStats,
-    ) -> Result<WorkspaceEdit, String> {
+    ) -> Result<WorkspaceEdit, RenameError> {
         let mut workspace_edit = WorkspaceEdit::default();
 
         // Get the file containing the symbol
-        let file = self
-            .files
-            .get(file_name)
-            .ok_or_else(|| "Could not find file".to_string())?;
+        let file = self.files.get(file_name).ok_or(RenameError::FileNotFound)?;
 
         // Find ALL related symbols in the inheritance hierarchy
         let heritage_symbols = self.find_all_heritage_members(file, symbol_id, local_name);

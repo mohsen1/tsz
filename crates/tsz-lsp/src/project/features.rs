@@ -1055,7 +1055,8 @@ impl Project {
                 file_name,
                 file.source_text(),
                 options,
-            ),
+            )
+            .map_err(|e| e.to_string()),
         )
     }
 
@@ -1067,11 +1068,14 @@ impl Project {
         options: &crate::formatting::FormattingOptions,
     ) -> Option<Result<Vec<crate::formatting::TextEdit>, String>> {
         let file = self.files.get(file_name)?;
-        Some(crate::formatting::DocumentFormattingProvider::format_range(
-            file.source_text(),
-            range,
-            options,
-        ))
+        Some(
+            crate::formatting::DocumentFormattingProvider::format_range(
+                file.source_text(),
+                range,
+                options,
+            )
+            .map_err(|e| e.to_string()),
+        )
     }
 
     /// Format on typing a trigger character (textDocument/onTypeFormatting).
@@ -1092,7 +1096,8 @@ impl Project {
                 position.character,
                 ch,
                 options,
-            ),
+            )
+            .map_err(|e| e.to_string()),
         )
     }
 }

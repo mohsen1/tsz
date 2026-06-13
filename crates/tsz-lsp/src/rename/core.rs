@@ -8,6 +8,7 @@ use super::{
     PrepareRenameResult, RenameProvider, RenameSymbolKind, RenameTextEdit, RenameWorkspaceEdit,
     TextEdit, WorkspaceEdit,
 };
+use crate::errors::RenameError;
 use crate::navigation::references::FindReferences;
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::find_node_at_offset;
@@ -42,10 +43,10 @@ impl<'a> RenameProvider<'a> {
     /// kind, kind modifiers, and trigger span -- matching tsserver's format.
     pub fn prepare_rename_info(&self, root: NodeIndex, position: Position) -> PrepareRenameResult {
         let Some(node_idx) = self.rename_target_node(position) else {
-            return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+            return PrepareRenameResult::cannot_rename(&RenameError::NotRenamable);
         };
         let Some(node) = self.arena.get(node_idx) else {
-            return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+            return PrepareRenameResult::cannot_rename(&RenameError::NotRenamable);
         };
 
         // Extract identifier text (fall back to source slice, trimming non-ident chars)
@@ -60,7 +61,7 @@ impl<'a> RenameProvider<'a> {
 
         // Check for non-renamable built-in identifiers
         if is_non_renamable_builtin(&display_name) {
-            return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+            return PrepareRenameResult::cannot_rename(&RenameError::NotRenamable);
         }
 
         // `import.meta` / `new.target` are MetaProperty-like access
@@ -75,7 +76,7 @@ impl<'a> RenameProvider<'a> {
             && let Some(parent) = self.arena.get(ext.parent)
         {
             if parent.kind == syntax_kind_ext::META_PROPERTY {
-                return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+                return PrepareRenameResult::cannot_rename(&RenameError::NotRenamable);
             }
             if parent.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && let Some(access) = self.arena.get_access_expr(parent)
@@ -84,7 +85,7 @@ impl<'a> RenameProvider<'a> {
                 && (lhs.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
                     || lhs.kind == tsz_scanner::SyntaxKind::NewKeyword as u16)
             {
-                return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+                return PrepareRenameResult::cannot_rename(&RenameError::NotRenamable);
             }
         }
 
@@ -102,15 +103,13 @@ impl<'a> RenameProvider<'a> {
                         || parent.kind == syntax_kind_ext::METHOD_DECLARATION
                 });
             if !is_property_name {
-                return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+                return PrepareRenameResult::cannot_rename(&RenameError::NotRenamable);
             }
         }
 
         // Check if identifier lives inside node_modules (heuristic)
         if self.file_name.contains("node_modules") {
-            return PrepareRenameResult::cannot_rename(
-                "You cannot rename elements from external modules.",
-            );
+            return PrepareRenameResult::cannot_rename(&RenameError::ExternalModule);
         }
 
         // Resolve symbol to get kind / modifiers / qualified name
@@ -157,14 +156,11 @@ impl<'a> RenameProvider<'a> {
         &self,
         position: Position,
         new_name: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, RenameError> {
         let node_idx = self
             .rename_target_node(position)
-            .ok_or_else(|| "You cannot rename this element.".to_string())?;
-        let node = self
-            .arena
-            .get(node_idx)
-            .ok_or_else(|| "You cannot rename this element.".to_string())?;
+            .ok_or(RenameError::NotRenamable)?;
+        let node = self.arena.get(node_idx).ok_or(RenameError::NotRenamable)?;
         self.normalize_rename_name(node.kind, new_name)
     }
 
@@ -181,7 +177,7 @@ impl<'a> RenameProvider<'a> {
         root: NodeIndex,
         position: Position,
         new_name: String,
-    ) -> Result<WorkspaceEdit, String> {
+    ) -> Result<WorkspaceEdit, RenameError> {
         self.provide_rename_edits_internal(root, position, new_name, None, None)
     }
 
@@ -192,7 +188,7 @@ impl<'a> RenameProvider<'a> {
         new_name: String,
         scope_cache: &mut ScopeCache,
         scope_stats: Option<&mut ScopeCacheStats>,
-    ) -> Result<WorkspaceEdit, String> {
+    ) -> Result<WorkspaceEdit, RenameError> {
         self.provide_rename_edits_internal(root, position, new_name, Some(scope_cache), scope_stats)
     }
 
@@ -202,9 +198,9 @@ impl<'a> RenameProvider<'a> {
         root: NodeIndex,
         symbol_id: SymbolId,
         new_name: String,
-    ) -> Result<WorkspaceEdit, String> {
+    ) -> Result<WorkspaceEdit, RenameError> {
         if symbol_id.is_none() {
-            return Err("Could not find symbol to rename".to_string());
+            return Err(RenameError::SymbolNotFound);
         }
 
         let finder = FindReferences::new(
@@ -216,7 +212,7 @@ impl<'a> RenameProvider<'a> {
         );
         let locations = finder
             .find_references_for_symbol(root, symbol_id)
-            .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+            .ok_or(RenameError::SymbolNotFound)?;
 
         let mut workspace_edit = WorkspaceEdit::new();
         for loc in Self::dedup_locations(locations) {
@@ -237,7 +233,7 @@ impl<'a> RenameProvider<'a> {
         root: NodeIndex,
         position: Position,
         new_name: String,
-    ) -> Result<RenameWorkspaceEdit, String> {
+    ) -> Result<RenameWorkspaceEdit, RenameError> {
         self.provide_rich_rename_edits_internal(root, position, new_name, None, None)
     }
 
@@ -249,7 +245,7 @@ impl<'a> RenameProvider<'a> {
         new_name: String,
         scope_cache: &mut ScopeCache,
         scope_stats: Option<&mut ScopeCacheStats>,
-    ) -> Result<RenameWorkspaceEdit, String> {
+    ) -> Result<RenameWorkspaceEdit, RenameError> {
         self.provide_rich_rename_edits_internal(
             root,
             position,
@@ -270,7 +266,7 @@ impl<'a> RenameProvider<'a> {
         new_name: String,
         scope_cache: Option<&mut ScopeCache>,
         scope_stats: Option<&mut ScopeCacheStats>,
-    ) -> Result<WorkspaceEdit, String> {
+    ) -> Result<WorkspaceEdit, RenameError> {
         let rich = self.provide_rich_rename_edits_internal(
             root,
             position,
@@ -288,14 +284,11 @@ impl<'a> RenameProvider<'a> {
         new_name: String,
         scope_cache: Option<&mut ScopeCache>,
         scope_stats: Option<&mut ScopeCacheStats>,
-    ) -> Result<RenameWorkspaceEdit, String> {
+    ) -> Result<RenameWorkspaceEdit, RenameError> {
         let node_idx = self
             .rename_target_node(position)
-            .ok_or_else(|| "You cannot rename this element.".to_string())?;
-        let node = self
-            .arena
-            .get(node_idx)
-            .ok_or_else(|| "You cannot rename this element.".to_string())?;
+            .ok_or(RenameError::NotRenamable)?;
+        let node = self.arena.get(node_idx).ok_or(RenameError::NotRenamable)?;
 
         // Get old name for shorthand / import expansion.
         // Try get_identifier_text first; fall back to source text slice.
@@ -310,7 +303,7 @@ impl<'a> RenameProvider<'a> {
 
         // Reject non-renamable built-in identifiers
         if is_non_renamable_builtin(&old_name) {
-            return Err("You cannot rename this element.".to_string());
+            return Err(RenameError::NotRenamable);
         }
 
         let normalized_name = self.normalize_rename_name(node.kind, &new_name)?;
@@ -329,7 +322,7 @@ impl<'a> RenameProvider<'a> {
         } else {
             finder.find_references(root, position)
         }
-        .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+        .ok_or(RenameError::SymbolNotFound)?;
 
         // Convert locations to RenameTextEdits, handling special contexts
         let mut workspace_edit = RenameWorkspaceEdit::new();
@@ -751,14 +744,12 @@ impl<'a> RenameProvider<'a> {
         true
     }
 
-    fn normalize_rename_name(&self, node_kind: u16, new_name: &str) -> Result<String, String> {
+    fn normalize_rename_name(&self, node_kind: u16, new_name: &str) -> Result<String, RenameError> {
         let is_private = node_kind == SyntaxKind::PrivateIdentifier as u16;
         if is_private {
             let stripped = new_name.strip_prefix('#').unwrap_or(new_name);
             if !is_valid_private_identifier(stripped) {
-                return Err(format!(
-                    "'{new_name}' is not a valid private identifier name"
-                ));
+                return Err(RenameError::InvalidPrivateIdentifier(new_name.to_string()));
             }
             return Ok(format!("#{stripped}"));
         }
@@ -766,13 +757,13 @@ impl<'a> RenameProvider<'a> {
         // For string literal property names, accept any non-empty string
         if node_kind == SyntaxKind::StringLiteral as u16 {
             if new_name.is_empty() {
-                return Err("Rename target cannot be empty.".to_string());
+                return Err(RenameError::EmptyName);
             }
             return Ok(new_name.to_string());
         }
 
         if new_name.starts_with('#') || !self.is_valid_identifier(new_name) {
-            return Err(format!("'{new_name}' is not a valid identifier name"));
+            return Err(RenameError::InvalidIdentifier(new_name.to_string()));
         }
 
         Ok(new_name.to_string())
