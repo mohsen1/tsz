@@ -89,6 +89,7 @@ impl<'a> FlowAnalyzer<'a> {
         let mut pending_cache_writes: Vec<((FlowNodeId, SymbolId, TypeId), TypeId)> = Vec::new();
         let mut condition_dp_memos = FlowConditionDpMemos::default();
         let mut antecedent_defer_memo: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
+        let mut condition_antecedent_defer_memo: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
         condition_dp_memos.clear();
 
         // Process worklist until empty
@@ -289,47 +290,11 @@ impl<'a> FlowAnalyzer<'a> {
                         //     narrow the type (e.g. `s = new Set<number>();
                         //     if (s instanceof Set)` — without deferring, we'd narrow
                         //     the declared type instead of the assignment-narrowed type)
-                        let ant_flow = self.binder.flow_nodes.get(ant);
-                        let ant_flags = ant_flow.map(|f| f.flags).unwrap_or(0);
-                        // Check if the antecedent ASSIGNMENT targets our reference.
-                        let ant_is_targeting_assignment = (ant_flags & flow_flags::ASSIGNMENT) != 0
-                            && ant_flow.is_some_and(|f| {
-                                // Quick symbol check: does this assignment target our ref?
-                                let assignment_sym = self.reference_symbol(f.node);
-                                assignment_sym.is_some()
-                                    && symbol_id.is_some()
-                                    && assignment_sym == symbol_id
-                            });
-                        // Also defer to non-targeting ASSIGNMENT antecedents when
-                        // their own antecedent chain contains a deferrable node.
-                        // This covers the pattern: `x = 10; var b = x; typeof x`
-                        // where the non-targeting ASSIGNMENT (var b = x) passes
-                        // through to the targeting ASSIGNMENT (x = 10). Without
-                        // deferring, the CONDITION uses the stale initial_type.
-                        let ant_is_passthrough_assignment = !ant_is_targeting_assignment
-                            && (ant_flags & flow_flags::ASSIGNMENT) != 0
-                            && ant_flow.is_some_and(|f| {
-                                f.antecedent.first().is_some_and(|&grandparent| {
-                                    self.binder.flow_nodes.get(grandparent).is_some_and(|gp| {
-                                        gp.has_any_flags(
-                                            flow_flags::CONDITION
-                                                | flow_flags::CALL
-                                                | flow_flags::ASSIGNMENT
-                                                | flow_flags::LOOP_LABEL,
-                                        )
-                                    })
-                                })
-                            });
-                        let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
-                            // Closure START nodes may carry the enclosing flow
-                            // that preserves narrowing for effectively-const captures.
-                            || (ant_flags & flow_flags::START) != 0
-                            || (ant_flags & flow_flags::CALL) != 0
-                            || (ant_flags & flow_flags::LOOP_LABEL) != 0
-                            || (ant_flags & flow_flags::BRANCH_LABEL) != 0
-                            || (ant_flags & flow_flags::SWITCH_CLAUSE) != 0
-                            || ant_is_targeting_assignment
-                            || ant_is_passthrough_assignment;
+                        let ant_needs_defer = self.condition_antecedent_requires_defer_cached(
+                            ant,
+                            symbol_id,
+                            &mut condition_antecedent_defer_memo,
+                        );
                         if ant_needs_defer {
                             defer_to_antecedent(
                                 worklist,
@@ -1106,5 +1071,65 @@ impl<'a> FlowAnalyzer<'a> {
         let result = self.antecedent_requires_defer(antecedent, reference, symbol_id);
         memo.insert(antecedent, result);
         result
+    }
+
+    fn condition_antecedent_requires_defer_cached(
+        &self,
+        antecedent: FlowNodeId,
+        symbol_id: Option<SymbolId>,
+        memo: &mut FxHashMap<FlowNodeId, bool>,
+    ) -> bool {
+        if let Some(&cached) = memo.get(&antecedent) {
+            return cached;
+        }
+        let result = self.condition_antecedent_requires_defer(antecedent, symbol_id);
+        memo.insert(antecedent, result);
+        result
+    }
+
+    fn condition_antecedent_requires_defer(
+        &self,
+        antecedent: FlowNodeId,
+        symbol_id: Option<SymbolId>,
+    ) -> bool {
+        let Some(ant_flow) = self.binder.flow_nodes.get(antecedent) else {
+            return false;
+        };
+        let ant_flags = ant_flow.flags;
+        let ant_is_assignment = (ant_flags & flow_flags::ASSIGNMENT) != 0;
+        // Check if the antecedent ASSIGNMENT targets our reference.
+        let ant_is_targeting_assignment = ant_is_assignment && {
+            // Quick symbol check: does this assignment target our ref?
+            let assignment_sym = self.reference_symbol(ant_flow.node);
+            assignment_sym.is_some() && symbol_id.is_some() && assignment_sym == symbol_id
+        };
+        // Also defer to non-targeting ASSIGNMENT antecedents when
+        // their own antecedent chain contains a deferrable node.
+        // This covers the pattern: `x = 10; var b = x; typeof x`
+        // where the non-targeting ASSIGNMENT (var b = x) passes
+        // through to the targeting ASSIGNMENT (x = 10). Without
+        // deferring, the CONDITION uses the stale initial_type.
+        let ant_is_passthrough_assignment = !ant_is_targeting_assignment
+            && ant_is_assignment
+            && ant_flow.antecedent.first().is_some_and(|&grandparent| {
+                self.binder.flow_nodes.get(grandparent).is_some_and(|gp| {
+                    gp.has_any_flags(
+                        flow_flags::CONDITION
+                            | flow_flags::CALL
+                            | flow_flags::ASSIGNMENT
+                            | flow_flags::LOOP_LABEL,
+                    )
+                })
+            });
+        (ant_flags & flow_flags::CONDITION) != 0
+            // Closure START nodes may carry the enclosing flow
+            // that preserves narrowing for effectively-const captures.
+            || (ant_flags & flow_flags::START) != 0
+            || (ant_flags & flow_flags::CALL) != 0
+            || (ant_flags & flow_flags::LOOP_LABEL) != 0
+            || (ant_flags & flow_flags::BRANCH_LABEL) != 0
+            || (ant_flags & flow_flags::SWITCH_CLAUSE) != 0
+            || ant_is_targeting_assignment
+            || ant_is_passthrough_assignment
     }
 }

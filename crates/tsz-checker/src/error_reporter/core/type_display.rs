@@ -707,6 +707,11 @@ impl<'a> CheckerState<'a> {
                         self.evaluate_type_for_assignability(ty)
                     };
 
+                if crate::error_reporter::display_budget::is_exhausted() {
+                    visiting.remove(&ty);
+                    return evaluated;
+                }
+
                 if self.should_truncate_assignability_display_type(evaluated, depth) {
                     visiting.remove(&ty);
                     return evaluated;
@@ -940,6 +945,11 @@ impl<'a> CheckerState<'a> {
                         self.evaluate_type_for_assignability(ty)
                     };
 
+                if crate::error_reporter::display_budget::is_exhausted() {
+                    visiting.remove(&ty);
+                    return evaluated;
+                }
+
                 if self.should_truncate_assignability_display_type(evaluated, depth) {
                     visiting.remove(&ty);
                     return evaluated;
@@ -969,6 +979,11 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.evaluate_type_for_assignability(ty)
                 };
+
+            if crate::error_reporter::display_budget::is_exhausted() {
+                visiting.remove(&ty);
+                return evaluated;
+            }
 
             if self.should_truncate_assignability_display_type(evaluated, depth) {
                 visiting.remove(&ty);
