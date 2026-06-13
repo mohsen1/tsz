@@ -574,6 +574,9 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        if self.same_base_generic_mapped_application_variance_accepts(source, target) {
+            return true;
+        }
         {
             let flags = self.ctx.pack_relation_flags();
             let inputs = crate::query_boundaries::assignability::AssignabilityQueryInputs {
@@ -591,8 +594,21 @@ impl<'a> CheckerState<'a> {
                 ),
                 Some(false)
             ) {
-                self.error_type_not_assignable_at_with_raw_display_types(source, target, diag_idx);
-                return false;
+                if self.same_base_generic_mapped_application_has_type_param_arg(source, target) {
+                    // A negative public variance prepass is not definitive for
+                    // generic mapped aliases. Let the ordinary structural path
+                    // decide so opposite-direction mapped relations still fail.
+                } else if self.same_type_alias_application_uses_conditional_infer(source, target) {
+                    let outcome = self.assignability_reason_relation_outcome(source, target);
+                    if outcome.related {
+                        return true;
+                    }
+                } else {
+                    self.error_type_not_assignable_at_with_raw_display_types(
+                        source, target, diag_idx,
+                    );
+                    return false;
+                }
             }
         }
         if !force_nested_error_nullish_report

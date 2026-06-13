@@ -20,6 +20,7 @@ pub(crate) mod checkers;
 pub(crate) mod class;
 pub(crate) mod class_type;
 pub(crate) mod common;
+pub(crate) mod conditional_infer_alias;
 pub(crate) mod construct_signatures;
 pub(crate) mod definite_assignment;
 pub(crate) mod definition_identity;
