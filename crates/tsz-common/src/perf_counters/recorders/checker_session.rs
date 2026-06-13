@@ -234,7 +234,7 @@ pub fn record_slow_check_statement_timing(
 /// never drive compiler behavior.
 pub fn record_slow_type_alias_check_timing(
     file: &str,
-    name: &str,
+    name: Option<&str>,
     phase: &'static str,
     pos: u32,
     end: u32,
@@ -248,7 +248,7 @@ pub fn record_slow_type_alias_check_timing(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     rows.push(SlowTypeAliasCheckTiming {
         file: file.to_owned(),
-        name: name.to_owned(),
+        name: name.unwrap_or("<anonymous>").to_owned(),
         phase,
         pos,
         end,
