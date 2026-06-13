@@ -108,7 +108,62 @@ pub struct FileSessionResetCacheStatistics {
 }
 
 #[inline]
-pub fn record_file_session_reset_cache_statistics(
+pub fn record_file_session_reset_cache_statistics(stats: FileSessionResetCacheStatistics) {
+    let FileSessionResetCacheStatistics {
+        total_entries,
+        total_bytes,
+        namespace_member_entries,
+        namespace_member_bytes,
+        export_equals_entries,
+        export_equals_bytes,
+        nested_namespace_entries,
+        nested_namespace_bytes,
+        lowering_entity_name_entries,
+        lowering_entity_name_bytes,
+        env_eval_entries,
+        env_eval_bytes,
+    } = stats;
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    record_max_inner(&c.file_session_reset_cache_entries_max, total_entries);
+    record_max_inner(&c.file_session_reset_cache_bytes_max, total_bytes);
+    record_max_inner(
+        &c.file_session_reset_namespace_member_entries_max,
+        namespace_member_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_namespace_member_bytes_max,
+        namespace_member_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_export_equals_entries_max,
+        export_equals_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_export_equals_bytes_max,
+        export_equals_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_nested_namespace_entries_max,
+        nested_namespace_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_nested_namespace_bytes_max,
+        nested_namespace_bytes,
+    );
+    record_max_inner(
+        &c.file_session_reset_lowering_entity_name_entries_max,
+        lowering_entity_name_entries,
+    );
+    record_max_inner(
+        &c.file_session_reset_lowering_entity_name_bytes_max,
+        lowering_entity_name_bytes,
+    );
+    record_max_inner(&c.file_session_reset_env_eval_entries_max, env_eval_entries);
+    record_max_inner(&c.file_session_reset_env_eval_bytes_max, env_eval_bytes);
+}
 
 /// Record one semantic `check_source_file` duration in attribution mode.
 ///
@@ -142,6 +197,35 @@ pub fn record_slow_check_file_timing(file: &str, elapsed_ns: u64, diagnostics: u
 /// intentionally store syntax coordinates rather than source snippets so the
 /// counter stays structural and cheap.
 pub fn record_slow_check_statement_timing(
+    file: &str,
+    kind: u16,
+    pos: u32,
+    end: u32,
+    elapsed_ns: u64,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let mut rows = slow_check_statement_timings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    rows.push(SlowCheckStatementTiming {
+        file: file.to_owned(),
+        kind,
+        pos,
+        end,
+        elapsed_ms: elapsed_ns as f64 / 1_000_000.0,
+    });
+    rows.sort_by(|a, b| {
+        b.elapsed_ms
+            .total_cmp(&a.elapsed_ms)
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.pos.cmp(&b.pos))
+            .then_with(|| a.end.cmp(&b.end))
+    });
+    rows.truncate(SLOW_CHECK_STATEMENT_TIMING_LIMIT);
+}
 
 /// Record one type-alias checking phase duration in attribution mode.
 ///
@@ -149,3 +233,35 @@ pub fn record_slow_check_statement_timing(
 /// do not pay for clock reads. The alias name is an output label only; it must
 /// never drive compiler behavior.
 pub fn record_slow_type_alias_check_timing(
+    file: &str,
+    name: &str,
+    phase: &'static str,
+    pos: u32,
+    end: u32,
+    elapsed_ns: u64,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let mut rows = slow_type_alias_check_timings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    rows.push(SlowTypeAliasCheckTiming {
+        file: file.to_owned(),
+        name: name.to_owned(),
+        phase,
+        pos,
+        end,
+        elapsed_ms: elapsed_ns as f64 / 1_000_000.0,
+    });
+    rows.sort_by(|a, b| {
+        b.elapsed_ms
+            .total_cmp(&a.elapsed_ms)
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.phase.cmp(b.phase))
+            .then_with(|| a.pos.cmp(&b.pos))
+            .then_with(|| a.end.cmp(&b.end))
+    });
+    rows.truncate(SLOW_TYPE_ALIAS_CHECK_TIMING_LIMIT);
+}
