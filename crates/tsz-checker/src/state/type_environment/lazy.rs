@@ -1670,6 +1670,18 @@ impl<'a> CheckerState<'a> {
                             })
                     })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+            } else if symbol.has_any_flags(symbol_flags::VARIABLE)
+                && !symbol.has_any_flags(symbol_flags::TYPE)
+            {
+                // `typeof value` can be represented as a Lazy(value DefId) once it
+                // flows through aliases/mapped types instead of as a direct
+                // TypeQuery(SymbolRef). Relation prep must register the value-space
+                // type for value-only DefIds so solver-side mapped/keyof evaluation
+                // does not classify the unresolved Lazy as a non-object. Merged
+                // interface/var symbols still have type-space meaning, so bare type
+                // references like `HTMLDivElement` must continue resolving to the
+                // instance type instead of the constructor value.
+                self.type_of_value_declaration_for_symbol(sym_id, symbol.value_declaration)
             } else {
                 self.get_type_of_symbol(sym_id)
             }
