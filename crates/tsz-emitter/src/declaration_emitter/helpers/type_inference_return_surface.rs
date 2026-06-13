@@ -24,7 +24,7 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(self.print_type_id_expanded_for_inferred_declaration(type_id));
         }
         if let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
-            && self.type_contains_conditional_alias_application_for_inferred_emit(type_id, 0)
+            && self.type_contains_conditional_alias_application_for_inferred_emit(type_id)
         {
             return Some(self.print_type_id_for_inferred_declaration(type_id));
         }

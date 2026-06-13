@@ -5,7 +5,7 @@
 //! `ResolvedModule` structure.
 
 use crate::span::Span;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use tsz_common::file_extensions::is_ts_declaration_file_name;
 
 use super::COULD_NOT_FIND_DECLARATION_FILE;
@@ -15,28 +15,14 @@ use super::COULD_NOT_FIND_DECLARATION_FILE;
 /// (e.g. `<containing_dir>/./node_modules/foo/index.js`). tsc canonicalizes
 /// the path before formatting; matching that is required for fingerprint
 /// parity in the conformance harness.
+///
+/// Delegates to the canonical
+/// [`tsz_common::module_resolution::path_identity::normalize_segments`]:
+/// unmatched `..` on a relative path is kept, and `..` at the filesystem
+/// root clamps (the historical local loop spelled the latter `/..`; tsc
+/// clamps, and resolved module paths cannot underflow the root anyway).
 fn normalize_display_path(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let last_is_real_dir = out
-                    .components()
-                    .next_back()
-                    .is_some_and(|c| matches!(c, Component::Normal(_)));
-                if last_is_real_dir {
-                    out.pop();
-                } else {
-                    out.push("..");
-                }
-            }
-            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
-                out.push(component.as_os_str());
-            }
-        }
-    }
-    out
+    tsz_common::module_resolution::path_identity::normalize_segments(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -524,5 +510,15 @@ mod normalize_display_path_tests {
     fn does_not_pop_leading_parentdir_when_followed_by_more() {
         let p = Path::new("../../../x");
         assert_eq!(normalize_display_path(p).to_string_lossy(), "../../../x");
+    }
+
+    #[test]
+    fn clamps_excess_parent_segments_at_root() {
+        // Canonical `normalize_segments` semantics: tsc/Node clamp `..` at
+        // the filesystem root. The historical local loop spelled this
+        // `/../b`; resolved module paths cannot underflow the root, so no
+        // TS7016 fingerprint can observe the difference.
+        let p = Path::new("/a/../../b");
+        assert_eq!(normalize_display_path(p).to_string_lossy(), "/b");
     }
 }

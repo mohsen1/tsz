@@ -1644,3 +1644,44 @@ declare const jsx: typeof React.createElement;
         "Fragment JSX should still reference the configured element factory and default fragment factory.\nOutput:\n{output}"
     );
 }
+
+fn emit_es2015(source: &str) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn es6_class_var_function_recovery_emits_var_and_arrow_tail() {
+    let output = emit_es2015("class C {\n    var constructor() { }\n}");
+    assert!(
+        output.contains("class C {\n}\nvar constructor;\n() => { };"),
+        "Recovered `var <name>() {{ }}` class member should emit tsc's var+arrow tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es6_class_var_function_recovery_supports_renamed_binder() {
+    let output = emit_es2015("class Widget {\n    var myWidget_3() { }\n}");
+    assert!(
+        output.contains("var myWidget_3;\n() => { };"),
+        "Recovery tail should use the recovered declaration name verbatim.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es6_class_var_function_recovery_ignores_string_literal_text() {
+    // A healthy class must not gain a recovery tail just because a string
+    // literal inside it happens to contain the `var <name> () { }` shape.
+    let output = emit_es2015("class D {\n    m() { return \"var hijack () { }\"; }\n}");
+    assert!(
+        !output.contains("var hijack;"),
+        "String literal contents must not trigger the recovery tail.\nOutput:\n{output}"
+    );
+}

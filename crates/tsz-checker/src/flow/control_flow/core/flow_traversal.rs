@@ -90,6 +90,7 @@ impl<'a> FlowAnalyzer<'a> {
         let mut cacheable_walk = true;
         let mut pending_cache_writes: Vec<((FlowNodeId, SymbolId, TypeId), TypeId)> = Vec::new();
         let mut condition_dp_memos = FlowConditionDpMemos::default();
+        let mut antecedent_defer_memo: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
         condition_dp_memos.clear();
 
         // Process worklist until empty
@@ -845,8 +846,12 @@ impl<'a> FlowAnalyzer<'a> {
                 } else if affects_ref {
                     current_type
                 } else if let Some(&ant) = flow.antecedent.first() {
-                    if self.antecedent_requires_defer(ant, reference, symbol_id)
-                        && !visited.contains(&ant)
+                    if self.antecedent_requires_defer_cached(
+                        ant,
+                        reference,
+                        symbol_id,
+                        &mut antecedent_defer_memo,
+                    ) && !visited.contains(&ant)
                         && !results.contains_key(&ant)
                     {
                         defer_to_antecedent(worklist, in_worklist, ant, current_flow, current_type);
@@ -862,7 +867,12 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             } else if flow.has_any_flags(flow_flags::CALL) {
                 if let Some(&ant) = flow.antecedent.first()
-                    && self.antecedent_requires_defer(ant, reference, symbol_id)
+                    && self.antecedent_requires_defer_cached(
+                        ant,
+                        reference,
+                        symbol_id,
+                        &mut antecedent_defer_memo,
+                    )
                     && !visited.contains(&ant)
                     && !results.contains_key(&ant)
                 {
@@ -924,7 +934,12 @@ impl<'a> FlowAnalyzer<'a> {
             } else {
                 // Default: continue to antecedent
                 if let Some(&ant) = flow.antecedent.first() {
-                    if self.antecedent_requires_defer(ant, reference, symbol_id) {
+                    if self.antecedent_requires_defer_cached(
+                        ant,
+                        reference,
+                        symbol_id,
+                        &mut antecedent_defer_memo,
+                    ) {
                         self.get_flow_type(reference, current_type, ant)
                     } else {
                         if !in_worklist.contains(&ant) && !visited.contains(&ant) {
@@ -1078,5 +1093,20 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             result
         }
+    }
+
+    fn antecedent_requires_defer_cached(
+        &self,
+        antecedent: FlowNodeId,
+        reference: NodeIndex,
+        symbol_id: Option<SymbolId>,
+        memo: &mut FxHashMap<FlowNodeId, bool>,
+    ) -> bool {
+        if let Some(&cached) = memo.get(&antecedent) {
+            return cached;
+        }
+        let result = self.antecedent_requires_defer(antecedent, reference, symbol_id);
+        memo.insert(antecedent, result);
+        result
     }
 }

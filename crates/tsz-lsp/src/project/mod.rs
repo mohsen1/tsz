@@ -4,6 +4,7 @@
 //! LSP features can be extended across multiple files.
 
 mod core;
+mod diagnostic_pull;
 pub(crate) mod eviction;
 pub(crate) mod features;
 pub(crate) mod file_context;

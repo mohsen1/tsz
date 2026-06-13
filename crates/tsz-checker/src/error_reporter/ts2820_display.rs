@@ -4,6 +4,16 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Text-level numeric-annotation widening for the TS2820 target display.
+    ///
+    /// Retained from #13075: the `target_str` reaching
+    /// `format_ts2820_target_display` is assembled by several upstream
+    /// producers (assignability target rewrites, union-alias overrides,
+    /// template-placeholder normalization) and is not the render of any
+    /// single `TypeId`, so the type-level
+    /// `widen_object_property_literals_for_display` boundary helper cannot
+    /// reproduce it without restructuring the TS2322 display pipeline.
+    /// Displays produced from a `TypeId` must use that helper instead.
     pub(super) fn widen_numeric_member_literals_in_display_text(display: &str) -> String {
         let bytes = display.as_bytes();
         let mut out = String::with_capacity(display.len());

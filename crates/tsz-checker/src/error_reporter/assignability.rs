@@ -1327,20 +1327,16 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_for_assignability(source);
         let widened = crate::query_boundaries::diagnostics::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
-        let widened_display = self
-            .format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic);
-        if Self::display_has_member_literals_assignability(&widened_display) {
-            Self::widen_member_literals_in_display_text(&widened_display)
-        } else {
-            widened_display
-        }
+        let widened = self
+            .widen_annotation_literals_for_display(
+                widened,
+                crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+            )
+            .type_id;
+        self.format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic)
     }
 
-    /// Returns `true` when `ty` (a non-fresh source type) contains a literal-typed
-    /// member at any nesting depth: a property of an object, an array element, a
-    /// tuple element, or a union member, recursively. Used to decide whether a
-    /// source whose canonical shape is authoritative (no fresh-object-literal
-    /// display provenance) should be displayed verbatim instead of text-widened.
+    /// Returns `true` when a non-fresh source has canonical literal members.
     pub(super) fn source_carries_canonical_literal_member(&self, ty: TypeId) -> bool {
         let mut visiting = rustc_hash::FxHashSet::default();
         self.source_carries_canonical_literal_member_inner(ty, &mut visiting, 0)
@@ -1427,13 +1423,13 @@ impl<'a> CheckerState<'a> {
 
         let widened = crate::query_boundaries::diagnostics::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
-        let widened_display = self
-            .format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic);
-        if Self::display_has_member_literals_assignability(&widened_display) {
-            Self::widen_member_literals_in_display_text(&widened_display)
-        } else {
-            widened_display
-        }
+        let widened = self
+            .widen_annotation_literals_for_display(
+                widened,
+                crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+            )
+            .type_id;
+        self.format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic)
     }
 
     /// Returns true when `ty` would be formatted as an Application type (e.g. `Foo<{...}>`).
@@ -1551,6 +1547,9 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Text-level literal-annotation widening for generic-signature displays
+    /// spliced from multiple rendered types; single-`TypeId` displays use the
+    /// type-level widening boundary instead.
     pub(super) fn widen_member_literals_in_display_text(display: &str) -> String {
         let bytes = display.as_bytes();
         let mut out = String::with_capacity(display.len());

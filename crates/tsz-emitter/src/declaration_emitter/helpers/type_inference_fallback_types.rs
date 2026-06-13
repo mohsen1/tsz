@@ -1027,9 +1027,8 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_id) = call_type_id
                     && (reused_type_uses_function_local_alias
                         || self.should_expand_named_application_for_inferred_declaration(type_id)
-                        || self.type_contains_conditional_alias_application_for_inferred_emit(
-                            type_id, 0,
-                        ))
+                        || self
+                            .type_contains_conditional_alias_application_for_inferred_emit(type_id))
                 {
                     let printed = if let Some(source_type_text) = reused_type_text.as_deref() {
                         let setter_names =
