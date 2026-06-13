@@ -37,6 +37,7 @@ fn main() -> Result<()> {
         }
     };
 
+    let (preprocessed, batch_residency_budget) = extract_batch_residency_budget_arg(preprocessed);
     let args = match CliArgs::try_parse_from(&preprocessed) {
         Ok(args) => args,
         Err(e) => {
@@ -51,23 +52,27 @@ fn main() -> Result<()> {
     if use_large_stack_thread {
         std::thread::Builder::new()
             .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
-            .spawn(move || actual_main(args, cwd))
+            .spawn(move || actual_main(args, cwd, batch_residency_budget))
             .expect("failed to spawn main thread")
             .join()
             .expect("main thread panicked")
     } else {
-        actual_main(args, cwd)
+        actual_main(args, cwd, batch_residency_budget)
     }
 }
 
-fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
+fn actual_main(
+    mut args: CliArgs,
+    cwd: std::path::PathBuf,
+    batch_residency_budget: bool,
+) -> Result<()> {
     validate_locale_or_exit(&args);
 
     // Initialize locale for i18n message translation
     locale::init_locale(args.locale.as_deref());
 
-    match select_command(&mut args, &cwd) {
-        Command::Batch => run_batch_mode(),
+    match select_command(&mut args, &cwd, batch_residency_budget) {
+        Command::Batch { residency_budget } => run_batch_mode(residency_budget),
         Command::Init => init::handle_init(&args, &cwd),
         Command::ShowConfig => handle_show_config(&args, &cwd),
         Command::ListFilesOnly => handle_list_files_only(&args, &cwd),
@@ -108,7 +113,7 @@ fn validate_locale_or_exit(args: &CliArgs) {
 /// and separates the (process-exiting) argument validation that runs while the
 /// command is selected from the code that executes it.
 enum Command {
-    Batch,
+    Batch { residency_budget: bool },
     Init,
     ShowConfig,
     ListFilesOnly,
@@ -123,10 +128,16 @@ enum Command {
 /// returned `Command` names the action to execute. `args` may be normalized in
 /// place (promoting a lone directory positional to `--project`, merging
 /// output-only tsconfig options) before the compile command is returned.
-fn select_command(args: &mut CliArgs, cwd: &std::path::Path) -> Command {
+fn select_command(
+    args: &mut CliArgs,
+    cwd: &std::path::Path,
+    batch_residency_budget: bool,
+) -> Command {
     // Handle --batch: enter batch compilation mode
     if args.batch {
-        return Command::Batch;
+        return Command::Batch {
+            residency_budget: batch_residency_budget,
+        };
     }
 
     // Handle --init: create tsconfig.json
@@ -229,6 +240,63 @@ const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
     args.project.is_some() || args.build || args.watch || args.batch || !args.files.is_empty()
 }
 
+/// Pull the internal batch residency probe out before clap sees it.
+///
+/// The flag is part of the batch worker protocol, not tsconfig/compiler-option
+/// compatibility. Only strip it when `--batch` is present; otherwise the normal
+/// parser keeps reporting it as an unknown option like `tsc` would for any
+/// unsupported compiler option.
+fn extract_batch_residency_budget_arg(
+    args: Vec<std::ffi::OsString>,
+) -> (Vec<std::ffi::OsString>, bool) {
+    let is_batch = args
+        .iter()
+        .skip(1)
+        .any(|arg| arg.to_string_lossy() == "--batch");
+    if !is_batch {
+        return (args, false);
+    }
+
+    let mut normalized = Vec::with_capacity(args.len());
+    let mut residency_budget = false;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].to_string_lossy();
+        let flag = arg.as_ref();
+        let mut matched = false;
+        let mut value = None;
+        for spelling in ["--batchResidencyBudget", "--batch-residency-budget"] {
+            if flag == spelling {
+                matched = true;
+                break;
+            }
+            if let Some(raw_value) = flag.strip_prefix(&format!("{spelling}=")) {
+                matched = true;
+                value = Some(raw_value.to_ascii_lowercase());
+                break;
+            }
+        }
+
+        if matched {
+            let next_value = args
+                .get(i + 1)
+                .map(|arg| arg.to_string_lossy().to_ascii_lowercase());
+            match value.as_deref().or(next_value.as_deref()) {
+                Some("false") => residency_budget = false,
+                _ => residency_budget = true,
+            }
+            if value.is_none() && matches!(next_value.as_deref(), Some("true" | "false")) {
+                i += 1;
+            }
+        } else {
+            normalized.push(args[i].clone());
+        }
+        i += 1;
+    }
+
+    (normalized, residency_budget)
+}
+
 /// Batch compilation mode: read project directory paths from stdin (one per line),
 /// compile each with `--project <path> --noEmit --pretty false`, print diagnostics,
 /// then print a sentinel line so the caller can demarcate output boundaries.
@@ -236,7 +304,7 @@ const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
 /// Each iteration creates fresh `CliArgs` — no state is shared between compilations.
 /// If tsz panics during any compilation, the process exits naturally (no `catch_unwind`).
 /// The pool manager detects EOF on stdout and respawns a fresh worker.
-fn run_batch_mode() -> Result<()> {
+fn run_batch_mode(residency_budget: bool) -> Result<()> {
     use std::io::{BufRead, Write};
 
     let stdin = std::io::stdin();
@@ -273,14 +341,18 @@ fn run_batch_mode() -> Result<()> {
         let project_path = std::path::Path::new(project_dir);
 
         // Build args matching what the conformance runner passes per test
-        let batch_args = CliArgs::parse_from([
+        let mut batch_args_raw = vec![
             "tsz",
             "--project",
             project_dir,
             "--noEmit",
             "--pretty",
             "false",
-        ]);
+        ];
+        if residency_budget {
+            batch_args_raw.push("--extendedDiagnostics");
+        }
+        let batch_args = CliArgs::parse_from(batch_args_raw);
 
         // Match subprocess mode for code paths that still consult process cwd
         // during JS module/JSDoc symbol resolution. Keep passing project_path

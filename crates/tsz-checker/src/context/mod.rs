@@ -23,7 +23,7 @@ pub use cross_file_delegation_cache::{CrossArenaSessionMemo, CrossFileDelegation
 pub use cross_file_type_params_cache::{
     CrossFileTypeParamsCacheStatistics, cross_file_type_params_cache_statistics,
 };
-mod constructors;
+pub(crate) mod constructors;
 mod core;
 pub use core::build_lib_file_local_names;
 mod cross_file_query;
@@ -115,6 +115,22 @@ pub struct JSDocGlobalTypedefLookupCache {
     pub miss_cache: RefCell<FxHashSet<String>>,
     pub in_progress: RefCell<FxHashSet<String>>,
     pub typedef_presence_by_file: Arc<dashmap::DashMap<(u32, u32, String), bool>>,
+}
+
+/// File-session caches for lib type and lazy lib-member resolution.
+#[derive(Default)]
+pub struct LibTypeResolutionCaches {
+    /// Cache for `resolve_lib_type_by_name` results.
+    /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
+    pub types: FxHashMap<String, Option<TypeId>>,
+
+    /// Per-checker cache for lazy single-member lib-interface property reads.
+    /// Keyed by `(interface_name, property_name)` and stores both hits and
+    /// conservative misses after the existing lazy-member resolver has decided
+    /// whether it can lower only the requested member. This keeps repeated DOM
+    /// reads from rescanning declaration and heritage lists while preserving the
+    /// same full-materialization fallback on cached misses.
+    pub lazy_members: RefCell<FxHashMap<(String, Atom), Option<TypeId>>>,
 }
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
@@ -533,9 +549,8 @@ pub struct CheckerContext<'a> {
     /// Cached types for variable declarations (used for TS2403 checks).
     pub var_decl_types: FxHashMap<SymbolId, TypeId>,
 
-    /// Cache for `resolve_lib_type_by_name` results.
-    /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
-    pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,
+    /// File-session caches for lib type and lazy lib-member resolution.
+    pub lib_type_resolution_caches: LibTypeResolutionCaches,
 
     /// File-local caches for cross-file/lib delegation results.
     pub lib_delegation_cache: CrossFileDelegationCache,

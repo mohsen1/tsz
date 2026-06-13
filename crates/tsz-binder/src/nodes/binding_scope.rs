@@ -20,11 +20,6 @@ impl BinderState {
         node: NodeIndex,
         capacity: usize,
     ) {
-        // Legacy scope chain management
-        let parent = Some(self.current_scope_idx);
-        self.scope_chain
-            .push(crate::ScopeContext::new(kind, node, parent));
-        self.current_scope_idx = self.scope_chain.len() - 1;
         if capacity > 0 {
             // Take the current scope, push it, and create a pre-sized one
             let old_scope = std::mem::take(&mut self.current_scope);
@@ -39,17 +34,20 @@ impl BinderState {
     }
 
     pub(crate) fn exit_scope(&mut self, arena: &NodeArena) {
-        // Capture exports before popping if this is a module/namespace
-        if let Some(ctx) = self.scope_chain.get(self.current_scope_idx) {
-            match ctx.container_kind {
+        // Capture exports before popping if this is a module/namespace.
+        // Copy the scope identity out of the persistent arena first so the
+        // mutable symbol-table writes below don't conflict with the borrow.
+        let current_scope_info = self
+            .current_persistent_scope()
+            .map(|scope| (scope.kind, scope.container_node));
+        if let Some((container_kind, container_node)) = current_scope_info {
+            match container_kind {
                 ContainerKind::Module => {
                     // Find the symbol for this module/namespace
-                    if let Some(sym_id) = self.node_symbols.get(&ctx.container_node.0) {
+                    if let Some(sym_id) = self.node_symbols.get(&container_node.0) {
                         let export_all = self.in_global_augmentation
-                            || self
-                                .scope_chain
-                                .get(self.current_scope_idx)
-                                .and_then(|ctx| arena.get(ctx.container_node))
+                            || arena
+                                .get(container_node)
                                 .and_then(|node| arena.get_module(node))
                                 .is_some_and(|module| {
                                     let is_external =
@@ -101,7 +99,7 @@ impl BinderState {
                 }
                 ContainerKind::Class => {
                     // Find the symbol for this class
-                    if let Some(sym_id) = self.node_symbols.get(&ctx.container_node.0) {
+                    if let Some(sym_id) = self.node_symbols.get(&container_node.0) {
                         // Persist the current scope as the class's members
                         if let Some(symbol) = self.symbols.get_mut(*sym_id) {
                             symbol.members = Some(Box::new(self.current_scope.clone()));
@@ -116,11 +114,6 @@ impl BinderState {
         self.sync_current_scope_to_persistent();
 
         self.pop_scope();
-        if let Some(ctx) = self.scope_chain.get(self.current_scope_idx)
-            && let Some(parent) = ctx.parent_idx
-        {
-            self.current_scope_idx = parent;
-        }
 
         // Exit persistent scope
         self.exit_persistent_scope();

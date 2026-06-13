@@ -18,21 +18,202 @@ use tsz_common::checker_options::CheckerOptions;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::def::DefinitionStore;
 
+/// Compiler-option finalization policy for one construction path.
+///
+/// Historically every constructor hand-rolled this step and drifted in two
+/// independent dimensions (whether `apply_strict_defaults` ran, and whether
+/// the index flags were pushed into the `QueryDatabase`). The policy makes
+/// both explicit per constructor; the resulting matrix is pinned by the
+/// `checker_constructor_matrix_tests` integration test so future drift fails
+/// loudly instead of diverging silently.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OptionsPolicy {
+    /// Expand `strict` into the strict-family sub-flags via
+    /// [`CheckerOptions::apply_strict_defaults`].
+    ///
+    /// Preserved legacy behavior: when the caller already resolved options at
+    /// the config layer (e.g. `strict: true` plus an explicit
+    /// `strictPropertyInitialization: false` override), expanding again here
+    /// clobbers the per-flag opt-out. Paths that receive pre-resolved options
+    /// must use [`OptionsPolicy::PRE_RESOLVED`].
+    expand_strict: bool,
+    /// Push `no_unchecked_indexed_access` / `exact_optional_property_types`
+    /// into the `QueryDatabase` (the historical `normalize_options` side
+    /// effect). Cache/parent constructors historically skipped this and rely
+    /// on the driver or the owning context having configured the database.
+    push_index_flags_into_types: bool,
+}
+
+impl OptionsPolicy {
+    /// The driver/config layer fully resolved the options (strict family
+    /// expanded with individual overrides honored): do not re-expand here;
+    /// push the index flags into the `QueryDatabase`.
+    pub(crate) const PRE_RESOLVED: Self = Self {
+        expand_strict: false,
+        push_index_flags_into_types: true,
+    };
+    /// Expand the strict family here; leave the `QueryDatabase` untouched.
+    /// Historical behavior of the cache and parent-cache constructors.
+    pub(crate) const EXPAND_STRICT_LOCALLY: Self = Self {
+        expand_strict: true,
+        push_index_flags_into_types: false,
+    };
+    /// Expand the strict family here and push the index flags into the
+    /// `QueryDatabase`. Historical behavior of
+    /// `CheckerState::with_options_and_shared_def_store` (which used to call
+    /// `apply_strict_defaults` at the state layer before delegating).
+    pub(crate) const EXPAND_STRICT_AND_PUSH: Self = Self {
+        expand_strict: true,
+        push_index_flags_into_types: true,
+    };
+}
+
+/// How the context's `DefinitionStore` is installed.
+pub(crate) enum DefStorePlan {
+    /// Build a per-file store from the binder's `semantic_defs` via the
+    /// solver-owned factory, then warm the local symbol/def caches from it.
+    PerFile,
+    /// Install a shared store (project-wide `DefId` namespace), then warm
+    /// the local symbol/def caches from it.
+    Shared(Arc<DefinitionStore>),
+    /// Leave the empty default store and skip warm-up. The caller MUST
+    /// install a populated store before use (`ProgramContext::apply_to`, or
+    /// the parent-propagation block in `with_parent_cache`).
+    Deferred,
+}
+
+/// When a persistent [`TypeCache`] is restored relative to
+/// `warm_local_caches_from_shared_store`.
+///
+/// The order is observable: `apply_cache` replaces `def_to_symbol`
+/// wholesale, while warm-up inserts into it. Both historical orders are
+/// preserved explicitly per constructor.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CacheRestoreOrder {
+    /// Restore the cache before warming local caches (historical
+    /// `with_cache` / `with_cache_and_options` order: warmed mappings land
+    /// on top of the restored cache).
+    BeforeWarm,
+    /// Restore the cache after warming local caches (historical
+    /// `with_cache_and_shared_def_store` order: the restored `def_to_symbol`
+    /// replaces warmed entries).
+    AfterWarm,
+}
+
+/// Per-constructor parts consumed by [`CheckerContext::from_parts`], the
+/// single private build path behind every public constructor.
+pub(crate) struct ContextParts {
+    pub(crate) file_name: String,
+    pub(crate) compiler_options: CheckerOptions,
+    pub(crate) options_policy: OptionsPolicy,
+    pub(crate) def_store: DefStorePlan,
+    /// Persistent cache to restore, if any.
+    pub(crate) cache: Option<TypeCache>,
+    /// Ignored when `cache` is `None`.
+    pub(crate) cache_order: CacheRestoreOrder,
+    /// `EnvironmentCapabilities::from_options` `has_lib` seed; only the
+    /// parent-cache path inherits this from the parent context.
+    pub(crate) inherit_has_lib: bool,
+    /// Capacity for the symbol type caches; `None` means
+    /// `binder.symbols.len()`. Child contexts pass `Some(0)` because they
+    /// replace the caches with parent snapshots immediately afterwards.
+    pub(crate) symbol_cache_capacity: Option<usize>,
+}
+
 impl<'a> CheckerContext<'a> {
-    fn normalize_options(
-        types: &dyn QueryDatabase,
-        compiler_options: CheckerOptions,
-        configure_no_unchecked_indexed_access: bool,
-    ) -> CheckerOptions {
-        // Note: apply_strict_defaults() is intentionally NOT called here.
-        // The driver/config layer already handles strict expansion with proper
-        // individual overrides (e.g., strict: true + strictPropertyInitialization: false).
-        // Calling apply_strict_defaults() here would clobber those overrides.
-        if configure_no_unchecked_indexed_access {
+    /// Single build path for every public constructor: finalize options
+    /// exactly once per the explicit [`OptionsPolicy`], derive capabilities,
+    /// initialize all fields via [`Self::base`], then install the
+    /// `DefinitionStore` and restore the persistent cache per plan.
+    ///
+    /// `apply_strict_defaults` has exactly one call site in this crate: here.
+    pub(crate) fn from_parts(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        parts: ContextParts,
+    ) -> Self {
+        let ContextParts {
+            file_name,
+            compiler_options,
+            options_policy,
+            def_store,
+            cache,
+            cache_order,
+            inherit_has_lib,
+            symbol_cache_capacity,
+        } = parts;
+
+        // Note: for `PRE_RESOLVED`, `apply_strict_defaults()` is intentionally
+        // NOT called. The driver/config layer already handles strict expansion
+        // with proper individual overrides (e.g., strict: true +
+        // strictPropertyInitialization: false). Calling it here would clobber
+        // those overrides.
+        let compiler_options = if options_policy.expand_strict {
+            compiler_options.apply_strict_defaults()
+        } else {
+            compiler_options
+        };
+        if options_policy.push_index_flags_into_types {
             types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
+            types.set_exact_optional_property_types(compiler_options.exact_optional_property_types);
         }
-        types.set_exact_optional_property_types(compiler_options.exact_optional_property_types);
-        compiler_options
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                inherit_has_lib,
+            );
+        let symbol_cache_capacity = symbol_cache_capacity.unwrap_or_else(|| binder.symbols.len());
+        let mut ctx = Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+            symbol_cache_capacity,
+        );
+
+        let warm = match def_store {
+            DefStorePlan::PerFile => {
+                // Pre-populated `DefinitionStore` from the binder's
+                // `semantic_defs` using the solver-owned factory. This is the
+                // canonical identity creation path — no checker-side
+                // conversion needed.
+                ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
+                    &binder.semantic_defs,
+                    |s| types.intern_string(s),
+                ));
+                true
+            }
+            DefStorePlan::Shared(store) => {
+                ctx.definition_store = store;
+                true
+            }
+            DefStorePlan::Deferred => false,
+        };
+        match cache {
+            None => {
+                if warm {
+                    ctx.warm_local_caches_from_shared_store();
+                }
+            }
+            Some(cache) => match cache_order {
+                CacheRestoreOrder::BeforeWarm => {
+                    ctx.apply_cache(cache);
+                    if warm {
+                        ctx.warm_local_caches_from_shared_store();
+                    }
+                }
+                CacheRestoreOrder::AfterWarm => {
+                    if warm {
+                        ctx.warm_local_caches_from_shared_store();
+                    }
+                    ctx.apply_cache(cache);
+                }
+            },
+        }
+        ctx
     }
 
     /// Create a fully-initialized `CheckerContext` with all fields set to defaults.
@@ -71,7 +252,7 @@ impl<'a> CheckerContext<'a> {
             ),
             enum_namespace_types: crate::context::CowCache::default(),
             var_decl_types: FxHashMap::default(),
-            lib_type_resolution_cache: FxHashMap::default(),
+            lib_type_resolution_caches: crate::context::LibTypeResolutionCaches::default(),
             lib_delegation_cache: crate::context::CrossFileDelegationCache::default(),
             namespace_member_resolution_cache: RefCell::new(crate::context::CowCache::default()),
             export_equals_named_cache: RefCell::new(crate::context::CowCache::default()),
@@ -334,30 +515,21 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
-        let compiler_options = Self::normalize_options(types, compiler_options, true);
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                false,
-            );
-        let mut ctx = Self::base(
+        Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            binder.symbols.len(),
-        );
-        // Create pre-populated DefinitionStore from binder's semantic_defs
-        // using the solver-owned factory. This is the canonical identity
-        // creation path — no checker-side conversion needed.
-        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
-            &binder.semantic_defs,
-            |s| types.intern_string(s),
-        ));
-        ctx.warm_local_caches_from_shared_store();
-        ctx
+            ContextParts {
+                file_name,
+                compiler_options,
+                options_policy: OptionsPolicy::PRE_RESOLVED,
+                def_store: DefStorePlan::PerFile,
+                cache: None,
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
+        )
     }
 
     /// Create a new `CheckerContext` with a shared `DefinitionStore`.
@@ -377,27 +549,24 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
         definition_store: Arc<DefinitionStore>,
     ) -> Self {
-        let compiler_options = Self::normalize_options(types, compiler_options, true);
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                false,
-            );
-        let mut ctx = Self::base(
+        // Local caches are eagerly warmed from the shared store so that
+        // cross-file symbol resolution and other early-access paths
+        // hit O(1) local lookups instead of the fallback path.
+        Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            binder.symbols.len(),
-        );
-        ctx.definition_store = definition_store;
-        // Eagerly warm local caches from the shared store so that
-        // cross-file symbol resolution and other early-access paths
-        // hit O(1) local lookups instead of the fallback path.
-        ctx.warm_local_caches_from_shared_store();
-        ctx
+            ContextParts {
+                file_name,
+                compiler_options,
+                options_policy: OptionsPolicy::PRE_RESOLVED,
+                def_store: DefStorePlan::Shared(definition_store),
+                cache: None,
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
+        )
     }
 
     /// Create a new `CheckerContext` with explicit compiler options.
@@ -411,27 +580,21 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        let compiler_options = Self::normalize_options(types, compiler_options.clone(), true);
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                false,
-            );
-        let mut ctx = Self::base(
+        Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            binder.symbols.len(),
-        );
-        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
-            &binder.semantic_defs,
-            |s| types.intern_string(s),
-        ));
-        ctx.warm_local_caches_from_shared_store();
-        ctx
+            ContextParts {
+                file_name,
+                compiler_options: compiler_options.clone(),
+                options_policy: OptionsPolicy::PRE_RESOLVED,
+                def_store: DefStorePlan::PerFile,
+                cache: None,
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
+        )
     }
 
     /// Same as [`with_options`], but skips building the per-file
@@ -457,20 +620,20 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        let compiler_options = Self::normalize_options(types, compiler_options.clone(), true);
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                false,
-            );
-        Self::base(
+        Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            binder.symbols.len(),
+            ContextParts {
+                file_name,
+                compiler_options: compiler_options.clone(),
+                options_policy: OptionsPolicy::PRE_RESOLVED,
+                def_store: DefStorePlan::Deferred,
+                cache: None,
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
         )
     }
 
@@ -512,28 +675,21 @@ impl<'a> CheckerContext<'a> {
         cache: TypeCache,
         compiler_options: CheckerOptions,
     ) -> Self {
-        let compiler_options = compiler_options.apply_strict_defaults();
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                false,
-            );
-        let mut ctx = Self::base(
+        Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            binder.symbols.len(),
-        );
-        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
-            &binder.semantic_defs,
-            |s| types.intern_string(s),
-        ));
-        ctx.apply_cache(cache);
-        ctx.warm_local_caches_from_shared_store();
-        ctx
+            ContextParts {
+                file_name,
+                compiler_options,
+                options_policy: OptionsPolicy::EXPAND_STRICT_LOCALLY,
+                def_store: DefStorePlan::PerFile,
+                cache: Some(cache),
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
+        )
     }
 
     /// Create a new `CheckerContext` with explicit compiler options and a persistent cache.
@@ -548,28 +704,21 @@ impl<'a> CheckerContext<'a> {
         cache: TypeCache,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        let compiler_options = compiler_options.clone().apply_strict_defaults();
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                false,
-            );
-        let mut ctx = Self::base(
+        Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            binder.symbols.len(),
-        );
-        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
-            &binder.semantic_defs,
-            |s| types.intern_string(s),
-        ));
-        ctx.apply_cache(cache);
-        ctx.warm_local_caches_from_shared_store();
-        ctx
+            ContextParts {
+                file_name,
+                compiler_options: compiler_options.clone(),
+                options_policy: OptionsPolicy::EXPAND_STRICT_LOCALLY,
+                def_store: DefStorePlan::PerFile,
+                cache: Some(cache),
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
+        )
     }
 
     /// Create a new `CheckerContext` with a persistent cache and a shared `DefinitionStore`.
@@ -586,25 +735,21 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
         definition_store: Arc<DefinitionStore>,
     ) -> Self {
-        let compiler_options = compiler_options.apply_strict_defaults();
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                false,
-            );
-        let mut ctx = Self::base(
+        Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            binder.symbols.len(),
-        );
-        ctx.definition_store = definition_store;
-        ctx.warm_local_caches_from_shared_store();
-        ctx.apply_cache(cache);
-        ctx
+            ContextParts {
+                file_name,
+                compiler_options,
+                options_policy: OptionsPolicy::EXPAND_STRICT_LOCALLY,
+                def_store: DefStorePlan::Shared(definition_store),
+                cache: Some(cache),
+                cache_order: CacheRestoreOrder::AfterWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
+        )
     }
 
     /// Create a child `CheckerContext` for temporary cross-file checks.
@@ -620,22 +765,24 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
         parent: &Self,
     ) -> Self {
-        let compiler_options = compiler_options.apply_strict_defaults();
-        let capabilities =
-            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
-                &compiler_options,
-                parent.capabilities.has_lib,
-            );
-        let mut ctx = Self::base(
+        let mut ctx = Self::from_parts(
             arena,
             binder,
             types,
-            file_name,
-            compiler_options,
-            capabilities,
-            // Child contexts replace symbol caches with parent snapshots below;
-            // starting at zero avoids binder-sized preallocation per child.
-            0,
+            ContextParts {
+                file_name,
+                compiler_options,
+                options_policy: OptionsPolicy::EXPAND_STRICT_LOCALLY,
+                // The shared store is installed from the parent below.
+                def_store: DefStorePlan::Deferred,
+                cache: None,
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: parent.capabilities.has_lib,
+                // Child contexts replace symbol caches with parent snapshots
+                // below; starting at zero avoids binder-sized preallocation
+                // per child.
+                symbol_cache_capacity: Some(0),
+            },
         );
 
         // Propagate parent state that is safe across arenas.
