@@ -518,3 +518,66 @@ const useA2: number = recA.v;
         "sequential distinct member reads must not cross-contaminate, got: {codes:?}"
     );
 }
+
+/// Destructuring binding after a type guard, with intervening pass-through
+/// `const` reads between the destructuring and the use. The destructuring
+/// `const { nested: { b: text } } = src` is never spliced (it has dedicated
+/// worklist handling), and the intervening reads that the chase DOES splice
+/// must not orphan the guarded property read: `src.nested.b` is narrowed to
+/// `string` by the guard, so `text` (and direct `src.member` reads) stay
+/// narrowed. Mirrors `destructuringTypeGuardFlow`; binder names varied.
+#[test]
+fn destructuring_after_guard_with_intervening_passthrough_keeps_narrowing() {
+    let codes = check_source_strict_codes(
+        r#"
+type Holder = {
+  count: number | null;
+  label: string;
+  inner: { idx: number; tag: string | null };
+};
+const src: Holder = { count: 3, label: "b", inner: { idx: 1, tag: "y" } };
+if (src.count && src.inner.tag) {
+  const { count, label, inner: { idx, tag: text } } = src;
+  const okCount: number = src.count;
+  const okIdx: number = idx;
+  const okLabel: string = label;
+  const okText: string = text;
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "guarded narrowing must survive a destructuring + intervening pass-through run, got: {codes:?}"
+    );
+}
+
+/// A `switch` over an `unknown` reference narrows each case body, with leading
+/// pass-through `const` statements that the chase must NOT splice (UNKNOWN
+/// initial types are excluded from the chase because the worklist gives them
+/// dedicated switch/typeof handling). Mirrors the `switchTestCollectEnum`
+/// family of `unknownType2`; binder names varied.
+#[test]
+fn unknown_switch_case_narrowing_survives_passthrough_run() {
+    let codes = check_source_strict_codes(
+        r#"
+enum Hue { Red = "red", Green = "green", Blue = "blue" }
+function classify(token: unknown) {
+  const lead1 = 0;
+  const lead2 = 0;
+  const lead3 = 0;
+  switch (token) {
+    case Hue.Red:
+      const r: Hue.Red = token;
+      break;
+    case Hue.Green:
+      const g: Hue.Green = token;
+      break;
+  }
+}
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "unknown switch-case narrowing must survive a pass-through run, got: {codes:?}"
+    );
+}

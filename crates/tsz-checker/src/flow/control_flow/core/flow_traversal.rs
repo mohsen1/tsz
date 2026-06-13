@@ -94,9 +94,20 @@ impl<'a> FlowAnalyzer<'a> {
         let mut condition_antecedent_defer_memo: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
         condition_dp_memos.clear();
 
-        // Reusable scratch buffer for the linear pass-through chase below: the run
-        // of pure pass-through ASSIGNMENT nodes spliced out in O(1) per node, each
-        // aliased to the landed node's result.
+        // Landed nodes whose spliced pass-through run CONTAINS the entry `flow_id`.
+        // When the chase splices out the very node we must return a result for, the
+        // landed node's finalized type IS that result (the run is pure pass-through,
+        // so `flow_id`'s flow type equals the antecedent result). The landed node may
+        // DEFER and re-pop any number of times before finalizing, so we cannot alias
+        // eagerly; instead we record the landed node here and write `results[flow_id]`
+        // at whichever finalize site (cache hit, visited skip, or final write) resolves
+        // it. We deliberately alias ONLY `flow_id`, never interior spliced nodes: an
+        // interior node can still be a live antecedent of a surviving merge point that
+        // re-schedules and finalizes it on its own; overwriting that with the landed
+        // result would corrupt the merge (the `jsxComplexSignature` family). `flow_id`
+        // is the sole result read outside the walk, so aliasing it alone is sufficient
+        // and never overwrites an independently-computed merge result.
+        let mut flow_id_landed_on: Option<FlowNodeId> = None;
         let mut passthrough_run: Vec<FlowNodeId> = Vec::new();
 
         // Process worklist until empty
@@ -124,15 +135,16 @@ impl<'a> FlowAnalyzer<'a> {
             // antecedent in place, landing on the first node that is NOT a pure
             // pass-through (a merge/condition/call/loop/switch, a targeting or
             // affecting assignment, a node needing defer, or one already
-            // finalized/cached). Only that landed node is processed; its result is
-            // then aliased back to every skipped node so `results[flow_id]` (the
-            // only result read outside this walk) stays correct when the entry was
-            // itself spliced. Skipped nodes are pure pass-throughs with a single
-            // antecedent and single straight-line successor, so no surviving merge
-            // point reads their now-absent result within this traversal, and the
-            // distinct-reference flow cache keys make caching them useless to later
-            // references anyway. Falls back to the full per-node walk whenever any
-            // gate is uncertain, so narrowing stays byte-identical.
+            // finalized/cached). Only that landed node is processed. If the entry
+            // `flow_id` itself was among the spliced nodes, its result is aliased
+            // from the landed node's once that resolves (`flow_id_landed_on`).
+            // `flow_id` is the only result read outside this walk, so we alias it
+            // alone and never touch interior spliced nodes: an interior node may
+            // still be a live antecedent of a surviving merge that re-schedules and
+            // finalizes it independently, and overwriting that would corrupt the
+            // merge. Re-scheduling an interior node simply re-runs the cheap chase.
+            // Falls back to the full per-node walk whenever any gate is uncertain,
+            // so narrowing stays byte-identical.
             passthrough_run.clear();
             let current_flow = self.chase_linear_passthrough(
                 entry_flow,
@@ -146,6 +158,14 @@ impl<'a> FlowAnalyzer<'a> {
                 results,
                 &mut passthrough_run,
             );
+            // If the chase spliced out the entry `flow_id` itself, remember the node
+            // it landed on so the final result can be aliased to `flow_id` once that
+            // node resolves (possibly after deferrals). Interior spliced nodes are
+            // intentionally left untracked so a surviving merge can re-derive them.
+            if current_flow != flow_id && passthrough_run.contains(&flow_id) {
+                flow_id_landed_on = Some(current_flow);
+            }
+            passthrough_run.clear();
 
             // Check global cache first to avoid redundant traversals.
             // Skip cache for SWITCH_CLAUSE nodes — they must be processed to
@@ -192,22 +212,22 @@ impl<'a> FlowAnalyzer<'a> {
                     // the landed node was already cached by a prior walk.
                     results.insert(current_flow, cached_type);
                     visited.insert(current_flow);
-                    for &skipped in &passthrough_run {
-                        results.insert(skipped, cached_type);
-                        visited.insert(skipped);
+                    if flow_id_landed_on == Some(current_flow) {
+                        results.insert(flow_id, cached_type);
+                        visited.insert(flow_id);
                     }
                     continue;
                 }
             }
 
             // Skip if we've already finalized this node. Propagate its result to
-            // the spliced pass-through run for the same reason as the cache-hit path.
+            // `flow_id` if the chase spliced `flow_id` onto this landed node.
             if visited.contains(&current_flow) {
-                if let Some(&done) = results.get(&current_flow) {
-                    for &skipped in &passthrough_run {
-                        results.insert(skipped, done);
-                        visited.insert(skipped);
-                    }
+                if flow_id_landed_on == Some(current_flow)
+                    && let Some(&done) = results.get(&current_flow)
+                {
+                    results.insert(flow_id, done);
+                    visited.insert(flow_id);
                 }
                 continue;
             }
@@ -1073,17 +1093,16 @@ impl<'a> FlowAnalyzer<'a> {
             results.insert(current_flow, final_type);
             visited.insert(current_flow);
 
-            // Alias the landed node's result to every pure pass-through node spliced
-            // out by `chase_linear_passthrough`: their flow type is exactly this
-            // antecedent result (they neither target nor affect the reference), so
-            // finalizing them here keeps `results[flow_id]` correct when the entry
-            // node was itself spliced, and prevents a redundant re-walk if reached
-            // again. These are not written to the global flow cache: each pass-through
-            // node's cached entry would be keyed by this reference's `cache_symbol`,
-            // which no other reference shares, so it could never be reused.
-            for &skipped in &passthrough_run {
-                results.insert(skipped, final_type);
-                visited.insert(skipped);
+            // If the chase spliced the entry `flow_id` onto this landed node, write
+            // its result now: the spliced run is pure pass-through, so `flow_id`'s
+            // flow type equals this antecedent result. Only `flow_id` is aliased
+            // (never interior spliced nodes — see `flow_id_landed_on`), so a surviving
+            // merge that re-derives an interior node is never overwritten. This is not
+            // written to the global flow cache: `flow_id`'s cached entry would be keyed
+            // by this reference's `cache_symbol`, which no other reference shares.
+            if flow_id_landed_on == Some(current_flow) {
+                results.insert(flow_id, final_type);
+                visited.insert(flow_id);
             }
 
             // Store result in global cache for future calls
@@ -1186,11 +1205,19 @@ impl<'a> FlowAnalyzer<'a> {
         // Gate: only collapse when the worklist treats this walk as
         // cacheable/concrete. Generic or control-flow-`any` walks keep the full
         // per-node path so loop fixed-point and generic-result invariants are
-        // untouched.
+        // untouched. `UNKNOWN` is excluded too: the worklist gives UNKNOWN
+        // references dedicated switch-clause and exhaustive-typeof handling
+        // (`skip_cache_for_explicit_unknown_switch` /
+        // `skip_cache_for_exhaustive_unknown_typeof`) whose narrowing flows
+        // through the very pass-through `const` nodes the chase would splice, so
+        // collapsing them would drop switch/typeof narrowing (e.g. `unknownType2`).
+        // UNKNOWN references are catch-clause / explicit-`unknown` shaped, not the
+        // concrete member-typed `const` hotspot, so this costs no perf.
         if initial_has_type_params
             || skip_cache_for_control_flow_typed_any
             || initial_type == TypeId::ANY
             || initial_type == TypeId::ERROR
+            || initial_type == TypeId::UNKNOWN
         {
             return entry;
         }
@@ -1216,6 +1243,17 @@ impl<'a> FlowAnalyzer<'a> {
                 return current;
             };
             if !pure_assignment_only(flow.flags) {
+                return current;
+            }
+            // A destructuring assignment is never spliced: it has dedicated
+            // worklist handling (`is_const_destructuring` defers to the antecedent
+            // and re-derives the binding from the narrowed source). The targeting
+            // predicates below compare against the binding *pattern* node, not the
+            // bound element, so a destructuring node that DOES define the reference
+            // (e.g. `const { nested: { b: text } } = aFoo` defining `text` after a
+            // guard, `destructuringTypeGuardFlow`) would read as non-targeting and
+            // be wrongly skipped, dropping the narrowing. Let the worklist own it.
+            if self.is_destructuring_assignment(flow.node) {
                 return current;
             }
             // Exactly one antecedent: a join/merge must be processed so its
