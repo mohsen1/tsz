@@ -78,6 +78,19 @@ fn estimated_size_accounts_for_retained_predicate_caches() {
 }
 
 #[test]
+fn type_predicate_cache_statistics_reports_union_normalize_entries() {
+    let interner = TypeInterner::new();
+    let _ = TypeDatabase::union2(&interner, TypeId::STRING, TypeId::NUMBER);
+
+    let stats = interner.type_predicate_cache_statistics();
+
+    assert!(
+        stats.union_normalize_cache_entries > 0,
+        "union normalization memo entries must be visible to cache residency reports"
+    );
+}
+
+#[test]
 fn boxed_def_id_registration_is_idempotent() {
     let interner = TypeInterner::new();
     let def_id = DefId(7);
