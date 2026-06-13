@@ -57,7 +57,7 @@ use tsz_parser::parser::node::NodeArena;
 
 /// Magic header. Trailing byte is the format version. Bump on layout
 /// changes that break round-trip.
-const SNAPSHOT_MAGIC: &[u8; 8] = b"TSZSNAP\x06";
+const SNAPSHOT_MAGIC: &[u8; 8] = b"TSZSNAP\x07";
 
 /// Environment variable that controls the lib snapshot cache.
 const ENV_VAR: &str = "TSZ_LIB_CACHE";

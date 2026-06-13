@@ -37,7 +37,6 @@ fn test_node_arena_basic() {
             atom: AstAtom::NONE,
             escaped_text: "hello".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
     assert_eq!(ident.0, 1);
@@ -89,7 +88,6 @@ fn test_node_view() {
             atom: AstAtom::NONE,
             escaped_text: "myVar".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
 
@@ -144,7 +142,6 @@ fn test_node_access_trait() {
             atom: AstAtom::NONE,
             escaped_text: "testVar".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
 
@@ -197,7 +194,6 @@ fn test_parent_mapping() {
             atom: AstAtom::NONE,
             escaped_text: "a".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
 
@@ -209,7 +205,6 @@ fn test_parent_mapping() {
             atom: AstAtom::NONE,
             escaped_text: "b".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
 
@@ -323,7 +318,6 @@ fn test_parent_mapping_nested() {
             atom: AstAtom::NONE,
             escaped_text: "a".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
     let b = arena.add_identifier(
@@ -334,7 +328,6 @@ fn test_parent_mapping_nested() {
             atom: AstAtom::NONE,
             escaped_text: "b".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
     let add = arena.add_binary_expr(
@@ -356,7 +349,6 @@ fn test_parent_mapping_nested() {
             atom: AstAtom::NONE,
             escaped_text: "c".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
     let multiply = arena.add_binary_expr(
@@ -425,7 +417,6 @@ fn test_parent_mapping_function() {
             atom: AstAtom::NONE,
             escaped_text: "foo".to_string(),
             original_text: None,
-            type_arguments: None,
         },
     );
 
@@ -583,7 +574,6 @@ fn estimated_size_bytes_grows_with_identifiers() {
                 atom: AstAtom::NONE,
                 escaped_text: name,
                 original_text: None,
-                type_arguments: None,
             },
         );
     }

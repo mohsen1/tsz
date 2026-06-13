@@ -209,7 +209,6 @@ pub struct IdentifierData {
     /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
     pub escaped_text: String,
     pub original_text: Option<String>,
-    pub type_arguments: Option<NodeList>,
 }
 
 /// Data for string literals (`StringLiteral`, template parts)

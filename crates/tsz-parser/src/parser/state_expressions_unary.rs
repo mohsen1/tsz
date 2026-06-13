@@ -217,7 +217,6 @@ impl ParserState {
                         atom,
                         escaped_text: String::from("await"),
                         original_text: None,
-                        type_arguments: None,
                     },
                 );
             }
@@ -405,7 +404,6 @@ impl ParserState {
                     atom,
                     escaped_text: String::from("yield"),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }

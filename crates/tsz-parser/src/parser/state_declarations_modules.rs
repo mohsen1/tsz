@@ -36,7 +36,6 @@ impl ParserState {
                     atom: self.scanner.interner_mut().intern("global"),
                     escaped_text: "global".to_string(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else {
@@ -61,7 +60,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 )
             } else if self.is_token(SyntaxKind::StringLiteral) {
@@ -87,7 +85,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 )
             } else {
@@ -135,7 +132,6 @@ impl ParserState {
                             atom: AstAtom::NONE,
                             escaped_text: String::new(),
                             original_text: None,
-                            type_arguments: None,
                         },
                     )
                 } else {
@@ -216,7 +212,6 @@ impl ParserState {
                     atom: self.scanner.interner_mut().intern("global"),
                     escaped_text: "global".to_string(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else {
@@ -241,7 +236,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 )
             } else if self.is_token(SyntaxKind::StringLiteral) {
@@ -267,7 +261,6 @@ impl ParserState {
                         atom: AstAtom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
-                        type_arguments: None,
                     },
                 )
             } else {
@@ -302,7 +295,6 @@ impl ParserState {
                             atom: AstAtom::NONE,
                             escaped_text: String::new(),
                             original_text: None,
-                            type_arguments: None,
                         },
                     )
                 } else {
@@ -936,7 +928,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else {
@@ -1175,7 +1166,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             );
         }
@@ -1190,7 +1180,6 @@ impl ParserState {
                 atom: AstAtom::NONE,
                 escaped_text: String::new(),
                 original_text: None,
-                type_arguments: None,
             },
         )
     }

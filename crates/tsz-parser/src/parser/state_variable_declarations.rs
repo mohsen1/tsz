@@ -104,7 +104,6 @@ impl ParserState {
                     atom: AstAtom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else {
@@ -390,7 +389,6 @@ impl ParserState {
                     atom,
                     escaped_text: text,
                     original_text: None,
-                    type_arguments: None,
                 },
             )
         } else if self.is_identifier_or_keyword() {

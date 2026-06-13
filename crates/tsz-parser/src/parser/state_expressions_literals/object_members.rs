@@ -1111,7 +1111,6 @@ impl ParserState {
                                 atom: self.scanner.interner_mut().intern(""),
                                 escaped_text: String::new(),
                                 original_text: None,
-                                type_arguments: None,
                             },
                         );
                     }
@@ -1151,7 +1150,6 @@ impl ParserState {
                         atom,
                         escaped_text: text,
                         original_text,
-                        type_arguments: None,
                     },
                 )
             }
