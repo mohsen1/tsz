@@ -97,6 +97,14 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// pattern thousands of times while checking whether the application-level
     /// infer fast path applies.
     contains_infer_cache: FxHashMap<TypeId, bool>,
+    /// PERF: Cache exact `TypeId` containment checks within this evaluator.
+    ///
+    /// Distributive conditional evaluation asks whether each branch references
+    /// the original distribution source before deciding whether substitution is
+    /// necessary. Recursive utility aliases can revisit the same branch/source
+    /// pair across tail-recursive conditional iterations; this memo keeps that
+    /// pure solver predicate O(1) after the first walk.
+    contains_type_by_id_cache: FxHashMap<(TypeId, TypeId), bool>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
     /// When true, flag `depth_exceeded` on Application cycle detection.
@@ -216,6 +224,8 @@ pub struct TypeEvaluatorCacheStatistics {
     pub conditional_subtype_entries: usize,
     /// Entries in the `contains infer` predicate memo keyed by `TypeId`.
     pub contains_infer_entries: usize,
+    /// Entries in the exact `contains_type_by_id(root, target)` memo.
+    pub contains_type_by_id_entries: usize,
     estimated_size_bytes: usize,
 }
 
@@ -265,6 +275,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
+            contains_type_by_id_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -288,15 +299,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub fn cache_statistics(&self) -> TypeEvaluatorCacheStatistics {
         let conditional_subtype_entries = self.conditional_subtype_cache.len();
         let contains_infer_entries = self.contains_infer_cache.len();
+        let contains_type_by_id_entries = self.contains_type_by_id_cache.len();
         let type_evaluator_cache_estimated_size_bytes = conditional_subtype_entries
             .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
             .saturating_add(
                 contains_infer_entries.saturating_mul(std::mem::size_of::<(TypeId, bool)>()),
+            )
+            .saturating_add(
+                contains_type_by_id_entries
+                    .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>()),
             );
 
         TypeEvaluatorCacheStatistics {
             conditional_subtype_entries,
             contains_infer_entries,
+            contains_type_by_id_entries,
             estimated_size_bytes: type_evaluator_cache_estimated_size_bytes,
         }
     }
@@ -492,6 +509,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub fn reset(&mut self) {
         self.cache.clear();
         self.tainted.clear();
+        self.contains_type_by_id_cache.clear();
         self.guard.reset();
         self.def_depth.clear();
         self.real_instantiation_depth_count = 0;
@@ -570,6 +588,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) fn cache_contains_infer(&mut self, type_id: TypeId, result: bool) {
         self.contains_infer_cache.insert(type_id, result);
+    }
+
+    /// PERF: Exact `TypeId` containment with an evaluator-local memo.
+    #[inline]
+    pub(crate) fn cached_contains_type_by_id(&mut self, root: TypeId, target: TypeId) -> bool {
+        if root == target {
+            return true;
+        }
+        if let Some(cached) = self.contains_type_by_id_cache.get(&(root, target)) {
+            return *cached;
+        }
+        let result = crate::visitor::contains_type_by_id(self.interner, root, target);
+        self.contains_type_by_id_cache
+            .insert((root, target), result);
+        result
     }
 
     /// Check if `no_unchecked_indexed_access` is enabled.
