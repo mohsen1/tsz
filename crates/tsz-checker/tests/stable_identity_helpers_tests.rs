@@ -243,6 +243,25 @@ const v: string = cfg.data.value;
     );
 }
 
+#[test]
+fn union_application_members_keep_branch_local_property_resolution() {
+    let source = r#"
+interface RenamedBox<T> {
+    value: T;
+}
+declare const item:
+    | (RenamedBox<number> & { left: string })
+    | (RenamedBox<number> & { right: boolean });
+const value: number = item.value;
+"#;
+    let diags = check_and_get_diagnostics(source);
+    let has_ts2339 = diags.iter().any(|(code, _)| *code == 2339);
+    assert!(
+        !has_ts2339,
+        "Expected no TS2339 for shared Application property across union arms, got: {diags:?}"
+    );
+}
+
 // =========================================================================
 // Mapped type template resolution
 // =========================================================================

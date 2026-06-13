@@ -11,6 +11,7 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
+use super::property_access_visited::PropertyAccessVisited;
 use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
 pub(crate) use super::lazy_fuel::{
@@ -935,15 +936,12 @@ impl<'a> CheckerState<'a> {
     /// the property-access path when the lazy single-member fast path missed
     /// (e.g. a heritage-inherited member) and the full structural shape is needed.
     pub(crate) fn resolve_type_for_property_access_force(&mut self, type_id: TypeId) -> TypeId {
-        use rustc_hash::FxHashSet;
         self.ensure_relation_input_ready(type_id);
-        let mut visited = FxHashSet::default();
+        let mut visited = PropertyAccessVisited::default();
         self.resolve_type_for_property_access_inner(type_id, &mut visited)
     }
 
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
-        use rustc_hash::FxHashSet;
-
         // A union whose members are `Application(Lazy(DefId), …)` instantiations
         // of generic lib references (e.g. `Int32Array | Uint8Array`) keeps those
         // members opaque under the solver's environment-free evaluator, hiding
@@ -1003,7 +1001,7 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_relation_input_ready(type_id);
 
-        let mut visited = FxHashSet::default();
+        let mut visited = PropertyAccessVisited::default();
         let result = self.resolve_type_for_property_access_inner(type_id, &mut visited);
         // Use entry().or_insert() to avoid overwriting a value that evaluate_application_type
         // may have stored in this cache during the inner call above. For homomorphic mapped
@@ -1030,7 +1028,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_for_property_access_inner(
         &mut self,
         type_id: TypeId,
-        visited: &mut rustc_hash::FxHashSet<TypeId>,
+        visited: &mut PropertyAccessVisited,
     ) -> TypeId {
         use tsz_binder::SymbolId;
         let factory = self.ctx.types.factory();
@@ -1233,8 +1231,10 @@ impl<'a> CheckerState<'a> {
                 let resolved_members: Vec<TypeId> = members
                     .iter()
                     .map(|&member| {
-                        let mut branch_visited = visited.clone();
-                        self.resolve_type_for_property_access_inner(member, &mut branch_visited)
+                        let checkpoint = visited.checkpoint();
+                        let resolved = self.resolve_type_for_property_access_inner(member, visited);
+                        visited.rollback_to(checkpoint);
+                        resolved
                     })
                     .collect();
                 factory.union_preserve_members(resolved_members)
