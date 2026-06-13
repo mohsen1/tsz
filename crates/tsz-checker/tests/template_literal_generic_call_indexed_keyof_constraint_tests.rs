@@ -179,6 +179,107 @@ function f2<
     );
 }
 
+/// Adjacent shape: four-level dependency, to prove the rule is not capped at
+/// three levels — each `keyof Registry[..][..] & string` constraint must be
+/// recognized as keying its own (deferred) indexed-access object.
+#[test]
+fn nested_keyof_indexed_constraint_four_levels() {
+    let result = codes(
+        r#"
+type Registry = {
+  a: { x: { p: { p1: number } } };
+};
+declare function f1<S extends string, T extends string, U extends string, V extends string>(
+  p: `${S}.${T}.${U}.${V}`,
+): void;
+function f2<
+  Scope extends keyof Registry & string,
+  Sub extends keyof Registry[Scope] & string,
+  Leaf extends keyof Registry[Scope][Sub] & string,
+  Twig extends keyof Registry[Scope][Sub][Leaf] & string,
+>(s: Scope, t: Sub, l: Leaf, w: Twig) {
+  f1(`${s}.${t}.${l}.${w}`);
+}
+"#,
+    );
+    assert!(
+        result.is_empty(),
+        "expected no diagnostics, got: {result:?}"
+    );
+}
+
+/// Adjacent shape: the `& string` key filter is what previously broke the
+/// recognition. The bare `keyof Registry[Scope]` form (no intersection) must
+/// keep passing, isolating the intersection idiom as the only difference.
+#[test]
+fn bare_keyof_indexed_constraint_without_string_filter() {
+    let result = codes(
+        r#"
+type Registry = {
+  a: { x: { x1: number }; y: { y1: number } };
+  b: { z: { z1: number } };
+};
+declare function f1<S extends string, T extends string, U extends string>(p: `${S}.${T}.${U}`): void;
+function f2<
+  Scope extends keyof Registry,
+  Sub extends keyof Registry[Scope],
+  Leaf extends keyof Registry[Scope][Sub],
+>(s: Scope, t: Sub, l: Leaf) {
+  f1(`${s as string}.${t as string}.${l as string}`);
+}
+"#,
+    );
+    assert!(
+        result.is_empty(),
+        "expected no diagnostics, got: {result:?}"
+    );
+}
+
+/// Adjacent shape: the key filter is `& number` rather than `& string`. The
+/// fix must see through any primitive key filter, not just `string`.
+#[test]
+fn nested_keyof_indexed_constraint_number_filter() {
+    let result = codes(
+        r#"
+type Registry = {
+  a: { 0: { x1: number }; 1: { y1: number } };
+};
+function read<
+  Scope extends keyof Registry,
+  Sub extends keyof Registry[Scope] & number,
+>(reg: Registry, s: Scope, t: Sub): Registry[Scope][Sub] {
+  return reg[s][t];
+}
+"#,
+    );
+    assert!(
+        result.is_empty(),
+        "expected no diagnostics, got: {result:?}"
+    );
+}
+
+/// Negative adjacent case: a `keyof A & string` constraint used to index a
+/// DIFFERENT object `B` (`B[K]`) must still report TS2536. This guards the fix
+/// against over-suppression — seeing through the `& string` key filter must
+/// recover the keyof *operand* `A`, and `A` is a different key space than `B`,
+/// so the index stays invalid. Both the bare and `& string` forms are checked.
+#[test]
+fn foreign_keyof_indexed_constraint_still_reports_ts2536() {
+    let result = codes(
+        r#"
+type A = { a1: number; a2: number };
+type B = { b1: number; b2: number };
+type BadBare<K extends keyof A> = B[K];
+type BadFiltered<K extends keyof A & string> = B[K];
+"#,
+    );
+    let ts2536 = result.iter().filter(|&&c| c == 2536).count();
+    assert_eq!(
+        ts2536, 2,
+        "expected TS2536 for both `B[K]` forms keyed by a foreign object, got: {result:?}"
+    );
+}
+
 /// Negative adjacent case: a literal that does NOT satisfy the prefix shape
 /// must still be rejected, proving we are not silently widening keyof to
 /// `string` everywhere.
