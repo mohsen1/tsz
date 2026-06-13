@@ -84,13 +84,6 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         object_type_for_check: TypeId,
     ) -> bool {
-        // `K extends keyof T[U] & string` (the common string-key-filtered idiom)
-        // must be recognized as keying its own object, not just the bare
-        // `keyof T[U]` form — otherwise indexing the deferred object `T[U]` (e.g.
-        // the three-level `Registry[Scope][Sub]` shape) raises a spurious
-        // `TS2536`. The per-operand key-space comparison below keeps genuinely
-        // foreign `keyof A` constraints (where `A` is a different object)
-        // reporting `TS2536`.
         crate::query_boundaries::state::checking::keyof_operands_through_filters(self.ctx.types, ty)
             .into_iter()
             .any(|operand| {
