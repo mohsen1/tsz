@@ -52,6 +52,12 @@ def fmt_int(n):
     return f"{n:,}"
 
 
+def fmt_pct(part: int, total: int) -> str:
+    if total <= 0:
+        return "0.0%"
+    return f"{100.0 * part / total:.1f}%"
+
+
 def by_reason_rows(snap, optional=False):
     # type: (dict, bool) -> list
     rows = snap.get("by_reason")
@@ -111,17 +117,21 @@ def print_reset_cache_high_water(checker: dict, indent: str = "  ") -> None:
         return
 
     rows_by_bytes = sorted(rows, key=lambda row: (-row["bytes"], row["name"]))
+    total_for_share = size if size is not None else sum(row["bytes"] for row in rows)
     dominant = rows_by_bytes[0]
     for row in rows_by_bytes:
         if row["entries"] == 0 and row["bytes"] == 0:
             continue
         print(
             f"{indent}  {row['name']:<22} "
-            f"entries={fmt_int(row['entries']):>8}  bytes={fmt_int(row['bytes']):>10}"
+            f"entries={fmt_int(row['entries']):>8}  "
+            f"bytes={fmt_int(row['bytes']):>10}  "
+            f"byte_share={fmt_pct(row['bytes'], total_for_share):>6}"
         )
     print(
         f"{indent}  dominant={dominant['name']} "
-        f"bytes={fmt_int(dominant['bytes'])}"
+        f"bytes={fmt_int(dominant['bytes'])} "
+        f"byte_share={fmt_pct(dominant['bytes'], total_for_share)}"
     )
 
 
@@ -367,6 +377,12 @@ def print_diff(post: dict, base: dict) -> None:
         post_by_name = {row["name"]: row for row in post_rows}
         base_by_name = {row["name"]: row for row in base_rows}
         print("  reset-cache high-water by family:")
+        post_total = post["checker"].get("file_session_reset_cache_bytes_max")
+        base_total = base["checker"].get("file_session_reset_cache_bytes_max")
+        if post_total is None:
+            post_total = sum(row["bytes"] for row in post_rows)
+        if base_total is None:
+            base_total = sum(row["bytes"] for row in base_rows)
         for name in sorted(set(post_by_name) | set(base_by_name)):
             post_row = post_by_name.get(name, {"entries": 0, "bytes": 0})
             base_row = base_by_name.get(name, {"entries": 0, "bytes": 0})
@@ -379,7 +395,9 @@ def print_diff(post: dict, base: dict) -> None:
                 f"entries {fmt_int(base_row['entries']):>8} → {fmt_int(post_row['entries']):>8} "
                 f"({entries_sign}{fmt_int(entries_delta)})  "
                 f"bytes {fmt_int(base_row['bytes']):>10} → {fmt_int(post_row['bytes']):>10} "
-                f"({bytes_sign}{fmt_int(bytes_delta)})"
+                f"({bytes_sign}{fmt_int(bytes_delta)})  "
+                f"share {fmt_pct(base_row['bytes'], base_total):>6} → "
+                f"{fmt_pct(post_row['bytes'], post_total):>6}"
             )
     post_slow = post.get("slow_check_file_timings") or []
     base_slow = base.get("slow_check_file_timings") or []
