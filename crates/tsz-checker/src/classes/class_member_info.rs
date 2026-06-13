@@ -674,92 +674,22 @@ impl<'a> CheckerState<'a> {
         base_names: &rustc_hash::FxHashSet<String>,
         target_name: &str,
     ) -> Option<String> {
-        let name_len = target_name.len();
         if base_names.is_empty() {
             return None;
         }
 
         // tsc does not suggest for very short names (≤ 3 chars) because the
         // edit distance threshold is too loose to produce meaningful matches.
-        if name_len <= 3 {
+        // Preserved at the call site (not folded into the shared helper).
+        if target_name.len() <= 3 {
             return None;
         }
 
-        let maximum_length_difference = if name_len * 34 / 100 > 2 {
-            name_len * 34 / 100
-        } else {
-            2
-        };
-        let mut best_distance = name_len * 4 / 10 + 1;
-        let mut best_candidate: Option<String> = None;
-
-        for candidate in base_names {
-            if candidate == target_name {
-                continue;
-            }
-            if name_len.abs_diff(candidate.len()) > maximum_length_difference {
-                continue;
-            }
-            if candidate.len() < 3 && candidate.to_lowercase() != target_name.to_lowercase() {
-                continue;
-            }
-
-            if let Some(distance) =
-                Self::override_name_levenshtein_with_max(target_name, candidate, best_distance)
-                && distance < best_distance
-            {
-                best_distance = distance;
-                best_candidate = Some(candidate.clone());
-            }
-        }
-
-        best_candidate
-    }
-
-    /// Compute edit distance with an upper bound, used for override suggestions.
-    fn override_name_levenshtein_with_max(
-        s1: &str,
-        s2: &str,
-        max_distance: usize,
-    ) -> Option<usize> {
-        if s1.len() > s2.len() {
-            return Self::override_name_levenshtein_with_max(s2, s1, max_distance);
-        }
-
-        let (short, long) = (s1.as_bytes(), s2.as_bytes());
-        let (short_len, long_len) = (short.len(), long.len());
-        if long_len - short_len > max_distance {
-            return None;
-        }
-
-        let mut previous: Vec<usize> = (0..=long_len).collect();
-        let mut current: Vec<usize> = vec![0; long_len + 1];
-
-        for (i, &lhs) in short.iter().enumerate() {
-            current[0] = i + 1;
-            let mut row_min = current[0];
-            for (j, &rhs) in long.iter().enumerate() {
-                let insert = previous[j + 1] + 1;
-                let delete = current[j] + 1;
-                let replace = previous[j] + usize::from(lhs != rhs);
-                let value = insert.min(delete).min(replace);
-                current[j + 1] = value;
-                if value < row_min {
-                    row_min = value;
-                }
-            }
-            if row_min > max_distance {
-                return None;
-            }
-            previous.copy_from_slice(&current);
-        }
-
-        let distance = previous[long_len];
-        if distance <= max_distance {
-            Some(distance)
-        } else {
-            None
-        }
+        // Route through the single canonical weighted scorer so override
+        // suggestions match tsc exactly, like the other spelling-suggestion
+        // paths (previously this used an unweighted integer distance with no
+        // case discount and no epsilon, which could rank differently).
+        Self::best_spelling_suggestion(target_name, base_names.iter().map(String::as_str))
     }
 
     /// Extract name, type, and flags from a class member node.

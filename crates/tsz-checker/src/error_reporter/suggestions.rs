@@ -41,27 +41,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let name_len = prop_name.len();
-        let maximum_length_difference = if name_len * 34 / 100 > 2 {
-            name_len * 34 / 100
-        } else {
-            2
-        };
-        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
-        let mut best_candidate: Option<String> = None;
-
-        for candidate in &property_names {
-            Self::consider_identifier_suggestion(
-                prop_name,
-                candidate,
-                name_len,
-                maximum_length_difference,
-                &mut best_distance,
-                &mut best_candidate,
-            );
-        }
-
-        best_candidate
+        Self::best_spelling_suggestion(prop_name, property_names.iter().map(String::as_str))
     }
 
     /// Returns true when `type_id` is a class instance type whose declaration extends
@@ -313,6 +293,50 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Canonical `tsc` `getSpellingSuggestion` thresholds: the single owner of
+    /// the `maximumLengthDifference`/`bestDistance` init that every
+    /// spelling-suggestion path shares. Returns
+    /// `(maximum_length_difference, initial_best_distance)`.
+    pub(crate) const fn spelling_thresholds(name_len: usize) -> (usize, f64) {
+        // tsc: maximumLengthDifference = max(2, floor(name.length * 0.34))
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        // tsc: initial bestDistance = floor(name.length * 0.4) + 1
+        let best_distance = (name_len * 4 / 10 + 1) as f64;
+        (maximum_length_difference, best_distance)
+    }
+
+    /// Canonical `tsc` `getSpellingSuggestion` candidate scan: owns the
+    /// threshold init and the per-candidate loop, delegating each candidate to
+    /// `consider_identifier_suggestion` (which uses the single weighted
+    /// `levenshtein_with_max` scorer). All single-source spelling-suggestion
+    /// call sites differ only in the candidate source they pass; this is the
+    /// one owner of the algorithm.
+    pub(crate) fn best_spelling_suggestion<'b>(
+        name: &str,
+        candidates: impl IntoIterator<Item = &'b str>,
+    ) -> Option<String> {
+        let name_len = name.len();
+        let (maximum_length_difference, mut best_distance) = Self::spelling_thresholds(name_len);
+        let mut best_candidate: Option<String> = None;
+
+        for candidate in candidates {
+            Self::consider_identifier_suggestion(
+                name,
+                candidate,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
+
+        best_candidate
+    }
+
     /// Find the best spelling suggestion for a name, matching tsc's `getSpellingSuggestion`.
     /// Returns `Some(best_name)` if a close-enough match is found.
     ///
@@ -332,20 +356,13 @@ impl<'a> CheckerState<'a> {
         );
 
         let name_len = name.len();
-        // tsc: bestDistance = (name.length + 2) * 0.34 rounded down, min 2
-        let maximum_length_difference = if name_len * 34 / 100 > 2 {
-            name_len * 34 / 100
-        } else {
-            2
-        };
-        // tsc: initial bestDistance = floor(name.length * 0.4) + 1
-        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
+        let (maximum_length_difference, mut best_distance) = Self::spelling_thresholds(name_len);
         let mut best_candidate: Option<String> = None;
 
-        for candidate in visible_names {
+        for candidate in &visible_names {
             Self::consider_identifier_suggestion(
                 name,
-                &candidate,
+                candidate,
                 name_len,
                 maximum_length_difference,
                 &mut best_distance,
@@ -613,12 +630,7 @@ impl<'a> CheckerState<'a> {
     /// scope symbols, lib globals, and built-in type keywords.
     pub(crate) fn find_jsdoc_type_spelling_suggestion(&self, name: &str) -> Option<String> {
         let name_len = name.len();
-        let maximum_length_difference = if name_len * 34 / 100 > 2 {
-            name_len * 34 / 100
-        } else {
-            2
-        };
-        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
+        let (maximum_length_difference, mut best_distance) = Self::spelling_thresholds(name_len);
         let mut best_candidate: Option<String> = None;
 
         // Search file-level symbols (the binder's file_locals).
