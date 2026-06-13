@@ -1024,6 +1024,104 @@ withTempDir((dir) => {
   });
 });
 
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  const attributionPlan = path.join(dir, "missing-attribution.md");
+  const manifest = path.join(dir, "bench-attribution-manifest.json");
+  const perfPath = path.join(dir, "bench.ts-essentials-project.perf.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        winner: "tsgo",
+        factor: 1.2,
+        tsz_ms: 120,
+        tsgo_ms: 100,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "utility types plus recursive JSON shapes",
+        },
+      },
+      {
+        name: "vite-vanilla-ts-app",
+        winner: "tsgo",
+        factor: 1.5,
+        tsz_ms: 150,
+        tsgo_ms: 100,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "generated app dependency/config sanity",
+        },
+      },
+    ],
+  });
+  writeJson(perfPath, {
+    mode: "attribution",
+    checker: { with_parent_cache_constructed: 0 },
+    delegate: { misses: 0 },
+    slow_check_file_timings: [],
+  });
+  writeJson(manifest, {
+    schema_version: 1,
+    rows: [
+      {
+        name: "ts-essentials-project",
+        status: "failed",
+        exit_code: 1,
+        signal: null,
+        perf_path: perfPath,
+      },
+      {
+        name: "vite-vanilla-ts-app",
+        status: "skipped",
+        reason: "unresolved placeholder <generated-vite>",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output, attributionPlan], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps with attribution: 0\/2/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.deepEqual(report.two_x_target.attribution_attempts, {
+    failed: 1,
+    skipped: 1,
+  });
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+
+  const tsEssentials = report.target_gaps.find((row) => row.name === "ts-essentials-project");
+  assert.equal(tsEssentials.attribution_status.present, true);
+  assert.equal(tsEssentials.attribution_status.mode, "attribution");
+  assert.equal(tsEssentials.attribution_status.attempt_status, "failed");
+  assert.equal(tsEssentials.attribution_status.attempt_exit_code, 1);
+  assert.equal(tsEssentials.attribution_status.warning, "attribution command failed: exit 1");
+
+  const vite = report.target_gaps.find((row) => row.name === "vite-vanilla-ts-app");
+  assert.equal(vite.attribution_status.present, false);
+  assert.equal(vite.attribution_status.attempt_status, "skipped");
+  assert.equal(
+    vite.attribution_status.warning,
+    "attribution attempt skipped: unresolved placeholder <generated-vite>",
+  );
+
+  const planMarkdown = fs.readFileSync(attributionPlan, "utf8");
+  assert.match(planMarkdown, /Attribution attempt: failed/);
+  assert.match(planMarkdown, /Attribution attempt: skipped/);
+});
+
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
 assert.match(
   benchWorkflow,
