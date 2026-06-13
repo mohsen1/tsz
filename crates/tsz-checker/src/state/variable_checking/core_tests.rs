@@ -1644,6 +1644,20 @@ mod function_type_nested_check_tests {
         );
     }
 
+    /// Declare function return annotations must be validated after the
+    /// function's own type parameters are in scope.
+    #[test]
+    fn ts2536_in_declare_function_return_type_reported() {
+        let source = "declare function readBad<Row extends { [Key in keyof Row]: Row[Key] }>(
+            ): Row[keyof Row][\"missing\"];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for Row[keyof Row][\"missing\"] in declare function return type"
+        );
+    }
+
     /// TS2536 inside a constructor return type must also be reported.
     #[test]
     fn ts2536_in_constructor_return_type_reported() {
