@@ -282,6 +282,7 @@ fn test_apply_strict_defaults_enables_all_strict_flags() {
         strict_function_types: false,
         strict_bind_call_apply: false,
         strict_property_initialization: false,
+        strict_builtin_iterator_return: false,
         use_unknown_in_catch_variables: false,
         always_strict: false,
         ..CheckerOptions::default()
@@ -289,15 +290,19 @@ fn test_apply_strict_defaults_enables_all_strict_flags() {
 
     let opts = opts.apply_strict_defaults();
 
-    // All should be re-enabled by strict
+    // All strict-family members should be re-enabled by strict
     assert!(opts.no_implicit_any);
     assert!(opts.no_implicit_this);
     assert!(opts.strict_null_checks);
     assert!(opts.strict_function_types);
     assert!(opts.strict_bind_call_apply);
     assert!(opts.strict_property_initialization);
+    assert!(opts.strict_builtin_iterator_return);
     assert!(opts.use_unknown_in_catch_variables);
-    assert!(opts.always_strict);
+    // tsc 6.0 removed alwaysStrict from the strict family
+    // (utilities.ts computedOptions.alwaysStrict: "Previously a strict-mode
+    // flag, but no longer"): `strict` must not force it back on.
+    assert!(!opts.always_strict);
 }
 
 #[test]

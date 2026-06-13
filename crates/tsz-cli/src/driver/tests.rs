@@ -500,6 +500,11 @@ fn test_cli_module_resolution_preserves_config_package_json_resolution_false() {
 /// `tsconfig.json`. `preprocess_args` forwards the explicit-false intent
 /// through the hidden `--__explicitly-disabled-bool-flag` side-channel; this
 /// test simulates the post-preprocess args directly. Issue #3861.
+///
+/// `alwaysStrict` must survive the contraction: tsc 6.0 removed it from the
+/// strict family (`utilities.ts` `computedOptions.alwaysStrict`: "Previously
+/// a strict-mode flag, but no longer"), so it resolves as
+/// `alwaysStrict !== false`, independent of `strict`.
 #[test]
 fn test_cli_strict_false_overrides_config_strict_true() {
     let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=strict"])
@@ -509,6 +514,7 @@ fn test_cli_strict_false_overrides_config_strict_true() {
     options.checker.no_implicit_any = true;
     options.checker.strict_null_checks = true;
     options.checker.always_strict = true;
+    options.printer.always_strict = true;
     let config_options = CompilerOptions {
         strict: Some(true),
         ..Default::default()
@@ -525,8 +531,58 @@ fn test_cli_strict_false_overrides_config_strict_true() {
         "--strict false must reset the strict-family expansion"
     );
     assert!(!options.checker.strict_null_checks);
-    assert!(!options.checker.always_strict);
+    assert!(
+        options.checker.always_strict,
+        "--strict false must not reset alwaysStrict (tsc 6.0: not a strict-family member)"
+    );
+    assert!(
+        options.printer.always_strict,
+        "--strict false must not reset the printer alwaysStrict either"
+    );
+}
+
+/// `--strict` on the command line must not clobber an explicit
+/// `alwaysStrict: false` from `tsconfig.json`: tsc 6.0 resolves
+/// `alwaysStrict` as `alwaysStrict !== false`, independent of `strict`.
+#[test]
+fn test_cli_strict_true_preserves_config_always_strict_false() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    // Simulate a config with `alwaysStrict: false` already resolved.
+    options.checker.always_strict = false;
+    options.printer.always_strict = false;
+
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(options.checker.strict);
+    assert!(options.checker.no_implicit_any, "family expanded");
+    assert!(options.checker.strict_null_checks, "family expanded");
+    assert!(
+        !options.checker.always_strict,
+        "--strict must not force alwaysStrict over an explicit config false (tsc 6.0)"
+    );
     assert!(!options.printer.always_strict);
+}
+
+/// Issue #3861 ordering, inverse permutation: `--strict` plus an explicit
+/// `--strictFunctionTypes=false` keeps the member off while the rest of the
+/// family expands.
+#[test]
+fn test_cli_strict_true_with_explicit_member_false() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict", "--strictFunctionTypes=false"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict_function_types = true;
+
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(options.checker.strict);
+    assert!(
+        !options.checker.strict_function_types,
+        "explicit member must win over the --strict expansion (#3861)"
+    );
+    assert!(options.checker.strict_null_checks);
+    assert!(options.checker.no_implicit_any);
 }
 
 #[test]

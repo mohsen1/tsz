@@ -1305,8 +1305,7 @@ fn type_only_reexport_resolution_is_cached_and_stable() {
             .resolved_export_type_only_cache
             .read()
             .expect("cache lock")
-            .get("./entry")
-            .and_then(|module_cache| module_cache.get("Widget"))
+            .get(&("./entry".to_string(), "Widget".to_string()))
             .copied(),
         Some(Some((leaf_sym, false))),
         "type-only resolution should be memoized per (module, export)"
@@ -1349,8 +1348,7 @@ fn type_only_reexport_cache_missing_export_is_cached_as_none() {
             .resolved_export_type_only_cache
             .read()
             .expect("cache lock")
-            .get("./entry")
-            .and_then(|module_cache| module_cache.get("DoesNotExist"))
+            .get(&("./entry".to_string(), "DoesNotExist".to_string()))
             .copied(),
         Some(None),
         "negative type-only results must also be memoized"

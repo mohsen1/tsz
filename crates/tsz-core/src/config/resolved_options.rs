@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::checker::context::CheckerOptions;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+use tsz_common::options::strict_family::{StrictFamilyOverrides, apply_strict_family};
 
 use super::{
     CompilerOptions, build_path_mappings, checker_target_from_emitter,
@@ -643,29 +644,37 @@ pub fn resolve_compiler_options(
         resolved.incremental = incremental;
     }
 
-    if let Some(strict) = options.strict {
-        resolved.checker.strict = strict;
-        if strict {
-            resolved.checker.no_implicit_any = true;
-            resolved.checker.strict_null_checks = true;
-            resolved.checker.strict_function_types = true;
-            resolved.checker.strict_bind_call_apply = true;
-            resolved.checker.strict_property_initialization = true;
-            resolved.checker.no_implicit_this = true;
-            resolved.checker.use_unknown_in_catch_variables = true;
-            resolved.checker.always_strict = true;
-            resolved.checker.strict_builtin_iterator_return = true;
-            resolved.printer.always_strict = true;
-        } else {
-            resolved.checker.no_implicit_any = false;
-            resolved.checker.strict_null_checks = false;
-            resolved.checker.strict_function_types = false;
-            resolved.checker.strict_bind_call_apply = false;
-            resolved.checker.strict_property_initialization = false;
-            resolved.checker.no_implicit_this = false;
-            resolved.checker.use_unknown_in_catch_variables = false;
-            resolved.checker.strict_builtin_iterator_return = false;
-        }
+    // Strict-family expansion and explicit member overrides are owned by the
+    // shared `strict_family` table (tsc 6.0 `getStrictOptionValue`): the
+    // `strict` umbrella is expanded first, then explicitly provided members
+    // win (issue #3861 ordering). `alwaysStrict` is not a family member in
+    // tsc 6.0 (`alwaysStrict !== false`, independent of `strict`); only the
+    // explicit `alwaysStrict` override below touches it.
+    apply_strict_family(
+        &mut resolved.checker,
+        &StrictFamilyOverrides {
+            strict: options.strict,
+            no_implicit_any: options.no_implicit_any,
+            no_implicit_this: options.no_implicit_this,
+            strict_null_checks: options.strict_null_checks,
+            strict_function_types: options.strict_function_types,
+            strict_bind_call_apply: options.strict_bind_call_apply,
+            strict_property_initialization: options.strict_property_initialization,
+            strict_builtin_iterator_return: options.strict_builtin_iterator_return,
+            use_unknown_in_catch_variables: options.use_unknown_in_catch_variables,
+        },
+    );
+    if options.strict_builtin_iterator_return.is_none()
+        && options
+            .invalidated_options
+            .iter()
+            .any(|key| key == "strictBuiltinIteratorReturn")
+        && let Some(strict) = options.strict
+    {
+        // tsc reports TS5024 for an invalid explicitly-provided
+        // strictBuiltinIteratorReturn value, but the invalid sub-option does
+        // not block the strict umbrella from selecting the effective value.
+        resolved.checker.strict_builtin_iterator_return = strict;
     }
 
     if let Some(sound) = options.sound {
@@ -686,21 +695,10 @@ pub fn resolve_compiler_options(
     // effective default. CheckerOptions::default() already reflects this
     // (strict=true, all sub-flags=true). No override needed here.
 
-    // Individual strict-family options (override strict if set explicitly)
-    if let Some(v) = options.no_implicit_any {
-        resolved.checker.no_implicit_any = v;
-    }
+    // Non-strict-family individual options. The strict-family members are
+    // resolved by `apply_strict_family` above.
     if let Some(v) = options.no_implicit_returns {
         resolved.checker.no_implicit_returns = v;
-    }
-    if let Some(v) = options.strict_null_checks {
-        resolved.checker.strict_null_checks = v;
-    }
-    if let Some(v) = options.strict_function_types {
-        resolved.checker.strict_function_types = v;
-    }
-    if let Some(v) = options.strict_property_initialization {
-        resolved.checker.strict_property_initialization = v;
     }
     if let Some(v) = options.no_unchecked_indexed_access {
         resolved.checker.no_unchecked_indexed_access = v;
@@ -711,33 +709,11 @@ pub fn resolve_compiler_options(
     if let Some(v) = options.no_property_access_from_index_signature {
         resolved.checker.no_property_access_from_index_signature = v;
     }
-    if let Some(v) = options.no_implicit_this {
-        resolved.checker.no_implicit_this = v;
-    }
-    if let Some(v) = options.use_unknown_in_catch_variables {
-        resolved.checker.use_unknown_in_catch_variables = v;
-    }
-    if let Some(v) = options.strict_bind_call_apply {
-        resolved.checker.strict_bind_call_apply = v;
-    }
     if let Some(v) = options.no_implicit_override {
         resolved.checker.no_implicit_override = v;
     }
     if let Some(v) = options.no_unchecked_side_effect_imports {
         resolved.checker.no_unchecked_side_effect_imports = v;
-    }
-    if let Some(v) = options.strict_builtin_iterator_return {
-        resolved.checker.strict_builtin_iterator_return = v;
-    } else if options
-        .invalidated_options
-        .iter()
-        .any(|key| key == "strictBuiltinIteratorReturn")
-        && let Some(strict) = options.strict
-    {
-        // tsc reports TS5024 for an invalid explicitly-provided
-        // strictBuiltinIteratorReturn value, but the invalid sub-option does
-        // not block the strict umbrella from selecting the effective value.
-        resolved.checker.strict_builtin_iterator_return = strict;
     }
 
     if let Some(no_emit) = options.no_emit {
