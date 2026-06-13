@@ -36,9 +36,9 @@ impl<'a> DeclarationEmitter<'a> {
             current_arena: None,
             current_file_path: None,
             json_module_value_cache: FxHashMap::default(),
-            arena_to_path: FxHashMap::default(),
-            file_idx_to_path: FxHashMap::default(),
-            root_file_paths: FxHashSet::default(),
+            arena_to_path: Arc::new(FxHashMap::default()),
+            file_idx_to_path: Arc::new(FxHashMap::default()),
+            root_file_paths: Arc::new(FxHashSet::default()),
             global_symbol_arenas: Arc::new(FxHashMap::default()),
             bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
@@ -68,7 +68,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_statement_jsdoc_chain: Vec::new(),
             remove_comments: false,
             strip_internal: false,
-            files_with_augmentations: FxHashSet::default(),
+            files_with_augmentations: Arc::new(FxHashSet::default()),
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
@@ -128,9 +128,28 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Construct an emitter from a caller-owned `TypeCacheView`.
+    ///
+    /// Compatibility wrapper over [`Self::with_shared_type_info`] for callers
+    /// (mostly tests) that build a one-off view; batch emit should construct
+    /// the view once and share it via `Arc`.
     pub fn with_type_info(
         arena: &'a NodeArena,
         type_cache: TypeCacheView,
+        type_interner: &'a TypeInterner,
+        binder: &'a BinderState,
+    ) -> Self {
+        Self::with_shared_type_info(arena, Arc::new(type_cache), type_interner, binder)
+    }
+
+    /// Construct an emitter that shares a program-produced `TypeCacheView`.
+    ///
+    /// The view is read-only after construction, so per-file emitters and the
+    /// scratch emitters they spawn reference one `Arc` instead of deep-cloning
+    /// every cache map per emitter.
+    pub fn with_shared_type_info(
+        arena: &'a NodeArena,
+        type_cache: Arc<TypeCacheView>,
         type_interner: &'a TypeInterner,
         binder: &'a BinderState,
     ) -> Self {
@@ -164,9 +183,9 @@ impl<'a> DeclarationEmitter<'a> {
             current_arena: None,
             current_file_path: None,
             json_module_value_cache: FxHashMap::default(),
-            arena_to_path: FxHashMap::default(),
-            file_idx_to_path: FxHashMap::default(),
-            root_file_paths: FxHashSet::default(),
+            arena_to_path: Arc::new(FxHashMap::default()),
+            file_idx_to_path: Arc::new(FxHashMap::default()),
+            root_file_paths: Arc::new(FxHashSet::default()),
             global_symbol_arenas: Arc::new(FxHashMap::default()),
             bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
@@ -196,7 +215,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_statement_jsdoc_chain: Vec::new(),
             remove_comments: false,
             strip_internal: false,
-            files_with_augmentations: FxHashSet::default(),
+            files_with_augmentations: Arc::new(FxHashSet::default()),
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
@@ -336,6 +355,12 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// This enables resolving foreign symbols to their source files.
     pub fn set_arena_to_path(&mut self, arena_to_path: FxHashMap<usize, String>) {
+        self.arena_to_path = Arc::new(arena_to_path);
+    }
+
+    /// Share the program-wide arena-address-to-path mapping without cloning
+    /// it into each per-file emitter. The map is read-only during emit.
+    pub fn set_shared_arena_to_path(&mut self, arena_to_path: Arc<FxHashMap<usize, String>>) {
         self.arena_to_path = arena_to_path;
     }
 
@@ -345,10 +370,22 @@ impl<'a> DeclarationEmitter<'a> {
     /// the symbol is not in `symbol_arenas` (e.g., for cross-file interface
     /// references created during type checking).
     pub fn set_file_idx_to_path(&mut self, file_idx_to_path: FxHashMap<u32, String>) {
+        self.file_idx_to_path = Arc::new(file_idx_to_path);
+    }
+
+    /// Share the program-wide file-index-to-path mapping without cloning it
+    /// into each per-file emitter. The map is read-only during emit.
+    pub fn set_shared_file_idx_to_path(&mut self, file_idx_to_path: Arc<FxHashMap<u32, String>>) {
         self.file_idx_to_path = file_idx_to_path;
     }
 
     pub fn set_root_file_paths(&mut self, root_file_paths: FxHashSet<String>) {
+        self.root_file_paths = Arc::new(root_file_paths);
+    }
+
+    /// Share the canonicalized root-file set without cloning it into each
+    /// per-file emitter. The set is read-only during emit.
+    pub fn set_shared_root_file_paths(&mut self, root_file_paths: Arc<FxHashSet<String>>) {
         self.root_file_paths = root_file_paths;
     }
 
@@ -391,6 +428,12 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Set the collection of file paths that contain module augmentations.
     pub fn set_files_with_augmentations(&mut self, files: FxHashSet<String>) {
+        self.files_with_augmentations = Arc::new(files);
+    }
+
+    /// Share the program-wide augmentation-file set without cloning it into
+    /// each per-file emitter. The set is read-only during emit.
+    pub fn set_shared_files_with_augmentations(&mut self, files: Arc<FxHashSet<String>>) {
         self.files_with_augmentations = files;
     }
 

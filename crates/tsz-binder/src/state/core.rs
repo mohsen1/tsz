@@ -609,15 +609,6 @@ impl BinderState {
     /// Skipped during module augmentation to prevent augmented symbols from
     /// leaking into the augmenting file's scope (and subsequently into `file_locals/globals`).
     pub(crate) fn declare_in_persistent_scope(&mut self, name: String, sym_id: SymbolId) {
-        self.declare_in_persistent_scope_with_atom(name, None, sym_id);
-    }
-
-    pub(crate) fn declare_in_persistent_scope_with_atom(
-        &mut self,
-        name: String,
-        atom: Option<tsz_common::interner::AstAtom>,
-        sym_id: SymbolId,
-    ) {
         if self.in_module_augmentation {
             return;
         }
@@ -625,7 +616,7 @@ impl BinderState {
             && let Some(scope) =
                 Arc::make_mut(&mut self.scopes).get_mut(self.current_scope_id.0 as usize)
         {
-            scope.table.set_with_atom(name, atom, sym_id);
+            scope.table.set(name, sym_id);
         }
     }
 
@@ -1273,11 +1264,7 @@ impl BinderState {
                     if let Some(module_exports) = symbol.exports.as_ref() {
                         for (export_name, &export_sym_id) in module_exports.iter() {
                             if !file_exports.has(export_name) {
-                                file_exports.set_with_atom(
-                                    export_name.clone(),
-                                    module_exports.atom_for_symbol(export_sym_id),
-                                    export_sym_id,
-                                );
+                                file_exports.set(export_name.clone(), export_sym_id);
                             }
                         }
                     }
@@ -1302,11 +1289,7 @@ impl BinderState {
                     {
                         Arc::make_mut(&mut self.alias_partners).insert(sym_id, existing_id);
                     }
-                    file_exports.set_with_atom(
-                        name.clone(),
-                        self.file_locals.atom_for_symbol(sym_id),
-                        sym_id,
-                    );
+                    file_exports.set(name.clone(), sym_id);
                 }
             }
         }

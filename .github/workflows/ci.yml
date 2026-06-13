@@ -797,6 +797,74 @@ jobs:
           SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
         run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
 
+  premerge-microbench:
+    name: premerge-microbench
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 10
+    continue-on-error: true
+    env:
+      TSZ_BENCH_PROFILE: dist-fast
+      TSZ_BENCH_TARGET_DIR: ${{ github.workspace }}/.target
+      TSZ_BENCH_RUNS: "2"
+      TSZ_BENCH_WARMUP: "1"
+      # Advisory-only while #13247 gathers per-run noise bands. The JSON
+      # artifact is the signal; blocking thresholds come after calibration.
+      TSZ_BENCH_THRESHOLD_PCT: "999999"
+      TSZ_BENCH_BASELINE_FILE: ${{ github.workspace }}/.target/premerge-microbench-baseline.json
+      TSZ_BENCH_OUTPUT_JSON: ${{ github.workspace }}/premerge-microbench.json
+      TSZ_BENCH_CASE_FILTER: deeppartial_optional_chain_15,union_members_100,mapped_type_keys_150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run advisory pre-merge microbenchmarks
+        run: scripts/bench/precommit-microbench.sh --no-build
+      - name: Summarize advisory microbenchmarks
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f premerge-microbench.json ]]; then
+            echo "No premerge-microbench.json was produced." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync("premerge-microbench.json", "utf8"));
+          console.log("## Advisory pre-merge microbenchmarks");
+          console.log("");
+          console.log(`Status: ${report.status}`);
+          console.log(`Runs: ${report.runs}, warmup: ${report.warmup}`);
+          console.log("");
+          console.log("| Case | Median | Mean |");
+          console.log("| --- | ---: | ---: |");
+          for (const [name, data] of Object.entries(report.cases || {})) {
+            console.log(`| \`${name}\` | ${data.median_ms.toFixed(2)}ms | ${data.mean_ms.toFixed(2)}ms |`);
+          }
+          if ((report.regressions || []).length > 0) {
+            console.log("");
+            console.log(`Regressions detected: ${report.regressions.length}`);
+          }
+          NODE
+      - name: Upload advisory microbenchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: premerge-microbench
+          path: premerge-microbench.json
+          retention-days: 14
+          if-no-files-found: warn
+          compression-level: 1
+
   wasm:
     name: wasm
     needs: gate

@@ -16,10 +16,111 @@
 //! — emitted a spurious second TS2322 on `b = a` because this helper
 //! short-circuited the variance check before contravariance could fire.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{
+    DiagnosticShape, assert_diagnostic_shape, assert_diagnostic_shapes_exactly,
+    check_source_diagnostics, check_source_with_libs, load_compiled_lib_files,
+};
+use tsz_checker::{context::CheckerOptions, diagnostics::Diagnostic};
+use tsz_common::common::ScriptTarget;
 
 fn codes(diags: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<u32> {
     diags.iter().map(|d| d.code).collect()
+}
+
+fn check_es2015_promise_source(source: &str) -> Vec<Diagnostic> {
+    let libs = load_compiled_lib_files(&["lib.es5.d.ts", "lib.es2015.promise.d.ts"]);
+    check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
+}
+
+fn check_esnext_weakref_source(source: &str) -> Vec<Diagnostic> {
+    let libs = load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2016.array.include.d.ts",
+        "lib.es2016.intl.d.ts",
+        "lib.es2017.arraybuffer.d.ts",
+        "lib.es2017.date.d.ts",
+        "lib.es2017.intl.d.ts",
+        "lib.es2017.object.d.ts",
+        "lib.es2017.sharedmemory.d.ts",
+        "lib.es2017.string.d.ts",
+        "lib.es2017.typedarrays.d.ts",
+        "lib.es2018.asyncgenerator.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.es2018.intl.d.ts",
+        "lib.es2018.promise.d.ts",
+        "lib.es2018.regexp.d.ts",
+        "lib.es2019.array.d.ts",
+        "lib.es2019.intl.d.ts",
+        "lib.es2019.object.d.ts",
+        "lib.es2019.string.d.ts",
+        "lib.es2019.symbol.d.ts",
+        "lib.es2020.bigint.d.ts",
+        "lib.es2020.date.d.ts",
+        "lib.es2020.intl.d.ts",
+        "lib.es2020.number.d.ts",
+        "lib.es2020.promise.d.ts",
+        "lib.es2020.sharedmemory.d.ts",
+        "lib.es2020.string.d.ts",
+        "lib.es2020.symbol.wellknown.d.ts",
+        "lib.es2021.intl.d.ts",
+        "lib.es2021.promise.d.ts",
+        "lib.es2021.string.d.ts",
+        "lib.es2021.weakref.d.ts",
+        "lib.es2022.array.d.ts",
+        "lib.es2022.error.d.ts",
+        "lib.es2022.intl.d.ts",
+        "lib.es2022.object.d.ts",
+        "lib.es2022.regexp.d.ts",
+        "lib.es2022.string.d.ts",
+        "lib.es2023.array.d.ts",
+        "lib.es2023.collection.d.ts",
+        "lib.es2023.intl.d.ts",
+        "lib.es2024.arraybuffer.d.ts",
+        "lib.es2024.collection.d.ts",
+        "lib.es2024.object.d.ts",
+        "lib.es2024.promise.d.ts",
+        "lib.es2024.regexp.d.ts",
+        "lib.es2024.sharedmemory.d.ts",
+        "lib.es2024.string.d.ts",
+        "lib.es2025.collection.d.ts",
+        "lib.esnext.array.d.ts",
+        "lib.esnext.collection.d.ts",
+        "lib.esnext.decorators.d.ts",
+        "lib.esnext.disposable.d.ts",
+        "lib.esnext.error.d.ts",
+        "lib.esnext.intl.d.ts",
+        "lib.esnext.iterator.d.ts",
+        "lib.esnext.promise.d.ts",
+        "lib.esnext.sharedmemory.d.ts",
+        "lib.esnext.temporal.d.ts",
+        "lib.esnext.typedarrays.d.ts",
+    ]);
+    check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
 }
 
 #[test]
@@ -37,11 +138,12 @@ function f2<A, B extends A>(a: Contravariant<A>, b: Contravariant<B>) {
 }
 "#;
     let diags = check_source_diagnostics(source);
-    let codes = codes(&diags);
-    let ts2322_count = codes.iter().filter(|c| **c == 2322).count();
-    assert_eq!(
-        ts2322_count, 1,
-        "Exactly one TS2322 expected (the `a = b` line). Codes: {codes:?}"
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[DiagnosticShape::code(2322).at(6, 5).with_message_fragment(
+            "Type 'Contravariant<B>' is not assignable to type 'Contravariant<A>'.",
+        )],
     );
 }
 
@@ -65,6 +167,137 @@ function f<A, B extends A>(ca: Contra<A>, cb: Contra<B>) {
     assert_eq!(
         ts2322_count, 1,
         "Exactly one TS2322 expected (the wrong direction). Codes: {codes:?}"
+    );
+}
+
+#[test]
+fn conditional_alias_callback_param_keeps_variance_acceptance() {
+    // Repro from `conditionalTypes2.ts` / TypeScript #33568. The expected
+    // callback parameter is `Foo3<T>` while the provided callback accepts
+    // `Foo3<string>`. During callback comparison the relation checks
+    // `Foo3<T>` against `Foo3<string>`; because the source application still
+    // carries a free type parameter, the conditional alias must remain eligible
+    // for the variance path rather than falling through to a structural
+    // false-positive override/callback diagnostic.
+    let source = r#"
+declare function ff(x: Foo3<string>): void;
+declare function gg<T>(f: (x: Foo3<T>) => void): void;
+type Foo3<T> = T extends number ? { n: T } : { x: T };
+gg(ff);
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes = codes(&diags);
+    assert!(
+        !codes.contains(&2416) && !codes.contains(&2322) && !codes.contains(&2345),
+        "expected callback assignment to stay clean. Codes: {codes:?}"
+    );
+}
+
+#[test]
+fn nested_conditional_alias_callback_param_keeps_variance_acceptance() {
+    // Nested repro shape from `conditionalTypes2.ts` / TypeScript #33568.
+    // The public relation query must not treat the variance prepass rejection
+    // as definitive when a conditional alias body forwards through wrapped
+    // applications that still carry type parameters.
+    let source = r#"
+declare function consume(response: RootResponse<string>): void;
+declare function register<Response>(callback: Callback<Response>): void;
+
+interface Callback<Response> {
+    (response: RootResponse<Response>): void;
+}
+
+type RootResponse<Response> =
+    Response extends RecordLike ? RecordResponse<Response> : ValueResponse<Response>;
+
+interface RecordLike {
+    readonly Id: string;
+}
+
+declare type RecordResponse<T extends RecordLike> = ValueResponse<T> & {
+    sendRecord(): void;
+};
+
+declare type ValueResponse<T> = {
+    sendValue(name: keyof PropertiesOfType<T, string>): void;
+};
+
+declare type PropertyNamesOfType<T, RestrictToType> = {
+    [PropertyName in Extract<keyof T, string>]: T[PropertyName] extends RestrictToType ? PropertyName : never
+}[Extract<keyof T, string>];
+
+declare type PropertiesOfType<T, RestrictToType> = Pick<
+    T,
+    PropertyNamesOfType<Required<T>, RestrictToType>
+>;
+
+register(consume);
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes = codes(&diags);
+    assert!(
+        !codes.contains(&2416) && !codes.contains(&2322) && !codes.contains(&2345),
+        "expected nested callback assignment to stay clean. Codes: {codes:?}"
+    );
+}
+
+#[test]
+fn recursive_tuple_conditional_with_free_number_params_reports_declared_mismatches() {
+    // `recursiveConditionalTypes.ts` reports both tuple-length assignments.
+    // The diagnostic stays anchored on the declared conditional alias
+    // applications instead of falling through to a reduced tuple detail.
+    let source = r#"
+type TupleOf<T, N extends number> = N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<number, M>) {
+    tn = tm;
+    tm = tn;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2322).at(7, 5).with_message_fragment(
+                "Type 'TupleOf<number, M>' is not assignable to type 'TupleOf<number, N>'.",
+            ),
+            DiagnosticShape::code(2322).at(8, 5).with_message_fragment(
+                "Type 'TupleOf<number, N>' is not assignable to type 'TupleOf<number, M>'.",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn recursive_tuple_conditional_with_target_type_param_reports_declared_mismatches() {
+    // The source application has a concrete tuple-length argument, while the
+    // target argument is a type parameter constrained to that concrete length.
+    // `tsc` still reports both assignments against the declared alias forms.
+    let source = r#"
+type TupleOf<T, N extends number> = N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f<N extends 1>(one: TupleOf<number, 1>, tn: TupleOf<number, N>) {
+    one = tn;
+    tn = one;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2322).at(7, 5).with_message_fragment(
+                "Type 'TupleOf<number, N>' is not assignable to type '[number]'.",
+            ),
+            DiagnosticShape::code(2322).at(8, 5).with_message_fragment(
+                "Type 'TupleOf<number, 1>' is not assignable to type 'TupleOf<number, N>'.",
+            ),
+        ],
     );
 }
 
@@ -104,10 +337,194 @@ function f<A, B extends A>(a: Invariant<A>, b: Invariant<B>) {
 }
 "#;
     let diags = check_source_diagnostics(source);
-    let codes = codes(&diags);
-    let ts2322_count = codes.iter().filter(|c| **c == 2322).count();
-    assert_eq!(
-        ts2322_count, 2,
-        "Both TS2322 expected for invariant case. Codes: {codes:?}"
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2322).at(6, 5).with_message_fragment(
+                "Type 'Invariant<B>' is not assignable to type 'Invariant<A>'.",
+            ),
+            DiagnosticShape::code(2322).at(7, 5).with_message_fragment(
+                "Type 'Invariant<A>' is not assignable to type 'Invariant<B>'.",
+            ),
+        ],
     );
+}
+
+#[test]
+fn same_base_mapped_record_alias_keeps_tsc_variance_quirk() {
+    let source = r#"
+type RecordA<K extends keyof any, T> = {
+    [P in K]: T;
+};
+type RecordB<K extends keyof any, T> = {
+    [P in K]: T;
+};
+
+function sameA(x: RecordA<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function sameB(x: RecordB<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+function mixedA(x: RecordB<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function mixedB(x: RecordA<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+function sameGenericA<T>(x: RecordA<'a', T>, y: RecordA<string, T>) {
+    x = y;
+}
+function sameGenericB<T>(x: RecordB<'a', T>, y: RecordB<string, T>) {
+    x = y;
+}
+function mixedGenericA<T>(x: RecordB<'a', T>, y: RecordA<string, T>) {
+    x = y;
+}
+function mixedGenericB<T>(x: RecordA<'a', T>, y: RecordB<string, T>) {
+    x = y;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", T>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", T>'"),
+        ],
+    );
+}
+
+#[test]
+fn promise_like_method_callback_variance_still_rejects_unconstrained_applications() {
+    let source = r#"// @target: es2015
+interface Promise<T> {
+    then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+interface CPromise<T extends { x: any; }> {
+    then<U extends { x: any; }>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+var a: Promise<Foo>;
+declare var b: Promise<Bar>;
+a = b; // ok
+b = a; // ok
+
+var a2: CPromise<Foo>;
+declare var b2: CPromise<Bar>;
+a2 = b2; // ok
+b2 = a2; // was error
+"#;
+    let diags = check_es2015_promise_source(source);
+    assert_diagnostic_shape(
+        source,
+        &diags,
+        &DiagnosticShape::code(2322)
+            .with_message_fragment("Type 'Promise<Foo>' is not assignable to type 'Promise<Bar>'."),
+    );
+}
+
+#[test]
+fn recursive_conditional_alias_reports_target_alias_not_reduced_param() {
+    // Reduced from `recursiveConditionalTypes.ts`: assigning
+    // `AwaitedLike<Base>` to `AwaitedLike<Derived>` is invalid, but the
+    // reported target remains the alias application. Same-generic variance
+    // rejection with type-parameter arguments must not skip the conditional
+    // alias structural path and explain the target as the raw parameter.
+    let source = r#"
+type AwaitedLike<T> =
+    T extends null | undefined ? T :
+    T extends PromiseLike<infer Value> ? AwaitedLike<Value> :
+    T;
+
+interface PromiseLike<T> {
+    then<U>(f: ((value: T) => U | PromiseLike<U>) | null | undefined): PromiseLike<U>;
+}
+
+function assign<Base, Derived extends Base>(
+    baseAwaited: AwaitedLike<Base>,
+    derivedAwaited: AwaitedLike<Derived>,
+) {
+    baseAwaited = derivedAwaited;
+    derivedAwaited = baseAwaited;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[DiagnosticShape::code(2322)
+            .at(16, 5)
+            .with_message_fragment("is not assignable to type 'AwaitedLike<Derived>'")],
+    );
+}
+
+#[test]
+fn set_callback_parameter_from_instantiated_receiver_keeps_method_bivariance() {
+    let source = r#"
+const cleanup = ({ ref, set }: {
+    readonly ref: WeakRef<object>;
+    readonly set: Set<WeakRef<object>>;
+}) => {
+    set.delete(ref);
+};
+
+class Box<K extends object> {
+    declare readonly [Symbol.toStringTag]: "Box";
+
+    #weakMap = new WeakMap<K, { readonly ref: WeakRef<K>; value: number }>();
+    #refSet = new Set<WeakRef<K>>();
+    #registry = new FinalizationRegistry(cleanup);
+
+    set(key: K, value: number): this {
+        const entry = this.#weakMap.get(key);
+        if (entry !== undefined) {
+            entry.value = value;
+        } else {
+            const ref = new WeakRef(key);
+            this.#weakMap.set(key, { ref, value });
+            this.#refSet.add(ref);
+            this.#registry.register(key, {
+                set: this.#refSet,
+                ref,
+            }, ref);
+        }
+        return this;
+    }
+
+    has(key: K): boolean {
+        return this.#weakMap.has(key);
+    }
+
+    get(key: K): number | undefined {
+        return this.#weakMap.get(key)?.value;
+    }
+
+    delete(key: K): boolean {
+        const entry = this.#weakMap.get(key);
+        if (entry === undefined) {
+            return false;
+        }
+        const { ref } = entry;
+        this.#weakMap.delete(key);
+        this.#refSet.delete(ref);
+        this.#registry.unregister(ref);
+        return true;
+    }
+}
+"#;
+    let diags = check_esnext_weakref_source(source);
+    assert_diagnostic_shapes_exactly(source, &diags, &[]);
 }

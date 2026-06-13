@@ -6,19 +6,12 @@
 use crate::state::BinderState;
 use crate::{ContainerKind, SymbolTable, symbol_flags};
 use std::sync::Arc;
-use tsz_common::interner::AstAtom;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl BinderState {
-    fn import_export_identifier_atom(arena: &NodeArena, index: NodeIndex) -> Option<AstAtom> {
-        arena
-            .get_identifier_at(index)
-            .and_then(|ident| (ident.atom != AstAtom::NONE).then_some(ident.atom))
-    }
-
     pub(crate) fn bind_import_declaration(
         &mut self,
         arena: &NodeArena,
@@ -56,10 +49,9 @@ impl BinderState {
             && let Some(name) = Self::get_identifier_name(arena, clause.name)
         {
             // Use import_clause node as the declaration node
-            let sym_id = self.declare_symbol_with_atom(
+            let sym_id = self.declare_symbol(
                 arena,
                 name,
-                Self::import_export_identifier_atom(arena, clause.name),
                 symbol_flags::ALIAS,
                 import.import_clause,
                 false,
@@ -83,10 +75,9 @@ impl BinderState {
         {
             if bindings_node.kind == SyntaxKind::Identifier as u16 {
                 if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings) {
-                    let sym_id = self.declare_symbol_with_atom(
+                    let sym_id = self.declare_symbol(
                         arena,
                         name,
-                        Self::import_export_identifier_atom(arena, clause.named_bindings),
                         symbol_flags::ALIAS,
                         clause.named_bindings,
                         false,
@@ -106,10 +97,9 @@ impl BinderState {
                     && let Some(name) = Self::get_identifier_name(arena, named.name)
                 {
                     // Use named_bindings (NamespaceImport) as the declaration node
-                    let sym_id = self.declare_symbol_with_atom(
+                    let sym_id = self.declare_symbol(
                         arena,
                         name,
-                        Self::import_export_identifier_atom(arena, named.name),
                         symbol_flags::ALIAS,
                         clause.named_bindings,
                         false,
@@ -145,14 +135,8 @@ impl BinderState {
                         continue;
                     };
 
-                    let sym_id = self.declare_symbol_with_atom(
-                        arena,
-                        name,
-                        Self::import_export_identifier_atom(arena, local_ident),
-                        symbol_flags::ALIAS,
-                        spec_idx,
-                        false,
-                    );
+                    let sym_id =
+                        self.declare_symbol(arena, name, symbol_flags::ALIAS, spec_idx, false);
 
                     // Get property name before mutable borrow to avoid borrow checker error
                     let prop_name = if spec.name.is_some() && spec.property_name.is_some() {
@@ -217,15 +201,8 @@ impl BinderState {
                 }
 
                 // Create symbol with ALIAS flag
-                let name_atom = Self::import_export_identifier_atom(arena, import.import_clause);
-                let sym_id = self.declare_symbol_with_atom(
-                    arena,
-                    name,
-                    name_atom,
-                    symbol_flags::ALIAS,
-                    idx,
-                    is_exported,
-                );
+                let sym_id =
+                    self.declare_symbol(arena, name, symbol_flags::ALIAS, idx, is_exported);
 
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = arena.get(idx).map(|node| (node.pos, node.end));
@@ -256,8 +233,7 @@ impl BinderState {
                 // We still need to explicit export handling if declare_symbol didn't handle it fully?
                 // declare_symbol takes is_exported flag.
                 if self.in_global_augmentation {
-                    self.file_locals
-                        .set_with_atom(name.to_string(), name_atom, sym_id);
+                    self.file_locals.set(name.to_string(), sym_id);
                     Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
@@ -495,11 +471,6 @@ impl BinderState {
                                 } else {
                                     Self::get_identifier_or_string_literal_name(arena, spec.name)
                                 };
-                                let exported_atom = if spec.name.is_none() {
-                                    Self::import_export_identifier_atom(arena, spec.property_name)
-                                } else {
-                                    Self::import_export_identifier_atom(arena, spec.name)
-                                };
 
                                 if let (Some(orig), Some(exp)) = (original_name, exported_name) {
                                     // Resolve the original symbol in the current scope
@@ -569,11 +540,7 @@ impl BinderState {
                                                         ns_sym.exports.get_or_insert_with(|| {
                                                             Box::new(SymbolTable::new())
                                                         });
-                                                    exports.set_with_atom(
-                                                        exp.to_string(),
-                                                        exported_atom,
-                                                        sym_id,
-                                                    );
+                                                    exports.set(exp.to_string(), sym_id);
                                                 }
                                             } else if let Some(parent_id) = container_sym {
                                                 sym.parent = parent_id;
@@ -627,27 +594,11 @@ impl BinderState {
                                                 clone_sym.is_type_only = true;
                                                 clone_sym.is_exported = true;
                                             }
-                                            self.current_scope.set_with_atom(
-                                                exp.to_string(),
-                                                exported_atom,
-                                                clone_id,
-                                            );
-                                            self.file_locals.set_with_atom(
-                                                exp.to_string(),
-                                                exported_atom,
-                                                clone_id,
-                                            );
+                                            self.current_scope.set(exp.to_string(), clone_id);
+                                            self.file_locals.set(exp.to_string(), clone_id);
                                         } else if orig != exp {
-                                            self.current_scope.set_with_atom(
-                                                exp.to_string(),
-                                                exported_atom,
-                                                sym_id,
-                                            );
-                                            self.file_locals.set_with_atom(
-                                                exp.to_string(),
-                                                exported_atom,
-                                                sym_id,
-                                            );
+                                            self.current_scope.set(exp.to_string(), sym_id);
+                                            self.file_locals.set(exp.to_string(), sym_id);
                                         }
                                     }
                                 }
@@ -675,7 +626,6 @@ impl BinderState {
                             // and `Bar` value-bearing (matches tsc's TS1361/TS1362).
                             struct ReexportSpec {
                                 exported: String,
-                                exported_atom: Option<AstAtom>,
                                 original: Option<String>,
                                 spec_idx: NodeIndex,
                                 is_type_only: bool,
@@ -704,19 +654,10 @@ impl BinderState {
                                     } else {
                                         None
                                     };
-                                    let exported_atom = if spec.name.is_some() {
-                                        Self::import_export_identifier_atom(arena, spec.name)
-                                    } else {
-                                        Self::import_export_identifier_atom(
-                                            arena,
-                                            spec.property_name,
-                                        )
-                                    };
 
                                     if let Some(exported) = exported_name.or(original_name) {
                                         reexport_specs.push(ReexportSpec {
                                             exported: exported.to_string(),
-                                            exported_atom,
                                             original: original_name
                                                 .map(std::string::ToString::to_string),
                                             spec_idx,
@@ -746,10 +687,9 @@ impl BinderState {
                                         .insert(spec.spec_idx.0, existing_id);
                                     continue;
                                 }
-                                let sym_id = self.declare_symbol_with_atom(
+                                let sym_id = self.declare_symbol(
                                     arena,
                                     &spec.exported,
-                                    spec.exported_atom,
                                     symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
                                     spec.spec_idx,
                                     true,
@@ -799,8 +739,6 @@ impl BinderState {
                 }
                 // Namespace export: export * as ns from 'mod'  OR  UMD: export as namespace Foo
                 else if let Some(name) = Self::get_identifier_name(arena, export.export_clause) {
-                    let name_atom =
-                        Self::import_export_identifier_atom(arena, export.export_clause);
                     let is_umd = export.module_specifier.is_none()
                         && node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
                     let container_sym = self.current_container_symbol();
@@ -849,22 +787,18 @@ impl BinderState {
                     if let Some(type_alias_id) = existing_type_alias_id {
                         Arc::make_mut(&mut self.alias_partners).insert(type_alias_id, sym_id);
                     } else if is_umd {
-                        self.current_scope
-                            .set_with_atom(name.to_string(), name_atom, sym_id);
+                        self.current_scope.set(name.to_string(), sym_id);
                     }
                     Arc::make_mut(&mut self.node_symbols).insert(export.export_clause.0, sym_id);
 
                     if is_umd {
                         // UMD namespace exports register a global name.
                         // Add to file_locals + root scope so the name is visible cross-file.
-                        self.file_locals
-                            .set_with_atom(name.to_string(), name_atom, sym_id);
+                        self.file_locals.set(name.to_string(), sym_id);
                         if let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut()
                             && !root_scope.table.has(name)
                         {
-                            root_scope
-                                .table
-                                .set_with_atom(name.to_string(), name_atom, sym_id);
+                            root_scope.table.set(name.to_string(), sym_id);
                         }
                     } else {
                         // Regular namespace re-export — add to module exports
@@ -872,7 +806,7 @@ impl BinderState {
                         Arc::make_mut(&mut self.module_exports)
                             .entry(current_file)
                             .or_default()
-                            .set_with_atom(name.to_string(), name_atom, sym_id);
+                            .set(name.to_string(), sym_id);
                     }
                 }
             }
