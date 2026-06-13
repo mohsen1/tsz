@@ -230,6 +230,7 @@ withTempDir((dir) => {
     rows_with_attribution: 1,
     missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
     rows_with_attribution_command: 2,
+    attribution_attempts: {},
     missing_attribution_plan: [
       {
         name: "vite-vanilla-ts-app",
@@ -242,6 +243,10 @@ withTempDir((dir) => {
         attribution_command: report.target_gaps[1].loss_closure.attribution_command,
         timing_command: report.target_gaps[1].loss_closure.command,
         attribution_warning: "attribution artifact missing",
+        attribution_attempt_status: null,
+        attribution_attempt_reason: null,
+        attribution_attempt_exit_code: null,
+        attribution_attempt_signal: null,
       },
       {
         name: "single-file-loss",
@@ -254,6 +259,10 @@ withTempDir((dir) => {
         attribution_command: null,
         timing_command: null,
         attribution_warning: "attribution artifact missing",
+        attribution_attempt_status: null,
+        attribution_attempt_reason: null,
+        attribution_attempt_exit_code: null,
+        attribution_attempt_signal: null,
       },
     ],
     worst_gap: report.target_gaps[0],
