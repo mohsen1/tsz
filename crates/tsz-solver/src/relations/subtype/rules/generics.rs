@@ -485,15 +485,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             && !needs_structural_fallback
                             && !rejection_unreliable
                         {
+                            let source_args_contain_type_parameters =
+                                args_contain_type_parameters(self.interner, &s_app.args);
                             // For two applications of the same generic definition with
                             // concrete type arguments, a variance failure is conclusive.
-                            // However, when any source arg is a type parameter, we must
-                            // fall through to structural comparison — the expanded form
-                            // may introduce implicit index signatures (e.g., homomorphic
-                            // mapped types like `{ [K in keyof T]: T[K] }`) that make
-                            // the structural check succeed even though the variance
-                            // check on the raw type parameter fails.
-                            if !args_contain_type_parameters(self.interner, &s_app.args) {
+                            if !source_args_contain_type_parameters
+                                || (variances.iter().any(|v| v.has_direct_usage())
+                                    && !self.conditional_infer_alias_base(s_app.base)
+                                    && !self.conditional_infer_alias_base(t_app.base)
+                                    && !self.expanded_application_pair_has_method_property(
+                                        source_type,
+                                        s_app_id,
+                                        target_type,
+                                        t_app_id,
+                                    ))
+                            {
                                 return SubtypeResult::False;
                             }
                         }
@@ -612,7 +618,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_expanded = self.try_expand_application_type(source_type, s_app_id);
         let t_expanded = self.try_expand_application_type(target_type, t_app_id);
         let result = match (s_expanded, t_expanded) {
-            (Some(s_struct), Some(t_struct)) => self.check_subtype(s_struct, t_struct),
+            (Some(s_struct), Some(t_struct)) => self.check_expanded_application_subtype(
+                s_struct,
+                t_struct,
+                source_type,
+                target_type,
+            ),
             (Some(s_struct), None) => self.check_subtype(s_struct, target_type),
             (None, Some(t_struct)) => self.check_subtype(source_type, t_struct),
             (None, None) => {
@@ -648,68 +659,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         result
-    }
-
-    /// Same-base all-`any`-target-args lawyer shortcut.
-    ///
-    /// When source and target are applications of the SAME generic definition
-    /// and every target argument is `any` (e.g. `Kysely<DB>` passed where
-    /// `Kysely<any>` is expected), tsc relates them under assignability:
-    /// `any` type arguments silence per-argument and structural comparison
-    /// for a same-reference target (`AnyPropagationRules` family). This is
-    /// the argument-free subset of the `try_variance_fast_path` shortcut,
-    /// safe to apply even when the application identities were recovered
-    /// from display provenance (full variance on recovered applications is
-    /// not attempted — provenance is display-grade, conclusive only for the
-    /// permissive all-`any` direction, never for rejection).
-    ///
-    /// Gated on any-propagation being permissive on both sides at the
-    /// current depth, so strict subtype/identity relations and asymmetric
-    /// overload passes fall through unchanged.
-    pub(crate) fn try_same_base_all_any_target_args(
-        &mut self,
-        source: TypeId,
-        s_app_id: Option<TypeApplicationId>,
-        t_app_id: TypeApplicationId,
-    ) -> Option<SubtypeResult> {
-        let t_app = self.interner.type_application(t_app_id);
-        if t_app.args.is_empty() || !t_app.args.iter().all(|arg| arg.is_any()) {
-            return None;
-        }
-        let allow_any = self
-            .any_propagation
-            .allows_any_source_at_depth(self.guard.depth())
-            && self
-                .any_propagation
-                .allows_any_target_at_depth(self.guard.depth());
-        if !allow_any {
-            return None;
-        }
-        let same_definition = if let Some(s_app_id) = s_app_id {
-            let s_app = self.interner.type_application(s_app_id);
-            s_app.base == t_app.base
-                || matches!(
-                    (
-                        crate::visitor::lazy_def_id(self.interner, s_app.base),
-                        crate::visitor::lazy_def_id(self.interner, t_app.base),
-                    ),
-                    (Some(s_def), Some(t_def)) if self.resolver.defs_are_equivalent(s_def, t_def)
-                )
-        } else {
-            // The source lost its Application identity to evaluation (e.g. a
-            // class's self-instantiated instance type like `Kysely<DB>` inside
-            // its own body). Match the instance object's nominal symbol
-            // against the target base definition's symbol: an instance of the
-            // SAME definition is assignable to its own all-`any` instantiation.
-            let s_shape_id = object_shape_id(self.interner, source)
-                .or_else(|| object_with_index_shape_id(self.interner, source));
-            let s_symbol =
-                s_shape_id.and_then(|shape_id| self.interner.object_shape(shape_id).symbol);
-            let t_symbol = crate::visitor::lazy_def_id(self.interner, t_app.base)
-                .and_then(|t_def| self.resolver.def_to_symbol_id(t_def));
-            matches!((s_symbol, t_symbol), (Some(s_sym), Some(t_sym)) if s_sym == t_sym)
-        };
-        same_definition.then_some(SubtypeResult::True)
     }
 
     /// Pre-evaluation variance fast path for Application types.

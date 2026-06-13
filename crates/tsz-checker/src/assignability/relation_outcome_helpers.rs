@@ -29,6 +29,18 @@ impl<'a> CheckerState<'a> {
                 property_classification: None,
             };
         }
+        if self.same_type_alias_application_uses_conditional_infer(source, target)
+            && self.diagnostic_relation_boolean_guard(source, target)
+        {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
         if let Some(outcome) = self.variance_accepted_relation_outcome(source, target) {
             return outcome;
         }

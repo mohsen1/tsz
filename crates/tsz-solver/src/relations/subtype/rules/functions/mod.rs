@@ -638,11 +638,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> bool {
         self.instantiated_generic_method_args
             .iter()
-            .any(|&arg| self.type_matches_instantiated_generic_arg(source_type, arg))
+            .any(|&arg| self.type_contains_instantiated_generic_arg(source_type, arg))
             || self
                 .instantiated_generic_method_args
                 .iter()
-                .any(|&arg| self.type_matches_instantiated_generic_arg(target_type, arg))
+                .any(|&arg| self.type_contains_instantiated_generic_arg(target_type, arg))
+    }
+
+    fn type_contains_instantiated_generic_arg(&self, type_id: TypeId, arg: TypeId) -> bool {
+        if self.type_matches_instantiated_generic_arg(type_id, arg) {
+            return true;
+        }
+        if crate::visitor::application_id(self.interner, arg).is_none() {
+            return false;
+        }
+        let mut found = false;
+        crate::visitor::walk_referenced_types(self.interner, type_id, |candidate| {
+            if self.type_matches_instantiated_generic_arg(candidate, arg) {
+                found = true;
+            }
+        });
+        found
     }
 
     fn type_matches_instantiated_generic_arg(&self, type_id: TypeId, arg: TypeId) -> bool {
