@@ -751,6 +751,138 @@ fn instantiate_generic_cached_is_invariant_to_type_param_renaming() {
 }
 
 #[test]
+fn instantiate_generic_cached_reuses_alpha_equivalent_independent_args() {
+    // Issue #13394: utility pipelines often instantiate the same alias body
+    // with structurally identical object arguments whose leaf type parameters
+    // only differ by local binder name. When the instantiated result erases
+    // those binders (here, `keyof T`), the cache should reuse the first walk.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = interner.keyof(t_id);
+    let param = param_info(t_atom);
+
+    let (_, source_a) = type_param(&interner, "SourceA");
+    let (_, source_b) = type_param(&interner, "SourceB");
+    let arg_a = object_with(&interner, source_a);
+    let arg_b = object_with(&interner, source_b);
+
+    let stats0 = db.statistics();
+    let r_a = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[arg_a]);
+    let stats1 = db.statistics();
+    let r_b = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[arg_b]);
+    let stats2 = db.statistics();
+
+    let expected_b = instantiate_generic_cached(&interner, None, body, &[param], &[arg_b]);
+    assert_ne!(
+        r_a, expected_b,
+        "the witness should require restoring the current binder, not returning the first result"
+    );
+    assert_eq!(
+        r_b, expected_b,
+        "alpha-equivalent cache hits must restore the current binder identity"
+    );
+    assert!(
+        stats1.instantiation_cache_misses > stats0.instantiation_cache_misses,
+        "first alpha-equivalent request must still miss and populate"
+    );
+    assert!(
+        stats2.instantiation_cache_hits > stats1.instantiation_cache_hits,
+        "second alpha-equivalent request should hit instead of re-walking"
+    );
+}
+
+#[test]
+fn instantiate_type_cached_does_not_alpha_reuse_independent_args() {
+    // Request scope matters: the alpha-equivalent cache is only for generic
+    // alias/application instantiation. Ordinary instantiate_type_cached calls
+    // keep exact substitution keys so broad substitution walks cannot perturb
+    // diagnostic shape on already-wrong programs.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = interner.keyof(t_id);
+
+    let (_, source_a) = type_param(&interner, "SourceA");
+    let (_, source_b) = type_param(&interner, "SourceB");
+    let arg_a = object_with(&interner, source_a);
+    let arg_b = object_with(&interner, source_b);
+
+    let mut subst_a = TypeSubstitution::new();
+    subst_a.insert(t_atom, arg_a);
+    let mut subst_b = TypeSubstitution::new();
+    subst_b.insert(t_atom, arg_b);
+
+    let stats0 = db.statistics();
+    let _ = instantiate_type_cached(&interner, Some(&db), body, &subst_a);
+    let stats1 = db.statistics();
+    let cached_b = instantiate_type_cached(&interner, Some(&db), body, &subst_b);
+    let stats2 = db.statistics();
+    let expected_b = instantiate_type_cached(&interner, None, body, &subst_b);
+
+    assert_eq!(
+        cached_b, expected_b,
+        "exact-key instantiate_type_cached should still compute the current result"
+    );
+    assert!(
+        stats1.instantiation_cache_misses > stats0.instantiation_cache_misses,
+        "first request should miss"
+    );
+    assert_eq!(
+        stats2.instantiation_cache_hits, stats1.instantiation_cache_hits,
+        "instantiate_type_cached must not use alpha-equivalent cache slots"
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_keeps_constrained_type_param_args_distinct() {
+    // Alpha-cache reuse is only sound for simple local binders. Constrained
+    // type parameters carry semantic information and must keep their ordinary
+    // exact cache keys.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = interner.keyof(t_id);
+    let param = param_info(t_atom);
+
+    let source_a_atom = interner.intern_string("SourceA");
+    let source_b_atom = interner.intern_string("SourceB");
+    let source_a = interner.type_param(TypeParamInfo {
+        constraint: Some(TypeId::STRING),
+        ..param_info(source_a_atom)
+    });
+    let source_b = interner.type_param(TypeParamInfo {
+        constraint: Some(TypeId::NUMBER),
+        ..param_info(source_b_atom)
+    });
+    let arg_a = object_with(&interner, source_a);
+    let arg_b = object_with(&interner, source_b);
+
+    let stats0 = db.statistics();
+    let _ = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[arg_a]);
+    let stats1 = db.statistics();
+    let cached_b = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[arg_b]);
+    let stats2 = db.statistics();
+    let expected_b = instantiate_generic_cached(&interner, None, body, &[param], &[arg_b]);
+
+    assert_eq!(
+        cached_b, expected_b,
+        "constrained arg instantiation must still compute the current result"
+    );
+    assert!(
+        stats1.instantiation_cache_misses > stats0.instantiation_cache_misses,
+        "first constrained request should miss"
+    );
+    assert_eq!(
+        stats2.instantiation_cache_hits, stats1.instantiation_cache_hits,
+        "constrained type parameters must not use the simple alpha cache"
+    );
+}
+
+#[test]
 fn evaluator_recursive_utility_application_populates_cache() {
     // End-to-end wiring evidence for issue #10851: route an alias body that
     // contains the type parameter twice through the actual `TypeEvaluator`

@@ -40,7 +40,8 @@ impl<'a> TypeInstantiator<'a> {
 
         // HOMOMORPHIC UNION DISTRIBUTION (tsc: instantiateMappedType → mapTypeWithAlias)
         // Excluded: array/tuple-like unions are handled by the blocks below.
-        if let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
+        if !self.preserve_meta_types
+            && let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(tp_info)) = self.interner.lookup(keyof_source)
             && !self.is_shadowed(tp_info.name)
             && let Some(substituted) = self.substitution.get(tp_info.name)
@@ -103,7 +104,8 @@ impl<'a> TypeInstantiator<'a> {
         // template references T[K]. Templates that DO reference T[K]
         // are still handled by the main array-preservation block below
         // (which mirrors tsc's full instantiateMappedArrayType path).
-        if crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
+        if !self.preserve_meta_types
+            && crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
             && let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(tp_info)) = self.interner.lookup(keyof_source)
             && !self.is_shadowed(tp_info.name)
@@ -151,7 +153,8 @@ impl<'a> TypeInstantiator<'a> {
             };
         }
 
-        if crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
+        if !self.preserve_meta_types
+            && crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
             && let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(tp_info)) = self.interner.lookup(keyof_source)
             && !self.is_shadowed(tp_info.name)
