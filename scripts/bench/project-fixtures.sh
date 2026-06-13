@@ -618,8 +618,59 @@ tsz_write_effect_config() {
   tsz_write_basic_external_project_config "$1" "packages/effect/src"
 }
 
+tsz_write_drizzle_orm_external_stubs() {
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+
+  mkdir -p \
+    "$fixture_dir/node_modules/@cloudflare/workers-types" \
+    "$fixture_dir/node_modules/bun-types"
+
+  cat > "$fixture_dir/tsz-bench-external-module.d.ts" <<'TYPES'
+declare const tszBenchExternalModule: any;
+export = tszBenchExternalModule;
+TYPES
+
+  cat > "$fixture_dir/node_modules/bun-types/index.d.ts" <<'TYPES'
+// Package marker for `/// <reference types="bun-types" />`.
+TYPES
+
+  cat > "$fixture_dir/node_modules/@cloudflare/workers-types/index.d.ts" <<'TYPES'
+interface D1Database {
+  [key: string]: any;
+}
+
+interface D1PreparedStatement {
+  [key: string]: any;
+  bind(...values: any[]): D1PreparedStatement;
+}
+
+interface D1Result<T = unknown> {
+  [key: string]: any;
+  results: T[];
+}
+TYPES
+}
+
 tsz_write_drizzle_orm_config() {
-  tsz_write_basic_external_project_config "$1" "drizzle-orm/src"
+  # drizzle-orm imports sibling modules with explicit `.ts` extensions and its
+  # upstream tsconfig permits them with allowImportingTsExtensions plus noEmit.
+  # It also maps `~/*` to package-internal imports. This generated config lives
+  # one directory above drizzle-orm's own tsconfig, so the target is rooted at
+  # drizzle-orm/src rather than upstream's config-relative src. The fixture does
+  # not install the optional driver dependency graph, so unknown package imports
+  # use local any stubs while package-internal paths still bind source.
+  tsz_write_drizzle_orm_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "drizzle-orm/src" \
+    '    "baseUrl": ".",
+    "paths": {
+      "~/*": ["drizzle-orm/src/*"],
+      "*": ["tsz-bench-external-module.d.ts"]
+    },
+    "allowImportingTsExtensions": true,
+    "ignoreDeprecations": "6.0",
+'
 }
 
 tsz_write_ts_rest_config() {

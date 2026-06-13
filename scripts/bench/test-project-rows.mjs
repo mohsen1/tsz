@@ -81,6 +81,45 @@ tsz_project_fixture_sources "${rowName}"
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
+function shellProjectConfig(writer) {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
+output="$dir/tsconfig.json"
+${writer} "$output"
+cat "$output"
+`;
+  const result = runShellScript(script);
+  assert.equal(
+    result.status,
+    0,
+    `${writer} failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  return JSON.parse(result.stdout);
+}
+
+function shellProjectConfigFiles(writer) {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
+output="$dir/tsconfig.json"
+${writer} "$output"
+cd "$dir"
+find . -type f | sed 's#^./##' | sort
+`;
+  const result = runShellScript(script);
+  assert.equal(
+    result.status,
+    0,
+    `${writer} failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  return result.stdout.trim().split(/\r?\n/).filter(Boolean);
+}
+
 function shellSyncedProjectRowGroups() {
   const script = `
 set -euo pipefail
@@ -320,6 +359,37 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
     );
   }
 }
+
+assert.equal(
+  shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.allowImportingTsExtensions,
+  true,
+  "drizzle-orm guard config must match upstream .ts import extension support",
+);
+assert.deepEqual(
+  shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.paths,
+  { "~/*": ["drizzle-orm/src/*"], "*": ["tsz-bench-external-module.d.ts"] },
+  "drizzle-orm guard config must match upstream tilde import path support",
+);
+assert.equal(
+  shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.baseUrl,
+  ".",
+  "drizzle-orm guard config must resolve path mappings from the generated config root",
+);
+assert.equal(
+  shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.ignoreDeprecations,
+  "6.0",
+  "drizzle-orm guard config must silence current baseUrl deprecation diagnostics",
+);
+assert.deepEqual(
+  shellProjectConfigFiles("tsz_write_drizzle_orm_config"),
+  [
+    "node_modules/@cloudflare/workers-types/index.d.ts",
+    "node_modules/bun-types/index.d.ts",
+    "tsconfig.json",
+    "tsz-bench-external-module.d.ts",
+  ],
+  "drizzle-orm guard config must write local stubs for external package types",
+);
 
 for (const rowName of pinnedSourceRows) {
   const row = projectRowsByName.get(rowName);
