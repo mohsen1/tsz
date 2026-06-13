@@ -774,40 +774,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
-        let mut all_ok = true;
-        let mut any_checked = false;
-        let mut forward_rejected = false;
 
-        for (i, variance) in variances.iter().enumerate() {
-            let s_arg = s_args[i];
-            let t_arg = t_args[i];
-
-            if variance.is_invariant() {
-                any_checked = true;
-                if !self.check_subtype(s_arg, t_arg).is_true() {
-                    forward_rejected = true;
-                    all_ok = false;
-                    break;
-                }
-                if !self.check_subtype(t_arg, s_arg).is_true() {
-                    all_ok = false;
-                    break;
-                }
-            } else if variance.is_covariant() {
-                any_checked = true;
-                if !self.check_subtype(s_arg, t_arg).is_true() {
-                    forward_rejected = true;
-                    all_ok = false;
-                    break;
-                }
-            } else if variance.is_contravariant() {
-                any_checked = true;
-                if !self.check_subtype(t_arg, s_arg).is_true() {
-                    all_ok = false;
-                    break;
-                }
-            }
-        }
+        // Walk the per-argument variance positions through the single shared
+        // loop (`run_application_variance_arg_loop`) so this engine fast path
+        // and the relation-query boundary
+        // (`relation_queries::check_application_variance`) cannot drift on
+        // argument orientation. The engine relates arguments through the raw
+        // judge (`check_subtype`); the boundary uses the lawyer.
+        let crate::relations::variance::VarianceArgLoopOutcome {
+            any_checked,
+            all_ok,
+            forward_rejected,
+        } = crate::relations::variance::run_application_variance_arg_loop(
+            &variances,
+            &s_args,
+            &t_args,
+            |s_arg, t_arg| self.check_subtype(s_arg, t_arg).is_true(),
+        );
 
         if any_checked && all_ok && !needs_structural_fallback {
             return Some(SubtypeResult::True);

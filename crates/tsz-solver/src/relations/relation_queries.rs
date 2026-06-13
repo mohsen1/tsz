@@ -844,32 +844,21 @@ pub fn check_application_variance<R: TypeResolver>(
         checker.set_query_db(qdb);
     }
 
-    let mut any_checked = false;
-    let mut all_ok = true;
-    for (i, variance) in variances.iter().enumerate() {
-        let s_arg = s_app.args[i];
-        let t_arg = t_app.args[i];
-
-        if variance.is_invariant() {
-            any_checked = true;
-            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
-                all_ok = false;
-                break;
-            }
-        } else if variance.is_covariant() {
-            any_checked = true;
-            if !checker.is_assignable(s_arg, t_arg) {
-                all_ok = false;
-                break;
-            }
-        } else if variance.is_contravariant() {
-            any_checked = true;
-            if !checker.is_assignable(t_arg, s_arg) {
-                all_ok = false;
-                break;
-            }
-        }
-    }
+    // Walk the per-argument variance positions through the single shared loop
+    // (`run_application_variance_arg_loop`) so this boundary entry and the
+    // engine fast path (`SubtypeChecker::try_variance_fast_path`) cannot drift
+    // on argument orientation. This boundary relates arguments through the
+    // lawyer (`CompatChecker::is_assignable`); the engine uses the raw judge.
+    let crate::relations::variance::VarianceArgLoopOutcome {
+        any_checked,
+        all_ok,
+        forward_rejected: _,
+    } = crate::relations::variance::run_application_variance_arg_loop(
+        &variances,
+        &s_app.args,
+        &t_app.args,
+        |s_arg, t_arg| checker.is_assignable(s_arg, t_arg),
+    );
 
     let source_args_contain_type_parameters = s_app
         .args
