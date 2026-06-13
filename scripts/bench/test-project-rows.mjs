@@ -120,6 +120,25 @@ find . -type f | sed 's#^./##' | sort
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
+function shellProjectGeneratedFile(writer, relativePath) {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
+output="$dir/tsconfig.json"
+${writer} "$output"
+cat "$dir/${relativePath}"
+`;
+  const result = runShellScript(script);
+  assert.equal(
+    result.status,
+    0,
+    `${writer} generated file ${relativePath} failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  return result.stdout;
+}
+
 function shellSyncedProjectRowGroups() {
   const script = `
 set -euo pipefail
@@ -387,9 +406,37 @@ assert.deepEqual(
     "node_modules/bun-types/index.d.ts",
     "tsconfig.json",
     "tsz-bench-external-module.d.ts",
+    "tsz-bench-external-named-modules.d.ts",
   ],
   "drizzle-orm guard config must write local stubs for external package types",
 );
+{
+  const externalStub = shellProjectGeneratedFile(
+    "tsz_write_drizzle_orm_config",
+    "tsz-bench-external-named-modules.d.ts",
+  );
+  for (const expected of [
+    "declare module '@aws-sdk/client-rds-data'",
+    "export class RDSDataClient",
+    "export interface Field",
+    "declare module 'better-sqlite3'",
+    "export const Database",
+    "declare module 'bun:sqlite'",
+    "declare module '@libsql/client'",
+    "export const createClient",
+    "declare module '@prisma/client'",
+    "export const Prisma",
+    "declare const Buffer",
+    "interface DurableObjectStorage",
+    "type SqlStorageCursor",
+  ]) {
+    assert.match(
+      externalStub,
+      new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `drizzle-orm external stub must include ${expected}`,
+    );
+  }
+}
 
 for (const rowName of pinnedSourceRows) {
   const row = projectRowsByName.get(rowName);
