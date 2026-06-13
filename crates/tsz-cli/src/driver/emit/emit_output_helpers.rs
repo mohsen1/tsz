@@ -718,6 +718,11 @@ pub(super) fn rewrite_amd_relative_import_type_specifiers(
     rewritten
 }
 
+/// Resolve a `./`/`../` import specifier against an AMD module id. The
+/// collapse loop is owned by
+/// `tsz_common::module_resolution::path_identity` (bail variant: a `..`
+/// escaping the bundle root, or an empty result, yields `None` and the
+/// caller keeps the raw specifier).
 pub(super) fn resolve_amd_relative_module_specifier(
     module_name: &str,
     specifier: &str,
@@ -726,29 +731,16 @@ pub(super) fn resolve_amd_relative_module_specifier(
         .rsplit_once('/')
         .map(|(dir, _)| dir)
         .unwrap_or("");
-    let mut parts: Vec<&str> = if base_dir.is_empty() {
-        Vec::new()
-    } else {
-        base_dir.split('/').collect()
-    };
-    for part in specifier.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop()?;
-            }
-            part => parts.push(part),
-        }
-    }
-    if let Some(last) = parts.last_mut() {
-        *last = last
-            .strip_suffix(".ts")
-            .or_else(|| last.strip_suffix(".tsx"))
-            .or_else(|| last.strip_suffix(".js"))
-            .or_else(|| last.strip_suffix(".jsx"))
-            .unwrap_or(last);
-    }
-    (!parts.is_empty()).then(|| parts.join("/"))
+    let resolved = tsz_common::module_resolution::path_identity::resolve_relative_slash_specifier(
+        base_dir, specifier,
+    )?;
+    let stripped = resolved
+        .strip_suffix(".ts")
+        .or_else(|| resolved.strip_suffix(".tsx"))
+        .or_else(|| resolved.strip_suffix(".js"))
+        .or_else(|| resolved.strip_suffix(".jsx"))
+        .unwrap_or(&resolved);
+    Some(stripped.to_owned())
 }
 
 pub(super) fn output_relative_path(
@@ -865,4 +857,36 @@ pub(super) fn js_input_skipped_by_node_modules_depth(path: &Path, max_depth: u32
 pub(super) fn path_has_node_modules_segment(path: &Path) -> bool {
     path.components()
         .any(|component| component.as_os_str() == "node_modules")
+}
+
+#[cfg(test)]
+mod resolve_amd_relative_module_specifier_tests {
+    use super::resolve_amd_relative_module_specifier;
+
+    #[test]
+    fn resolves_relative_specifiers_against_module_dir() {
+        // Pinned before routing through
+        // path_identity::resolve_relative_slash_specifier.
+        assert_eq!(
+            resolve_amd_relative_module_specifier("dir/m1", "./m2"),
+            Some("dir/m2".to_string())
+        );
+        assert_eq!(
+            resolve_amd_relative_module_specifier("dir/sub/m", "../x.js"),
+            Some("dir/x".to_string())
+        );
+        // Known TS/JS extensions are stripped from the resolved module id.
+        assert_eq!(
+            resolve_amd_relative_module_specifier("m1", "./m2.ts"),
+            Some("m2".to_string())
+        );
+    }
+
+    #[test]
+    fn bails_on_root_escape_and_empty_result() {
+        // `..` escaping the bundle root: the caller keeps the raw specifier.
+        assert_eq!(resolve_amd_relative_module_specifier("m1", "../x"), None);
+        // Collapsing to nothing is also a bail, not an empty module id.
+        assert_eq!(resolve_amd_relative_module_specifier("dir/m", "./.."), None);
+    }
 }

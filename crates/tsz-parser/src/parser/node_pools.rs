@@ -149,6 +149,8 @@ macro_rules! for_each_node_pool {
             jsx_namespaced_names => JsxNamespacedNameData,
             // Source file
             source_files => SourceFileData,
+            // Parser recovery side tables
+            class_body_var_fn_recoveries => ClassBodyVarFnRecovery,
         }
     };
 }

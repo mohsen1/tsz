@@ -1287,21 +1287,24 @@ impl<'a> CheckerState<'a> {
             } => {
                 // Use the unwidened source: tsc preserves literal spellings in
                 // "has no properties in common" messages.
-                let mut source_str =
-                    if (crate::query_boundaries::common::has_call_signatures(
+                let callable_widened_source =
+                    ((crate::query_boundaries::common::has_call_signatures(
                         self.ctx.types,
                         source,
                     ) || crate::query_boundaries::common::has_construct_signatures(
                         self.ctx.types,
                         source,
-                    )) && depth == 0
-                    {
-                        let widened_source = self.widen_type_for_display(source);
-                        let widened_source = self.widen_function_like_display_type(widened_source);
+                    )) && depth == 0)
+                        .then(|| {
+                            let widened_source = self.widen_type_for_display(source);
+                            self.widen_function_like_display_type(widened_source)
+                        });
+                let mut source_str = match callable_widened_source {
+                    Some(widened_source) => {
                         self.format_type_for_assignability_message(widened_source)
-                    } else {
-                        self.format_type_diagnostic(source)
-                    };
+                    }
+                    None => self.format_type_diagnostic(source),
+                };
                 let target_str = self.format_type_for_assignability_message(target);
 
                 // If calling the source would fix the mismatch, emit TS2560 instead.
@@ -1321,7 +1324,24 @@ impl<'a> CheckerState<'a> {
                 if code
                     == diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT
                 {
-                    source_str = Self::widen_member_literals_in_display_text(&source_str);
+                    // TS2560 widens literal members of the source display:
+                    // widen annotations at the type level and reprint with
+                    // the same formatter that produced the display (#13075).
+                    let display_source = callable_widened_source.unwrap_or(source);
+                    let widened = self.widen_annotation_literals_for_display(
+                        display_source,
+                        crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+                    );
+                    if widened.display_residue {
+                        // Literal spellings live only in display provenance;
+                        // render the canonical (display-property-free) form.
+                        source_str = self.format_type_diagnostic_widened(widened.type_id);
+                    } else if widened.type_id != display_source {
+                        source_str = match callable_widened_source {
+                            Some(_) => self.format_type_for_assignability_message(widened.type_id),
+                            None => self.format_type_diagnostic(widened.type_id),
+                        };
+                    }
                 }
                 let (source_str, target_str) = self
                     .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);

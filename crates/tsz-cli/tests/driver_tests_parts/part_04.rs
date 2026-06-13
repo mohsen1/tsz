@@ -705,6 +705,59 @@ fn compile_resolves_node_modules_types() {
 }
 
 #[test]
+fn compile_filters_keys_through_namespace_imported_package_interface() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "module": "commonjs",
+            "target": "es2017",
+            "moduleResolution": "node",
+            "ignoreDeprecations": "6.0",
+            "skipLibCheck": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        r#"import * as L from "lib";
+
+type Conc = {
+  array: L.Validator<string[]>;
+  bool: L.Validator<number>;
+};
+type RK<W> = { [K in keyof W]-?: W[K] extends L.Validator<any> ? K : never }[keyof W];
+type R = RK<Conc>;
+type KeepsArray = "array" extends R ? "Y" : "N";
+
+const result: "Y" = null as any as KeepsArray;
+"#,
+    );
+    write_file(
+        &base.join("node_modules/lib/index.d.ts"),
+        r#"export interface Validator<T> {
+  (props: object): null;
+  tag?: T;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_resolves_tsconfig_types_includes_selected_packages() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1841,4 +1894,3 @@ fn compile_resolves_node_modules_types_versions_empty_env_uses_tsconfig() {
     }));
     assert!(!base.join("dist/src/index.js").is_file());
 }
-

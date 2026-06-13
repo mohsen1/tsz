@@ -974,6 +974,61 @@ withTempDir((dir) => {
 withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
   const output = path.join(dir, "report.json");
+  const perfPath = path.join(dir, "bench.ts-essentials-project.perf.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        winner: "tsgo",
+        factor: 1.2,
+        tsz_ms: 120,
+        tsgo_ms: 100,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "utility types plus recursive JSON shapes",
+        },
+      },
+    ],
+  });
+  writeJson(perfPath, {
+    schema_version: 9,
+    enabled: true,
+    mode: "attribution",
+    wired: {
+      delegate_cross_arena: true,
+      checker_construction: true,
+      interner_intern_calls: true,
+    },
+    delegate: { misses: 0 },
+    checker: { with_parent_cache_constructed: 0 },
+    interner: { intern_calls: 0 },
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps with attribution: 1\/1/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.two_x_target.rows_below_target, 1);
+  assert.equal(report.two_x_target.rows_with_attribution, 1);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, []);
+  assert.deepEqual(report.two_x_target.missing_attribution_plan, []);
+  assert.equal(
+    report.target_gaps[0].attribution_status.warning,
+    "attribution dominant_subsystem missing",
+  );
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
   const perfPath = path.join(dir, "bench.perf.json");
   writeJson(input, {
     results: [

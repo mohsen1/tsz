@@ -107,22 +107,16 @@ pub(super) fn dedup_in_place(v: &mut Vec<String>) {
     v.retain(|s| seen.insert(s.clone()));
 }
 
+/// Lexically collapse `.`/`..` in a joined package/config-relative path.
+///
+/// Delegates to the canonical
+/// [`tsz_common::module_resolution::path_identity::normalize_segments`]:
+/// `..` clamps at the filesystem root (as the historical local loop already
+/// did) and an unmatched `..` on a relative path is kept (the historical
+/// loop dropped it; callers always join onto rooted package/config
+/// directories, where the two behaviors agree).
 pub(super) fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-
-    normalized
+    tsz_common::module_resolution::path_identity::normalize_segments(path)
 }
 
 fn strip_path_file_extension(path: &Path, strip: fn(&str) -> &str) -> PathBuf {
@@ -858,6 +852,28 @@ pub(super) fn has_source_extension(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_path_collapses_dot_segments_and_clamps_at_root() {
+        // Pinned before routing through path_identity::normalize_segments.
+        // Every caller joins onto a package/config directory, so the inputs
+        // are effectively rooted; these shapes must not change.
+        assert_eq!(
+            normalize_path(Path::new("/pkg/./lib/../x")),
+            PathBuf::from("/pkg/x")
+        );
+        // Excess `..` clamps at the filesystem root (both the historical loop
+        // and the canonical helper agree here).
+        assert_eq!(normalize_path(Path::new("/a/../../b")), PathBuf::from("/b"));
+        assert_eq!(
+            normalize_path(Path::new("/cfg/dir/../paths/target")),
+            PathBuf::from("/cfg/paths/target")
+        );
+        // Canonical semantics for a relative input (unreachable from the
+        // rooted call sites): an unmatched `..` is kept, where the
+        // historical loop silently dropped it (`x`).
+        assert_eq!(normalize_path(Path::new("../x")), PathBuf::from("../x"));
+    }
 
     #[test]
     fn strip_ts_path_extension_uses_shared_ts_family_rules() {

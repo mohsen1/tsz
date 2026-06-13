@@ -205,71 +205,36 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn widen_anonymous_object_literal_display_text(display: &str) -> String {
+    /// Re-render an anonymous object display with its literal annotations
+    /// widened at the type level (#13075).
+    ///
+    /// The historical rewrite only applied to displays rendered as a bare
+    /// anonymous object (`{ ... }`); keep that scope so named, union, and
+    /// array surfaces preserve their literal annotations.
+    fn rerender_anonymous_object_with_widened_literals(
+        &mut self,
+        type_id: TypeId,
+        display: String,
+    ) -> String {
         if !display.starts_with("{ ") || !display.ends_with(" }") {
-            return display.to_string();
+            return display;
         }
-
-        let bytes = display.as_bytes();
-        let mut out = String::with_capacity(display.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            out.push(bytes[i] as char);
-            if bytes[i] != b':' {
-                i += 1;
-                continue;
-            }
-            i += 1;
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                out.push(bytes[i] as char);
-                i += 1;
-            }
-            if i >= bytes.len() {
-                break;
-            }
-            if bytes[i] == b'"' {
-                i += 1;
-                while i < bytes.len() {
-                    if bytes[i] == b'\\' {
-                        i = (i + 2).min(bytes.len());
-                        continue;
-                    }
-                    if bytes[i] == b'"' {
-                        i += 1;
-                        break;
-                    }
-                    i += 1;
-                }
-                out.push_str("string");
-            } else if display[i..].starts_with("true") {
-                i += 4;
-                out.push_str("boolean");
-            } else if display[i..].starts_with("false") {
-                i += 5;
-                out.push_str("boolean");
-            } else {
-                let start = i;
-                if bytes[i] == b'-' {
-                    i += 1;
-                }
-                let digits_start = i;
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    i += 1;
-                }
-                if i > digits_start {
-                    if i < bytes.len() && bytes[i] == b'.' {
-                        i += 1;
-                        while i < bytes.len() && bytes[i].is_ascii_digit() {
-                            i += 1;
-                        }
-                    }
-                    out.push_str("number");
-                } else {
-                    out.push_str(&display[start..i]);
-                }
-            }
+        let widened = self.widen_annotation_literals_for_display(
+            type_id,
+            diagnostics::AnnotationLiteralWideningPolicy::ALL,
+        );
+        if widened.display_residue {
+            // Literal spellings live only in fresh-object-literal display
+            // provenance; render the canonical (display-property-free) form.
+            return self.format_type_diagnostic_widened(widened.type_id);
         }
-        out
+        if widened.type_id == type_id {
+            return display;
+        }
+        self.format_type_for_diagnostic_role(
+            widened.type_id,
+            DiagnosticTypeDisplayRole::DefaultDiagnostic,
+        )
     }
 
     pub(crate) fn resolve_diagnostic_anchor(
@@ -385,8 +350,10 @@ impl<'a> CheckerState<'a> {
                     target_display_type,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
                 );
-                let src_str = Self::widen_anonymous_object_literal_display_text(&src_str);
-                let tgt_str = Self::widen_anonymous_object_literal_display_text(&tgt_str);
+                let src_str = self
+                    .rerender_anonymous_object_with_widened_literals(source_display_type, src_str);
+                let tgt_str = self
+                    .rerender_anonymous_object_with_widened_literals(target_display_type, tgt_str);
                 let (src_str, tgt_str) = self.finalize_pair_display_for_diagnostic(
                     source_display_type,
                     target_display_type,

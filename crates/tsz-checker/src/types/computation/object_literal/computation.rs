@@ -1593,15 +1593,28 @@ impl<'a> CheckerState<'a> {
                                 &name,
                                 Some(refined_method_type),
                             );
-                        let refined_this_display = Self::widen_primitive_literal_type_display(
-                            &self.format_type(crate::query_boundaries::common::widen_type(
+                        let refined_this_display = {
+                            let widened = crate::query_boundaries::common::widen_type(
                                 self.ctx.types,
                                 crate::query_boundaries::common::widen_freshness(
                                     self.ctx.types,
                                     refined_this_type,
                                 ),
-                            )),
-                        );
+                            );
+                            // Widen the literal annotations the deep widen
+                            // leaves behind (method returns, signature
+                            // params) at the type level, then print once
+                            // (#13075). The synthetic `this` object is
+                            // factory-built without display provenance, so
+                            // any display residue is ignored.
+                            let widened = self
+                                .widen_annotation_literals_for_display(
+                                    widened,
+                                    crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+                                )
+                                .type_id;
+                            self.format_type(widened)
+                        };
                         self.ctx.this_type_stack.push(refined_this_type);
                         let rerun_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
                         let rerun_pre_refresh_snap = self.ctx.snapshot_diagnostics();
