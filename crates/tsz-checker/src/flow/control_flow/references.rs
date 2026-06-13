@@ -861,7 +861,7 @@ impl<'a> FlowAnalyzer<'a> {
         assignment_root == reference_root
     }
 
-    fn reference_root_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+    pub(crate) fn reference_root_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;
 
