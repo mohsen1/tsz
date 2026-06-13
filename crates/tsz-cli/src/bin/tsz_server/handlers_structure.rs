@@ -460,7 +460,7 @@ impl Server {
                 "projectUsesOutFile": project.uses_out_file,
             }]))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_compile_on_save_emit_file(
@@ -644,7 +644,7 @@ impl Server {
             }
             Some(serde_json::json!([body_item]))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     /// Issue #3753: resolve an outgoing-call import-binding to the actual
@@ -1235,7 +1235,7 @@ impl Server {
                 Some(serde_json::json!(body))
             }
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     /// `configurePlugin` — stores plugin configuration for future use.
@@ -1710,7 +1710,7 @@ impl Server {
             }]))
         })();
 
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_outlining_spans(
@@ -1758,7 +1758,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_brace(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -1823,6 +1823,6 @@ impl Server {
                 Some(serde_json::json!([]))
             }
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 }

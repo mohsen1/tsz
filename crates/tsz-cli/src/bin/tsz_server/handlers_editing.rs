@@ -473,7 +473,7 @@ impl Server {
             Some(serde_json::json!(results))
         })();
 
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     /// Scan `source_text` from `start_pos` for TODO comments. Skips string and
@@ -1724,7 +1724,7 @@ impl Server {
 
             Some(serde_json::json!(diagnostics))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 }
 

@@ -59,7 +59,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_type_definition(
@@ -127,7 +127,7 @@ impl Server {
 
             Some(serde_json::json!(body))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_definition_and_bound_span(
@@ -610,7 +610,7 @@ impl Server {
                 "highlightSpans": highlight_spans,
             }]))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     /// Find highlight groups across `files_to_search` using the project-level

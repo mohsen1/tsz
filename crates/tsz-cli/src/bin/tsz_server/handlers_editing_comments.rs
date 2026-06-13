@@ -97,7 +97,7 @@ impl Server {
                 edits,
             ))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_toggle_multiline_comment(
@@ -271,7 +271,7 @@ impl Server {
                 edits,
             ))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     fn comment_edits_for_protocol(
@@ -459,7 +459,7 @@ impl Server {
                 edits,
             ))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 
     pub(crate) fn handle_uncomment_selection(
@@ -542,6 +542,6 @@ impl Server {
                 edits,
             ))
         })();
-        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_or_empty_array(seq, request, result)
     }
 }
