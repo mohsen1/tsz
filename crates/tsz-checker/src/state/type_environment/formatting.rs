@@ -2,6 +2,7 @@
 //!
 //! Extracted from `core.rs` to keep module size manageable.
 
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -111,6 +112,14 @@ impl<'a> CheckerState<'a> {
     /// Enables display properties to preserve original literal types from the
     /// freshness model (e.g., `"frizzlebizzle"` not `string`) matching tsc.
     pub fn format_type_diagnostic(&self, type_id: TypeId) -> String {
+        self.format_type_for_basic_diagnostic_role(
+            type_id,
+            DiagnosticTypeDisplayRole::DefaultDiagnostic,
+        )
+        .expect("DefaultDiagnostic is a basic diagnostic display role")
+    }
+
+    fn format_type_diagnostic_impl(&self, type_id: TypeId) -> String {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
@@ -562,6 +571,14 @@ impl<'a> CheckerState<'a> {
     /// tsc shows widened property types in assignability messages:
     /// `{ two: number }` not `{ two: 1 }`.
     pub fn format_type_diagnostic_widened(&self, type_id: TypeId) -> String {
+        self.format_type_for_basic_diagnostic_role(
+            type_id,
+            DiagnosticTypeDisplayRole::WidenedDiagnostic,
+        )
+        .expect("WidenedDiagnostic is a basic diagnostic display role")
+    }
+
+    fn format_type_diagnostic_widened_impl(&self, type_id: TypeId) -> String {
         let mut formatter = self
             .ctx
             .create_type_formatter()
@@ -573,6 +590,14 @@ impl<'a> CheckerState<'a> {
     /// Format a type for TS2741 messages, showing the merged object form
     /// instead of following `display_alias` to intersection types.
     pub fn format_type_diagnostic_flattened(&self, type_id: TypeId) -> String {
+        self.format_type_for_basic_diagnostic_role(
+            type_id,
+            DiagnosticTypeDisplayRole::FlattenedDiagnostic,
+        )
+        .expect("FlattenedDiagnostic is a basic diagnostic display role")
+    }
+
+    fn format_type_diagnostic_flattened_impl(&self, type_id: TypeId) -> String {
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
@@ -652,6 +677,29 @@ impl<'a> CheckerState<'a> {
             .create_diagnostic_type_formatter()
             .with_display_properties();
         formatter.format(type_id).into_owned()
+    }
+
+    /// Format checker-owned diagnostic display roles that are pure formatter
+    /// policy selections. Context-sensitive roles still live in the
+    /// `error_reporter` dispatcher because they may evaluate the peer type or
+    /// inspect the diagnostic anchor before choosing the display surface.
+    pub(crate) fn format_type_for_basic_diagnostic_role(
+        &self,
+        type_id: TypeId,
+        role: DiagnosticTypeDisplayRole,
+    ) -> Option<String> {
+        match role {
+            DiagnosticTypeDisplayRole::DefaultDiagnostic => {
+                Some(self.format_type_diagnostic_impl(type_id))
+            }
+            DiagnosticTypeDisplayRole::WidenedDiagnostic => {
+                Some(self.format_type_diagnostic_widened_impl(type_id))
+            }
+            DiagnosticTypeDisplayRole::FlattenedDiagnostic => {
+                Some(self.format_type_diagnostic_flattened_impl(type_id))
+            }
+            _ => None,
+        }
     }
 
     /// Format a pair of types for diagnostics that display two types side by side.
