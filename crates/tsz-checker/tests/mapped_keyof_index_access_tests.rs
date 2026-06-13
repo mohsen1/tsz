@@ -122,6 +122,26 @@ const bad: { title: "other" } = (null as any as Picked);
     );
 }
 
+/// Merged interface/constructor symbols carry value flags for `typeof`, but a
+/// bare type reference must still resolve to the instance side in relation prep.
+#[test]
+fn merged_interface_var_type_reference_stays_instance_in_relation_path() {
+    let diagnostics = check_strict(
+        r#"
+interface ElementLike { innerHTML: string; }
+declare var ElementLike: { new (): ElementLike; prototype: ElementLike };
+type Mirror<T> = { [K in keyof T]: T[K] };
+declare const node: Mirror<ElementLike>;
+node.innerHTML = "";
+"#,
+    );
+
+    assert!(
+        no_errors(&diagnostics),
+        "expected merged interface/var type reference to stay instance-shaped, got: {diagnostics:#?}"
+    );
+}
+
 // ============================================================================
 // Core: mapped-type keyof index access evaluates to the template
 // ============================================================================
