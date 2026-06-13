@@ -69,6 +69,13 @@ impl SharedQueryCache {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_for_instantiation_family_test(share_instantiation_family: bool) -> Self {
+        let mut cache = Self::new();
+        cache.share_instantiation_family = share_instantiation_family;
+        cache
+    }
+
     /// Number of entries across all shared caches.
     pub fn total_entries(&self) -> usize {
         self.eval_cache.len()

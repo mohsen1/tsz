@@ -126,6 +126,51 @@ fn application_eval_cache_is_per_file_isolated() {
 }
 
 #[test]
+fn opt_in_shared_application_eval_cache_reuses_across_file_caches() {
+    // Structural rule: #13240's shared application-eval cache stays opt-in,
+    // but once a shared cache is explicitly opted in, sibling file-local
+    // `QueryCache`s can reuse the same generic application answer and expose
+    // that reuse through shared hit/miss/insert counters.
+    let interner = TypeInterner::new();
+    let shared = SharedQueryCache::new_for_instantiation_family_test(true);
+
+    let def_id = DefId(7);
+    let args = &[TypeId::STRING, TypeId::NUMBER];
+    let result = TypeId::BOOLEAN;
+
+    {
+        let db_a = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_a.lookup_application_eval_cache(def_id, args, false),
+            None
+        );
+        db_a.insert_application_eval_cache(def_id, args, false, result);
+
+        let stats = db_a.statistics();
+        assert_eq!(stats.application_eval_cache_entries, 1);
+        assert_eq!(stats.application_eval_cache_shared_inserts, 1);
+        assert_eq!(stats.application_eval_cache_shared_hits, 0);
+        assert_eq!(stats.application_eval_cache_shared_misses, 1);
+    }
+
+    {
+        let db_b = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_b.lookup_application_eval_cache(def_id, args, false),
+            Some(result)
+        );
+
+        let stats = db_b.statistics();
+        assert_eq!(stats.application_eval_cache_entries, 1);
+        assert_eq!(stats.application_eval_cache_hits, 1);
+        assert_eq!(stats.application_eval_cache_misses, 0);
+        assert_eq!(stats.application_eval_cache_shared_hits, 1);
+        assert_eq!(stats.application_eval_cache_shared_misses, 0);
+        assert_eq!(stats.application_eval_cache_shared_inserts, 0);
+    }
+}
+
+#[test]
 fn application_eval_cache_stats_visible_in_display() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
@@ -191,6 +236,42 @@ fn instantiation_cache_is_per_file_isolated() {
         0,
         "SharedQueryCache must not store instantiation_cache entries"
     );
+}
+
+#[test]
+fn opt_in_shared_instantiation_cache_reuses_across_file_caches() {
+    // Structural rule: #13240's shared instantiation cache remains disabled
+    // by default, but an explicitly opted-in shared cache should let a fresh
+    // file-local `QueryCache` warm itself from a sibling file's instantiation.
+    let interner = TypeInterner::new();
+    let shared = SharedQueryCache::new_for_instantiation_family_test(true);
+    let key = InstantiationCacheKey::new(TypeId::OBJECT, CanonicalSubst::empty(), 0, None);
+    let result = TypeId::BOOLEAN;
+
+    {
+        let db_a = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(db_a.lookup_instantiation_cache(&key), None);
+        db_a.insert_instantiation_cache(key.clone(), result);
+
+        let stats = db_a.statistics();
+        assert_eq!(stats.instantiation_cache_entries, 1);
+        assert_eq!(stats.instantiation_cache_shared_inserts, 1);
+        assert_eq!(stats.instantiation_cache_shared_hits, 0);
+        assert_eq!(stats.instantiation_cache_shared_misses, 1);
+    }
+
+    {
+        let db_b = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(db_b.lookup_instantiation_cache(&key), Some(result));
+
+        let stats = db_b.statistics();
+        assert_eq!(stats.instantiation_cache_entries, 1);
+        assert_eq!(stats.instantiation_cache_hits, 1);
+        assert_eq!(stats.instantiation_cache_misses, 0);
+        assert_eq!(stats.instantiation_cache_shared_hits, 1);
+        assert_eq!(stats.instantiation_cache_shared_misses, 0);
+        assert_eq!(stats.instantiation_cache_shared_inserts, 0);
+    }
 }
 
 // Inner relation cache inserts driven by the `SubtypeChecker`'s recursive
