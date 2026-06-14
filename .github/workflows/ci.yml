@@ -854,11 +854,25 @@ jobs:
           console.log("");
           console.log(`Status: ${report.status}`);
           console.log(`Runs: ${report.runs}, warmup: ${report.warmup}`);
+          if (report.noise_summary?.max_case) {
+            const maxCase = report.noise_summary.max_case;
+            console.log(
+              `Max within-run spread: \`${maxCase.name}\` ${maxCase.relative_spread_pct.toFixed(2)}% (${maxCase.spread_ms.toFixed(2)}ms)`
+            );
+          }
+          if (report.run_context?.git_sha || report.run_context?.github_run_id) {
+            const sha = report.run_context.git_sha ? report.run_context.git_sha.slice(0, 12) : "unknown";
+            const runId = report.run_context.github_run_id || "local";
+            const attempt = report.run_context.github_run_attempt || "1";
+            console.log(`Run context: sha \`${sha}\`, run \`${runId}\`, attempt \`${attempt}\``);
+          }
           console.log("");
-          console.log("| Case | Median | Mean |");
-          console.log("| --- | ---: | ---: |");
+          console.log("| Case | Median | Mean | Spread |");
+          console.log("| --- | ---: | ---: | ---: |");
           for (const [name, data] of Object.entries(report.cases || {})) {
-            console.log(`| \`${name}\` | ${data.median_ms.toFixed(2)}ms | ${data.mean_ms.toFixed(2)}ms |`);
+            const spread = data.noise?.relative_spread_pct;
+            const spreadCell = typeof spread === "number" ? `${spread.toFixed(2)}%` : "";
+            console.log(`| \`${name}\` | ${data.median_ms.toFixed(2)}ms | ${data.mean_ms.toFixed(2)}ms | ${spreadCell} |`);
           }
           if ((report.regressions || []).length > 0) {
             console.log("");
