@@ -1312,7 +1312,9 @@ impl<'a> FlowAnalyzer<'a> {
                 {
                     return current;
                 }
-                run.push(current);
+                if current == alias_flow_id {
+                    *run_contains_alias_flow_id = true;
+                }
                 current = ant;
                 continue;
             }
