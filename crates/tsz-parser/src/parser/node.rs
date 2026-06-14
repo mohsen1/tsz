@@ -192,8 +192,32 @@ pub enum NodeCategory {
 // Typed Data Pools
 // =============================================================================
 
+/// Declare a family of AST node-data structs that share the standard
+/// `#[derive(Clone, Debug, Serialize, Deserialize)]` surface, spelling those
+/// four derives in exactly one place instead of on every struct.
+///
+/// Each wrapped struct keeps its own doc comments, container attributes, and
+/// field-level `#[serde(...)]` attributes verbatim, so the generated output is
+/// byte-identical to writing the derive on each struct. Node-data variants that
+/// need a different derive set (for example the `Copy` headers or the `Default`
+/// arenas) stay outside this macro with their own explicit derive.
+macro_rules! node_data_structs {
+    (
+        $(
+            $(#[$meta:meta])*
+            $vis:vis struct $name:ident { $($body:tt)* }
+        )+
+    ) => {
+        $(
+            $(#[$meta])*
+            #[derive(Clone, Debug, Serialize, Deserialize)]
+            $vis struct $name { $($body)* }
+        )+
+    };
+}
+
+node_data_structs! {
 /// Data for identifier nodes (`Identifier`, `PrivateIdentifier`)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IdentifierData {
     /// Interned atom for O(1) comparison (`OPTIMIZATION`: use this instead of `escaped_text`).
     /// `AstAtom` indices are stable within a single arena because they are
@@ -212,7 +236,6 @@ pub struct IdentifierData {
 }
 
 /// Data for string literals (`StringLiteral`, template parts)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LiteralData {
     pub text: String,
     pub raw_text: Option<String>,
@@ -230,7 +253,6 @@ pub struct LiteralData {
 }
 
 /// Data for binary expressions
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BinaryExprData {
     pub left: NodeIndex,
     pub operator_token: u16, // SyntaxKind
@@ -238,14 +260,12 @@ pub struct BinaryExprData {
 }
 
 /// Data for unary expressions (prefix/postfix)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnaryExprData {
     pub operator: u16, // SyntaxKind
     pub operand: NodeIndex,
 }
 
 /// Data for call/new expressions
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CallExprData {
     pub expression: NodeIndex,
     pub type_arguments: Option<NodeList>,
@@ -253,7 +273,6 @@ pub struct CallExprData {
 }
 
 /// Data for property/element access
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessExprData {
     pub expression: NodeIndex,
     pub name_or_argument: NodeIndex,
@@ -261,7 +280,6 @@ pub struct AccessExprData {
 }
 
 /// Data for function declarations/expressions/arrows
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FunctionData {
     pub modifiers: Option<NodeList>,
     pub is_async: bool,       // Async function
@@ -275,7 +293,6 @@ pub struct FunctionData {
 }
 
 /// Data for class declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClassData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -285,7 +302,6 @@ pub struct ClassData {
 }
 
 /// Data for if statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IfStatementData {
     pub expression: NodeIndex,
     pub then_statement: NodeIndex,
@@ -293,7 +309,6 @@ pub struct IfStatementData {
 }
 
 /// Data for for/while/do loops
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LoopData {
     pub initializer: NodeIndex,
     pub condition: NodeIndex,
@@ -302,10 +317,10 @@ pub struct LoopData {
 }
 
 /// Data for block statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockData {
     pub statements: NodeList,
     pub multi_line: bool,
+}
 }
 
 /// Data for expression statements
@@ -314,15 +329,14 @@ pub struct ExpressionStatementData {
     pub expression: NodeIndex,
 }
 
+node_data_structs! {
 /// Parser-owned recovery fact for malformed `''.typeof(expr)` declaration tails.
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecoveredTypeofMemberCallData {
     pub argument_pos: u32,
     pub argument_end: u32,
 }
 
 /// Data for variable declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VariableData {
     pub modifiers: Option<NodeList>,
     pub declarations: NodeList,
@@ -330,20 +344,17 @@ pub struct VariableData {
 }
 
 /// Data for type references
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeRefData {
     pub type_name: NodeIndex,
     pub type_arguments: Option<NodeList>,
 }
 
 /// Data for union/intersection types
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompositeTypeData {
     pub types: NodeList,
 }
 
 /// Data for conditional expressions (a ? b : c)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConditionalExprData {
     pub condition: NodeIndex,
     pub when_true: NodeIndex,
@@ -351,27 +362,23 @@ pub struct ConditionalExprData {
 }
 
 /// Data for object/array literals
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LiteralExprData {
     pub elements: NodeList,
     pub multi_line: bool,
 }
 
 /// Data for parenthesized expressions
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParenthesizedData {
     pub expression: NodeIndex,
 }
 
 /// Data for spread/await/yield expressions
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnaryExprDataEx {
     pub expression: NodeIndex,
     pub asterisk_token: bool, // For yield*
 }
 
 /// Data for as/satisfies/type assertion expressions
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeAssertionData {
     pub expression: NodeIndex,
     pub type_node: NodeIndex,
@@ -380,33 +387,28 @@ pub struct TypeAssertionData {
 }
 
 /// Data for return/throw statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReturnData {
     pub expression: NodeIndex,
 }
 
 /// Data for expression statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExprStatementData {
     pub expression: NodeIndex,
 }
 
 /// Data for switch statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SwitchData {
     pub expression: NodeIndex,
     pub case_block: NodeIndex,
 }
 
 /// Data for case/default clauses
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CaseClauseData {
     pub expression: NodeIndex, // NONE for default clause
     pub statements: NodeList,
 }
 
 /// Data for try statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TryData {
     pub try_block: NodeIndex,
     pub catch_clause: NodeIndex,
@@ -414,34 +416,29 @@ pub struct TryData {
 }
 
 /// Data for catch clauses
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CatchClauseData {
     pub variable_declaration: NodeIndex,
     pub block: NodeIndex,
 }
 
 /// Data for labeled statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LabeledData {
     pub label: NodeIndex,
     pub statement: NodeIndex,
 }
 
 /// Data for break/continue statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JumpData {
     pub label: NodeIndex,
 }
 
 /// Data for with statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WithData {
     pub expression: NodeIndex,
     pub statement: NodeIndex,
 }
 
 /// Data for interface declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InterfaceData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -451,7 +448,6 @@ pub struct InterfaceData {
 }
 
 /// Data for type alias declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeAliasData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -460,7 +456,6 @@ pub struct TypeAliasData {
 }
 
 /// Data for enum declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EnumData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -468,14 +463,12 @@ pub struct EnumData {
 }
 
 /// Data for enum members
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EnumMemberData {
     pub name: NodeIndex,
     pub initializer: NodeIndex,
 }
 
 /// Data for module/namespace declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModuleData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -483,13 +476,11 @@ pub struct ModuleData {
 }
 
 /// Data for module blocks: { statements }
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModuleBlockData {
     pub statements: Option<NodeList>,
 }
 
 /// Data for property/method signatures
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignatureData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -500,7 +491,6 @@ pub struct SignatureData {
 }
 
 /// Data for index signatures
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndexSignatureData {
     pub modifiers: Option<NodeList>,
     pub parameters: NodeList,
@@ -508,7 +498,6 @@ pub struct IndexSignatureData {
 }
 
 /// Data for property declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PropertyDeclData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -519,7 +508,6 @@ pub struct PropertyDeclData {
 }
 
 /// Data for method declarations (class methods)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MethodDeclData {
     pub modifiers: Option<NodeList>,
     pub asterisk_token: bool,
@@ -532,7 +520,6 @@ pub struct MethodDeclData {
 }
 
 /// Data for constructor declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConstructorData {
     pub modifiers: Option<NodeList>,
     pub type_parameters: Option<NodeList>,
@@ -541,7 +528,6 @@ pub struct ConstructorData {
 }
 
 /// Data for accessor declarations (get/set)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessorData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -552,7 +538,6 @@ pub struct AccessorData {
 }
 
 /// Data for parameter declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParameterData {
     pub modifiers: Option<NodeList>,
     pub dot_dot_dot_token: bool,
@@ -563,7 +548,6 @@ pub struct ParameterData {
 }
 
 /// Data for type parameter declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeParameterData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -572,27 +556,23 @@ pub struct TypeParameterData {
 }
 
 /// Data for decorator nodes
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecoratorData {
     pub expression: NodeIndex,
 }
 
 /// Data for heritage clauses
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeritageData {
     pub token: u16, // ExtendsKeyword or ImplementsKeyword
     pub types: NodeList,
 }
 
 /// Data for expression with type arguments
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExprWithTypeArgsData {
     pub expression: NodeIndex,
     pub type_arguments: Option<NodeList>,
 }
 
 /// Data for import declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportDeclData {
     pub modifiers: Option<NodeList>,
     /// For `import type X = require(...)` (import-equals only): true when the `type` keyword was present.
@@ -604,7 +584,6 @@ pub struct ImportDeclData {
 }
 
 /// Data for import clauses
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportClauseData {
     pub is_type_only: bool,
     pub is_deferred: bool,
@@ -613,14 +592,12 @@ pub struct ImportClauseData {
 }
 
 /// Data for namespace/named imports
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NamedImportsData {
     pub name: NodeIndex,    // For namespace import
     pub elements: NodeList, // For named imports
 }
 
 /// Data for import/export specifiers
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpecifierData {
     pub is_type_only: bool,
     pub property_name: NodeIndex,
@@ -628,7 +605,6 @@ pub struct SpecifierData {
 }
 
 /// Data for export declarations
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExportDeclData {
     pub modifiers: Option<NodeList>,
     pub is_type_only: bool,
@@ -643,7 +619,6 @@ pub struct ExportDeclData {
 }
 
 /// Data for export assignments
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExportAssignmentData {
     pub modifiers: Option<NodeList>,
     pub is_export_equals: bool,
@@ -651,7 +626,6 @@ pub struct ExportAssignmentData {
 }
 
 /// Data for import attributes
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportAttributesData {
     pub token: u16,
     pub elements: NodeList,
@@ -659,20 +633,17 @@ pub struct ImportAttributesData {
 }
 
 /// Data for import attribute
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportAttributeData {
     pub name: NodeIndex,
     pub value: NodeIndex,
 }
 
 /// Data for binding patterns
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BindingPatternData {
     pub elements: NodeList,
 }
 
 /// Data for binding elements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BindingElementData {
     pub dot_dot_dot_token: bool,
     pub property_name: NodeIndex,
@@ -681,7 +652,6 @@ pub struct BindingElementData {
 }
 
 /// Data for property assignments
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PropertyAssignmentData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -689,7 +659,6 @@ pub struct PropertyAssignmentData {
 }
 
 /// Data for shorthand property assignments
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShorthandPropertyData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
@@ -708,13 +677,11 @@ pub struct ShorthandPropertyData {
 }
 
 /// Data for spread assignments
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpreadData {
     pub expression: NodeIndex,
 }
 
 /// Data for variable declarations (individual)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VariableDeclarationData {
     pub name: NodeIndex,            // Identifier or BindingPattern
     pub exclamation_token: bool,    // Definite assignment assertion
@@ -723,7 +690,6 @@ pub struct VariableDeclarationData {
 }
 
 /// Data for for-in/for-of statements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForInOfData {
     pub await_modifier: bool,   // For for-await-of
     pub initializer: NodeIndex, // Variable declaration or expression
@@ -734,21 +700,18 @@ pub struct ForInOfData {
 /// Data for debugger/empty statements (no data needed, use token)
 ///
 /// Data for template expressions
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TemplateExprData {
     pub head: NodeIndex,
     pub template_spans: NodeList,
 }
 
 /// Data for template spans
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TemplateSpanData {
     pub expression: NodeIndex,
     pub literal: NodeIndex,
 }
 
 /// Data for tagged template expressions
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaggedTemplateData {
     pub tag: NodeIndex,
     pub type_arguments: Option<NodeList>,
@@ -756,20 +719,17 @@ pub struct TaggedTemplateData {
 }
 
 /// Data for qualified names
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QualifiedNameData {
     pub left: NodeIndex,
     pub right: NodeIndex,
 }
 
 /// Data for computed property names
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ComputedPropertyData {
     pub expression: NodeIndex,
 }
 
 /// Data for type nodes (function type, constructor type)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FunctionTypeData {
     pub type_parameters: Option<NodeList>,
     pub parameters: NodeList,
@@ -782,38 +742,32 @@ pub struct FunctionTypeData {
 }
 
 /// Data for type query (typeof)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeQueryData {
     pub expr_name: NodeIndex,
     pub type_arguments: Option<NodeList>,
 }
 
 /// Data for type literal
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeLiteralData {
     pub members: NodeList,
 }
 
 /// Data for array type
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArrayTypeData {
     pub element_type: NodeIndex,
 }
 
 /// Data for tuple type
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TupleTypeData {
     pub elements: NodeList,
 }
 
 /// Data for optional/rest types
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WrappedTypeData {
     pub type_node: NodeIndex,
 }
 
 /// Data for conditional types
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConditionalTypeData {
     pub check_type: NodeIndex,
     pub extends_type: NodeIndex,
@@ -822,27 +776,23 @@ pub struct ConditionalTypeData {
 }
 
 /// Data for infer type
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InferTypeData {
     pub type_parameter: NodeIndex,
 }
 
 /// Data for type operator (keyof, unique, readonly)
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypeOperatorData {
     pub operator: u16,
     pub type_node: NodeIndex,
 }
 
 /// Data for indexed access type
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndexedAccessTypeData {
     pub object_type: NodeIndex,
     pub index_type: NodeIndex,
 }
 
 /// Data for mapped type
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MappedTypeData {
     pub readonly_token: NodeIndex,
     pub type_parameter: NodeIndex,
@@ -853,20 +803,17 @@ pub struct MappedTypeData {
 }
 
 /// Data for literal types
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LiteralTypeData {
     pub literal: NodeIndex,
 }
 
 /// Data for template literal types
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TemplateLiteralTypeData {
     pub head: NodeIndex,
     pub template_spans: NodeList,
 }
 
 /// Data for named tuple member
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NamedTupleMemberData {
     pub dot_dot_dot_token: bool,
     pub name: NodeIndex,
@@ -875,7 +822,6 @@ pub struct NamedTupleMemberData {
 }
 
 /// Data for type predicate
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TypePredicateData {
     pub asserts_modifier: bool,
     pub parameter_name: NodeIndex,
@@ -883,7 +829,6 @@ pub struct TypePredicateData {
 }
 
 /// Data for JSX elements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxElementData {
     pub opening_element: NodeIndex,
     pub children: NodeList,
@@ -891,7 +836,6 @@ pub struct JsxElementData {
 }
 
 /// Data for JSX self-closing/opening elements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxOpeningData {
     pub tag_name: NodeIndex,
     pub type_arguments: Option<NodeList>,
@@ -899,13 +843,11 @@ pub struct JsxOpeningData {
 }
 
 /// Data for JSX closing elements
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxClosingData {
     pub tag_name: NodeIndex,
 }
 
 /// Data for JSX fragments
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxFragmentData {
     pub opening_fragment: NodeIndex,
     pub children: NodeList,
@@ -913,47 +855,40 @@ pub struct JsxFragmentData {
 }
 
 /// Data for JSX attributes
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxAttributesData {
     pub properties: NodeList,
 }
 
 /// Data for JSX attribute
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxAttributeData {
     pub name: NodeIndex,
     pub initializer: NodeIndex,
 }
 
 /// Data for JSX spread attribute
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxSpreadAttributeData {
     pub expression: NodeIndex,
 }
 
 /// Data for JSX expression
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxExpressionData {
     pub dot_dot_dot_token: bool,
     pub expression: NodeIndex,
 }
 
 /// Data for JSX text
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxTextData {
     pub text: String,
     pub contains_only_trivia_white_spaces: bool,
 }
 
 /// Data for JSX namespaced name
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsxNamespacedNameData {
     pub namespace: NodeIndex,
     pub name: NodeIndex,
 }
 
 /// Data for source files
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SourceFileData {
     pub statements: NodeList,
     pub end_of_file_token: NodeIndex,
@@ -977,6 +912,7 @@ pub struct SourceFileData {
     pub id: u32,
     pub modifier_flags: u32,
     pub transform_flags: u32,
+}
 }
 
 /// Serialize Arc<str> as a regular string
@@ -1032,6 +968,7 @@ for_each_node_pool!(declare_pool_lengths);
 // Thin Node Arena
 // =============================================================================
 
+node_data_structs! {
 /// A class-body member that parser error recovery dropped after it matched
 /// tsc's `var <name>() { }` statement-level recovery shape: a `var` keyword
 /// treated as an invalid member modifier, a plain identifier name, an empty
@@ -1043,7 +980,6 @@ for_each_node_pool!(declare_pool_lengths);
 /// equivalent tail after the class output. The parser records the recovery
 /// here so emit consumes parser-owned AST data instead of re-scanning raw
 /// source text.
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClassBodyVarFnRecovery {
     /// Start position of the dropped member (the `var` keyword, or the first
     /// modifier when other modifiers precede it). Always inside the span of
@@ -1051,6 +987,7 @@ pub struct ClassBodyVarFnRecovery {
     pub pos: u32,
     /// Recovered declaration name, preserving any original escape spelling.
     pub name: String,
+}
 }
 
 /// Generate [`NodeArenaInner`] with one `Vec<ElementType>` field per entry of
@@ -1305,13 +1242,14 @@ impl NodeArenaInner {
     }
 }
 
+node_data_structs! {
 /// Extended node info for nodes that need more than what fits in Node
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExtendedNodeInfo {
     pub parent: NodeIndex,
     pub id: u32,
     pub modifier_flags: u32,
     pub transform_flags: u32,
+}
 }
 
 impl Default for ExtendedNodeInfo {
