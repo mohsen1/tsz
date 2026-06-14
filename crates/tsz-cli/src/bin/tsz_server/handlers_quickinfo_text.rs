@@ -6,7 +6,7 @@
 
 /// Check if a byte is a valid JS identifier character (ASCII alphanumeric, `_`, or `$`).
 pub(super) const fn is_js_identifier_char(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+    tsz_common::text_scan::is_ascii_identifier_continue(byte)
 }
 
 /// Extract a trailing type name from a display string like `"(var) x: Foo"` → `"Foo"`.

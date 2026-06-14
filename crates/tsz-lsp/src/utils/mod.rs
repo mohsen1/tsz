@@ -228,7 +228,7 @@ pub fn should_backtrack_to_previous_symbol(source_text: &str, offset: u32) -> bo
     }
 
     let prev = bytes[idx - 1];
-    if !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$') {
+    if !tsz_common::text_scan::is_ascii_identifier_continue(prev) {
         return false;
     }
 
@@ -236,8 +236,7 @@ pub fn should_backtrack_to_previous_symbol(source_text: &str, offset: u32) -> bo
         return true;
     }
 
-    let current = bytes[idx];
-    !(current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
+    !tsz_common::text_scan::is_ascii_identifier_continue(bytes[idx])
 }
 
 /// Check if a node is the `import` keyword (for dynamic import expressions).

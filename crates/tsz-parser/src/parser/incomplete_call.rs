@@ -54,10 +54,7 @@ const DECLARATION_KEYWORDS: [&str; 7] = [
     "module",
 ];
 
-#[inline]
-const fn is_ident_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
-}
+use tsz_common::text_scan::is_ascii_identifier_continue as is_ident_byte;
 
 #[inline]
 fn is_less_than_or_equal(bytes: &[u8], idx: usize) -> bool {

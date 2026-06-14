@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
         (!name.is_empty()
             && name
                 .chars()
-                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                .all(tsz_common::text_scan::is_ascii_identifier_continue_char))
         .then_some(name)
     }
 

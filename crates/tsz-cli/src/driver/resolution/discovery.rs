@@ -391,11 +391,7 @@ pub(crate) fn collect_jsdoc_module_requests(
     requests
 }
 
-/// True for bytes that can appear inside a JS identifier (so the byte before an
-/// `import` keyword can be checked for a word boundary).
-const fn is_identifier_part_byte(byte: u8) -> bool {
-    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
-}
+use tsz_common::text_scan::is_ascii_identifier_continue as is_identifier_part_byte;
 
 /// Append every `import(<quote>specifier<quote>)` specifier found in `text` to
 /// `out`. Requires a word boundary before `import` so identifiers ending in
@@ -570,7 +566,7 @@ pub(crate) fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
 }
 
 pub(crate) const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
-    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+    tsz_common::text_scan::is_ascii_identifier_continue_char(ch)
 }
 
 #[cfg(test)]

@@ -1,4 +1,20 @@
-//! Char-boundary-safe text windowing helpers.
+//! Byte-level source-text scanning primitives.
+//!
+//! Phases that scan raw source or display text at the byte level all need the
+//! same handful of leaf operations: "is this byte/char an ASCII identifier
+//! char", "skip past a quoted literal", "is this needle a standalone
+//! (whole-word) token", and "skip ASCII whitespace". This module is the single
+//! source of truth for those primitives so the emitter, CLI, parser, binder,
+//! checker, and LSP stop re-deriving (and silently drifting) their own copies.
+//!
+//! The identifier predicates are the ASCII fast path mirroring
+//! `tsz_scanner`'s Unicode `is_ecmascript_identifier_*`: an identifier *start*
+//! is `_`, `$`, or an ASCII letter; an identifier *continue* additionally
+//! admits ASCII digits. Callers that need full Unicode identifier semantics
+//! must use the scanner helpers; these cover the ASCII-only byte/char scans
+//! that walk already-emitted text or display strings.
+//!
+//! # Char-boundary-safe text windowing
 //!
 //! Several phases scan only the leading portion of a source file — JSX pragma
 //! detection (`@jsx`, `@jsxImportSource`, `@jsxRuntime`, `@jsxFrag`) caps the
@@ -69,9 +85,234 @@ pub fn leading_window(text: &str, max_bytes: usize) -> &str {
     &text[..limit]
 }
 
+/// True when `b` can begin an ASCII identifier: `_`, `$`, or an ASCII letter.
+///
+/// The ASCII fast path for `tsz_scanner`'s Unicode `is_ecmascript_identifier_start`.
+#[inline]
+#[must_use]
+pub const fn is_ascii_identifier_start(b: u8) -> bool {
+    b == b'_' || b == b'$' || b.is_ascii_alphabetic()
+}
+
+/// True when `b` can continue an ASCII identifier: an identifier-start byte or
+/// an ASCII digit.
+///
+/// The ASCII fast path for `tsz_scanner`'s Unicode `is_ecmascript_identifier_part`.
+#[inline]
+#[must_use]
+pub const fn is_ascii_identifier_continue(b: u8) -> bool {
+    is_ascii_identifier_start(b) || b.is_ascii_digit()
+}
+
+/// `char` variant of [`is_ascii_identifier_start`]: `_`, `$`, or an ASCII letter.
+///
+/// Non-ASCII characters return `false`; callers that need Unicode identifier
+/// semantics must use the scanner helpers instead.
+#[inline]
+#[must_use]
+pub const fn is_ascii_identifier_start_char(c: char) -> bool {
+    c == '_' || c == '$' || c.is_ascii_alphabetic()
+}
+
+/// `char` variant of [`is_ascii_identifier_continue`]: an identifier-start char
+/// or an ASCII digit.
+#[inline]
+#[must_use]
+pub const fn is_ascii_identifier_continue_char(c: char) -> bool {
+    is_ascii_identifier_start_char(c) || c.is_ascii_digit()
+}
+
+/// Advance past a quoted literal that opens at `start` (the opening `quote`
+/// byte) and return the index just after its closing quote.
+///
+/// Policy (one source of truth for every byte-level quoted-literal skip):
+/// - A backslash escapes the next byte (the escape pair is consumed, clamped at
+///   end-of-input).
+/// - A matching `quote` byte closes the literal; the returned index points just
+///   past it.
+/// - A raw line terminator (`\n`/`\r`) terminates a single-line string literal
+///   (`'`/`"`): the literal is treated as closed and the returned index points
+///   *at* the terminator, so the caller resumes scanning there. This matches
+///   the TS grammar (single-line strings cannot contain raw newlines) and lets
+///   an unterminated string fail gracefully instead of consuming to EOF.
+/// - Template literals (`` ` ``) may span newlines, so raw line terminators do
+///   not terminate them.
+///
+/// When the literal is unterminated, the input length is returned.
+#[inline]
+#[must_use]
+pub fn skip_quoted_literal(bytes: &[u8], start: usize, quote: u8) -> usize {
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos = (pos + 2).min(bytes.len()),
+            b if b == quote => return pos + 1,
+            b'\n' | b'\r' if quote != b'`' => return pos,
+            _ => pos += 1,
+        }
+    }
+    pos
+}
+
+/// Skip ASCII inline/line-terminator whitespace (`' '`, `'\t'`, `'\r'`, `'\n'`)
+/// starting at `from`, returning the index of the first non-whitespace byte (or
+/// `bytes.len()`).
+///
+/// This is the explicit, single whitespace set for byte-level source-text
+/// scans; it deliberately excludes form-feed/vertical-tab so every scanner
+/// agrees on what "skip whitespace" means.
+#[inline]
+#[must_use]
+pub fn skip_ascii_whitespace(bytes: &[u8], from: usize) -> usize {
+    let mut pos = from;
+    while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t' | b'\r' | b'\n') {
+        pos += 1;
+    }
+    pos
+}
+
+/// Return the byte offset of the first occurrence of `needle` in `haystack`
+/// that appears as a standalone (whole-word) ASCII identifier token — i.e. not
+/// flanked by identifier-continue bytes on either side.
+///
+/// Returns `None` when `needle` is empty or never appears as a whole word.
+#[inline]
+#[must_use]
+pub fn find_standalone_token(haystack: &str, needle: &str) -> Option<usize> {
+    let bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    if needle_bytes.is_empty() || needle_bytes.len() > bytes.len() {
+        return None;
+    }
+    let mut i = 0;
+    while i + needle_bytes.len() <= bytes.len() {
+        if &bytes[i..i + needle_bytes.len()] == needle_bytes {
+            let prev_ok = i == 0 || !is_ascii_identifier_continue(bytes[i - 1]);
+            let next_ok = i + needle_bytes.len() == bytes.len()
+                || !is_ascii_identifier_continue(bytes[i + needle_bytes.len()]);
+            if prev_ok && next_ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// True when `haystack` contains `needle` as a standalone (whole-word) ASCII
+/// identifier token. See [`find_standalone_token`].
+#[inline]
+#[must_use]
+pub fn contains_standalone_token(haystack: &str, needle: &str) -> bool {
+    find_standalone_token(haystack, needle).is_some()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::leading_window;
+    use super::{
+        contains_standalone_token, find_standalone_token, is_ascii_identifier_continue,
+        is_ascii_identifier_continue_char, is_ascii_identifier_start,
+        is_ascii_identifier_start_char, leading_window, skip_ascii_whitespace, skip_quoted_literal,
+    };
+
+    #[test]
+    fn identifier_start_admits_underscore_dollar_and_letters_only() {
+        for b in [b'_', b'$', b'a', b'Z'] {
+            assert!(is_ascii_identifier_start(b));
+        }
+        for b in [b'0', b'9', b' ', b'.', b'-'] {
+            assert!(!is_ascii_identifier_start(b));
+        }
+        // Non-ASCII bytes are never identifier-start under the ASCII fast path.
+        assert!(!is_ascii_identifier_start(0xC3));
+    }
+
+    #[test]
+    fn identifier_continue_additionally_admits_digits() {
+        for b in [b'_', b'$', b'a', b'Z', b'0', b'9'] {
+            assert!(is_ascii_identifier_continue(b));
+        }
+        for b in [b' ', b'.', b'-', b'('] {
+            assert!(!is_ascii_identifier_continue(b));
+        }
+    }
+
+    #[test]
+    fn char_variants_match_byte_variants_for_ascii() {
+        for c in ['_', '$', 'a', 'Z', '0', '9', ' ', '.', '-'] {
+            assert_eq!(
+                is_ascii_identifier_start_char(c),
+                is_ascii_identifier_start(c as u8)
+            );
+            assert_eq!(
+                is_ascii_identifier_continue_char(c),
+                is_ascii_identifier_continue(c as u8)
+            );
+        }
+        // Non-ASCII chars are rejected by the ASCII fast path.
+        assert!(!is_ascii_identifier_start_char('é'));
+        assert!(!is_ascii_identifier_continue_char('é'));
+    }
+
+    #[test]
+    fn skip_quoted_basic_string_returns_past_close() {
+        let s = b"'abc' rest";
+        // Opens at 0, closes at index 4; returns 5 (the space).
+        assert_eq!(skip_quoted_literal(s, 0, b'\''), 5);
+    }
+
+    #[test]
+    fn skip_quoted_honors_backslash_escape() {
+        let s = br#""a\"b" rest"#;
+        // The escaped quote does not close the literal; real close is index 5.
+        assert_eq!(skip_quoted_literal(s, 0, b'"'), 6);
+    }
+
+    #[test]
+    fn skip_quoted_trailing_backslash_at_eof_clamps() {
+        let s = b"'ab\\";
+        assert_eq!(skip_quoted_literal(s, 0, b'\''), s.len());
+    }
+
+    #[test]
+    fn skip_quoted_single_line_terminates_on_raw_newline() {
+        let s = b"'unterminated\nnext";
+        // Returns the index *at* the newline (13), not EOF.
+        assert_eq!(skip_quoted_literal(s, 0, b'\''), 13);
+        assert_eq!(s[13], b'\n');
+    }
+
+    #[test]
+    fn skip_quoted_template_spans_newlines() {
+        let s = b"`line1\nline2` rest";
+        // Backtick literals are not terminated by raw newlines.
+        let end = skip_quoted_literal(s, 0, b'`');
+        assert_eq!(s[end - 1], b'`');
+        assert_eq!(end, 13);
+    }
+
+    #[test]
+    fn skip_whitespace_skips_inline_and_line_terminators_only() {
+        let s = b" \t\r\nx";
+        assert_eq!(skip_ascii_whitespace(s, 0), 4);
+        // Form-feed (0x0C) is deliberately not part of the set.
+        let ff = b"\x0Cx";
+        assert_eq!(skip_ascii_whitespace(ff, 0), 0);
+        // From past the end is a no-op clamp.
+        assert_eq!(skip_ascii_whitespace(s, s.len()), s.len());
+    }
+
+    #[test]
+    fn standalone_token_requires_word_boundaries() {
+        assert!(contains_standalone_token("a + react + b", "react"));
+        assert!(!contains_standalone_token("react_2 = 1", "react"));
+        assert!(!contains_standalone_token("preact", "react"));
+        assert_eq!(find_standalone_token("x react y", "react"), Some(2));
+        // Token at the very start and end of input.
+        assert!(contains_standalone_token("react", "react"));
+        // Empty needle never matches.
+        assert!(!contains_standalone_token("anything", ""));
+    }
 
     #[test]
     fn ascii_caps_exactly_at_budget() {

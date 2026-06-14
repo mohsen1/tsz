@@ -1060,10 +1060,10 @@ impl<'a> CheckerState<'a> {
         let name = head.rsplit_once('.').map(|(_, name)| name).unwrap_or(head);
         let mut chars = name.chars();
         let first = chars.next()?;
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        if !tsz_common::text_scan::is_ascii_identifier_start_char(first) {
             return None;
         }
-        if !chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
+        if !chars.all(tsz_common::text_scan::is_ascii_identifier_continue_char) {
             return None;
         }
 

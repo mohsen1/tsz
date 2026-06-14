@@ -429,7 +429,7 @@ impl<'a> Completions<'a> {
     }
 
     const fn is_identifier_char(ch: char) -> bool {
-        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+        tsz_common::text_scan::is_ascii_identifier_continue_char(ch)
     }
 
     fn collect_string_literals_from_type_node(

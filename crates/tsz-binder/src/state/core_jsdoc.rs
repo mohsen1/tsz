@@ -279,7 +279,7 @@ impl BinderState {
     }
 
     pub(super) const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
-        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+        tsz_common::text_scan::is_ascii_identifier_continue_char(ch)
     }
 
     /// Collapse `@import` tag continuations onto a single line so the

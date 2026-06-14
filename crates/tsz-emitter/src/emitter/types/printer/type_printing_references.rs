@@ -331,7 +331,7 @@ impl<'a> TypePrinter<'a> {
     }
 
     const fn is_identifier_continue(byte: u8) -> bool {
-        byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
+        tsz_common::text_scan::is_ascii_identifier_continue(byte)
     }
 
     /// Print a type parameter declaration with constraint and default.

@@ -1110,7 +1110,11 @@ impl<'a> Printer<'a> {
         let line = crate::safe_slice::slice(text, start, line_end).ok()?;
         let trimmed = line.trim_start();
         let rest = trimmed.strip_prefix("declare namespace debugger")?;
-        if rest.as_bytes().first().is_some_and(is_identifier_continue) {
+        if rest
+            .as_bytes()
+            .first()
+            .is_some_and(|&b| tsz_common::text_scan::is_ascii_identifier_continue(b))
+        {
             return None;
         }
 
@@ -1121,13 +1125,13 @@ impl<'a> Printer<'a> {
     }
 }
 
-const fn is_identifier_continue(byte: &u8) -> bool {
-    byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$'
-}
-
 fn strip_recovery_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
     let rest = text.strip_prefix(keyword)?;
-    if rest.as_bytes().first().is_some_and(is_identifier_continue) {
+    if rest
+        .as_bytes()
+        .first()
+        .is_some_and(|&b| tsz_common::text_scan::is_ascii_identifier_continue(b))
+    {
         return None;
     }
     Some(rest)

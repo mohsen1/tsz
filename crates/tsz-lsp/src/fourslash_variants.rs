@@ -162,13 +162,8 @@ pub fn apply_variant(source: &str, variant: &ShapeVariant) -> String {
 // Internal lexing helpers.
 // -----------------------------------------------------------------------------
 
-const fn is_ident_start(b: u8) -> bool {
-    b.is_ascii_alphabetic() || b == b'_' || b == b'$'
-}
-
-const fn is_ident_continue(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
-}
+use tsz_common::text_scan::is_ascii_identifier_continue as is_ident_continue;
+use tsz_common::text_scan::is_ascii_identifier_start as is_ident_start;
 
 /// If `bytes[i..]` starts with a marker comment `/*name*/`, return the byte
 /// offset just past the closing `*/`. Delegates to

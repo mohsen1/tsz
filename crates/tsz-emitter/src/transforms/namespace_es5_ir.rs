@@ -85,9 +85,7 @@ fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
     })
 }
 
-const fn is_identifier_continue(byte: u8) -> bool {
-    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
-}
+use tsz_common::text_scan::is_ascii_identifier_continue as is_identifier_continue;
 
 fn previous_identifier_token(text: &str, mut end: usize) -> Option<(&str, usize)> {
     let bytes = text.as_bytes();
