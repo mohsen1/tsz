@@ -157,6 +157,15 @@ pub struct LibTypeResolutionCaches {
     /// reads from rescanning declaration and heritage lists while preserving the
     /// same full-materialization fallback on cached misses.
     pub lazy_members: RefCell<FxHashMap<(Atom, Atom), Option<TypeId>>>,
+
+    /// Per-checker cache for lazy single-member receiver eligibility.
+    /// Keyed by the bare receiver `Lazy(DefId)`. Stores both eligible and
+    /// ineligible decisions after the conservative receiver predicate has
+    /// inspected symbol provenance, generic parameters, shadowing, global
+    /// augmentations, and heritage bases. This keeps repeated DOM/lib property
+    /// reads from re-walking the same heritage/augmentation graph before they
+    /// can hit the member cache.
+    pub lazy_member_receivers: RefCell<FxHashMap<tsz_solver::def::DefId, bool>>,
 }
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
