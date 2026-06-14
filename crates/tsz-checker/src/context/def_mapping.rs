@@ -616,11 +616,52 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
     /// recovery pattern.
+    /// True when `sym_id` is a local *value-only* binding (no type-position
+    /// meaning) that is not itself a lib symbol — i.e. a value that merely
+    /// shadows a same-named global lib type (`const Readonly: unique symbol`
+    /// vs the lib `Readonly<T>`). Such a binding occupies only the value
+    /// namespace, so it must never stand in for the lib type's canonical
+    /// identity in type position.
+    fn is_value_only_lib_shadow(&self, sym_id: SymbolId) -> bool {
+        use tsz_binder::symbol_flags;
+        !self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            && self.binder.get_symbol(sym_id).is_some_and(|s| {
+                s.has_any_flags(symbol_flags::VALUE)
+                    && !s.has_any_flags(
+                        symbol_flags::TYPE
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE
+                            | symbol_flags::ALIAS,
+                    )
+            })
+    }
+
     pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
         if let Some(sym_id) = self.binder.file_locals.get(name)
             && !self.symbol_has_current_file_type_declaration(sym_id, name)
         {
-            return sym_id;
+            // A local *value-only* binding that merely shares a name with a
+            // global lib type (e.g. `export declare const Readonly: unique
+            // symbol`) must not be treated as the canonical lib symbol. It
+            // carries no type-position meaning, so the lib type stays visible;
+            // keying the lib type's `DefId` to this value symbol corrupts
+            // deferred reduction — the lib `Readonly<…>` application then no
+            // longer matches the mapped-type body registered for the lib symbol,
+            // so it stays opaque (#8432 `deeplyNestedMappedTypes.ts`). Type-
+            // position resolution already routes such shadows to the recorded
+            // lib TYPE symbol via `lib_type_namespace`; mirror that here so the
+            // application-base def and the body-registration def agree on the lib
+            // symbol instead of the value. Genuine merged lib symbols, and any
+            // symbol carrying type meaning, keep the existing fast path.
+            if self.is_value_only_lib_shadow(sym_id) {
+                if let Some(&lib_type_sym_id) = self.binder.lib_type_namespace.get(name) {
+                    return lib_type_sym_id;
+                }
+                // No recorded lib type shadow: fall through to the lib-symbol
+                // search below rather than returning the value symbol.
+            } else {
+                return sym_id;
+            }
         }
 
         if let Some(sym_id) = self
